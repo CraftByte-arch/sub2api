@@ -100,13 +100,46 @@ The page should match Sub2API's existing admin/user console style:
 - no nested decorative cards
 - clear modes, model controls, and result grid
 
+The intended product direction is close to the provided reference screenshot: a compact image creation workspace, not a generic settings page.
+
+Reference layout interpretation:
+
+- The existing Sub2API sidebar remains visible. The `Image Studio` item should be highlighted with a soft teal active background and icon treatment consistent with the existing sidebar.
+- The main content uses a single large rounded workspace shell with subtle border and shadow, centered inside the app content area.
+- The workspace top bar has three tabs:
+  - `文生图`
+  - `图生图`
+  - `记录`
+- The active tab uses teal text plus a 2px underline. Inactive tabs use muted gray text and small line icons.
+- The body splits into two columns:
+  - left control column, about 500-540px wide on desktop
+  - right preview/output canvas taking the remaining width
+- The left control column contains:
+  - API key select
+  - model select/input
+  - aspect ratio grid
+  - image count slider
+  - prompt textarea
+  - optional advanced controls collapsed below the main flow
+- The right canvas is a large dashed-border drop/preview surface with a centered empty state when no result exists.
+- Empty state should show a small spark/image icon, title `还没有图片`, and helper text `在左侧填写提示词和参数，点击生成图片。`
+- Generated results replace the empty state with a responsive image grid. Each image tile should expose download/open actions without shifting layout.
+
+Visual tokens for the extension:
+
+- Accent: teal/cyan in the same family as the screenshot, but adjusted to existing Sub2API colors.
+- Background: app content may use a very light cool tint or existing page background; avoid heavy gradients.
+- Radius: workspace shell can use a larger radius than small controls, but individual cards/tiles stay at 8px or below unless matching existing Sub2API components.
+- Controls: use fixed-height selects/buttons and stable ratio tiles so hover/selection does not resize the layout.
+- Typography: compact dashboard text, no hero-scale heading.
+
 Primary regions:
 
-- connection bar: API key, protocol, model
-- prompt and controls panel
-- upload panel for edit mode
-- results panel
-- raw response drawer or collapsible area
+- top mode tabs
+- left prompt and controls panel
+- edit-mode upload controls inside the left column
+- right preview/results canvas
+- raw response drawer or collapsible area below results
 
 ## Error Handling
 

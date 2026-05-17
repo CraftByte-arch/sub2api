@@ -333,16 +333,26 @@ Expected: FAIL.
 
 **Step 3: Implement page**
 
-Use existing layout language:
+Use a workspace layout close to the provided reference screenshot:
 
-- no landing hero
-- compact header
-- two-column desktop layout
-- single-column mobile layout
-- stable form control sizing
-- accessible labels and buttons
+- keep the normal Sub2API app sidebar visible
+- use one large rounded workspace shell in the main content area
+- put `文生图`, `图生图`, and `记录` tabs in the workspace top bar
+- use teal text and underline for the active tab
+- split the workspace body into a left control column and right preview canvas
+- keep the left column about 500-540px on desktop
+- make the right canvas a dashed-border empty/result area
+- render aspect ratio choices as fixed-size selectable tiles
+- render the image count as a slider with the current value aligned right
+- make the prompt textarea visually prominent, with teal focus treatment
+- show the empty state text `还没有图片` and `在左侧填写提示词和参数，点击生成图片。`
+- use a single-column layout on mobile where controls come before preview
+- keep form controls and result tiles stable in size
+- use accessible labels and buttons
 
 Load keys with `keysAPI.list`. Filter active keys first and visibly mark groups that appear image-capable.
+
+The first implementation should support the visual shape even if the `记录` tab is initially a local/session history placeholder. Do not add backend history storage in this task.
 
 **Step 4: Run component tests**
 
