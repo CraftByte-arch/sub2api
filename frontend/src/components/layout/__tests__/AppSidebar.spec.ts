@@ -19,6 +19,13 @@ describe('AppSidebar custom SVG styles', () => {
   })
 })
 
+describe('AppSidebar extension navigation', () => {
+  it('contains the Image Studio user navigation entry', () => {
+    expect(componentSource).toContain("path: '/image-studio'")
+    expect(componentSource).toContain("label: t('nav.imageStudio')")
+  })
+})
+
 describe('AppSidebar header styles', () => {
   it('does not clip the version badge dropdown', () => {
     const sidebarHeaderBlockMatch = styleSource.match(/\.sidebar-header\s*\{[\s\S]*?\n {2}\}/)

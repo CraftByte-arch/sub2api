@@ -10,6 +10,7 @@ import { useAdminSettingsStore } from '@/stores/adminSettings'
 import { useNavigationLoadingState } from '@/composables/useNavigationLoading'
 import { useRoutePrefetch } from '@/composables/useRoutePrefetch'
 import { resolveDocumentTitle } from './title'
+import { extensionRoutes } from '@/extensions'
 
 /**
  * Route definitions with lazy loading
@@ -350,6 +351,7 @@ const routes: RouteRecordRaw[] = [
       titleKey: 'customPage.title',
     }
   },
+  ...extensionRoutes,
 
   // ==================== Admin Routes ====================
   {

@@ -356,6 +356,7 @@ export default {
     groups: '分组管理',
     channels: '渠道管理',
     availableChannels: '可用渠道',
+    imageStudio: '生图工作台',
     subscriptions: '订阅管理',
     accounts: '账号管理',
     proxies: 'IP管理',
@@ -990,6 +991,11 @@ export default {
       unitPerMillion: '/ 1M token',
       unitPerRequest: '/ 次'
     }
+  },
+
+  imageStudio: {
+    title: '生图工作台',
+    description: '使用当前账号的 API Key 调用 Sub2API 生图能力。'
   },
 
   affiliate: {

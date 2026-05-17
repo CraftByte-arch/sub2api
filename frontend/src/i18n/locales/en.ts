@@ -356,6 +356,7 @@ export default {
     groups: 'Groups',
     channels: 'Channels',
     availableChannels: 'Available Channels',
+    imageStudio: 'Image Studio',
     subscriptions: 'Subscriptions',
     accounts: 'Accounts',
     proxies: 'Proxies',
@@ -986,6 +987,11 @@ export default {
       unitPerMillion: '/ 1M tokens',
       unitPerRequest: '/ request'
     }
+  },
+
+  imageStudio: {
+    title: 'Image Studio',
+    description: 'Use your API keys to generate and edit images through Sub2API.'
   },
 
   affiliate: {
