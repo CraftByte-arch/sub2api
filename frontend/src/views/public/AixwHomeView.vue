@@ -6,12 +6,8 @@
 <template>
   <div class="h-screen w-screen bg-[#FDFDFD] relative overflow-hidden font-sans">
     <!-- Logo -->
-    <div class="absolute top-8 left-12 flex items-center gap-2 font-semibold text-lg tracking-wider">
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <path d="M12 2L22 22H2L12 2Z" fill="black" fill-opacity="0.8"/>
-        <path d="M12 8L17 18H7L12 8Z" fill="white"/>
-      </svg>
-      <span>A AIXW</span>
+    <div class="absolute top-8 left-12 flex items-center">
+      <img src="@/assets/aixw-logo.png" alt="AIXW Logo" class="h-10 w-auto mix-blend-darken" />
     </div>
 
     <!-- Center Content -->
