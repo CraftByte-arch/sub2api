@@ -7,7 +7,7 @@
   <div class="h-screen w-screen bg-[#FDFDFD] relative overflow-hidden font-sans">
     <!-- Logo -->
     <div class="absolute top-8 left-12 flex items-center">
-      <img src="@/assets/aixw-logo.png" alt="AIXW Logo" class="h-10 w-auto mix-blend-darken" />
+      <img src="@/assets/aixw-logo.webp" alt="AIXW Logo" class="h-10 w-auto mix-blend-darken" />
     </div>
 
     <!-- Center Content -->
