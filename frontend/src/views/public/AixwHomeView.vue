@@ -20,7 +20,10 @@
         class="bg-[#111111] text-white px-8 py-4 rounded-xl font-medium transition-all hover:bg-black hover:scale-105 hover:shadow-lg flex items-center gap-2"
       >
         Get started 
-        <span class="text-xl leading-none">-></span>
+        <svg viewBox="0 0 1024 1024" class="w-4 h-4 fill-current">
+          <path d="M473.9 896.5c0-9 3.4-17.9 10.3-24.7L843.9 512 484.1 152.2c-13.7-13.7-13.7-35.8 0-49.5 13.7-13.7 35.8-13.7 49.5 0l384.5 384.5c13.7 13.7 13.7 35.8 0 49.5L533.6 921.3c-13.7 13.7-35.8 13.7-49.5 0-6.8-6.9-10.2-15.8-10.2-24.8z"></path>
+          <path d="M95.6 512c0-19.3 15.7-35 35-35h762.7c19.3 0 35 15.7 35 35s-15.7 35-35 35H130.6c-19.3 0-35-15.7-35-35z"></path>
+        </svg>
       </router-link>
     </div>
 

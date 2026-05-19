@@ -20,7 +20,7 @@ describe('AixwHomeView', () => {
     expect(wrapper.find('img[alt="AIXW Logo"]').exists()).toBe(true)
     
     // Check for button text
-    expect(wrapper.text()).toContain('Get started ->')
+    expect(wrapper.text()).toContain('Get started')
 
     // Check bottom links
     expect(wrapper.text()).toContain('RELIABLE')
