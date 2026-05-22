@@ -361,7 +361,7 @@ export default {
     groups: '分组管理',
     channels: '渠道管理',
     availableChannels: '可用渠道',
-    imageStudio: '生图工作台',
+    imageStudio: '生图体验',
     subscriptions: '订阅管理',
     accounts: '账号管理',
     proxies: 'IP管理',
@@ -1045,7 +1045,7 @@ export default {
   },
 
   imageStudio: {
-    title: '生图工作台',
+    title: '生图体验',
     description: '使用当前账号的 API Key 调用 Sub2API 生图能力。'
   },
 

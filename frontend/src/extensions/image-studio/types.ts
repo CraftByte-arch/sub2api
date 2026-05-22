@@ -16,7 +16,7 @@ export interface ImageStudioCommonControls {
 export interface ImageStudioGenerationInput extends ImageStudioCommonControls {}
 
 export interface ImageStudioEditInput extends ImageStudioCommonControls {
-  image: File
+  image: File | File[]
   mask?: File | null
 }
 
@@ -28,3 +28,110 @@ export interface ImageStudioOutput {
   revisedPrompt?: string
   raw: unknown
 }
+
+export type ImageStudioGenerationPhase =
+  | 'idle'
+  | 'created'
+  | 'preparing'
+  | 'image_task_created'
+  | 'image_in_progress'
+  | 'generating'
+  | 'partial_preview'
+  | 'image_done'
+  | 'completed'
+  | 'failed'
+
+export interface ImageStudioStreamState {
+  phase: ImageStudioGenerationPhase
+  message: string
+  detail?: string
+  startedAt?: number
+  updatedAt?: number
+}
+
+export interface ImageStudioStreamEvent {
+  type: string
+  data: Record<string, any>
+}
+
+export interface ImageStudioHistoryRecord {
+  id: string
+  createdAt: string
+  mode: Exclude<ImageStudioMode, 'history'>
+  prompt: string
+  model: string
+  size: string
+  count: number
+  outputFormat: string
+  images: Array<{
+    id: string
+    src: string
+    mimeType?: string
+    revisedPrompt?: string
+  }>
+}
+
+export interface ImageStudioPromptHistoryRecord {
+  id: string
+  createdAt: string
+  mode: Exclude<ImageStudioMode, 'history'>
+  prompt: string
+  source: 'generated' | 'polished'
+}
+
+export interface ImageStudioRatioOption {
+  value: string
+  label: string
+  tier: string
+  size: string
+  aspect: string
+}
+
+export interface ImageStudioSelectOption {
+  value: string
+  label: string
+  tier?: '1K' | '2K' | '4K'
+  status?: 'standard' | 'experimental'
+  description?: string
+}
+
+export interface StudioApiKey {
+  id: number
+  key: string
+  name: string
+  status: string
+  group?: {
+    platform?: string
+    allow_image_generation?: boolean
+    image_rate_multiplier?: number
+    image_price_1k?: number | null
+    image_price_2k?: number | null
+    image_price_4k?: number | null
+  }
+}
+
+export type ImageStudioLightboxImage =
+  | {
+    kind: 'output'
+    title: string
+    src: string
+    downloadName: string
+    canEdit: true
+    output: ImageStudioOutput
+    index: number
+  }
+  | {
+    kind: 'history'
+    title: string
+    src: string
+    downloadName: string
+    canEdit: true
+    record: ImageStudioHistoryRecord
+  }
+  | {
+    kind: 'reference'
+    title: string
+    src: string
+    downloadName: null
+    canEdit: false
+  }
