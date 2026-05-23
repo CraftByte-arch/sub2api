@@ -27,7 +27,6 @@ describe('image studio payload builders', () => {
       size: '1024x1024',
       quality: 'high',
       outputFormat: 'png',
-      outputCompression: 75,
       count: 2,
       advancedParams: {
         tool: { background: 'transparent' },
@@ -68,14 +67,12 @@ describe('image studio payload builders', () => {
       count: 1,
       advancedParams: {
         n: 3,
-        tool: { n: 4, output_compression: 66 },
-        output_compression: 88,
+        tool: { n: 4 },
         partial_images: 0
       }
     })
 
     expect(payload).not.toHaveProperty('n')
-    expect(payload).not.toHaveProperty('output_compression')
     expect(payload).not.toHaveProperty('partial_images')
     expect(payload.tools).toEqual([
       expect.objectContaining({
@@ -84,7 +81,6 @@ describe('image studio payload builders', () => {
       })
     ])
     expect((payload.tools as Array<Record<string, unknown>>)[0]).not.toHaveProperty('n')
-    expect((payload.tools as Array<Record<string, unknown>>)[0]).not.toHaveProperty('output_compression')
   })
 
   it('builds an Images API generation payload with common controls', () => {
@@ -94,7 +90,6 @@ describe('image studio payload builders', () => {
       size: '1536x1024',
       quality: 'medium',
       outputFormat: 'webp',
-      outputCompression: 75,
       count: 1,
       advancedParams: { user: 'demo-user' }
     })
@@ -108,6 +103,24 @@ describe('image studio payload builders', () => {
       n: 1,
       user: 'demo-user'
     })
+  })
+
+  it('keeps the selected output format in Responses image generation payloads', () => {
+    const payload = buildResponsesGenerationPayload({
+      model: 'gpt-5.4',
+      prompt: 'a quiet tea house',
+      size: '1024x1024',
+      quality: 'high',
+      outputFormat: 'webp',
+      count: 1,
+      advancedParams: {}
+    })
+
+    expect(payload.tools).toEqual([
+      expect.objectContaining({
+        output_format: 'webp'
+      })
+    ])
   })
 
   it('builds a Responses edit payload with input image data URLs', async () => {
@@ -125,7 +138,6 @@ describe('image studio payload builders', () => {
         mask,
         size: '1024x1024',
         outputFormat: 'webp',
-        outputCompression: 75,
         count: 1,
         advancedParams: {}
       })

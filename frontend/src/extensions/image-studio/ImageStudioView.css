@@ -303,6 +303,74 @@
   transform: translateY(-1px);
 }
 
+.ratio-card:disabled,
+.ratio-card.disabled {
+  border-color: rgba(203, 213, 225, 0.7);
+  background: rgba(241, 245, 249, 0.7);
+  color: #94a3b8;
+  cursor: not-allowed;
+  opacity: 0.72;
+  transform: none;
+  box-shadow: none;
+}
+
+.ratio-card.disabled[data-disabled-reason]::after,
+.ratio-card:disabled[data-disabled-reason]::after {
+  position: absolute;
+  z-index: 4;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  width: max-content;
+  max-width: 220px;
+  border-radius: 8px;
+  padding: 6px 8px;
+  background: rgba(15, 23, 42, 0.92);
+  color: #fff;
+  content: attr(data-disabled-reason);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.35;
+  opacity: 0;
+  pointer-events: none;
+  text-align: center;
+  transform: translate(-50%, 4px);
+  transition: opacity 140ms ease, transform 140ms ease;
+  white-space: normal;
+}
+
+.ratio-card.disabled[data-disabled-reason]::before,
+.ratio-card:disabled[data-disabled-reason]::before {
+  position: absolute;
+  z-index: 4;
+  bottom: calc(100% + 3px);
+  left: 50%;
+  border: 5px solid transparent;
+  border-top-color: rgba(15, 23, 42, 0.92);
+  content: '';
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 4px);
+  transition: opacity 140ms ease, transform 140ms ease;
+}
+
+.ratio-card.disabled[data-disabled-reason]:hover::after,
+.ratio-card.disabled[data-disabled-reason]:hover::before,
+.ratio-card.disabled[data-disabled-reason]:focus-visible::after,
+.ratio-card.disabled[data-disabled-reason]:focus-visible::before,
+.ratio-card:disabled[data-disabled-reason]:hover::after,
+.ratio-card:disabled[data-disabled-reason]:hover::before,
+.ratio-card:disabled[data-disabled-reason]:focus-visible::after,
+.ratio-card:disabled[data-disabled-reason]:focus-visible::before {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.ratio-card:disabled:hover,
+.ratio-card.disabled:hover {
+  border-color: rgba(203, 213, 225, 0.7);
+  transform: none;
+}
+
 .ratio-badge {
   position: absolute;
   top: 5px;
@@ -367,6 +435,11 @@
 .resolution-status {
   background: rgba(245, 158, 11, 0.14);
   color: #b45309;
+}
+
+.resolution-status.disabled-status {
+  background: rgba(148, 163, 184, 0.16);
+  color: #64748b;
 }
 
 .resolution-description {
@@ -3742,6 +3815,51 @@ main:has(.image-studio-page) {
   color: var(--studio-brand-dark);
 }
 
+.studio-custom-select-option:disabled,
+.studio-custom-select-option.disabled {
+  position: relative;
+  color: #94a3b8;
+  cursor: not-allowed;
+  opacity: 0.66;
+}
+
+.studio-custom-select-option:disabled:hover,
+.studio-custom-select-option.disabled:hover {
+  background: transparent;
+  color: #94a3b8;
+}
+
+.studio-custom-select-option.disabled[data-disabled-reason]::after,
+.studio-custom-select-option:disabled[data-disabled-reason]::after {
+  position: absolute;
+  z-index: 122;
+  top: 50%;
+  right: calc(100% + 8px);
+  width: max-content;
+  max-width: 220px;
+  border-radius: 8px;
+  padding: 6px 8px;
+  background: rgba(15, 23, 42, 0.92);
+  color: #fff;
+  content: attr(data-disabled-reason);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.35;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(4px, -50%);
+  transition: opacity 140ms ease, transform 140ms ease;
+  white-space: normal;
+}
+
+.studio-custom-select-option.disabled[data-disabled-reason]:hover::after,
+.studio-custom-select-option.disabled[data-disabled-reason]:focus-visible::after,
+.studio-custom-select-option:disabled[data-disabled-reason]:hover::after,
+.studio-custom-select-option:disabled[data-disabled-reason]:focus-visible::after {
+  opacity: 1;
+  transform: translate(0, -50%);
+}
+
 .studio-custom-select-option.active {
   background: linear-gradient(135deg, #dffbf6 0%, #c7f4eb 100%);
   color: var(--studio-brand-dark);
@@ -4623,10 +4741,9 @@ body.reference-resizing-active .composer-panel {
 }
 
 .history-mode .history-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(clamp(280px, 23vw, 360px), 1fr));
-  align-items: start;
-  gap: 14px;
+  display: block;
+  columns: clamp(280px, 23vw, 360px);
+  column-gap: 14px;
   margin-top: 12px;
 }
 
@@ -4894,11 +5011,12 @@ body.reference-resizing-active .composer-panel {
   grid-template-columns: none;
   width: 100%;
   min-height: 0;
-  margin: 0;
+  margin: 0 0 14px;
   overflow: hidden;
   border-radius: 18px;
   border: 1px solid rgba(203, 213, 225, 0.9);
   background: linear-gradient(180deg, rgba(248, 250, 252, 0.98), rgba(241, 245, 249, 0.98));
+  break-inside: avoid;
   cursor: pointer;
 }
 

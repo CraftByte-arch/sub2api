@@ -129,8 +129,11 @@
             :key="option.value"
             type="button"
             class="ratio-card resolution-card"
-            :class="{ active: selectedResolutionValue === option.value }"
+            :class="{ active: selectedResolutionValue === option.value, disabled: option.disabled }"
+            :disabled="option.disabled"
             :data-testid="`resolution-option-${option.value}`"
+            :data-disabled-reason="option.disabledReason"
+            :title="option.disabledReason"
             @click="$emit('update:selected-resolution-value', option.value)"
           >
             <span class="resolution-card-top">
@@ -143,10 +146,11 @@
               </span>
             </span>
             <span class="resolution-description">{{ option.description }}</span>
-            <span v-if="option.status === 'experimental'" class="resolution-status">实验性</span>
+            <span v-if="option.disabledReason" class="resolution-status disabled-status">不支持 PNG</span>
+            <span v-else-if="option.status === 'experimental'" class="resolution-status">实验性</span>
           </button>
         </div>
-        <p class="control-hint">超过 2560×1440 的高像素尺寸会标记为实验性，可能更慢或失败率更高。</p>
+        <p class="control-hint">超过 2560×1440 的高像素尺寸会标记为实验性；4K 暂不支持 PNG 输出。</p>
       </div>
 
     </section>
@@ -202,7 +206,7 @@
             placement="top"
             @update:model-value="$emit('update:output-format', $event)"
           />
-          <p class="control-hint">WebP 体积更小；PNG 兼容性更好。</p>
+          <p class="control-hint">WebP 体积更小；PNG 暂不支持 4K 分辨率。</p>
         </div>
 
         <details class="advanced-json-panel">

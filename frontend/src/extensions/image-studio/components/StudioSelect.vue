@@ -28,7 +28,7 @@
       @change="selectValue(($event.target as HTMLSelectElement).value)"
     >
       <option v-if="placeholder" value="" :disabled="placeholderDisabled">{{ placeholder }}</option>
-      <option v-for="option in options" :key="option.value" :value="option.value">
+      <option v-for="option in options" :key="option.value" :value="option.value" :disabled="option.disabled">
         {{ option.label }}
       </option>
     </select>
@@ -51,9 +51,13 @@
           :key="option.value"
           type="button"
           class="studio-custom-select-option"
-          :class="{ active: modelValue === option.value }"
+          :class="{ active: modelValue === option.value, disabled: option.disabled }"
+          :disabled="option.disabled"
+          :data-disabled-reason="option.disabledReason"
           role="option"
           :aria-selected="modelValue === option.value"
+          :aria-disabled="option.disabled ? 'true' : undefined"
+          :title="option.disabledReason"
           @click="selectValue(option.value)"
         >
           {{ option.label }}
@@ -72,6 +76,8 @@ import { computed, onBeforeUnmount, ref } from 'vue'
 interface StudioSelectOption {
   value: string
   label: string
+  disabled?: boolean
+  disabledReason?: string
 }
 
 const props = withDefaults(defineProps<{
@@ -126,6 +132,8 @@ function closeMenu() {
 }
 
 function selectValue(value: string) {
+  const option = props.options.find((item) => item.value === value)
+  if (option?.disabled) return
   emit('update:modelValue', value)
   emit('change', value)
   closeMenu()

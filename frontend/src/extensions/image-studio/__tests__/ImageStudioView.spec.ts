@@ -334,11 +334,35 @@ describe('ImageStudioView', () => {
         ]
       })
     }))
-    expect(wrapper.find('img[alt="Generated image 1"]').attributes('src')).toBe('data:image/png;base64,ZmFrZQ==')
+    expect(wrapper.find('img[alt="Generated image 1"]').attributes('src')).toBe('data:image/webp;base64,ZmFrZQ==')
     expect(wrapper.get('[data-testid="download-button"]').attributes()).toMatchObject({
-      href: 'data:image/png;base64,ZmFrZQ==',
-      download: 'image-studio-1.png'
+      href: 'data:image/webp;base64,ZmFrZQ==',
+      download: 'image-studio-1.webp'
     })
+  })
+
+  it('keeps the selected output format for non-transparent generations', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+
+    await wrapper.get('[data-testid="prompt-input"]').setValue('一座安静茶室')
+    await wrapper.get('.advanced-header').trigger('click')
+    await wrapper.get('[data-testid="background-select"]').setValue('opaque')
+    await wrapper.get('[data-testid="output-format-select"]').setValue('png')
+    await wrapper.get('[data-testid="generate-button"]').trigger('click')
+    await flushPromises()
+
+    expect(sendResponsesImageRequest).toHaveBeenCalledWith(expect.objectContaining({
+      body: expect.objectContaining({
+        tools: [
+          expect.objectContaining({
+            output_format: 'png'
+          })
+        ]
+      })
+    }))
+    expect(wrapper.find('img[alt="Generated image 1"]').attributes('src')).toBe('data:image/png;base64,ZmFrZQ==')
+    expect(wrapper.get('[data-testid="download-button"]').attributes('download')).toBe('image-studio-1.png')
   })
 
   it('opens prompt history and manages saved prompt records', async () => {

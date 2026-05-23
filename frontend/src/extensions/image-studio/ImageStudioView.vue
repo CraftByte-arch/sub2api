@@ -267,18 +267,18 @@
               :background="background"
               :background-options="backgroundOptions"
               :output-format="outputFormat"
-              :output-format-options="outputFormatOptions"
+              :output-format-options="outputFormatOptionsForSelection"
               :advanced-json="advancedJson"
               @open-history-lightbox="openHistoryLightbox"
               @edit-history-image="handleEditHistoryImage"
               @delete-history-record="deleteHistoryRecord"
               @update:selected-key-value="selectedKeyValue = $event"
               @update:selected-ratio-value="selectedRatioValue = $event"
-              @update:selected-resolution-value="selectedResolutionValue = $event"
+              @update:selected-resolution-value="updateSelectedResolutionValue"
               @update:advanced-open="advancedOpen = $event"
               @update:quality="quality = $event"
               @update:background="background = $event"
-              @update:output-format="outputFormat = $event"
+              @update:output-format="updateOutputFormat"
               @update:advanced-json="advancedJson = $event"
             />
           </aside>
@@ -594,7 +594,15 @@ const promptPolishModelOptions = [
 const activeKeys = computed(() => apiKeys.value.filter((key) => key.status === 'active'))
 const selectedKey = computed(() => activeKeys.value.find((key) => key.key === selectedKeyValue.value) ?? null)
 const selectedRatio = computed(() => ratioOptions.find((item) => item.value === selectedRatioValue.value) ?? ratioOptions[0])
-const selectedResolutionOptions = computed(() => resolutionMap[selectedRatio.value.value] ?? [])
+const selectedResolutionOptions = computed(() =>
+  (resolutionMap[selectedRatio.value.value] ?? []).map((option) => ({
+    ...option,
+    disabled: outputFormat.value === 'png' && is4kResolution(option),
+    disabledReason: outputFormat.value === 'png' && is4kResolution(option)
+      ? '4K 分辨率暂不支持 PNG 输出'
+      : undefined
+  }))
+)
 const selectedResolution = computed(() =>
   selectedResolutionOptions.value.find((option) => option.value === selectedResolutionValue.value) ??
   selectedResolutionOptions.value[0] ??
@@ -653,6 +661,16 @@ const submitDisabled = computed(() => {
   return false
 })
 
+const outputFormatOptionsForSelection = computed(() =>
+  outputFormatOptions.map((option) => ({
+    ...option,
+    disabled: option.value === 'png' && is4kResolutionValue(selectedResolutionValue.value),
+    disabledReason: option.value === 'png' && is4kResolutionValue(selectedResolutionValue.value)
+      ? '4K 分辨率暂不支持 PNG 输出'
+      : undefined
+  }))
+)
+
 const studioBodyStyle = computed(() => (
   activeTab.value !== 'generate' && templateDrawerOpen.value && templateDrawerHeight.value
     ? { '--studio-edit-template-height': `${templateDrawerHeight.value}px` }
@@ -688,6 +706,12 @@ onMounted(async () => {
 watch(selectedRatioValue, () => {
   syncResolutionToSelectedRatio()
 }, { immediate: true })
+
+watch(outputFormat, () => {
+  if (outputFormat.value === 'png' && is4kResolutionValue(selectedResolutionValue.value)) {
+    syncResolutionToSelectedRatio()
+  }
+})
 
 onBeforeUnmount(() => {
   document.removeEventListener('pointerdown', handleDocumentPointerDown)
@@ -798,7 +822,7 @@ async function handleSubmit() {
     const isEditMode = activeTab.value === 'edit'
     const requestInput = {
       ...commonInput,
-      outputFormat: upstreamOutputFormatForRequest(commonInput.background)
+      outputFormat: requestedOutputFormat
     }
 
     const response = isEditMode
@@ -817,10 +841,6 @@ async function handleSubmit() {
   } finally {
     submitting.value = false
   }
-}
-
-function upstreamOutputFormatForRequest(backgroundValue: string): string {
-  return backgroundValue === 'transparent' ? 'webp' : 'jpeg'
 }
 
 function updateGenerationStreamState(phase: ImageStudioStreamState['phase'], message: string, detail = '') {
@@ -1294,13 +1314,13 @@ function selectHistoryRecord(record: ImageStudioHistoryRecord) {
 function reuseHistoryRecord(record: ImageStudioHistoryRecord) {
   setPromptValue(record.prompt, 'external')
   model.value = record.model
-  outputFormat.value = record.outputFormat || 'jpeg'
+  updateOutputFormat(record.outputFormat || 'jpeg')
   const matchedRatio = findRatioByResolution(record.size)
   if (matchedRatio) {
     selectedRatioValue.value = matchedRatio.value
-    selectedResolutionValue.value = record.size
+    updateSelectedResolutionValue(record.size)
   } else {
-    selectedResolutionValue.value = selectedResolutionOptions.value[0]?.value ?? record.size
+    updateSelectedResolutionValue(selectedResolutionOptions.value[0]?.value ?? record.size)
   }
   setActiveTab('generate')
 }
@@ -1309,6 +1329,16 @@ function findRatioByResolution(size: string) {
   return ratioOptions.find((ratio) =>
     (resolutionMap[ratio.value] ?? []).some((option) => option.value === size)
   ) ?? null
+}
+
+function updateSelectedResolutionValue(value: string) {
+  if (outputFormat.value === 'png' && is4kResolutionValue(value)) return
+  selectedResolutionValue.value = value
+}
+
+function updateOutputFormat(value: string) {
+  if (value === 'png' && is4kResolutionValue(selectedResolutionValue.value)) return
+  outputFormat.value = value
 }
 
 function createResolutionOption(value: string, description: string): ImageStudioSelectOption {
@@ -1327,10 +1357,20 @@ function createResolutionOption(value: string, description: string): ImageStudio
 }
 
 function syncResolutionToSelectedRatio() {
-  const options = selectedResolutionOptions.value
+  const options = selectedResolutionOptions.value.filter((option) => !option.disabled)
   if (options.length === 0) return
   if (options.some((option) => option.value === selectedResolutionValue.value)) return
   selectedResolutionValue.value = options[0].value
+}
+
+function is4kResolution(option: ImageStudioSelectOption) {
+  return option.tier === '4K' || is4kResolutionValue(option.value)
+}
+
+function is4kResolutionValue(value: string) {
+  const [width, height] = value.split('x').map(Number)
+  if (!Number.isFinite(width) || !Number.isFinite(height)) return false
+  return width * height > 2560 * 1440
 }
 
 async function handleEditOutput(output: ImageStudioOutput, index: number) {
@@ -1538,40 +1578,10 @@ async function restoreOutputsToRequestedFormat(
   requestedFormat: string
 ): Promise<ImageStudioOutput[]> {
   const targetMimeType = mimeTypeFromOutputFormat(requestedFormat)
-  if (targetMimeType === 'image/webp') {
-    return generatedOutputs.map((output) => ({ ...output, mimeType: output.mimeType || targetMimeType }))
-  }
-
-  return Promise.all(generatedOutputs.map(async (output) => {
-    try {
-      const sourceBlob = await outputSourceToBlob(output.src)
-      const convertedBlob = await renderImageBlobToFormat(
-        sourceBlob,
-        targetMimeType,
-        targetMimeType === 'image/jpeg' ? 0.95 : undefined
-      )
-      const src = await blobToDataUrl(convertedBlob)
-      return {
-        ...output,
-        kind: 'b64_json' as const,
-        src,
-        mimeType: targetMimeType
-      }
-    } catch {
-      return output
-    }
+  return generatedOutputs.map((output) => ({
+    ...output,
+    mimeType: output.mimeType || targetMimeType
   }))
-}
-
-async function outputSourceToBlob(src: string): Promise<Blob> {
-  if (src.startsWith('data:')) {
-    const { bytes, mimeType } = parseDataUrlBytes(src)
-    return new Blob([bytes], { type: mimeType })
-  }
-
-  const response = await fetch(src)
-  if (!response.ok) throw new Error('读取生成图片失败')
-  return response.blob()
 }
 
 function parseDataUrlBytes(dataUrl: string): { bytes: Uint8Array, mimeType: string } {
@@ -1629,15 +1639,6 @@ function canvasToBlob(canvas: HTMLCanvasElement, mimeType: string, quality?: num
         reject(new Error('图片格式转换失败'))
       }
     }, mimeType, quality)
-  })
-}
-
-function blobToDataUrl(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(String(reader.result))
-    reader.onerror = () => reject(reader.error ?? new Error('读取生成图片失败'))
-    reader.readAsDataURL(blob)
   })
 }
 

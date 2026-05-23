@@ -9,7 +9,6 @@ export interface ImageStudioCommonControls {
   outputFormat?: string
   background?: string
   count?: number
-  outputCompression?: number | null
   advancedParams?: Record<string, any>
 }
 
@@ -93,6 +92,8 @@ export interface ImageStudioSelectOption {
   tier?: '1K' | '2K' | '4K'
   status?: 'standard' | 'experimental'
   description?: string
+  disabled?: boolean
+  disabledReason?: string
 }
 
 export interface StudioApiKey {
