@@ -432,6 +432,7 @@ func redeemCodeEntityToService(m *dbent.RedeemCode) *service.RedeemCode {
 		ID:              m.ID,
 		Code:            m.Code,
 		Type:            m.Type,
+		Source:          "redeem_code",
 		Value:           m.Value,
 		Status:          m.Status,
 		UsedBy:          m.UsedBy,

@@ -232,6 +232,8 @@ export interface BalanceHistoryItem {
   id: number
   code: string
   type: string
+  source?: string
+  order_type?: string
   value: number
   status: string
   used_by: number | null

@@ -339,6 +339,8 @@ type RedeemCode struct {
 	ID        int64      `json:"id"`
 	Code      string     `json:"code"`
 	Type      string     `json:"type"`
+	Source    string     `json:"source,omitempty"`
+	OrderType string     `json:"order_type,omitempty"`
 	Value     float64    `json:"value"`
 	Status    string     `json:"status"`
 	UsedBy    *int64     `json:"used_by"`

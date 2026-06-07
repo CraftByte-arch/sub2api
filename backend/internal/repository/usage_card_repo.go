@@ -246,8 +246,17 @@ func (r *usageCardRepository) listCards(ctx context.Context, userID *int64, stat
 		query += fmt.Sprintf(" AND c.user_id = $%d", len(args))
 	}
 	if status != "" {
-		args = append(args, status)
-		query += fmt.Sprintf(" AND c.status = $%d", len(args))
+		switch status {
+		case service.UsageCardStatusActive:
+			args = append(args, time.Now())
+			query += fmt.Sprintf(" AND c.status = '%s' AND c.expires_at > $%d AND c.used_usd < c.total_limit_usd", service.UsageCardStatusActive, len(args))
+		case service.UsageCardStatusExpired:
+			args = append(args, time.Now())
+			query += fmt.Sprintf(" AND (c.status = '%s' OR (c.status = '%s' AND c.expires_at <= $%d))", service.UsageCardStatusExpired, service.UsageCardStatusActive, len(args))
+		default:
+			args = append(args, status)
+			query += fmt.Sprintf(" AND c.status = $%d", len(args))
+		}
 	}
 	if !includeDeleted {
 		query += " AND c.deleted_at IS NULL"

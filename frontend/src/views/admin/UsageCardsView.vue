@@ -187,23 +187,22 @@
             <template #cell-status="{ row }">
               <span
                 class="inline-flex rounded-full px-2.5 py-1 text-xs font-medium"
-                :class="statusBadgeClass(row.status)"
+                :class="statusBadgeClass(effectiveCardStatus(row))"
               >
-                {{ usageCardStatusLabel(row.status) }}
+                {{ usageCardStatusLabel(effectiveCardStatus(row)) }}
               </span>
             </template>
 
             <template #cell-expires_at="{ row }">
               <div class="whitespace-nowrap text-sm text-gray-900 dark:text-white">{{ formatDateTime(row.expires_at) }}</div>
-              <div class="text-xs text-gray-500 dark:text-gray-400">{{ expiresHint(row.expires_at) }}</div>
             </template>
 
             <template #cell-actions="{ row }">
               <div class="flex justify-end gap-2">
-                <button v-if="row.status === 'active'" class="btn btn-sm btn-secondary" @click="suspendCard(row.id)">{{ t('admin.usageCards.suspend') }}</button>
-                <button v-if="row.status === 'suspended'" class="btn btn-sm btn-secondary" @click="resumeCard(row.id)">{{ t('admin.usageCards.resume') }}</button>
-                <button v-if="canRevokeCard(row.status)" class="btn btn-sm btn-danger" @click="cancelCard(row.id)">{{ t('admin.usageCards.cancel') }}</button>
-                <span v-if="!hasCardActions(row.status)" class="text-sm text-gray-400 dark:text-gray-500">{{ t('admin.usageCards.noActions') }}</span>
+                <button v-if="effectiveCardStatus(row) === 'active'" class="btn btn-sm btn-secondary" @click="suspendCard(row.id)">{{ t('admin.usageCards.suspend') }}</button>
+                <button v-if="effectiveCardStatus(row) === 'suspended'" class="btn btn-sm btn-secondary" @click="resumeCard(row.id)">{{ t('admin.usageCards.resume') }}</button>
+                <button v-if="canRevokeCard(effectiveCardStatus(row))" class="btn btn-sm btn-danger" @click="cancelCard(row.id)">{{ t('admin.usageCards.cancel') }}</button>
+                <span v-if="!hasCardActions(effectiveCardStatus(row))" class="text-sm text-gray-400 dark:text-gray-500">{{ t('admin.usageCards.noActions') }}</span>
               </div>
             </template>
           </DataTable>
@@ -420,6 +419,15 @@ function usageCardStatusLabel(status: string) {
   return t(`usageCards.status.${status}`, status)
 }
 
+function effectiveCardStatus(card: UserUsageCard) {
+  if (card.status === 'active') {
+    const expiresAt = new Date(card.expires_at).getTime()
+    if (Number.isFinite(expiresAt) && expiresAt <= Date.now()) return 'expired'
+    if (card.total_limit_usd > 0 && card.used_usd >= card.total_limit_usd) return 'exhausted'
+  }
+  return card.status
+}
+
 function canRevokeCard(status: string) {
   return status === 'active' || status === 'suspended'
 }
@@ -477,15 +485,6 @@ function formatDateTime(value: string) {
     hour: '2-digit',
     minute: '2-digit',
   })
-}
-
-function expiresHint(value: string) {
-  const expiresAt = new Date(value).getTime()
-  if (!Number.isFinite(expiresAt)) return ''
-  const diff = expiresAt - Date.now()
-  if (diff <= 0) return t('usageCards.status.expired')
-  const days = Math.ceil(diff / 86400000)
-  return t('admin.subscriptions.daysRemaining', { days })
 }
 
 async function loadPlans() {

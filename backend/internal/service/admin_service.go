@@ -17,7 +17,9 @@ import (
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/authidentity"
 	"github.com/Wei-Shaw/sub2api/ent/authidentitychannel"
+	"github.com/Wei-Shaw/sub2api/ent/paymentorder"
 	"github.com/Wei-Shaw/sub2api/ent/usagecardplan"
+	"github.com/Wei-Shaw/sub2api/internal/payment"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
@@ -1128,8 +1130,16 @@ func (s *adminServiceImpl) GetUserBalanceHistory(ctx context.Context, userID int
 		return codes, total, totalRecharged, nil
 	}
 
+	if codeType == RedeemTypeUsageCard {
+		return s.getUsageCardBalanceHistory(ctx, userID, params)
+	}
+
 	if codeType == "" {
 		return s.getAllUserBalanceHistory(ctx, userID, params)
+	}
+
+	if codeType == RedeemTypeBalance || codeType == RedeemTypeSubscription {
+		return s.getOrderAwareBalanceHistoryByType(ctx, userID, params, codeType)
 	}
 
 	codes, result, err := s.redeemCodeRepo.ListByUserPaginated(ctx, userID, params, codeType)
@@ -1159,16 +1169,28 @@ func (s *adminServiceImpl) getAllUserBalanceHistory(ctx context.Context, userID 
 	if err != nil {
 		return nil, 0, 0, err
 	}
-	codes := mergeBalanceHistoryCodes(redeemCodes, affiliateCodes, params)
+	usageCardOrders, usageCardOrderTotal, err := s.listUsageCardPurchaseHistoryForMerge(ctx, userID, needed)
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	balanceOrders, balanceOrderTotal, err := s.listPaymentOrderHistoryForMerge(ctx, userID, needed, payment.OrderTypeBalance)
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	subscriptionOrders, subscriptionOrderTotal, err := s.listPaymentOrderHistoryForMerge(ctx, userID, needed, payment.OrderTypeSubscription)
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	codes := mergeBalanceHistoryCodeGroups(params, redeemCodes, affiliateCodes, balanceOrders, subscriptionOrders, usageCardOrders)
 
 	totalRecharged, err := s.redeemCodeRepo.SumPositiveBalanceByUser(ctx, userID)
 	if err != nil {
 		return nil, 0, 0, err
 	}
-	return codes, redeemTotal + affiliateTotal, totalRecharged, nil
+	return codes, redeemTotal + affiliateTotal + balanceOrderTotal + subscriptionOrderTotal + usageCardOrderTotal, totalRecharged, nil
 }
 
-func (s *adminServiceImpl) listRedeemBalanceHistoryForMerge(ctx context.Context, userID int64, needed int) ([]RedeemCode, int64, error) {
+func (s *adminServiceImpl) listRedeemBalanceHistoryForMerge(ctx context.Context, userID int64, needed int, codeType ...string) ([]RedeemCode, int64, error) {
 	if needed <= 0 {
 		return nil, 0, nil
 	}
@@ -1179,7 +1201,11 @@ func (s *adminServiceImpl) listRedeemBalanceHistoryForMerge(ctx context.Context,
 	)
 	for page := 1; len(out) < needed; page++ {
 		params := pagination.PaginationParams{Page: page, PageSize: 1000}
-		codes, result, err := s.redeemCodeRepo.ListByUserPaginated(ctx, userID, params, "")
+		filter := ""
+		if len(codeType) > 0 {
+			filter = codeType[0]
+		}
+		codes, result, err := s.redeemCodeRepo.ListByUserPaginated(ctx, userID, params, filter)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -1302,8 +1328,256 @@ WHERE user_id = $1
 	return total.Int64, nil
 }
 
+func (s *adminServiceImpl) getUsageCardBalanceHistory(ctx context.Context, userID int64, params pagination.PaginationParams) ([]RedeemCode, int64, float64, error) {
+	needed := params.Offset() + params.Limit()
+	if needed < params.Limit() {
+		needed = params.Limit()
+	}
+	redeemCodes, redeemTotal, err := s.listRedeemBalanceHistoryForMerge(ctx, userID, needed, RedeemTypeUsageCard)
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	purchaseCodes, purchaseTotal, err := s.listUsageCardPurchaseHistoryForMerge(ctx, userID, needed)
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	codes := mergeBalanceHistoryCodeGroups(params, redeemCodes, purchaseCodes)
+	totalRecharged, err := s.redeemCodeRepo.SumPositiveBalanceByUser(ctx, userID)
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	return codes, redeemTotal + purchaseTotal, totalRecharged, nil
+}
+
+func (s *adminServiceImpl) getOrderAwareBalanceHistoryByType(ctx context.Context, userID int64, params pagination.PaginationParams, codeType string) ([]RedeemCode, int64, float64, error) {
+	needed := params.Offset() + params.Limit()
+	if needed < params.Limit() {
+		needed = params.Limit()
+	}
+	redeemCodes, redeemTotal, err := s.listRedeemBalanceHistoryForMerge(ctx, userID, needed, codeType)
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	orderType := payment.OrderTypeBalance
+	if codeType == RedeemTypeSubscription {
+		orderType = payment.OrderTypeSubscription
+	}
+	orderCodes, orderTotal, err := s.listPaymentOrderHistoryForMerge(ctx, userID, needed, orderType)
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	codes := mergeBalanceHistoryCodeGroups(params, redeemCodes, orderCodes)
+	totalRecharged, err := s.redeemCodeRepo.SumPositiveBalanceByUser(ctx, userID)
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	return codes, redeemTotal + orderTotal, totalRecharged, nil
+}
+
+func (s *adminServiceImpl) listPaymentOrderHistoryForMerge(ctx context.Context, userID int64, needed int, orderType string) ([]RedeemCode, int64, error) {
+	if s == nil || s.entClient == nil || userID <= 0 || needed <= 0 {
+		return nil, 0, nil
+	}
+	q := s.entClient.PaymentOrder.Query().
+		Where(
+			paymentorder.UserIDEQ(userID),
+			paymentorder.OrderTypeEQ(orderType),
+			paymentorder.StatusEQ(OrderStatusCompleted),
+		)
+	total, err := q.Clone().Count(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+	orders, err := q.
+		Order(dbent.Desc(paymentorder.FieldCompletedAt), dbent.Desc(paymentorder.FieldPaidAt), dbent.Desc(paymentorder.FieldCreatedAt)).
+		Limit(needed).
+		All(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+	plans, err := s.usageCardPlansByID(ctx, paymentOrderPlanIDs(orders))
+	if err != nil {
+		return nil, 0, err
+	}
+	codes := make([]RedeemCode, 0, len(orders))
+	for i := range orders {
+		codes = append(codes, paymentOrderHistoryFromOrder(orders[i], plans))
+	}
+	return codes, int64(total), nil
+}
+
+func (s *adminServiceImpl) listUsageCardPurchaseHistoryForMerge(ctx context.Context, userID int64, needed int) ([]RedeemCode, int64, error) {
+	if s == nil || s.entClient == nil || userID <= 0 || needed <= 0 {
+		return nil, 0, nil
+	}
+	q := s.entClient.PaymentOrder.Query().
+		Where(
+			paymentorder.UserIDEQ(userID),
+			paymentorder.OrderTypeEQ(payment.OrderTypeUsageCard),
+			paymentorder.StatusEQ(OrderStatusCompleted),
+		)
+	total, err := q.Clone().Count(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+	orders, err := q.
+		Order(dbent.Desc(paymentorder.FieldCompletedAt), dbent.Desc(paymentorder.FieldPaidAt), dbent.Desc(paymentorder.FieldCreatedAt)).
+		Limit(needed).
+		All(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+	plans, err := s.usageCardPlansByID(ctx, paymentOrderPlanIDs(orders))
+	if err != nil {
+		return nil, 0, err
+	}
+	codes := make([]RedeemCode, 0, len(orders))
+	for i := range orders {
+		codes = append(codes, usageCardPurchaseHistoryFromOrder(orders[i], plans))
+	}
+	return codes, int64(total), nil
+}
+
+func (s *adminServiceImpl) usageCardPlansByID(ctx context.Context, ids []int64) (map[int64]*UsageCardPlan, error) {
+	out := make(map[int64]*UsageCardPlan, len(ids))
+	if len(ids) == 0 || s == nil || s.entClient == nil {
+		return out, nil
+	}
+	plans, err := s.entClient.UsageCardPlan.Query().Where(usagecardplan.IDIn(ids...)).All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range plans {
+		out[p.ID] = &UsageCardPlan{
+			ID:           p.ID,
+			Name:         p.Name,
+			Description:  p.Description,
+			Price:        p.Price,
+			AmountUSD:    p.AmountUsd,
+			ValidityDays: p.ValidityDays,
+			Features:     p.Features,
+			ForSale:      p.ForSale,
+			SortOrder:    p.SortOrder,
+			CreatedAt:    p.CreatedAt,
+			UpdatedAt:    p.UpdatedAt,
+		}
+	}
+	return out, nil
+}
+
+func paymentOrderPlanIDs(orders []*dbent.PaymentOrder) []int64 {
+	seen := make(map[int64]struct{}, len(orders))
+	ids := make([]int64, 0, len(orders))
+	for _, order := range orders {
+		if order == nil || order.PlanID == nil || *order.PlanID <= 0 {
+			continue
+		}
+		if _, ok := seen[*order.PlanID]; ok {
+			continue
+		}
+		seen[*order.PlanID] = struct{}{}
+		ids = append(ids, *order.PlanID)
+	}
+	return ids
+}
+
+func usageCardPurchaseHistoryFromOrder(order *dbent.PaymentOrder, plans map[int64]*UsageCardPlan) RedeemCode {
+	if order == nil {
+		return RedeemCode{}
+	}
+	usedBy := order.UserID
+	usedAt := order.CreatedAt
+	if order.PaidAt != nil {
+		usedAt = *order.PaidAt
+	}
+	if order.CompletedAt != nil {
+		usedAt = *order.CompletedAt
+	}
+	var plan *UsageCardPlan
+	var planID *int64
+	value := order.Amount
+	if order.PlanID != nil {
+		id := *order.PlanID
+		planID = &id
+		if p := plans[id]; p != nil {
+			plan = p
+			if p.AmountUSD > 0 {
+				value = p.AmountUSD
+			}
+		}
+	}
+	return RedeemCode{
+		ID:              -order.ID,
+		Code:            order.OutTradeNo,
+		Type:            RedeemTypeUsageCard,
+		Source:          "purchase",
+		OrderType:       payment.OrderTypeUsageCard,
+		Value:           value,
+		Status:          StatusUsed,
+		UsedBy:          &usedBy,
+		UsedAt:          &usedAt,
+		Notes:           "usage_card_purchase",
+		CreatedAt:       order.CreatedAt,
+		UsageCardPlanID: planID,
+		UsageCardPlan:   plan,
+	}
+}
+
+func paymentOrderHistoryFromOrder(order *dbent.PaymentOrder, plans map[int64]*UsageCardPlan) RedeemCode {
+	if order == nil {
+		return RedeemCode{}
+	}
+	usedBy := order.UserID
+	usedAt := order.CreatedAt
+	if order.PaidAt != nil {
+		usedAt = *order.PaidAt
+	}
+	if order.CompletedAt != nil {
+		usedAt = *order.CompletedAt
+	}
+
+	item := RedeemCode{
+		ID:        -order.ID,
+		Code:      order.OutTradeNo,
+		Source:    "purchase",
+		OrderType: order.OrderType,
+		Status:    StatusUsed,
+		UsedBy:    &usedBy,
+		UsedAt:    &usedAt,
+		CreatedAt: order.CreatedAt,
+	}
+
+	switch order.OrderType {
+	case payment.OrderTypeBalance:
+		item.Type = RedeemTypeBalance
+		item.Value = order.Amount
+		item.Notes = "balance_purchase"
+	case payment.OrderTypeSubscription:
+		item.Type = RedeemTypeSubscription
+		if order.SubscriptionDays != nil {
+			item.Value = float64(*order.SubscriptionDays)
+			item.ValidityDays = *order.SubscriptionDays
+		}
+		item.Notes = "subscription_purchase"
+	case payment.OrderTypeUsageCard:
+		return usageCardPurchaseHistoryFromOrder(order, plans)
+	}
+
+	if order.PlanID != nil && *order.PlanID > 0 {
+		item.GroupID = order.SubscriptionGroupID
+	}
+	return item
+}
+
 func mergeBalanceHistoryCodes(redeemCodes, affiliateCodes []RedeemCode, params pagination.PaginationParams) []RedeemCode {
-	combined := append(append([]RedeemCode{}, redeemCodes...), affiliateCodes...)
+	return mergeBalanceHistoryCodeGroups(params, redeemCodes, affiliateCodes)
+}
+
+func mergeBalanceHistoryCodeGroups(params pagination.PaginationParams, codeGroups ...[]RedeemCode) []RedeemCode {
+	combined := make([]RedeemCode, 0)
+	for _, codes := range codeGroups {
+		combined = append(combined, codes...)
+	}
 	sort.SliceStable(combined, func(i, j int) bool {
 		return redeemCodeHistoryTime(combined[i]).After(redeemCodeHistoryTime(combined[j]))
 	})

@@ -123,6 +123,12 @@
                 <p class="mt-0.5 text-xs text-gray-400 dark:text-dark-500">
                   {{ formatDateTime(item.used_at || item.created_at) }}
                 </p>
+                <p
+                  v-if="getSourceLabel(item)"
+                  class="mt-0.5 text-xs text-gray-400 dark:text-dark-500"
+                >
+                  {{ getSourceLabel(item) }}
+                </p>
               </div>
             </div>
             <!-- Right: value -->
@@ -238,6 +244,8 @@ const loadHistory = async (page: number) => {
 
 // Helper: check if admin type
 const isAdminType = (type: string) => type === 'admin_balance' || type === 'admin_concurrency'
+const isPurchaseSource = (item: BalanceHistoryItem) => item.source === 'purchase'
+const isRedeemSource = (item: BalanceHistoryItem) => item.source === 'redeem_code'
 
 // Helper: check if balance type (includes admin_balance)
 const isBalanceType = (type: string) => type === 'balance' || type === 'admin_balance' || type === 'affiliate_balance'
@@ -302,6 +310,7 @@ const getValueColor = (item: BalanceHistoryItem) => {
 const getItemTitle = (item: BalanceHistoryItem) => {
   switch (item.type) {
     case 'balance':
+      if (isPurchaseSource(item)) return t('admin.users.balancePurchased')
       return t('redeem.balanceAddedRedeem')
     case 'affiliate_balance':
       return t('redeem.balanceAddedAffiliate')
@@ -312,8 +321,10 @@ const getItemTitle = (item: BalanceHistoryItem) => {
     case 'admin_concurrency':
       return item.value >= 0 ? t('redeem.concurrencyAddedAdmin') : t('redeem.concurrencyReducedAdmin')
     case 'subscription':
+      if (isPurchaseSource(item)) return t('admin.users.subscriptionPurchased')
       return t('redeem.subscriptionAssigned')
     case 'usage_card':
+      if (item.notes === 'usage_card_purchase') return t('admin.users.usageCardPurchased')
       return t('admin.users.usageCardRedeemed')
     default:
       return t('common.unknown')
@@ -339,5 +350,11 @@ const formatValue = (item: BalanceHistoryItem) => {
   // concurrency types
   const sign = item.value >= 0 ? '+' : ''
   return `${sign}${item.value}`
+}
+
+const getSourceLabel = (item: BalanceHistoryItem) => {
+  if (isPurchaseSource(item)) return t('admin.users.sourcePurchase')
+  if (isRedeemSource(item)) return t('admin.users.sourceRedeemCode')
+  return ''
 }
 </script>

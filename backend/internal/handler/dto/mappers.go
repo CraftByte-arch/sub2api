@@ -532,6 +532,8 @@ func redeemCodeFromServiceBase(rc *service.RedeemCode) RedeemCode {
 		ID:              rc.ID,
 		Code:            rc.Code,
 		Type:            rc.Type,
+		Source:          rc.Source,
+		OrderType:       rc.OrderType,
 		Value:           rc.Value,
 		Status:          rc.Status,
 		UsedBy:          rc.UsedBy,
@@ -549,9 +551,9 @@ func redeemCodeFromServiceBase(rc *service.RedeemCode) RedeemCode {
 		out.Status = service.StatusExpired
 	}
 
-	// For admin_balance/admin_concurrency types, include notes so users can see
-	// why they were charged or credited by admin
-	if (rc.Type == "admin_balance" || rc.Type == "admin_concurrency") && rc.Notes != "" {
+	// Include admin-only notes for adjustment reasons and synthetic history
+	// markers such as usage-card purchases.
+	if (rc.Type == "admin_balance" || rc.Type == "admin_concurrency" || rc.Type == "usage_card") && rc.Notes != "" {
 		out.Notes = &rc.Notes
 	}
 
