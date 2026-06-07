@@ -108,6 +108,13 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 			ValidityDays: sub.ValidityDays,
 		})
 	}
+	defaultUsageCards := make([]dto.DefaultUsageCardSetting, 0, len(settings.DefaultUsageCards))
+	for _, item := range settings.DefaultUsageCards {
+		defaultUsageCards = append(defaultUsageCards, dto.DefaultUsageCardSetting{
+			PlanID:   item.PlanID,
+			Quantity: item.Quantity,
+		})
+	}
 
 	// Load payment config
 	var paymentCfg *service.PaymentConfig
@@ -245,6 +252,7 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		AffiliateRebatePerInviteeCap:           settings.AffiliateRebatePerInviteeCap,
 		DefaultUserRPMLimit:                    settings.DefaultUserRPMLimit,
 		DefaultSubscriptions:                   defaultSubscriptions,
+		DefaultUsageCards:                      defaultUsageCards,
 		EnableModelFallback:                    settings.EnableModelFallback,
 		FallbackModelAnthropic:                 settings.FallbackModelAnthropic,
 		FallbackModelOpenAI:                    settings.FallbackModelOpenAI,
@@ -538,6 +546,7 @@ type UpdateSettingsRequest struct {
 	AffiliateRebatePerInviteeCap              *float64                          `json:"affiliate_rebate_per_invitee_cap"`
 	DefaultUserRPMLimit                       int                               `json:"default_user_rpm_limit"`
 	DefaultSubscriptions                      []dto.DefaultSubscriptionSetting  `json:"default_subscriptions"`
+	DefaultUsageCards                         []dto.DefaultUsageCardSetting     `json:"default_usage_cards"`
 	AuthSourceDefaultEmailBalance             *float64                          `json:"auth_source_default_email_balance"`
 	AuthSourceDefaultEmailConcurrency         *int                              `json:"auth_source_default_email_concurrency"`
 	AuthSourceDefaultEmailSubscriptions       *[]dto.DefaultSubscriptionSetting `json:"auth_source_default_email_subscriptions"`
@@ -1498,6 +1507,13 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			ValidityDays: sub.ValidityDays,
 		})
 	}
+	defaultUsageCards := make([]service.DefaultUsageCardSetting, 0, len(req.DefaultUsageCards))
+	for _, item := range req.DefaultUsageCards {
+		defaultUsageCards = append(defaultUsageCards, service.DefaultUsageCardSetting{
+			PlanID:   item.PlanID,
+			Quantity: item.Quantity,
+		})
+	}
 
 	// 验证最低版本号格式（空字符串=禁用，或合法 semver）
 	if req.MinClaudeCodeVersion != "" {
@@ -1673,6 +1689,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		AffiliateRebatePerInviteeCap:           affiliateRebatePerInviteeCap,
 		DefaultUserRPMLimit:                    req.DefaultUserRPMLimit,
 		DefaultSubscriptions:                   defaultSubscriptions,
+		DefaultUsageCards:                      defaultUsageCards,
 		EnableModelFallback:                    req.EnableModelFallback,
 		FallbackModelAnthropic:                 req.FallbackModelAnthropic,
 		FallbackModelOpenAI:                    req.FallbackModelOpenAI,

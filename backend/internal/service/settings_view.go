@@ -163,6 +163,7 @@ type SystemSettings struct {
 	AffiliateRebatePerInviteeCap float64
 	DefaultUserRPMLimit          int
 	DefaultSubscriptions         []DefaultSubscriptionSetting
+	DefaultUsageCards            []DefaultUsageCardSetting
 
 	// Model fallback configuration
 	EnableModelFallback      bool   `json:"enable_model_fallback"`
@@ -242,6 +243,11 @@ type SystemSettings struct {
 type DefaultSubscriptionSetting struct {
 	GroupID      int64 `json:"group_id"`
 	ValidityDays int   `json:"validity_days"`
+}
+
+type DefaultUsageCardSetting struct {
+	PlanID   int64 `json:"plan_id"`
+	Quantity int   `json:"quantity"`
 }
 
 type PublicSettings struct {

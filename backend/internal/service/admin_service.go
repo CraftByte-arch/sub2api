@@ -546,6 +546,7 @@ type adminServiceImpl struct {
 	entClient            *dbent.Client // 用于开启数据库事务
 	settingService       *SettingService
 	defaultSubAssigner   DefaultSubscriptionAssigner
+	usageCardService     *UsageCardService
 	userSubRepo          UserSubscriptionRepository
 	privacyClientFactory PrivacyClientFactory
 	runtimeBlocker       AccountRuntimeBlocker
@@ -572,6 +573,7 @@ func NewAdminService(
 	entClient *dbent.Client,
 	settingService *SettingService,
 	defaultSubAssigner DefaultSubscriptionAssigner,
+	usageCardService *UsageCardService,
 	userSubRepo UserSubscriptionRepository,
 	privacyClientFactory PrivacyClientFactory,
 	runtimeBlocker AccountRuntimeBlocker,
@@ -592,6 +594,7 @@ func NewAdminService(
 		entClient:            entClient,
 		settingService:       settingService,
 		defaultSubAssigner:   defaultSubAssigner,
+		usageCardService:     usageCardService,
 		userSubRepo:          userSubRepo,
 		privacyClientFactory: privacyClientFactory,
 		runtimeBlocker:       runtimeBlocker,
@@ -711,6 +714,7 @@ func (s *adminServiceImpl) CreateUser(ctx context.Context, input *CreateUserInpu
 		return nil, err
 	}
 	s.assignDefaultSubscriptions(ctx, user.ID)
+	s.assignDefaultUsageCards(ctx, user.ID)
 	return user, nil
 }
 
@@ -727,6 +731,36 @@ func (s *adminServiceImpl) assignDefaultSubscriptions(ctx context.Context, userI
 			Notes:        "auto assigned by default user subscriptions setting",
 		}); err != nil {
 			logger.LegacyPrintf("service.admin", "failed to assign default subscription: user_id=%d group_id=%d err=%v", userID, item.GroupID, err)
+		}
+	}
+}
+
+func (s *adminServiceImpl) assignDefaultUsageCards(ctx context.Context, userID int64) {
+	if s.settingService == nil || s.usageCardService == nil || userID <= 0 {
+		return
+	}
+	items := s.settingService.GetDefaultUsageCards(ctx)
+	for _, item := range items {
+		if item.PlanID <= 0 || item.Quantity <= 0 {
+			continue
+		}
+		plan, err := s.usageCardService.GetPlanByID(ctx, item.PlanID)
+		if err != nil {
+			logger.LegacyPrintf("service.admin", "failed to load default usage card plan: user_id=%d plan_id=%d err=%v", userID, item.PlanID, err)
+			continue
+		}
+		for i := 0; i < item.Quantity; i++ {
+			if _, err := s.usageCardService.issue(ctx, CreateUsageCardInput{
+				UserID:        userID,
+				PlanID:        &plan.ID,
+				Name:          plan.Name,
+				TotalLimitUSD: plan.AmountUSD,
+				Source:        UsageCardSourceAdmin,
+				Notes:         "auto assigned by default user usage cards setting",
+			}, plan.ValidityDays); err != nil {
+				logger.LegacyPrintf("service.admin", "failed to assign default usage card: user_id=%d plan_id=%d err=%v", userID, item.PlanID, err)
+				break
+			}
 		}
 	}
 }

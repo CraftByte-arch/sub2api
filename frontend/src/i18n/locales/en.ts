@@ -5780,8 +5780,16 @@ export default {
         defaultSubscriptionsEmpty: 'No default subscriptions configured.',
         defaultSubscriptionsDuplicate:
           'Duplicate subscription group: {groupId}. Each group can only appear once.',
+        defaultUsageCards: 'Default Usage Cards',
+        defaultUsageCardsHint: 'Auto-issue these usage card plans when a new user is created or registered',
+        addDefaultUsageCard: 'Add Default Usage Card',
+        defaultUsageCardsEmpty: 'No default usage cards configured.',
+        defaultUsageCardsDuplicate:
+          'Duplicate usage card plan: {planId}. Each plan can only appear once.',
         subscriptionGroup: 'Subscription Group',
         subscriptionValidityDays: 'Validity (days)',
+        usageCardPlan: 'Usage Card Plan',
+        usageCardQuantity: 'Quantity',
         defaultPlatformQuotas: 'Default Platform Quotas (on signup)',
         defaultPlatformQuotasHint: 'Automatically assigned to new users on signup; existing users are not affected. Leave blank = unlimited.',
         platformQuotaNotice: 'Monthly quota uses a 30-day rolling window, not a calendar month.',

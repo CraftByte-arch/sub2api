@@ -75,6 +75,7 @@ type AuthService struct {
 	affiliateService      *AffiliateService
 	defaultSubAssigner    DefaultSubscriptionAssigner
 	userPlatformQuotaRepo UserPlatformQuotaRepository
+	usageCardService      *UsageCardService
 }
 
 type DefaultSubscriptionAssigner interface {
@@ -85,6 +86,7 @@ type signupGrantPlan struct {
 	Balance        float64
 	Concurrency    int
 	Subscriptions  []DefaultSubscriptionSetting
+	UsageCards     []DefaultUsageCardSetting
 	PlatformQuotas map[string]*DefaultPlatformQuotaSetting
 }
 
@@ -103,6 +105,7 @@ func NewAuthService(
 	defaultSubAssigner DefaultSubscriptionAssigner,
 	affiliateService *AffiliateService,
 	userPlatformQuotaRepo UserPlatformQuotaRepository,
+	usageCardService *UsageCardService,
 ) *AuthService {
 	return &AuthService{
 		entClient:             entClient,
@@ -118,6 +121,7 @@ func NewAuthService(
 		affiliateService:      affiliateService,
 		defaultSubAssigner:    defaultSubAssigner,
 		userPlatformQuotaRepo: userPlatformQuotaRepo,
+		usageCardService:      usageCardService,
 	}
 }
 
@@ -230,6 +234,7 @@ func (s *AuthService) RegisterWithVerification(ctx context.Context, email, passw
 	}
 	s.postAuthUserBootstrap(ctx, user, "email", true)
 	s.assignSubscriptions(ctx, user.ID, grantPlan.Subscriptions, "auto assigned by signup defaults")
+	s.assignUsageCards(ctx, user.ID, grantPlan.UsageCards, "auto assigned by signup defaults")
 	// snapshot user × platform quota（fail-open）
 	_ = s.snapshotPlatformQuotaDefaults(ctx, user.ID, &grantPlan)
 	if s.affiliateService != nil {
@@ -541,6 +546,7 @@ func (s *AuthService) LoginOrRegisterOAuth(ctx context.Context, email, username 
 				user = newUser
 				s.postAuthUserBootstrap(ctx, user, signupSource, false)
 				s.assignSubscriptions(ctx, user.ID, grantPlan.Subscriptions, "auto assigned by signup defaults")
+				s.assignUsageCards(ctx, user.ID, grantPlan.UsageCards, "auto assigned by signup defaults")
 				// snapshot user × platform quota（fail-open）
 				_ = s.snapshotPlatformQuotaDefaults(ctx, user.ID, &grantPlan)
 			}
@@ -693,6 +699,7 @@ func (s *AuthService) LoginOrRegisterOAuthWithTokenPair(ctx context.Context, ema
 					user = newUser
 					s.postAuthUserBootstrap(ctx, user, signupSource, false)
 					s.assignSubscriptions(ctx, user.ID, grantPlan.Subscriptions, "auto assigned by signup defaults")
+					s.assignUsageCards(ctx, user.ID, grantPlan.UsageCards, "auto assigned by signup defaults")
 					// snapshot user × platform quota（fail-open）
 					_ = s.snapshotPlatformQuotaDefaults(ctx, user.ID, &grantPlan)
 					s.bindOAuthAffiliate(ctx, user.ID, affiliateCode)
@@ -713,6 +720,7 @@ func (s *AuthService) LoginOrRegisterOAuthWithTokenPair(ctx context.Context, ema
 					user = newUser
 					s.postAuthUserBootstrap(ctx, user, signupSource, false)
 					s.assignSubscriptions(ctx, user.ID, grantPlan.Subscriptions, "auto assigned by signup defaults")
+					s.assignUsageCards(ctx, user.ID, grantPlan.UsageCards, "auto assigned by signup defaults")
 					// snapshot user × platform quota（fail-open）
 					_ = s.snapshotPlatformQuotaDefaults(ctx, user.ID, &grantPlan)
 					s.bindOAuthAffiliate(ctx, user.ID, affiliateCode)
@@ -762,6 +770,35 @@ func (s *AuthService) assignSubscriptions(ctx context.Context, userID int64, ite
 	}
 }
 
+func (s *AuthService) assignUsageCards(ctx context.Context, userID int64, items []DefaultUsageCardSetting, notes string) {
+	if s.usageCardService == nil || userID <= 0 {
+		return
+	}
+	for _, item := range items {
+		if item.PlanID <= 0 || item.Quantity <= 0 {
+			continue
+		}
+		plan, err := s.usageCardService.GetPlanByID(ctx, item.PlanID)
+		if err != nil {
+			logger.LegacyPrintf("service.auth", "[Auth] Failed to load default usage card plan: user_id=%d plan_id=%d err=%v", userID, item.PlanID, err)
+			continue
+		}
+		for i := 0; i < item.Quantity; i++ {
+			if _, err := s.usageCardService.issue(ctx, CreateUsageCardInput{
+				UserID:        userID,
+				PlanID:        &plan.ID,
+				Name:          plan.Name,
+				TotalLimitUSD: plan.AmountUSD,
+				Source:        UsageCardSourceAdmin,
+				Notes:         notes,
+			}, plan.ValidityDays); err != nil {
+				logger.LegacyPrintf("service.auth", "[Auth] Failed to assign default usage card: user_id=%d plan_id=%d err=%v", userID, item.PlanID, err)
+				break
+			}
+		}
+	}
+}
+
 func (s *AuthService) resolveSignupGrantPlan(ctx context.Context, signupSource string) signupGrantPlan {
 	plan := signupGrantPlan{}
 	if s != nil && s.cfg != nil {
@@ -775,6 +812,7 @@ func (s *AuthService) resolveSignupGrantPlan(ctx context.Context, signupSource s
 	plan.Balance = s.settingService.GetDefaultBalance(ctx)
 	plan.Concurrency = s.settingService.GetDefaultConcurrency(ctx)
 	plan.Subscriptions = s.settingService.GetDefaultSubscriptions(ctx)
+	plan.UsageCards = s.settingService.GetDefaultUsageCards(ctx)
 
 	// ============ 全局 quota 装载（必须在 ResolveAuthSourceGrantSettings 之前） ============
 	// 无论 auth source 是否 enabled，全局层都要先装载，确保 !enabled 早退路径也携带全局 quota。

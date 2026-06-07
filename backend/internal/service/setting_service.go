@@ -178,6 +178,10 @@ type DefaultSubscriptionGroupReader interface {
 	GetByID(ctx context.Context, id int64) (*Group, error)
 }
 
+type DefaultUsageCardPlanReader interface {
+	GetPlanByID(ctx context.Context, id int64) (*UsageCardPlan, error)
+}
+
 // WebSearchManagerBuilder creates a websearch.Manager from config (injected by infra layer).
 // proxyURLs maps proxy ID to resolved URL for provider-level proxy support.
 type WebSearchManagerBuilder func(cfg *WebSearchEmulationConfig, proxyURLs map[int64]string)
@@ -186,6 +190,7 @@ type WebSearchManagerBuilder func(cfg *WebSearchEmulationConfig, proxyURLs map[i
 type SettingService struct {
 	settingRepo                 SettingRepository
 	defaultSubGroupReader       DefaultSubscriptionGroupReader
+	defaultUsageCardPlanReader  DefaultUsageCardPlanReader
 	proxyRepo                   ProxyRepository // for resolving websearch provider proxy URLs
 	cfg                         *config.Config
 	onUpdate                    func() // Callback when settings are updated (for cache invalidation)
@@ -665,6 +670,10 @@ func NewSettingService(settingRepo SettingRepository, cfg *config.Config) *Setti
 // SetDefaultSubscriptionGroupReader injects an optional group reader for default subscription validation.
 func (s *SettingService) SetDefaultSubscriptionGroupReader(reader DefaultSubscriptionGroupReader) {
 	s.defaultSubGroupReader = reader
+}
+
+func (s *SettingService) SetDefaultUsageCardPlanReader(reader DefaultUsageCardPlanReader) {
+	s.defaultUsageCardPlanReader = reader
 }
 
 // SetProxyRepository injects a proxy repo for resolving websearch provider proxy URLs.
@@ -1738,6 +1747,9 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	if err := s.validateDefaultSubscriptionGroups(ctx, settings.DefaultSubscriptions); err != nil {
 		return nil, err
 	}
+	if err := s.validateDefaultUsageCardPlans(ctx, settings.DefaultUsageCards); err != nil {
+		return nil, err
+	}
 	normalizedWhitelist, err := NormalizeRegistrationEmailSuffixWhitelist(settings.RegistrationEmailSuffixWhitelist)
 	if err != nil {
 		return nil, infraerrors.BadRequest("INVALID_REGISTRATION_EMAIL_SUFFIX_WHITELIST", err.Error())
@@ -1995,6 +2007,11 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 		return nil, fmt.Errorf("marshal default subscriptions: %w", err)
 	}
 	updates[SettingKeyDefaultSubscriptions] = string(defaultSubsJSON)
+	defaultUsageCardsJSON, err := json.Marshal(settings.DefaultUsageCards)
+	if err != nil {
+		return nil, fmt.Errorf("marshal default usage cards: %w", err)
+	}
+	updates[SettingKeyDefaultUsageCards] = string(defaultUsageCardsJSON)
 
 	// Model fallback configuration
 	updates[SettingKeyEnableModelFallback] = strconv.FormatBool(settings.EnableModelFallback)
@@ -2274,6 +2291,41 @@ func (s *SettingService) validateDefaultSubscriptionGroups(ctx context.Context, 
 		}
 	}
 
+	return nil
+}
+
+func (s *SettingService) validateDefaultUsageCardPlans(ctx context.Context, items []DefaultUsageCardSetting) error {
+	if len(items) == 0 {
+		return nil
+	}
+
+	checked := make(map[int64]struct{}, len(items))
+	for _, item := range items {
+		if item.PlanID <= 0 {
+			continue
+		}
+		if _, ok := checked[item.PlanID]; ok {
+			return fmt.Errorf("default usage card plan cannot be duplicated: %d", item.PlanID)
+		}
+		checked[item.PlanID] = struct{}{}
+		if item.Quantity <= 0 {
+			return fmt.Errorf("default usage card quantity must be positive: %d", item.PlanID)
+		}
+		if s.defaultUsageCardPlanReader == nil {
+			continue
+		}
+
+		plan, err := s.defaultUsageCardPlanReader.GetPlanByID(ctx, item.PlanID)
+		if err != nil {
+			if errors.Is(err, ErrUsageCardPlanNotFound) {
+				return fmt.Errorf("default usage card plan not found: %d", item.PlanID)
+			}
+			return fmt.Errorf("get default usage card plan %d: %w", item.PlanID, err)
+		}
+		if plan == nil || plan.ID <= 0 {
+			return fmt.Errorf("default usage card plan not found: %d", item.PlanID)
+		}
+	}
 	return nil
 }
 
@@ -2688,6 +2740,14 @@ func (s *SettingService) GetDefaultSubscriptions(ctx context.Context) []DefaultS
 	return parseDefaultSubscriptions(value)
 }
 
+func (s *SettingService) GetDefaultUsageCards(ctx context.Context) []DefaultUsageCardSetting {
+	value, err := s.settingRepo.GetValue(ctx, SettingKeyDefaultUsageCards)
+	if err != nil {
+		return nil
+	}
+	return parseDefaultUsageCards(value)
+}
+
 func (s *SettingService) GetAuthSourceDefaultSettings(ctx context.Context) (*AuthSourceDefaultSettings, error) {
 	keys := []string{
 		SettingKeyAuthSourceDefaultEmailBalance,
@@ -2908,6 +2968,7 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyAffiliateRebatePerInviteeCap:              strconv.FormatFloat(AffiliateRebatePerInviteeCapDefault, 'f', 2, 64),
 		SettingKeyDefaultUserRPMLimit:                       "0",
 		SettingKeyDefaultSubscriptions:                      "[]",
+		SettingKeyDefaultUsageCards:                         "[]",
 		SettingKeyAuthSourceDefaultEmailBalance:             "0",
 		SettingKeyAuthSourceDefaultEmailConcurrency:         "5",
 		SettingKeyAuthSourceDefaultEmailSubscriptions:       "[]",
@@ -3108,6 +3169,7 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 		result.AffiliateRebatePerInviteeCap = perInviteeCap
 	}
 	result.DefaultSubscriptions = parseDefaultSubscriptions(settings[SettingKeyDefaultSubscriptions])
+	result.DefaultUsageCards = parseDefaultUsageCards(settings[SettingKeyDefaultUsageCards])
 
 	// 敏感信息直接返回，方便测试连接时使用
 	result.SMTPPassword = settings[SettingKeySMTPPassword]
@@ -3626,6 +3688,27 @@ func parseDefaultSubscriptions(raw string) []DefaultSubscriptionSetting {
 		normalized = append(normalized, item)
 	}
 
+	return normalized
+}
+
+func parseDefaultUsageCards(raw string) []DefaultUsageCardSetting {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	var items []DefaultUsageCardSetting
+	if err := json.Unmarshal([]byte(raw), &items); err != nil {
+		return nil
+	}
+	normalized := make([]DefaultUsageCardSetting, 0, len(items))
+	for _, item := range items {
+		if item.PlanID <= 0 {
+			continue
+		}
+		if item.Quantity <= 0 {
+			item.Quantity = 1
+		}
+		normalized = append(normalized, item)
+	}
 	return normalized
 }
 

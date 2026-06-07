@@ -3263,6 +3263,114 @@
                 </div>
               </div>
 
+              <div class="border-t border-gray-100 pt-4 dark:border-dark-700">
+                <div class="mb-3 flex items-center justify-between">
+                  <div>
+                    <label class="font-medium text-gray-900 dark:text-white">
+                      {{ t("admin.settings.defaults.defaultUsageCards") }}
+                    </label>
+                    <p class="text-sm text-gray-500 dark:text-gray-400">
+                      {{ t("admin.settings.defaults.defaultUsageCardsHint") }}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    class="btn btn-secondary btn-sm"
+                    @click="addDefaultUsageCard"
+                    :disabled="usageCardPlans.length === 0"
+                  >
+                    {{ t("admin.settings.defaults.addDefaultUsageCard") }}
+                  </button>
+                </div>
+
+                <div
+                  v-if="form.default_usage_cards.length === 0"
+                  class="rounded border border-dashed border-gray-300 px-4 py-3 text-sm text-gray-500 dark:border-dark-600 dark:text-gray-400"
+                >
+                  {{ t("admin.settings.defaults.defaultUsageCardsEmpty") }}
+                </div>
+
+                <div v-else class="space-y-3">
+                  <div
+                    v-for="(item, index) in form.default_usage_cards"
+                    :key="`default-usage-card-${index}`"
+                    class="grid grid-cols-1 gap-3 rounded border border-gray-200 p-3 md:grid-cols-[1fr_120px_auto] dark:border-dark-600"
+                  >
+                    <div>
+                      <label
+                        class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400"
+                      >
+                        {{ t("admin.settings.defaults.usageCardPlan") }}
+                      </label>
+                      <Select
+                        v-model="item.plan_id"
+                        :options="defaultUsageCardPlanOptions"
+                        :placeholder="t('admin.settings.defaults.usageCardPlan')"
+                      >
+                        <template #selected="{ option }">
+                          <div
+                            v-if="option"
+                            class="flex min-w-0 items-center justify-between gap-3"
+                          >
+                            <span class="truncate font-medium text-gray-900 dark:text-white">
+                              {{ (option as DefaultUsageCardPlanOption).label }}
+                            </span>
+                            <span class="shrink-0 text-xs text-gray-500 dark:text-gray-400">
+                              ${{ (option as DefaultUsageCardPlanOption).amountUsd.toFixed(2) }} / {{ (option as DefaultUsageCardPlanOption).validityDays }}d
+                            </span>
+                          </div>
+                          <span v-else class="text-gray-400">
+                            {{ t("admin.settings.defaults.usageCardPlan") }}
+                          </span>
+                        </template>
+                        <template #option="{ option }">
+                          <div class="flex items-center justify-between gap-3">
+                            <div class="min-w-0">
+                              <div class="truncate font-medium text-gray-900 dark:text-white">
+                                {{ (option as DefaultUsageCardPlanOption).label }}
+                              </div>
+                              <div
+                                v-if="(option as DefaultUsageCardPlanOption).description"
+                                class="truncate text-xs text-gray-500 dark:text-gray-400"
+                              >
+                                {{ (option as DefaultUsageCardPlanOption).description }}
+                              </div>
+                            </div>
+                            <div class="shrink-0 text-right text-xs text-gray-500 dark:text-gray-400">
+                              <div>${{ (option as DefaultUsageCardPlanOption).amountUsd.toFixed(2) }}</div>
+                              <div>{{ (option as DefaultUsageCardPlanOption).validityDays }}d</div>
+                            </div>
+                          </div>
+                        </template>
+                      </Select>
+                    </div>
+                    <div>
+                      <label
+                        class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400"
+                      >
+                        {{ t("admin.settings.defaults.usageCardQuantity") }}
+                      </label>
+                      <input
+                        v-model.number="item.quantity"
+                        type="number"
+                        min="1"
+                        max="999"
+                        class="input h-[42px]"
+                      />
+                    </div>
+                    <div class="flex items-end">
+                      <button
+                        type="button"
+                        class="btn btn-secondary w-full text-red-600 hover:text-red-700 dark:text-red-400"
+                        @click="removeDefaultUsageCard(index)"
+                      >
+                        {{ t("common.delete") }}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               <!-- ★ 新增：系统全局默认平台限额矩阵 -->
               <div class="border-t border-gray-100 pt-4 dark:border-dark-700">
                 <div class="mb-3">
@@ -6835,6 +6943,7 @@
 import { ref, reactive, computed, onMounted, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { adminAPI } from "@/api";
+import { adminUsageCardsAPI } from "@/api/usageCards";
 import {
   appendAuthSourceDefaultsToUpdateRequest,
   buildAuthSourceDefaultsState,
@@ -6848,6 +6957,7 @@ import {
 import type {
   AuthSourceDefaultsState,
   AuthSourceType,
+  DefaultUsageCardSetting,
   SystemSettings,
   UpdateSettingsRequest,
   DefaultSubscriptionSetting,
@@ -6864,6 +6974,7 @@ import type {
   NotifyEmailEntry,
   Proxy,
 } from "@/types";
+import type { UsageCardPlan } from "@/types/payment";
 import type { ProviderInstance } from "@/types/payment";
 import AppLayout from "@/components/layout/AppLayout.vue";
 import Icon from "@/components/icons/Icon.vue";
@@ -7005,6 +7116,7 @@ const adminApiKeyMasked = ref("");
 const adminApiKeyOperating = ref(false);
 const newAdminApiKey = ref("");
 const subscriptionGroups = ref<AdminGroup[]>([]);
+const usageCardPlans = ref<UsageCardPlan[]>([]);
 
 // Overload Cooldown (529) 状态
 const overloadCooldownLoading = ref(true);
@@ -7124,6 +7236,16 @@ interface DefaultSubscriptionGroupOption {
   [key: string]: unknown;
 }
 
+interface DefaultUsageCardPlanOption {
+  value: number;
+  label: string;
+  description: string | null;
+  amountUsd: number;
+  validityDays: number;
+  forSale: boolean;
+  [key: string]: unknown;
+}
+
 type SettingsForm = Omit<
   SystemSettings,
   | "wechat_connect_open_enabled"
@@ -7171,6 +7293,7 @@ const form = reactive<SettingsForm>({
   affiliate_rebate_per_invitee_cap: 0,
   default_concurrency: 1,
   default_subscriptions: [],
+  default_usage_cards: [],
   force_email_on_third_party_signup: false,
   default_user_rpm_limit: 0,
   site_name: "Sub2API",
@@ -7614,6 +7737,17 @@ const defaultSubscriptionGroupOptions = computed<
   })),
 );
 
+const defaultUsageCardPlanOptions = computed<DefaultUsageCardPlanOption[]>(() =>
+  usageCardPlans.value.map((plan) => ({
+    value: plan.id,
+    label: plan.name,
+    description: plan.description || null,
+    amountUsd: plan.amount_usd,
+    validityDays: plan.validity_days,
+    forSale: plan.for_sale,
+  })),
+);
+
 const registrationEmailSuffixWhitelistSeparatorKeys = new Set([
   " ",
   ",",
@@ -7992,6 +8126,9 @@ async function loadSettings() {
     form.default_subscriptions = normalizeDefaultSubscriptionSettings(
       settings.default_subscriptions,
     );
+    form.default_usage_cards = normalizeDefaultUsageCardSettings(
+      settings.default_usage_cards,
+    );
     registrationEmailSuffixWhitelistTags.value =
       normalizeRegistrationEmailSuffixDomains(
         settings.registration_email_suffix_whitelist,
@@ -8107,6 +8244,15 @@ async function loadSubscriptionGroups() {
   }
 }
 
+async function loadUsageCardPlans() {
+  try {
+    const response = await adminUsageCardsAPI.listPlans();
+    usageCardPlans.value = response.data || [];
+  } catch (_error: unknown) {
+    usageCardPlans.value = [];
+  }
+}
+
 function findNextAvailableSubscriptionGroup(
   existingGroupIDs: number[],
 ): AdminGroup | undefined {
@@ -8128,6 +8274,52 @@ function addDefaultSubscription() {
 
 function removeDefaultSubscription(index: number) {
   form.default_subscriptions.splice(index, 1);
+}
+
+function normalizeDefaultUsageCardSettings(
+  items: DefaultUsageCardSetting[] | null | undefined,
+): DefaultUsageCardSetting[] {
+  if (!Array.isArray(items)) return [];
+  return items
+    .map((item) => ({
+      plan_id: Number(item?.plan_id) || 0,
+      quantity: Math.max(1, Math.floor(Number(item?.quantity) || 1)),
+    }))
+    .filter((item) => item.plan_id > 0);
+}
+
+function findNextAvailableUsageCardPlan(existingPlanIDs: number[]): UsageCardPlan | undefined {
+  const existing = new Set(existingPlanIDs);
+  return usageCardPlans.value.find((plan) => !existing.has(plan.id));
+}
+
+function addDefaultUsageCard() {
+  if (usageCardPlans.value.length === 0) return;
+  const candidate = findNextAvailableUsageCardPlan(
+    form.default_usage_cards.map((item) => item.plan_id),
+  );
+  if (!candidate) return;
+  form.default_usage_cards.push({
+    plan_id: candidate.id,
+    quantity: 1,
+  });
+}
+
+function removeDefaultUsageCard(index: number) {
+  form.default_usage_cards.splice(index, 1);
+}
+
+function findDuplicateDefaultUsageCard(
+  items: DefaultUsageCardSetting[],
+): DefaultUsageCardSetting | undefined {
+  const seenPlanIDs = new Set<number>();
+  return items.find((item) => {
+    if (seenPlanIDs.has(item.plan_id)) {
+      return true;
+    }
+    seenPlanIDs.add(item.plan_id);
+    return false;
+  });
 }
 
 function addAuthSourceDefaultSubscription(source: AuthSourceType) {
@@ -8240,6 +8432,9 @@ async function saveSettings() {
     const normalizedDefaultSubscriptions = normalizeDefaultSubscriptionSettings(
       form.default_subscriptions,
     );
+    const normalizedDefaultUsageCards = normalizeDefaultUsageCardSettings(
+      form.default_usage_cards,
+    );
     const duplicateDefaultSubscription = findDuplicateDefaultSubscription(
       normalizedDefaultSubscriptions,
     );
@@ -8247,6 +8442,17 @@ async function saveSettings() {
       appStore.showError(
         t("admin.settings.defaults.defaultSubscriptionsDuplicate", {
           groupId: duplicateDefaultSubscription.group_id,
+        }),
+      );
+      return;
+    }
+    const duplicateDefaultUsageCard = findDuplicateDefaultUsageCard(
+      normalizedDefaultUsageCards,
+    );
+    if (duplicateDefaultUsageCard) {
+      appStore.showError(
+        t("admin.settings.defaults.defaultUsageCardsDuplicate", {
+          planId: duplicateDefaultUsageCard.plan_id,
         }),
       );
       return;
@@ -8328,6 +8534,7 @@ async function saveSettings() {
       affiliate_rebate_per_invitee_cap: Math.max(0, Number(form.affiliate_rebate_per_invitee_cap) || 0),
       default_concurrency: form.default_concurrency,
       default_subscriptions: normalizedDefaultSubscriptions,
+      default_usage_cards: normalizedDefaultUsageCards,
       force_email_on_third_party_signup: form.force_email_on_third_party_signup,
       default_user_rpm_limit: form.default_user_rpm_limit,
       site_name: form.site_name,
@@ -9441,6 +9648,7 @@ async function handleDeleteProvider() {
 onMounted(() => {
   loadSettings();
   loadSubscriptionGroups();
+  loadUsageCardPlans();
   loadAdminApiKey();
   loadOverloadCooldownSettings();
   loadRateLimit429CooldownSettings();

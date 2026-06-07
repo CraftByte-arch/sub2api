@@ -461,6 +461,12 @@ func ProvideSettingService(settingRepo SettingRepository, groupRepo GroupReposit
 	return svc
 }
 
+func ProvideSettingServiceWithUsageCardPlanReader(settingRepo SettingRepository, groupRepo GroupRepository, proxyRepo ProxyRepository, usageCardService *UsageCardService, cfg *config.Config) *SettingService {
+	svc := ProvideSettingService(settingRepo, groupRepo, proxyRepo, cfg)
+	svc.SetDefaultUsageCardPlanReader(usageCardService)
+	return svc
+}
+
 func ProvideBillingService(cfg *config.Config, pricingService *PricingService, settingService *SettingService) *BillingService {
 	svc := NewBillingService(cfg, pricingService)
 	svc.SetSettingService(settingService)
@@ -539,7 +545,7 @@ var ProviderSet = wire.NewSet(
 	ProvideRateLimitService,
 	NewAccountUsageService,
 	NewAccountTestService,
-	ProvideSettingService,
+	ProvideSettingServiceWithUsageCardPlanReader,
 	NewDataManagementService,
 	ProvideBackupService,
 	ProvideOpsSystemLogSink,

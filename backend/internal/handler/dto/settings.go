@@ -161,6 +161,7 @@ type SystemSettings struct {
 	AffiliateRebatePerInviteeCap float64                      `json:"affiliate_rebate_per_invitee_cap"`
 	DefaultUserRPMLimit          int                          `json:"default_user_rpm_limit"`
 	DefaultSubscriptions         []DefaultSubscriptionSetting `json:"default_subscriptions"`
+	DefaultUsageCards            []DefaultUsageCardSetting    `json:"default_usage_cards"`
 
 	// Model fallback configuration
 	EnableModelFallback      bool   `json:"enable_model_fallback"`
@@ -266,6 +267,11 @@ type SystemSettings struct {
 
 	// 允许终端用户在用量页查看自己的失败请求
 	AllowUserViewErrorRequests bool `json:"allow_user_view_error_requests"`
+}
+
+type DefaultUsageCardSetting struct {
+	PlanID   int64 `json:"plan_id"`
+	Quantity int   `json:"quantity"`
 }
 
 type DefaultSubscriptionSetting struct {
