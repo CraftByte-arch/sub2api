@@ -230,6 +230,7 @@ func TestAPIContracts(t *testing.T) {
 					"name": "Key One",
 					"group_id": null,
 					"status": "active",
+					"billing_priority": "auto",
 					"ip_whitelist": null,
 					"ip_blacklist": null,
 					"last_used_at": null,
@@ -279,6 +280,7 @@ func TestAPIContracts(t *testing.T) {
 							"name": "Key One",
 							"group_id": null,
 							"status": "active",
+							"billing_priority": "auto",
 							"ip_whitelist": null,
 							"ip_blacklist": null,
 							"last_used_at": null,
@@ -345,6 +347,7 @@ func TestAPIContracts(t *testing.T) {
 						"platform": "anthropic",
 						"rate_multiplier": 1.5,
 						"is_exclusive": false,
+						"usage_card_disabled": false,
 						"status": "active",
 						"subscription_type": "standard",
 						"daily_limit_usd": null,
@@ -560,6 +563,7 @@ func TestAPIContracts(t *testing.T) {
 								"openai_ws_mode": false,
 								"group_id": null,
 								"subscription_id": null,
+								"usage_card_id": null,
 							"input_tokens": 10,
 							"output_tokens": 20,
 							"cache_creation_tokens": 1,
@@ -581,6 +585,8 @@ func TestAPIContracts(t *testing.T) {
 							"image_size": null,
 							"image_input_size": null,
 							"image_output_size": null,
+							"image_output_tokens": 0,
+							"image_output_cost": 0,
 							"image_size_source": null,
 							"image_size_breakdown": null,
 							"media_type": null,
@@ -824,6 +830,13 @@ func TestAPIContracts(t *testing.T) {
 					"hide_ccs_import_button": false,
 					"purchase_subscription_enabled": false,
 					"purchase_subscription_url": "",
+					"legacy_subscription_purchase_enabled": true,
+					"legacy_subscription_visible": true,
+					"usage_card_enabled": false,
+					"usage_card_payment_enabled": false,
+					"usage_card_redeem_enabled": false,
+					"usage_card_billing_enabled": false,
+					"usage_card_default_priority": "usage_card_first",
 					"table_default_page_size": 20,
 						"table_page_size_options": [10, 20, 50, 100],
 					"min_claude_code_version": "",
@@ -841,6 +854,10 @@ func TestAPIContracts(t *testing.T) {
 					"payment_visible_method_wxpay_source": "official_wxpay",
 					"payment_visible_method_alipay_enabled": true,
 					"payment_visible_method_wxpay_enabled": false,
+					"openai_long_context_billing_enabled": true,
+					"openai_long_context_billing_threshold": 272000,
+					"openai_long_context_billing_multiplier": 2,
+					"openai_long_context_output_multiplier": 1.5,
 					"openai_advanced_scheduler_enabled": true,
 					"openai_codex_user_agent":           "",
 					"openai_allow_claude_code_codex_plugin": false,
@@ -896,7 +913,8 @@ func TestAPIContracts(t *testing.T) {
 					"wechat_connect_mobile_app_secret_configured": false,
 					"wechat_connect_redirect_url": "",
 					"wechat_connect_frontend_redirect_url": "/auth/wechat/callback",
-					"wechat_connect_scopes": "snsapi_login"
+					"wechat_connect_scopes": "snsapi_login",
+					"allow_user_view_error_requests": false
 				}
 			}`,
 		},
@@ -1032,6 +1050,13 @@ func TestAPIContracts(t *testing.T) {
 					"hide_ccs_import_button": false,
 					"purchase_subscription_enabled": false,
 					"purchase_subscription_url": "",
+					"legacy_subscription_purchase_enabled": true,
+					"legacy_subscription_visible": true,
+					"usage_card_enabled": false,
+					"usage_card_payment_enabled": false,
+					"usage_card_redeem_enabled": false,
+					"usage_card_billing_enabled": false,
+					"usage_card_default_priority": "usage_card_first",
 					"table_default_page_size": 20,
 					"table_page_size_options": [10, 20, 50],
 					"default_platform_quotas": {"anthropic":{"daily":null,"weekly":null,"monthly":null},"antigravity":{"daily":null,"weekly":null,"monthly":null},"gemini":{"daily":null,"weekly":null,"monthly":null},"openai":{"daily":null,"weekly":null,"monthly":null}},
@@ -1078,6 +1103,10 @@ func TestAPIContracts(t *testing.T) {
 					"payment_visible_method_wxpay_source": "",
 					"payment_visible_method_alipay_enabled": false,
 					"payment_visible_method_wxpay_enabled": false,
+					"openai_long_context_billing_enabled": true,
+					"openai_long_context_billing_threshold": 272000,
+					"openai_long_context_billing_multiplier": 2,
+					"openai_long_context_output_multiplier": 1.5,
 					"openai_advanced_scheduler_enabled": false,
 					"openai_codex_user_agent":           "",
 					"openai_allow_claude_code_codex_plugin": false,
@@ -1167,7 +1196,8 @@ func TestAPIContracts(t *testing.T) {
 					"auth_source_default_dingtalk_subscriptions": [],
 					"auth_source_default_dingtalk_grant_on_signup": false,
 					"auth_source_default_dingtalk_grant_on_first_bind": false,
-					"force_email_on_third_party_signup": false
+					"force_email_on_third_party_signup": false,
+					"allow_user_view_error_requests": false
 				}
 			}`,
 		},
@@ -1279,7 +1309,7 @@ func newContractDeps(t *testing.T) *contractDeps {
 	adminService := service.NewAdminService(userRepo, groupRepo, &accountRepo, proxyRepo, apiKeyRepo, redeemRepo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	authHandler := handler.NewAuthHandler(cfg, nil, userService, settingService, nil, redeemService, nil, nil)
 	apiKeyHandler := handler.NewAPIKeyHandler(apiKeyService)
-	usageHandler := handler.NewUsageHandler(usageService, apiKeyService)
+	usageHandler := handler.NewUsageHandler(usageService, apiKeyService, nil, nil)
 	adminSettingHandler := adminhandler.NewSettingHandler(settingService, nil, nil, nil, nil, nil, nil)
 	adminAccountHandler := adminhandler.NewAccountHandler(adminService, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
@@ -2100,6 +2130,10 @@ func (r *stubApiKeyRepo) Delete(ctx context.Context, id int64) error {
 	delete(r.byID, id)
 	delete(r.byKey, key.Key)
 	return nil
+}
+
+func (r *stubApiKeyRepo) DeleteWithAudit(ctx context.Context, id int64) error {
+	return r.Delete(ctx, id)
 }
 
 func (r *stubApiKeyRepo) ListByUserID(ctx context.Context, userID int64, params pagination.PaginationParams, _ service.APIKeyListFilters) ([]service.APIKey, *pagination.PaginationResult, error) {
