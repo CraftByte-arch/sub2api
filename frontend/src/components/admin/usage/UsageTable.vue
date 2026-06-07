@@ -157,6 +157,9 @@
                 </div>
               </div>
             </div>
+            <span class="mt-1 inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-medium" :class="getDeductionSourceBadgeClass(row)">
+              {{ getDeductionSourceLabel(row) }}
+            </span>
             <div v-if="row.account_rate_multiplier != null" class="mt-0.5 text-[11px] text-orange-500 dark:text-orange-400">
               A ${{ accountBilled(row).toFixed(6) }}
             </div>
@@ -419,6 +422,23 @@ function getDisplayBillingMode(row: Pick<AdminUsageLog, 'billing_mode' | 'image_
     return BILLING_MODE_IMAGE
   }
   return row?.billing_mode
+}
+
+function getDeductionSourceKey(row: Pick<AdminUsageLog, 'subscription_id' | 'usage_card_id'> | null | undefined): 'usageCard' | 'subscription' | 'balance' {
+  if (row?.usage_card_id) return 'usageCard'
+  if (row?.subscription_id) return 'subscription'
+  return 'balance'
+}
+
+function getDeductionSourceLabel(row: Pick<AdminUsageLog, 'subscription_id' | 'usage_card_id'> | null | undefined): string {
+  return t(`usage.deductionSources.${getDeductionSourceKey(row)}`)
+}
+
+function getDeductionSourceBadgeClass(row: Pick<AdminUsageLog, 'subscription_id' | 'usage_card_id'> | null | undefined): string {
+  const source = getDeductionSourceKey(row)
+  if (source === 'usageCard') return 'bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-200'
+  if (source === 'subscription') return 'bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-200'
+  return 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200'
 }
 
 import DataTable from '@/components/common/DataTable.vue'

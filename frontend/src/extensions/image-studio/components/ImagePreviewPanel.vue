@@ -84,15 +84,35 @@
             <Icon name="edit" size="sm" />
             编辑
           </button>
-          <a
-            class="result-download"
-            :href="output.src"
-            :download="downloadFileName(output, index)"
-            data-testid="download-button"
+          <div
+            class="download-menu"
+            :class="{ open: openDownloadMenuId === output.id }"
+            @pointerdown.stop
           >
-            <Icon name="download" size="sm" />
-            下载
-          </a>
+            <button
+              type="button"
+              class="result-download"
+              data-testid="download-button"
+              aria-haspopup="menu"
+              :aria-expanded="openDownloadMenuId === output.id"
+              @click.stop="toggleDownloadMenu(output.id)"
+            >
+              <Icon name="download" size="sm" />
+              下载
+            </button>
+            <div class="download-menu-options" role="menu" aria-label="选择下载格式">
+              <button
+                v-for="format in downloadFormats"
+                :key="format.value"
+                type="button"
+                role="menuitem"
+                :data-testid="`download-${format.value}-button`"
+                @click="selectDownloadFormat(output, index, format.value)"
+              >
+                {{ format.label }}
+              </button>
+            </div>
+          </div>
         </div>
         <img
           :src="output.src"
@@ -106,7 +126,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import Icon from '@/components/icons/Icon.vue'
 import type { ImageStudioOutput, ImageStudioStreamState } from '../types'
 
@@ -121,10 +141,40 @@ const props = defineProps<{
   downloadFileName: (output: ImageStudioOutput, index: number) => string
 }>()
 
-defineEmits<{
+const emit = defineEmits<{
   'edit-output': [output: ImageStudioOutput, index: number]
   'open-lightbox': [output: ImageStudioOutput, index: number]
+  'download-output': [output: ImageStudioOutput, index: number, format: string]
 }>()
+
+const downloadFormats = [
+  { value: 'jpeg', label: 'JPEG' },
+  { value: 'webp', label: 'WebP' },
+  { value: 'png', label: 'PNG' }
+]
+
+const openDownloadMenuId = ref('')
+
+onMounted(() => {
+  document.addEventListener('pointerdown', closeDownloadMenu)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', closeDownloadMenu)
+})
+
+function toggleDownloadMenu(id: string) {
+  openDownloadMenuId.value = openDownloadMenuId.value === id ? '' : id
+}
+
+function closeDownloadMenu() {
+  openDownloadMenuId.value = ''
+}
+
+function selectDownloadFormat(output: ImageStudioOutput, index: number, format: string) {
+  openDownloadMenuId.value = ''
+  emit('download-output', output, index, format)
+}
 
 const title = computed(() => {
   if (props.submitting) return '正在生成'

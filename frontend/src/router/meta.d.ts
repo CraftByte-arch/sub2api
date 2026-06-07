@@ -56,6 +56,12 @@ declare module 'vue-router' {
     requiresRiskControl?: boolean
 
     /**
+     * Whether this route requires usage-card feature to be enabled
+     * @default false
+     */
+    requiresUsageCard?: boolean
+
+    /**
      * i18n key for the page title
      */
     titleKey?: string

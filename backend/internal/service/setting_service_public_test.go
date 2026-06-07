@@ -91,6 +91,48 @@ func TestSettingService_GetPublicSettings_ExposesForceEmailOnThirdPartySignup(t 
 	require.True(t, settings.ForceEmailOnThirdPartySignup)
 }
 
+func TestSettingService_GetOpenAILongContextBillingRuntime_DefaultsPreserveLegacyBehavior(t *testing.T) {
+	svc := NewSettingService(&settingPublicRepoStub{values: map[string]string{}}, &config.Config{})
+
+	runtime := svc.GetOpenAILongContextBillingRuntime(context.Background())
+
+	require.True(t, runtime.Enabled)
+	require.Equal(t, 272000, runtime.Threshold)
+	require.InDelta(t, 2.0, runtime.InputMultiplier, 1e-12)
+	require.InDelta(t, 1.5, runtime.OutputMultiplier, 1e-12)
+}
+
+func TestSettingService_GetOpenAILongContextBillingRuntime_ReadsConfiguredValues(t *testing.T) {
+	svc := NewSettingService(&settingPublicRepoStub{values: map[string]string{
+		SettingKeyOpenAILongContextBillingEnabled:    "false",
+		SettingKeyOpenAILongContextBillingThreshold:  "300000",
+		SettingKeyOpenAILongContextBillingMultiplier: "1.75",
+		SettingKeyOpenAILongContextOutputMultiplier:  "1.25",
+	}}, &config.Config{})
+
+	runtime := svc.GetOpenAILongContextBillingRuntime(context.Background())
+
+	require.False(t, runtime.Enabled)
+	require.Equal(t, 300000, runtime.Threshold)
+	require.InDelta(t, 1.75, runtime.InputMultiplier, 1e-12)
+	require.InDelta(t, 1.25, runtime.OutputMultiplier, 1e-12)
+}
+
+func TestSettingService_GetOpenAILongContextBillingRuntime_InvalidNumbersFallback(t *testing.T) {
+	svc := NewSettingService(&settingPublicRepoStub{values: map[string]string{
+		SettingKeyOpenAILongContextBillingThreshold:  "0",
+		SettingKeyOpenAILongContextBillingMultiplier: "-1",
+		SettingKeyOpenAILongContextOutputMultiplier:  "-2",
+	}}, &config.Config{})
+
+	runtime := svc.GetOpenAILongContextBillingRuntime(context.Background())
+
+	require.True(t, runtime.Enabled)
+	require.Equal(t, 272000, runtime.Threshold)
+	require.InDelta(t, 2.0, runtime.InputMultiplier, 1e-12)
+	require.InDelta(t, 1.5, runtime.OutputMultiplier, 1e-12)
+}
+
 func TestSettingService_GetPublicSettings_ExposesWeChatOAuthModeCapabilities(t *testing.T) {
 	svc := NewSettingService(&settingPublicRepoStub{
 		values: map[string]string{

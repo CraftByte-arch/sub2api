@@ -175,6 +175,16 @@ func (h *PaymentHandler) ProcessRefund(c *gin.Context) {
 	response.Success(c, result)
 }
 
+// GetRefundEligibleProviders returns provider instance IDs that allow admin refund.
+func (h *PaymentHandler) GetRefundEligibleProviders(c *gin.Context) {
+	ids, err := h.configService.GetAdminRefundEligibleInstanceIDs(c.Request.Context())
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gin.H{"provider_instance_ids": ids})
+}
+
 // --- Subscription Plans ---
 
 // ListPlans returns all subscription plans.

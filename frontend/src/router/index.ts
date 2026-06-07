@@ -13,6 +13,7 @@ import { getSetupStatus } from '@/api/setup'
 import { resolveCompletedSetupRedirectPath } from './setupRedirect'
 import { resolveDocumentTitle } from './title'
 import { extensionRoutes } from '@/extensions'
+import { isUsageCardFeatureVisible } from '@/utils/featureFlags'
 
 /**
  * Route definitions with lazy loading
@@ -275,6 +276,19 @@ const routes: RouteRecordRaw[] = [
       title: 'My Subscriptions',
       titleKey: 'userSubscriptions.title',
       descriptionKey: 'userSubscriptions.description'
+    }
+  },
+  {
+    path: '/usage-cards',
+    name: 'UsageCards',
+    component: () => import('@/views/user/UsageCardsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'My Usage Cards',
+      titleKey: 'usageCards.myTitle',
+      descriptionKey: 'usageCards.description',
+      requiresUsageCard: true
     }
   },
   {
@@ -654,6 +668,18 @@ const routes: RouteRecordRaw[] = [
       requiresPayment: true
     }
   },
+  {
+    path: '/admin/usage-cards',
+    name: 'AdminUsageCards',
+    component: () => import('@/views/admin/UsageCardsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Usage Card Management',
+      titleKey: 'admin.usageCards.title',
+      requiresUsageCard: true
+    }
+  },
 
   // ==================== 404 Not Found ====================
   {
@@ -823,6 +849,20 @@ router.beforeEach(async (to, _from, next) => {
     const riskControlEnabled = appStore.cachedPublicSettings?.risk_control_enabled === true
     if (!riskControlEnabled) {
       next(authStore.isAdmin ? '/admin/settings' : '/dashboard')
+      return
+    }
+  }
+
+  if (to.meta.requiresUsageCard && !isUsageCardFeatureVisible()) {
+    next(authStore.isAdmin ? '/admin/settings' : '/dashboard')
+    return
+  }
+
+  // Hide legacy subscription pages when the usage-card flow replaces them.
+  if (appStore.cachedPublicSettings?.legacy_subscription_visible === false) {
+    const restrictedLegacySubscriptionPaths = ['/admin/subscriptions', '/subscriptions']
+    if (restrictedLegacySubscriptionPaths.some((path) => to.path.startsWith(path))) {
+      next(authStore.isAdmin ? '/admin/dashboard' : '/dashboard')
       return
     }
   }

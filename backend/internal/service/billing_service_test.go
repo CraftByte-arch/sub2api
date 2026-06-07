@@ -197,6 +197,49 @@ func TestCalculateCost_OpenAIGPT54LongContextAppliesWholeSessionMultipliers(t *t
 	require.InDelta(t, expectedInput+expectedOutput, cost.ActualCost, 1e-10)
 }
 
+func TestCalculateCost_OpenAIGPT54LongContextUsesConfiguredHardRule(t *testing.T) {
+	svc := newTestBillingService()
+	svc.SetSettingService(NewSettingService(&settingPublicRepoStub{values: map[string]string{
+		SettingKeyOpenAILongContextBillingEnabled:    "true",
+		SettingKeyOpenAILongContextBillingThreshold:  "1000",
+		SettingKeyOpenAILongContextBillingMultiplier: "3",
+		SettingKeyOpenAILongContextOutputMultiplier:  "2",
+	}}, &config.Config{}))
+
+	tokens := UsageTokens{
+		InputTokens:  1200,
+		OutputTokens: 100,
+	}
+
+	cost, err := svc.CalculateCost("gpt-5.4", tokens, 1.0)
+	require.NoError(t, err)
+
+	expectedInput := float64(tokens.InputTokens) * 2.5e-6 * 3
+	expectedOutput := float64(tokens.OutputTokens) * 15e-6 * 2
+	require.InDelta(t, expectedInput, cost.InputCost, 1e-10)
+	require.InDelta(t, expectedOutput, cost.OutputCost, 1e-10)
+}
+
+func TestCalculateCost_OpenAIGPT54LongContextCanDisableHardRule(t *testing.T) {
+	svc := newTestBillingService()
+	svc.SetSettingService(NewSettingService(&settingPublicRepoStub{values: map[string]string{
+		SettingKeyOpenAILongContextBillingEnabled: "false",
+	}}, &config.Config{}))
+
+	tokens := UsageTokens{
+		InputTokens:  300000,
+		OutputTokens: 4000,
+	}
+
+	cost, err := svc.CalculateCost("gpt-5.4", tokens, 1.0)
+	require.NoError(t, err)
+
+	expectedInput := float64(tokens.InputTokens) * 2.5e-6
+	expectedOutput := float64(tokens.OutputTokens) * 15e-6
+	require.InDelta(t, expectedInput, cost.InputCost, 1e-10)
+	require.InDelta(t, expectedOutput, cost.OutputCost, 1e-10)
+}
+
 // 回归测试 #2293：长上下文计费触发时，cache_read_tokens 也应应用 LongContextInputMultiplier。
 // 修复前：CacheReadCost = tokens * 0.25e-6 （漏乘倍率，少计费用）。
 // 修复后：CacheReadCost = tokens * 0.25e-6 * LongContextInputMultiplier(=2.0)。

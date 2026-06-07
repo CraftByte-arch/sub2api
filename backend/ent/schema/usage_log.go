@@ -63,6 +63,9 @@ func (UsageLog) Fields() []ent.Field {
 		field.Int64("subscription_id").
 			Optional().
 			Nillable(),
+		field.Int64("usage_card_id").
+			Optional().
+			Nillable(),
 
 		// Token 计数字段
 		field.Int("input_tokens").
@@ -187,6 +190,10 @@ func (UsageLog) Edges() []ent.Edge {
 			Ref("usage_logs").
 			Field("subscription_id").
 			Unique(),
+		edge.From("usage_card", UserUsageCard.Type).
+			Ref("usage_logs").
+			Field("usage_card_id").
+			Unique(),
 	}
 }
 
@@ -198,6 +205,7 @@ func (UsageLog) Indexes() []ent.Index {
 		index.Fields("account_id"),
 		index.Fields("group_id"),
 		index.Fields("subscription_id"),
+		index.Fields("usage_card_id"),
 		index.Fields("created_at"),
 		index.Fields("model"),
 		index.Fields("requested_model"),

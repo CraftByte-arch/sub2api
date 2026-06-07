@@ -215,6 +215,9 @@ func (s *PaymentService) executeFulfillment(ctx context.Context, oid int64) erro
 	if o.OrderType == payment.OrderTypeSubscription {
 		return s.ExecuteSubscriptionFulfillment(ctx, oid)
 	}
+	if o.OrderType == payment.OrderTypeUsageCard {
+		return s.ExecuteUsageCardFulfillment(ctx, oid)
+	}
 	return s.ExecuteBalanceFulfillment(ctx, oid)
 }
 
@@ -297,6 +300,54 @@ func (s *PaymentService) doBalance(ctx context.Context, o *dbent.PaymentOrder) e
 		return err
 	}
 	return s.markCompleted(ctx, o, "RECHARGE_SUCCESS")
+}
+
+func (s *PaymentService) ExecuteUsageCardFulfillment(ctx context.Context, oid int64) error {
+	o, err := s.entClient.PaymentOrder.Get(ctx, oid)
+	if err != nil {
+		return infraerrors.NotFound("NOT_FOUND", "order not found")
+	}
+	if o.Status == OrderStatusCompleted {
+		return nil
+	}
+	if psIsRefundStatus(o.Status) {
+		return infraerrors.BadRequest("INVALID_STATUS", "refund-related order cannot fulfill")
+	}
+	if o.Status != OrderStatusPaid && o.Status != OrderStatusFailed {
+		return infraerrors.BadRequest("INVALID_STATUS", "order cannot fulfill in status "+o.Status)
+	}
+	c, err := s.entClient.PaymentOrder.Update().Where(paymentorder.IDEQ(oid), paymentorder.StatusIn(OrderStatusPaid, OrderStatusFailed)).SetStatus(OrderStatusRecharging).Save(ctx)
+	if err != nil {
+		return fmt.Errorf("lock: %w", err)
+	}
+	if c == 0 {
+		return nil
+	}
+	if err := s.doUsageCard(ctx, o); err != nil {
+		s.markFailed(ctx, oid, err)
+		return err
+	}
+	return nil
+}
+
+func (s *PaymentService) doUsageCard(ctx context.Context, o *dbent.PaymentOrder) error {
+	if s.usageCardService == nil {
+		return ErrUsageCardPaymentDisabled
+	}
+	if o.PlanID == nil || *o.PlanID <= 0 {
+		return infraerrors.BadRequest("INVALID_USAGE_CARD_ORDER", "usage card order missing plan")
+	}
+	if s.hasAuditLog(ctx, o.ID, "USAGE_CARD_SUCCESS") {
+		return s.markCompleted(ctx, o, "USAGE_CARD_SUCCESS")
+	}
+	plan, err := s.usageCardService.GetPlanByID(ctx, *o.PlanID)
+	if err != nil {
+		return fmt.Errorf("get usage card plan: %w", err)
+	}
+	if _, err := s.usageCardService.IssueFromPayment(ctx, o.UserID, plan, o.ID, o.RechargeCode); err != nil {
+		return fmt.Errorf("issue usage card: %w", err)
+	}
+	return s.markCompleted(ctx, o, "USAGE_CARD_SUCCESS")
 }
 
 func (s *PaymentService) markCompleted(ctx context.Context, o *dbent.PaymentOrder, auditAction string) error {

@@ -182,6 +182,9 @@ func (s *PaymentService) validateRefundRequest(ctx context.Context, oid, uid int
 		return nil, infraerrors.Forbidden("FORBIDDEN", "no permission")
 	}
 	if o.OrderType != payment.OrderTypeBalance {
+		if o.OrderType == payment.OrderTypeUsageCard {
+			return nil, infraerrors.BadRequest("USAGE_CARD_REFUND_UNSUPPORTED", "usage card orders do not support refunds")
+		}
 		return nil, infraerrors.BadRequest("INVALID_ORDER_TYPE", "only balance orders can request refund")
 	}
 	if o.Status != OrderStatusCompleted {
@@ -206,6 +209,9 @@ func (s *PaymentService) PrepareRefund(ctx context.Context, oid int64, amt float
 	ok := []string{OrderStatusCompleted, OrderStatusRefundRequested, OrderStatusRefundFailed}
 	if !psSliceContains(ok, o.Status) {
 		return nil, nil, infraerrors.BadRequest("INVALID_STATUS", "order status does not allow refund")
+	}
+	if o.OrderType == payment.OrderTypeUsageCard {
+		return nil, nil, infraerrors.BadRequest("USAGE_CARD_REFUND_UNSUPPORTED", "usage card orders do not support refunds")
 	}
 	// Check provider instance allows admin refund
 	inst, instErr := s.getRefundOrderProviderInstance(ctx, o)

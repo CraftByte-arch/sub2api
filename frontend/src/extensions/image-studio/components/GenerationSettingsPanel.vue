@@ -52,15 +52,35 @@
             <Icon name="edit" size="sm" />
             编辑
           </button>
-          <a
-            class="result-download"
-            :href="selectedHistoryRecord.images[0].src"
-            :download="historyDownloadFileName(selectedHistoryRecord)"
-            data-testid="history-download-button"
+          <div
+            class="download-menu"
+            :class="{ open: openHistoryDownloadMenu }"
+            @pointerdown.stop
           >
-            <Icon name="download" size="sm" />
-            下载
-          </a>
+            <button
+              type="button"
+              class="result-download"
+              data-testid="history-download-button"
+              aria-haspopup="menu"
+              :aria-expanded="openHistoryDownloadMenu"
+              @click.stop="openHistoryDownloadMenu = !openHistoryDownloadMenu"
+            >
+              <Icon name="download" size="sm" />
+              下载
+            </button>
+            <div class="download-menu-options" role="menu" aria-label="选择下载格式">
+              <button
+                v-for="format in downloadFormats"
+                :key="format.value"
+                type="button"
+                role="menuitem"
+                :data-testid="`history-download-${format.value}-button`"
+                @click="selectHistoryDownloadFormat(selectedHistoryRecord, format.value)"
+              >
+                {{ format.label }}
+              </button>
+            </div>
+          </div>
           <button
             type="button"
             class="result-delete"
@@ -79,7 +99,7 @@
 
   <template v-else>
     <section class="api-key-strip" aria-label="接口设置">
-      <label class="api-key-strip-label" for="studio-api-key">API 密钥</label>
+      <label class="api-key-strip-label">API 密钥</label>
       <div class="api-key-strip-control">
         <StudioSelect
           :model-value="selectedKeyValue"
@@ -91,6 +111,17 @@
           data-testid="api-key-select"
           aria-label="API 密钥"
           @update:model-value="$emit('update:selected-key-value', $event)"
+        />
+      </div>
+      <label class="api-key-strip-label">模型</label>
+      <div class="api-key-strip-control">
+        <StudioSelect
+          :model-value="model"
+          :options="modelOptions"
+          button-class="studio-select"
+          data-testid="image-model-select"
+          aria-label="生图模型"
+          @update:model-value="$emit('update:model', $event)"
         />
       </div>
     </section>
@@ -146,11 +177,11 @@
               </span>
             </span>
             <span class="resolution-description">{{ option.description }}</span>
-            <span v-if="option.disabledReason" class="resolution-status disabled-status">不支持 PNG</span>
+            <span v-if="option.disabledReason" class="resolution-status disabled-status">不可用</span>
             <span v-else-if="option.status === 'experimental'" class="resolution-status">实验性</span>
           </button>
         </div>
-        <p class="control-hint">超过 2560×1440 的高像素尺寸会标记为实验性；4K 暂不支持 PNG 输出。</p>
+        <p class="control-hint">超过 2560×1440 的高像素尺寸会标记为实验性。</p>
       </div>
 
     </section>
@@ -206,7 +237,7 @@
             placement="top"
             @update:model-value="$emit('update:output-format', $event)"
           />
-          <p class="control-hint">WebP 体积更小；PNG 暂不支持 4K 分辨率。</p>
+          <p class="control-hint">WebP 体积更小；PNG 更适合无损和透明背景。</p>
         </div>
 
         <details class="advanced-json-panel">
@@ -233,7 +264,7 @@ import type {
   ImageStudioSelectOption,
   StudioApiKey
 } from '../types'
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 const props = defineProps<{
   activeTab: ImageStudioMode
@@ -242,6 +273,8 @@ const props = defineProps<{
   selectedKeyValue: string
   loadingKeys: boolean
   activeKeys: StudioApiKey[]
+  model: string
+  modelOptions: ImageStudioSelectOption[]
   ratioOptions: ImageStudioRatioOption[]
   selectedRatio: ImageStudioRatioOption
   selectedRatioValue: string
@@ -264,11 +297,13 @@ const apiKeyOptions = computed(() =>
   }))
 )
 
-defineEmits<{
+const emit = defineEmits<{
   'open-history-lightbox': [record: ImageStudioHistoryRecord]
   'edit-history-image': [record: ImageStudioHistoryRecord]
   'delete-history-record': [record: ImageStudioHistoryRecord]
+  'download-history-image': [record: ImageStudioHistoryRecord, format: string]
   'update:selected-key-value': [value: string]
+  'update:model': [value: string]
   'update:selected-ratio-value': [value: string]
   'update:selected-resolution-value': [value: string]
   'update:advanced-open': [value: boolean]
@@ -277,6 +312,31 @@ defineEmits<{
   'update:output-format': [value: string]
   'update:advanced-json': [value: string]
 }>()
+
+const downloadFormats = [
+  { value: 'jpeg', label: 'JPEG' },
+  { value: 'webp', label: 'WebP' },
+  { value: 'png', label: 'PNG' }
+]
+
+const openHistoryDownloadMenu = ref(false)
+
+onMounted(() => {
+  document.addEventListener('pointerdown', closeHistoryDownloadMenu)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', closeHistoryDownloadMenu)
+})
+
+function closeHistoryDownloadMenu() {
+  openHistoryDownloadMenu.value = false
+}
+
+function selectHistoryDownloadFormat(record: ImageStudioHistoryRecord, format: string) {
+  openHistoryDownloadMenu.value = false
+  emit('download-history-image', record, format)
+}
 
 function ratioShapeStyle(aspect: string) {
   const [rawWidth, rawHeight] = aspect.split('/').map((item) => Number(item.trim()))

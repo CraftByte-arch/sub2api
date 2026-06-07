@@ -105,6 +105,11 @@ func GroupID(v int64) predicate.RedeemCode {
 	return predicate.RedeemCode(sql.FieldEQ(FieldGroupID, v))
 }
 
+// UsageCardPlanID applies equality check predicate on the "usage_card_plan_id" field. It's identical to UsageCardPlanIDEQ.
+func UsageCardPlanID(v int64) predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldEQ(FieldUsageCardPlanID, v))
+}
+
 // ValidityDays applies equality check predicate on the "validity_days" field. It's identical to ValidityDaysEQ.
 func ValidityDays(v int) predicate.RedeemCode {
 	return predicate.RedeemCode(sql.FieldEQ(FieldValidityDays, v))
@@ -620,6 +625,36 @@ func GroupIDNotNil() predicate.RedeemCode {
 	return predicate.RedeemCode(sql.FieldNotNull(FieldGroupID))
 }
 
+// UsageCardPlanIDEQ applies the EQ predicate on the "usage_card_plan_id" field.
+func UsageCardPlanIDEQ(v int64) predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldEQ(FieldUsageCardPlanID, v))
+}
+
+// UsageCardPlanIDNEQ applies the NEQ predicate on the "usage_card_plan_id" field.
+func UsageCardPlanIDNEQ(v int64) predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldNEQ(FieldUsageCardPlanID, v))
+}
+
+// UsageCardPlanIDIn applies the In predicate on the "usage_card_plan_id" field.
+func UsageCardPlanIDIn(vs ...int64) predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldIn(FieldUsageCardPlanID, vs...))
+}
+
+// UsageCardPlanIDNotIn applies the NotIn predicate on the "usage_card_plan_id" field.
+func UsageCardPlanIDNotIn(vs ...int64) predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldNotIn(FieldUsageCardPlanID, vs...))
+}
+
+// UsageCardPlanIDIsNil applies the IsNil predicate on the "usage_card_plan_id" field.
+func UsageCardPlanIDIsNil() predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldIsNull(FieldUsageCardPlanID))
+}
+
+// UsageCardPlanIDNotNil applies the NotNil predicate on the "usage_card_plan_id" field.
+func UsageCardPlanIDNotNil() predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldNotNull(FieldUsageCardPlanID))
+}
+
 // ValidityDaysEQ applies the EQ predicate on the "validity_days" field.
 func ValidityDaysEQ(v int) predicate.RedeemCode {
 	return predicate.RedeemCode(sql.FieldEQ(FieldValidityDays, v))
@@ -698,6 +733,29 @@ func HasGroup() predicate.RedeemCode {
 func HasGroupWith(preds ...predicate.Group) predicate.RedeemCode {
 	return predicate.RedeemCode(func(s *sql.Selector) {
 		step := newGroupStep()
+		sqlgraph.HasNeighborsWith(s, step, func(s *sql.Selector) {
+			for _, p := range preds {
+				p(s)
+			}
+		})
+	})
+}
+
+// HasUsageCardPlan applies the HasEdge predicate on the "usage_card_plan" edge.
+func HasUsageCardPlan() predicate.RedeemCode {
+	return predicate.RedeemCode(func(s *sql.Selector) {
+		step := sqlgraph.NewStep(
+			sqlgraph.From(Table, FieldID),
+			sqlgraph.Edge(sqlgraph.M2O, true, UsageCardPlanTable, UsageCardPlanColumn),
+		)
+		sqlgraph.HasNeighbors(s, step)
+	})
+}
+
+// HasUsageCardPlanWith applies the HasEdge predicate on the "usage_card_plan" edge with a given conditions (other predicates).
+func HasUsageCardPlanWith(preds ...predicate.UsageCardPlan) predicate.RedeemCode {
+	return predicate.RedeemCode(func(s *sql.Selector) {
+		step := newUsageCardPlanStep()
 		sqlgraph.HasNeighborsWith(s, step, func(s *sql.Selector) {
 			for _, p := range preds {
 				p(s)

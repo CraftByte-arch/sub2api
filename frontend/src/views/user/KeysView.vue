@@ -358,6 +358,26 @@
                 <Icon name="trash" size="sm" />
                 <span class="text-xs">{{ t('common.delete') }}</span>
               </button>
+              <div
+                v-if="isKeyBillingPriorityVisible(row)"
+                class="billing-priority-quick ml-2 flex w-44 shrink-0 flex-col gap-1 rounded-lg border border-gray-200 bg-gray-50/70 p-1.5 dark:border-dark-600 dark:bg-dark-800/60"
+                :title="
+                  isKeyUsageCardDisabled(row)
+                    ? t('keys.billingPriority.groupBalanceOnly')
+                    : t('keys.billingPriority.quickSwitch')
+                "
+                @click.stop
+              >
+                <span class="text-[11px] font-medium leading-none text-gray-500 dark:text-dark-300">
+                  {{ t('keys.billingPriority.shortLabel') }}
+                </span>
+                <Select
+                  :model-value="getKeyBillingPriority(row)"
+                  :options="billingPriorityOptions"
+                  :disabled="isKeyUsageCardDisabled(row) || billingPrioritySavingIds.has(row.id)"
+                  @update:model-value="(value) => changeBillingPriority(row, value)"
+                />
+              </div>
             </div>
           </template>
 
@@ -591,6 +611,23 @@
               </div>
             </div>
           </div>
+        </div>
+
+        <div v-if="isFormBillingPriorityVisible" class="space-y-2">
+          <label class="input-label">{{ t('keys.billingPriority.label') }}</label>
+          <Select
+            v-model="formData.billing_priority"
+            :options="billingPriorityOptions"
+            :disabled="selectedGroupUsageCardDisabled"
+            :title="selectedGroupUsageCardDisabled ? t('keys.billingPriority.groupBalanceOnly') : ''"
+          />
+          <p class="input-hint">
+            {{
+              selectedGroupUsageCardDisabled
+                ? t('keys.billingPriority.groupBalanceOnlyHint')
+                : t('keys.billingPriority.hint')
+            }}
+          </p>
         </div>
 
         <!-- Rate Limit Section -->
@@ -1045,30 +1082,28 @@
 </template>
 
 <script setup lang="ts">
-	import { ref, computed, onMounted, onUnmounted, type ComponentPublicInstance } from 'vue'
-	import { useI18n } from 'vue-i18n'
-	import { useAppStore } from '@/stores/app'
-	import { useOnboardingStore } from '@/stores/onboarding'
-	import { useClipboard } from '@/composables/useClipboard'
+import { ref, computed, watch, onMounted, onUnmounted, type ComponentPublicInstance } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { useAppStore } from '@/stores/app'
+import { useOnboardingStore } from '@/stores/onboarding'
+import { useClipboard } from '@/composables/useClipboard'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
-
-const { t } = useI18n()
 import { keysAPI, authAPI, usageAPI, userGroupsAPI } from '@/api'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
-	import DataTable from '@/components/common/DataTable.vue'
-	import Pagination from '@/components/common/Pagination.vue'
-	import BaseDialog from '@/components/common/BaseDialog.vue'
-	import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
-	import EmptyState from '@/components/common/EmptyState.vue'
-	import Select from '@/components/common/Select.vue'
-	import SearchInput from '@/components/common/SearchInput.vue'
-	import Icon from '@/components/icons/Icon.vue'
-	import UseKeyModal from '@/components/keys/UseKeyModal.vue'
-	import EndpointPopover from '@/components/keys/EndpointPopover.vue'
-	import GroupBadge from '@/components/common/GroupBadge.vue'
-	import GroupOptionItem from '@/components/common/GroupOptionItem.vue'
-	import type { ApiKey, Group, PublicSettings, SubscriptionType, GroupPlatform } from '@/types'
+import DataTable from '@/components/common/DataTable.vue'
+import Pagination from '@/components/common/Pagination.vue'
+import BaseDialog from '@/components/common/BaseDialog.vue'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
+import Select from '@/components/common/Select.vue'
+import SearchInput from '@/components/common/SearchInput.vue'
+import Icon from '@/components/icons/Icon.vue'
+import UseKeyModal from '@/components/keys/UseKeyModal.vue'
+import EndpointPopover from '@/components/keys/EndpointPopover.vue'
+import GroupBadge from '@/components/common/GroupBadge.vue'
+import GroupOptionItem from '@/components/common/GroupOptionItem.vue'
+import type { ApiKey, BillingPriority, Group, PublicSettings, SubscriptionType, GroupPlatform } from '@/types'
 import type { Column } from '@/components/common/types'
 import type { BatchApiKeyUsageStats } from '@/api/usage'
 import { formatDateTime } from '@/utils/format'
@@ -1077,6 +1112,8 @@ import {
   buildCcSwitchImportDeeplink,
   type CcSwitchClientType
 } from '@/utils/ccswitchImport'
+
+const { t } = useI18n()
 
 // Helper to format date for datetime-local input
 const formatDateTimeLocal = (isoDate: string): string => {
@@ -1093,6 +1130,7 @@ interface GroupOption {
   userRate: number | null
   subscriptionType: SubscriptionType
   platform: GroupPlatform
+  usageCardDisabled: boolean
 }
 
 const appStore = useAppStore()
@@ -1120,6 +1158,7 @@ const now = ref(new Date())
 let resetTimer: ReturnType<typeof setInterval> | null = null
 const usageStats = ref<Record<string, BatchApiKeyUsageStats>>({})
 const userGroupRates = ref<Record<number, number>>({})
+const billingPrioritySavingIds = ref<Set<number>>(new Set())
 
 const pagination = ref({
   page: 1,
@@ -1185,6 +1224,7 @@ const formData = ref({
   rate_limit_5h: null as number | null,
   rate_limit_1d: null as number | null,
   rate_limit_7d: null as number | null,
+  billing_priority: 'auto' as BillingPriority,
   enable_expiration: false,
   expiration_preset: '30' as '7' | '30' | '90' | 'custom',
   expiration_date: ''
@@ -1209,6 +1249,29 @@ const customKeyError = computed(() => {
 const statusOptions = computed(() => [
   { value: 'active', label: t('common.active') },
   { value: 'inactive', label: t('common.inactive') }
+])
+
+const getBillingPriorityBaseLabel = (priority: BillingPriority): string => {
+  const labels: Record<BillingPriority, string> = {
+    auto: t('keys.billingPriority.options.auto'),
+    balance_first: t('keys.billingPriority.options.balanceFirst'),
+    usage_card_first: t('keys.billingPriority.options.usageCardFirst'),
+    balance_only: t('keys.billingPriority.options.balanceOnly'),
+    usage_card_only: t('keys.billingPriority.options.usageCardOnly')
+  }
+  return labels[priority]
+}
+
+const billingPriorityOptions = computed<Array<{ value: BillingPriority; label: string }>>(() => [
+  {
+    value: 'auto',
+    label: t('keys.billingPriority.options.defaultRule', {
+      rule: getBillingPriorityBaseLabel('usage_card_first')
+    })
+  },
+  { value: 'balance_first', label: t('keys.billingPriority.options.balanceFirst') },
+  { value: 'balance_only', label: t('keys.billingPriority.options.balanceOnly') },
+  { value: 'usage_card_only', label: t('keys.billingPriority.options.usageCardOnly') }
 ])
 
 // Filter dropdown options
@@ -1250,9 +1313,39 @@ const groupOptions = computed(() =>
     rate: group.rate_multiplier,
     userRate: userGroupRates.value[group.id] ?? null,
     subscriptionType: group.subscription_type,
-    platform: group.platform
+    platform: group.platform,
+    usageCardDisabled: group.usage_card_disabled === true
   }))
 )
+
+const selectedGroupUsageCardDisabled = computed(() => {
+  const groupID = formData.value.group_id
+  if (groupID == null) return false
+  if (
+    selectedKey.value?.group_id === groupID &&
+    selectedKey.value.group?.usage_card_disabled === true
+  ) {
+    return true
+  }
+  return groupOptions.value.find((group) => group.value === groupID)?.usageCardDisabled === true
+})
+
+const selectedGroupSubscriptionType = computed<SubscriptionType>(() => {
+  const groupID = formData.value.group_id
+  if (groupID == null) return 'standard'
+  if (selectedKey.value?.group_id === groupID && selectedKey.value.group?.subscription_type) {
+    return selectedKey.value.group.subscription_type
+  }
+  return groupOptions.value.find((group) => group.value === groupID)?.subscriptionType || 'standard'
+})
+
+const isFormBillingPriorityVisible = computed(() => selectedGroupSubscriptionType.value !== 'subscription')
+
+watch(selectedGroupUsageCardDisabled, (disabled) => {
+  if (disabled) {
+    formData.value.billing_priority = 'balance_first'
+  }
+})
 
 // Group dropdown search
 const groupSearchQuery = ref('')
@@ -1406,6 +1499,7 @@ const editKey = (key: ApiKey) => {
     rate_limit_5h: key.rate_limit_5h || null,
     rate_limit_1d: key.rate_limit_1d || null,
     rate_limit_7d: key.rate_limit_7d || null,
+    billing_priority: key.billing_priority === 'usage_card_first' ? 'auto' : key.billing_priority || 'auto',
     enable_expiration: hasExpiration,
     expiration_preset: 'custom',
     expiration_date: key.expires_at ? formatDateTimeLocal(key.expires_at) : ''
@@ -1463,11 +1557,86 @@ const changeGroup = async (key: ApiKey, newGroupId: number | null) => {
   if (key.group_id === newGroupId) return
 
   try {
-    await keysAPI.update(key.id, { group_id: newGroupId })
+    const usageCardDisabled =
+      newGroupId != null &&
+      groupOptions.value.find((group) => group.value === newGroupId)?.usageCardDisabled === true
+    await keysAPI.update(key.id, {
+      group_id: newGroupId,
+      ...(usageCardDisabled ? { billing_priority: 'balance_first' as BillingPriority } : {})
+    })
     appStore.showSuccess(t('keys.groupChangedSuccess'))
     loadApiKeys()
   } catch (error) {
     appStore.showError(t('keys.failedToChangeGroup'))
+  }
+}
+
+const isBillingPriority = (value: string | number | boolean | null): value is BillingPriority => {
+  return (
+    value === 'auto' ||
+    value === 'balance_first' ||
+    value === 'usage_card_first' ||
+    value === 'balance_only' ||
+    value === 'usage_card_only'
+  )
+}
+
+const getKeyBillingPriority = (key: ApiKey): BillingPriority => {
+  if (isKeyUsageCardDisabled(key)) return 'balance_first'
+  if (key.billing_priority === 'usage_card_first') return 'auto'
+  return key.billing_priority || 'auto'
+}
+
+const isKeyBillingPriorityVisible = (key: ApiKey): boolean => {
+  if (key.group?.subscription_type === 'subscription') return false
+  if (key.group_id == null) return true
+  return groupOptions.value.find((group) => group.value === key.group_id)?.subscriptionType !== 'subscription'
+}
+
+const isKeyUsageCardDisabled = (key: ApiKey): boolean => {
+  if (key.group?.usage_card_disabled === true) return true
+  if (key.group_id == null) return false
+  return groupOptions.value.find((group) => group.value === key.group_id)?.usageCardDisabled === true
+}
+
+const setBillingPrioritySaving = (keyId: number, saving: boolean) => {
+  const next = new Set(billingPrioritySavingIds.value)
+  if (saving) {
+    next.add(keyId)
+  } else {
+    next.delete(keyId)
+  }
+  billingPrioritySavingIds.value = next
+}
+
+const changeBillingPriority = async (
+  key: ApiKey,
+  value: string | number | boolean | null
+) => {
+  if (!isBillingPriority(value)) return
+  if (isKeyUsageCardDisabled(key)) return
+
+  const previousPriority = key.billing_priority || 'auto'
+  if (previousPriority === value) return
+
+  setBillingPrioritySaving(key.id, true)
+  key.billing_priority = value
+  try {
+    const updatedKey = await keysAPI.update(key.id, { billing_priority: value })
+    const index = apiKeys.value.findIndex((item) => item.id === key.id)
+    if (index !== -1) {
+      apiKeys.value[index] = {
+        ...apiKeys.value[index],
+        billing_priority: updatedKey.billing_priority || value
+      }
+    }
+    appStore.showSuccess(t('keys.billingPriority.updateSuccess'))
+  } catch (error: any) {
+    key.billing_priority = previousPriority
+    const errorMsg = error.response?.data?.detail || t('keys.billingPriority.updateFailed')
+    appStore.showError(errorMsg)
+  } finally {
+    setBillingPrioritySaving(key.id, false)
   }
 }
 
@@ -1553,6 +1722,7 @@ const handleSubmit = async () => {
         rate_limit_5h: rateLimitData.rate_limit_5h,
         rate_limit_1d: rateLimitData.rate_limit_1d,
         rate_limit_7d: rateLimitData.rate_limit_7d,
+        billing_priority: selectedGroupUsageCardDisabled.value ? 'balance_first' : formData.value.billing_priority,
       })
       appStore.showSuccess(t('keys.keyUpdatedSuccess'))
     } else {
@@ -1565,7 +1735,8 @@ const handleSubmit = async () => {
         ipBlacklist,
         quota,
         expiresInDays,
-        rateLimitData
+        rateLimitData,
+        selectedGroupUsageCardDisabled.value ? 'balance_first' : formData.value.billing_priority
       )
       appStore.showSuccess(t('keys.keyCreatedSuccess'))
       // Only advance tour if active, on submit step, and creation succeeded
@@ -1623,6 +1794,7 @@ const closeModals = () => {
     rate_limit_5h: null,
     rate_limit_1d: null,
     rate_limit_7d: null,
+    billing_priority: 'auto',
     enable_expiration: false,
     expiration_preset: '30',
     expiration_date: ''
@@ -1788,3 +1960,18 @@ onUnmounted(() => {
   if (resetTimer) clearInterval(resetTimer)
 })
 </script>
+
+<style scoped>
+.billing-priority-quick :deep(.select-trigger) {
+  min-height: 2.25rem;
+  border-radius: 0.5rem;
+  padding: 0.375rem 0.5rem;
+  font-size: 0.75rem;
+  line-height: 1rem;
+}
+
+.billing-priority-quick :deep(.select-icon svg) {
+  height: 0.875rem;
+  width: 0.875rem;
+}
+</style>

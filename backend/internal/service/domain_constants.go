@@ -79,6 +79,7 @@ const (
 	RedeemTypeConcurrency      = domain.RedeemTypeConcurrency
 	RedeemTypeSubscription     = domain.RedeemTypeSubscription
 	RedeemTypeInvitation       = domain.RedeemTypeInvitation
+	RedeemTypeUsageCard        = domain.RedeemTypeUsageCard
 	RedeemTypeAffiliateBalance = "affiliate_balance"
 )
 
@@ -105,6 +106,32 @@ const (
 	SubscriptionStatusActive    = domain.SubscriptionStatusActive
 	SubscriptionStatusExpired   = domain.SubscriptionStatusExpired
 	SubscriptionStatusSuspended = domain.SubscriptionStatusSuspended
+)
+
+// Usage card status constants
+const (
+	UsageCardStatusActive    = domain.UsageCardStatusActive
+	UsageCardStatusExhausted = domain.UsageCardStatusExhausted
+	UsageCardStatusExpired   = domain.UsageCardStatusExpired
+	UsageCardStatusSuspended = domain.UsageCardStatusSuspended
+	UsageCardStatusCancelled = domain.UsageCardStatusCancelled
+)
+
+// Usage card source constants
+const (
+	UsageCardSourcePayment   = domain.UsageCardSourcePayment
+	UsageCardSourceRedeem    = domain.UsageCardSourceRedeem
+	UsageCardSourceAdmin     = domain.UsageCardSourceAdmin
+	UsageCardSourceMigration = domain.UsageCardSourceMigration
+)
+
+// Billing priority constants
+const (
+	BillingPriorityAuto           = domain.BillingPriorityAuto
+	BillingPriorityUsageCardFirst = domain.BillingPriorityUsageCardFirst
+	BillingPriorityBalanceFirst   = domain.BillingPriorityBalanceFirst
+	BillingPriorityUsageCardOnly  = domain.BillingPriorityUsageCardOnly
+	BillingPriorityBalanceOnly    = domain.BillingPriorityBalanceOnly
 )
 
 // LinuxDoConnectSyntheticEmailDomain 是 LinuxDo Connect 用户的合成邮箱后缀（RFC 保留域名）。
@@ -441,7 +468,22 @@ const (
 	SettingKeyBalanceLowNotifyRechargeURL = "balance_low_notify_recharge_url" // 充值页面 URL
 
 	// 订阅到期提醒
-	SettingKeySubscriptionExpiryNotifyEnabled = "subscription_expiry_notify_enabled" // 订阅到期提醒全局开关，默认开启
+	SettingKeySubscriptionExpiryNotifyEnabled   = "subscription_expiry_notify_enabled"   // 订阅到期提醒全局开关，默认开启
+	SettingKeyLegacySubscriptionPurchaseEnabled = "legacy_subscription_purchase_enabled" // 是否允许购买原订阅，默认开启
+	SettingKeyLegacySubscriptionVisible         = "legacy_subscription_visible"          // 是否显示原订阅入口，默认开启
+
+	// 余额卡功能开关（默认全部关闭，支持无感上线）
+	SettingKeyUsageCardEnabled         = "usage_card_enabled"
+	SettingKeyUsageCardPaymentEnabled  = "usage_card_payment_enabled"
+	SettingKeyUsageCardRedeemEnabled   = "usage_card_redeem_enabled"
+	SettingKeyUsageCardBillingEnabled  = "usage_card_billing_enabled"
+	SettingKeyUsageCardDefaultPriority = "usage_card_default_priority"
+
+	// OpenAI GPT 长上下文额外计费规则（默认保持旧行为：272K 以上输入 2 倍、输出 1.5 倍）
+	SettingKeyOpenAILongContextBillingEnabled    = "openai_long_context_billing_enabled"
+	SettingKeyOpenAILongContextBillingThreshold  = "openai_long_context_billing_threshold"
+	SettingKeyOpenAILongContextBillingMultiplier = "openai_long_context_billing_multiplier"
+	SettingKeyOpenAILongContextOutputMultiplier  = "openai_long_context_output_multiplier"
 
 	// 账号限额通知
 	SettingKeyAccountQuotaNotifyEnabled = "account_quota_notify_enabled" // 全局开关

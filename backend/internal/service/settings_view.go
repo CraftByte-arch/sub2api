@@ -127,20 +127,31 @@ type SystemSettings struct {
 	GoogleOAuthRedirectURL            string
 	GoogleOAuthFrontendRedirectURL    string
 
-	SiteName                    string
-	SiteLogo                    string
-	SiteSubtitle                string
-	APIBaseURL                  string
-	ContactInfo                 string
-	DocURL                      string
-	HomeContent                 string
-	HideCcsImportButton         bool
-	PurchaseSubscriptionEnabled bool
-	PurchaseSubscriptionURL     string
-	TableDefaultPageSize        int
-	TablePageSizeOptions        []int
-	CustomMenuItems             string // JSON array of custom menu items
-	CustomEndpoints             string // JSON array of custom endpoints
+	SiteName                           string
+	SiteLogo                           string
+	SiteSubtitle                       string
+	APIBaseURL                         string
+	ContactInfo                        string
+	DocURL                             string
+	HomeContent                        string
+	HideCcsImportButton                bool
+	PurchaseSubscriptionEnabled        bool
+	PurchaseSubscriptionURL            string
+	LegacySubscriptionPurchaseEnabled  bool
+	LegacySubscriptionVisible          bool
+	UsageCardEnabled                   bool
+	UsageCardPaymentEnabled            bool
+	UsageCardRedeemEnabled             bool
+	UsageCardBillingEnabled            bool
+	UsageCardDefaultPriority           string
+	OpenAILongContextBillingEnabled    bool
+	OpenAILongContextBillingThreshold  int
+	OpenAILongContextBillingMultiplier float64
+	OpenAILongContextOutputMultiplier  float64
+	TableDefaultPageSize               int
+	TablePageSizeOptions               []int
+	CustomMenuItems                    string // JSON array of custom menu items
+	CustomEndpoints                    string // JSON array of custom endpoints
 
 	DefaultConcurrency           int
 	DefaultBalance               float64
@@ -255,12 +266,19 @@ type PublicSettings struct {
 	HomeContent                      string
 	HideCcsImportButton              bool
 
-	PurchaseSubscriptionEnabled bool
-	PurchaseSubscriptionURL     string
-	TableDefaultPageSize        int
-	TablePageSizeOptions        []int
-	CustomMenuItems             string // JSON array of custom menu items
-	CustomEndpoints             string // JSON array of custom endpoints
+	PurchaseSubscriptionEnabled       bool
+	PurchaseSubscriptionURL           string
+	LegacySubscriptionPurchaseEnabled bool
+	LegacySubscriptionVisible         bool
+	UsageCardEnabled                  bool
+	UsageCardPaymentEnabled           bool
+	UsageCardRedeemEnabled            bool
+	UsageCardBillingEnabled           bool
+	UsageCardDefaultPriority          string
+	TableDefaultPageSize              int
+	TablePageSizeOptions              []int
+	CustomMenuItems                   string // JSON array of custom menu items
+	CustomEndpoints                   string // JSON array of custom endpoints
 
 	LinuxDoOAuthEnabled      bool
 	DingTalkOAuthEnabled     bool

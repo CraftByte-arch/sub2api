@@ -34,6 +34,7 @@ func (r *redeemCodeRepository) Create(ctx context.Context, code *service.RedeemC
 		SetNillableUsedBy(code.UsedBy).
 		SetNillableUsedAt(code.UsedAt).
 		SetNillableGroupID(code.GroupID).
+		SetNillableUsageCardPlanID(code.UsageCardPlanID).
 		Save(ctx)
 	if err == nil {
 		code.ID = created.ID
@@ -60,7 +61,8 @@ func (r *redeemCodeRepository) CreateBatch(ctx context.Context, codes []service.
 			SetNillableExpiresAt(c.ExpiresAt).
 			SetNillableUsedBy(c.UsedBy).
 			SetNillableUsedAt(c.UsedAt).
-			SetNillableGroupID(c.GroupID)
+			SetNillableGroupID(c.GroupID).
+			SetNillableUsageCardPlanID(c.UsageCardPlanID)
 		builders = append(builders, b)
 	}
 
@@ -70,6 +72,9 @@ func (r *redeemCodeRepository) CreateBatch(ctx context.Context, codes []service.
 func (r *redeemCodeRepository) GetByID(ctx context.Context, id int64) (*service.RedeemCode, error) {
 	m, err := r.client.RedeemCode.Query().
 		Where(redeemcode.IDEQ(id)).
+		WithUser().
+		WithGroup().
+		WithUsageCardPlan().
 		Only(ctx)
 	if err != nil {
 		if dbent.IsNotFound(err) {
@@ -83,6 +88,9 @@ func (r *redeemCodeRepository) GetByID(ctx context.Context, id int64) (*service.
 func (r *redeemCodeRepository) GetByCode(ctx context.Context, code string) (*service.RedeemCode, error) {
 	m, err := r.client.RedeemCode.Query().
 		Where(redeemcode.CodeEQ(code)).
+		WithUser().
+		WithGroup().
+		WithUsageCardPlan().
 		Only(ctx)
 	if err != nil {
 		if dbent.IsNotFound(err) {
@@ -149,6 +157,7 @@ func (r *redeemCodeRepository) ListWithFilters(ctx context.Context, params pagin
 	codesQuery := q.
 		WithUser().
 		WithGroup().
+		WithUsageCardPlan().
 		Offset(params.Offset()).
 		Limit(params.Limit())
 	for _, order := range redeemCodeListOrder(params) {
@@ -218,6 +227,11 @@ func (r *redeemCodeRepository) Update(ctx context.Context, code *service.RedeemC
 		up.SetGroupID(*code.GroupID)
 	} else {
 		up.ClearGroupID()
+	}
+	if code.UsageCardPlanID != nil {
+		up.SetUsageCardPlanID(*code.UsageCardPlanID)
+	} else {
+		up.ClearUsageCardPlanID()
 	}
 	if code.ExpiresAt != nil {
 		up.SetExpiresAt(*code.ExpiresAt)
@@ -347,6 +361,7 @@ func (r *redeemCodeRepository) ListByUser(ctx context.Context, userID int64, lim
 	codes, err := r.client.RedeemCode.Query().
 		Where(redeemcode.UsedByEQ(userID)).
 		WithGroup().
+		WithUsageCardPlan().
 		Order(dbent.Desc(redeemcode.FieldUsedAt)).
 		Limit(limit).
 		All(ctx)
@@ -375,6 +390,7 @@ func (r *redeemCodeRepository) ListByUserPaginated(ctx context.Context, userID i
 
 	codes, err := q.
 		WithGroup().
+		WithUsageCardPlan().
 		Offset(params.Offset()).
 		Limit(params.Limit()).
 		Order(dbent.Desc(redeemcode.FieldUsedAt)).
@@ -413,18 +429,19 @@ func redeemCodeEntityToService(m *dbent.RedeemCode) *service.RedeemCode {
 		return nil
 	}
 	out := &service.RedeemCode{
-		ID:           m.ID,
-		Code:         m.Code,
-		Type:         m.Type,
-		Value:        m.Value,
-		Status:       m.Status,
-		UsedBy:       m.UsedBy,
-		UsedAt:       m.UsedAt,
-		Notes:        derefString(m.Notes),
-		CreatedAt:    m.CreatedAt,
-		ExpiresAt:    m.ExpiresAt,
-		GroupID:      m.GroupID,
-		ValidityDays: m.ValidityDays,
+		ID:              m.ID,
+		Code:            m.Code,
+		Type:            m.Type,
+		Value:           m.Value,
+		Status:          m.Status,
+		UsedBy:          m.UsedBy,
+		UsedAt:          m.UsedAt,
+		Notes:           derefString(m.Notes),
+		CreatedAt:       m.CreatedAt,
+		ExpiresAt:       m.ExpiresAt,
+		GroupID:         m.GroupID,
+		UsageCardPlanID: m.UsageCardPlanID,
+		ValidityDays:    m.ValidityDays,
 	}
 	if m.Edges.User != nil {
 		out.User = userEntityToService(m.Edges.User)
@@ -432,7 +449,29 @@ func redeemCodeEntityToService(m *dbent.RedeemCode) *service.RedeemCode {
 	if m.Edges.Group != nil {
 		out.Group = groupEntityToService(m.Edges.Group)
 	}
+	if m.Edges.UsageCardPlan != nil {
+		out.UsageCardPlan = usageCardPlanEntityToService(m.Edges.UsageCardPlan)
+	}
 	return out
+}
+
+func usageCardPlanEntityToService(m *dbent.UsageCardPlan) *service.UsageCardPlan {
+	if m == nil {
+		return nil
+	}
+	return &service.UsageCardPlan{
+		ID:           m.ID,
+		Name:         m.Name,
+		Description:  m.Description,
+		Price:        m.Price,
+		AmountUSD:    m.AmountUsd,
+		ValidityDays: m.ValidityDays,
+		Features:     m.Features,
+		ForSale:      m.ForSale,
+		SortOrder:    m.SortOrder,
+		CreatedAt:    m.CreatedAt,
+		UpdatedAt:    m.UpdatedAt,
+	}
 }
 
 func redeemCodeEntitiesToService(models []*dbent.RedeemCode) []service.RedeemCode {

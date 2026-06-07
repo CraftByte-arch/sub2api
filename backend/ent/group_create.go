@@ -495,6 +495,20 @@ func (_c *GroupCreate) SetNillableRpmLimit(v *int) *GroupCreate {
 	return _c
 }
 
+// SetUsageCardDisabled sets the "usage_card_disabled" field.
+func (_c *GroupCreate) SetUsageCardDisabled(v bool) *GroupCreate {
+	_c.mutation.SetUsageCardDisabled(v)
+	return _c
+}
+
+// SetNillableUsageCardDisabled sets the "usage_card_disabled" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableUsageCardDisabled(v *bool) *GroupCreate {
+	if v != nil {
+		_c.SetUsageCardDisabled(*v)
+	}
+	return _c
+}
+
 // AddAPIKeyIDs adds the "api_keys" edge to the APIKey entity by IDs.
 func (_c *GroupCreate) AddAPIKeyIDs(ids ...int64) *GroupCreate {
 	_c.mutation.AddAPIKeyIDs(ids...)
@@ -720,6 +734,10 @@ func (_c *GroupCreate) defaults() error {
 		v := group.DefaultRpmLimit
 		_c.mutation.SetRpmLimit(v)
 	}
+	if _, ok := _c.mutation.UsageCardDisabled(); !ok {
+		v := group.DefaultUsageCardDisabled
+		_c.mutation.SetUsageCardDisabled(v)
+	}
 	return nil
 }
 
@@ -821,6 +839,9 @@ func (_c *GroupCreate) check() error {
 	}
 	if _, ok := _c.mutation.RpmLimit(); !ok {
 		return &ValidationError{Name: "rpm_limit", err: errors.New(`ent: missing required field "Group.rpm_limit"`)}
+	}
+	if _, ok := _c.mutation.UsageCardDisabled(); !ok {
+		return &ValidationError{Name: "usage_card_disabled", err: errors.New(`ent: missing required field "Group.usage_card_disabled"`)}
 	}
 	return nil
 }
@@ -988,6 +1009,10 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.RpmLimit(); ok {
 		_spec.SetField(group.FieldRpmLimit, field.TypeInt, value)
 		_node.RpmLimit = value
+	}
+	if value, ok := _c.mutation.UsageCardDisabled(); ok {
+		_spec.SetField(group.FieldUsageCardDisabled, field.TypeBool, value)
+		_node.UsageCardDisabled = value
 	}
 	if nodes := _c.mutation.APIKeysIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{
@@ -1697,6 +1722,18 @@ func (u *GroupUpsert) AddRpmLimit(v int) *GroupUpsert {
 	return u
 }
 
+// SetUsageCardDisabled sets the "usage_card_disabled" field.
+func (u *GroupUpsert) SetUsageCardDisabled(v bool) *GroupUpsert {
+	u.Set(group.FieldUsageCardDisabled, v)
+	return u
+}
+
+// UpdateUsageCardDisabled sets the "usage_card_disabled" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateUsageCardDisabled() *GroupUpsert {
+	u.SetExcluded(group.FieldUsageCardDisabled)
+	return u
+}
+
 // UpdateNewValues updates the mutable fields using the new values that were set on create.
 // Using this option is equivalent to using:
 //
@@ -2383,6 +2420,20 @@ func (u *GroupUpsertOne) AddRpmLimit(v int) *GroupUpsertOne {
 func (u *GroupUpsertOne) UpdateRpmLimit() *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateRpmLimit()
+	})
+}
+
+// SetUsageCardDisabled sets the "usage_card_disabled" field.
+func (u *GroupUpsertOne) SetUsageCardDisabled(v bool) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetUsageCardDisabled(v)
+	})
+}
+
+// UpdateUsageCardDisabled sets the "usage_card_disabled" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateUsageCardDisabled() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateUsageCardDisabled()
 	})
 }
 
@@ -3238,6 +3289,20 @@ func (u *GroupUpsertBulk) AddRpmLimit(v int) *GroupUpsertBulk {
 func (u *GroupUpsertBulk) UpdateRpmLimit() *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateRpmLimit()
+	})
+}
+
+// SetUsageCardDisabled sets the "usage_card_disabled" field.
+func (u *GroupUpsertBulk) SetUsageCardDisabled(v bool) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetUsageCardDisabled(v)
+	})
+}
+
+// UpdateUsageCardDisabled sets the "usage_card_disabled" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateUsageCardDisabled() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateUsageCardDisabled()
 	})
 }
 

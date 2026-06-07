@@ -164,6 +164,9 @@ func (Group) Fields() []ent.Field {
 		field.Int("rpm_limit").
 			Default(0).
 			Comment("分组 RPM 上限，0 表示不限制；设置后接管该分组用户的限流"),
+		field.Bool("usage_card_disabled").
+			Default(false).
+			Comment("是否禁止该分组使用余额卡扣费"),
 	}
 }
 
@@ -191,6 +194,7 @@ func (Group) Indexes() []ent.Index {
 		index.Fields("platform"),
 		index.Fields("subscription_type"),
 		index.Fields("is_exclusive"),
+		index.Fields("usage_card_disabled"),
 		index.Fields("deleted_at"),
 		index.Fields("sort_order"),
 	}

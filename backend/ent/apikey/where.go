@@ -95,6 +95,11 @@ func Status(v string) predicate.APIKey {
 	return predicate.APIKey(sql.FieldEQ(FieldStatus, v))
 }
 
+// BillingPriority applies equality check predicate on the "billing_priority" field. It's identical to BillingPriorityEQ.
+func BillingPriority(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldEQ(FieldBillingPriority, v))
+}
+
 // LastUsedAt applies equality check predicate on the "last_used_at" field. It's identical to LastUsedAtEQ.
 func LastUsedAt(v time.Time) predicate.APIKey {
 	return predicate.APIKey(sql.FieldEQ(FieldLastUsedAt, v))
@@ -533,6 +538,71 @@ func StatusEqualFold(v string) predicate.APIKey {
 // StatusContainsFold applies the ContainsFold predicate on the "status" field.
 func StatusContainsFold(v string) predicate.APIKey {
 	return predicate.APIKey(sql.FieldContainsFold(FieldStatus, v))
+}
+
+// BillingPriorityEQ applies the EQ predicate on the "billing_priority" field.
+func BillingPriorityEQ(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldEQ(FieldBillingPriority, v))
+}
+
+// BillingPriorityNEQ applies the NEQ predicate on the "billing_priority" field.
+func BillingPriorityNEQ(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldNEQ(FieldBillingPriority, v))
+}
+
+// BillingPriorityIn applies the In predicate on the "billing_priority" field.
+func BillingPriorityIn(vs ...string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldIn(FieldBillingPriority, vs...))
+}
+
+// BillingPriorityNotIn applies the NotIn predicate on the "billing_priority" field.
+func BillingPriorityNotIn(vs ...string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldNotIn(FieldBillingPriority, vs...))
+}
+
+// BillingPriorityGT applies the GT predicate on the "billing_priority" field.
+func BillingPriorityGT(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldGT(FieldBillingPriority, v))
+}
+
+// BillingPriorityGTE applies the GTE predicate on the "billing_priority" field.
+func BillingPriorityGTE(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldGTE(FieldBillingPriority, v))
+}
+
+// BillingPriorityLT applies the LT predicate on the "billing_priority" field.
+func BillingPriorityLT(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldLT(FieldBillingPriority, v))
+}
+
+// BillingPriorityLTE applies the LTE predicate on the "billing_priority" field.
+func BillingPriorityLTE(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldLTE(FieldBillingPriority, v))
+}
+
+// BillingPriorityContains applies the Contains predicate on the "billing_priority" field.
+func BillingPriorityContains(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldContains(FieldBillingPriority, v))
+}
+
+// BillingPriorityHasPrefix applies the HasPrefix predicate on the "billing_priority" field.
+func BillingPriorityHasPrefix(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldHasPrefix(FieldBillingPriority, v))
+}
+
+// BillingPriorityHasSuffix applies the HasSuffix predicate on the "billing_priority" field.
+func BillingPriorityHasSuffix(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldHasSuffix(FieldBillingPriority, v))
+}
+
+// BillingPriorityEqualFold applies the EqualFold predicate on the "billing_priority" field.
+func BillingPriorityEqualFold(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldEqualFold(FieldBillingPriority, v))
+}
+
+// BillingPriorityContainsFold applies the ContainsFold predicate on the "billing_priority" field.
+func BillingPriorityContainsFold(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldContainsFold(FieldBillingPriority, v))
 }
 
 // LastUsedAtEQ applies the EQ predicate on the "last_used_at" field.

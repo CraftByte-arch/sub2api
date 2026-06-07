@@ -69,6 +69,10 @@ const (
 	EdgeSubscriptions = "subscriptions"
 	// EdgeAssignedSubscriptions holds the string denoting the assigned_subscriptions edge name in mutations.
 	EdgeAssignedSubscriptions = "assigned_subscriptions"
+	// EdgeUsageCards holds the string denoting the usage_cards edge name in mutations.
+	EdgeUsageCards = "usage_cards"
+	// EdgeAssignedUsageCards holds the string denoting the assigned_usage_cards edge name in mutations.
+	EdgeAssignedUsageCards = "assigned_usage_cards"
 	// EdgeAnnouncementReads holds the string denoting the announcement_reads edge name in mutations.
 	EdgeAnnouncementReads = "announcement_reads"
 	// EdgeAllowedGroups holds the string denoting the allowed_groups edge name in mutations.
@@ -119,6 +123,20 @@ const (
 	AssignedSubscriptionsInverseTable = "user_subscriptions"
 	// AssignedSubscriptionsColumn is the table column denoting the assigned_subscriptions relation/edge.
 	AssignedSubscriptionsColumn = "assigned_by"
+	// UsageCardsTable is the table that holds the usage_cards relation/edge.
+	UsageCardsTable = "user_usage_cards"
+	// UsageCardsInverseTable is the table name for the UserUsageCard entity.
+	// It exists in this package in order to avoid circular dependency with the "userusagecard" package.
+	UsageCardsInverseTable = "user_usage_cards"
+	// UsageCardsColumn is the table column denoting the usage_cards relation/edge.
+	UsageCardsColumn = "user_id"
+	// AssignedUsageCardsTable is the table that holds the assigned_usage_cards relation/edge.
+	AssignedUsageCardsTable = "user_usage_cards"
+	// AssignedUsageCardsInverseTable is the table name for the UserUsageCard entity.
+	// It exists in this package in order to avoid circular dependency with the "userusagecard" package.
+	AssignedUsageCardsInverseTable = "user_usage_cards"
+	// AssignedUsageCardsColumn is the table column denoting the assigned_usage_cards relation/edge.
+	AssignedUsageCardsColumn = "assigned_by"
 	// AnnouncementReadsTable is the table that holds the announcement_reads relation/edge.
 	AnnouncementReadsTable = "announcement_reads"
 	// AnnouncementReadsInverseTable is the table name for the AnnouncementRead entity.
@@ -466,6 +484,34 @@ func ByAssignedSubscriptions(term sql.OrderTerm, terms ...sql.OrderTerm) OrderOp
 	}
 }
 
+// ByUsageCardsCount orders the results by usage_cards count.
+func ByUsageCardsCount(opts ...sql.OrderTermOption) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborsCount(s, newUsageCardsStep(), opts...)
+	}
+}
+
+// ByUsageCards orders the results by usage_cards terms.
+func ByUsageCards(term sql.OrderTerm, terms ...sql.OrderTerm) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborTerms(s, newUsageCardsStep(), append([]sql.OrderTerm{term}, terms...)...)
+	}
+}
+
+// ByAssignedUsageCardsCount orders the results by assigned_usage_cards count.
+func ByAssignedUsageCardsCount(opts ...sql.OrderTermOption) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborsCount(s, newAssignedUsageCardsStep(), opts...)
+	}
+}
+
+// ByAssignedUsageCards orders the results by assigned_usage_cards terms.
+func ByAssignedUsageCards(term sql.OrderTerm, terms ...sql.OrderTerm) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborTerms(s, newAssignedUsageCardsStep(), append([]sql.OrderTerm{term}, terms...)...)
+	}
+}
+
 // ByAnnouncementReadsCount orders the results by announcement_reads count.
 func ByAnnouncementReadsCount(opts ...sql.OrderTermOption) OrderOption {
 	return func(s *sql.Selector) {
@@ -631,6 +677,20 @@ func newAssignedSubscriptionsStep() *sqlgraph.Step {
 		sqlgraph.From(Table, FieldID),
 		sqlgraph.To(AssignedSubscriptionsInverseTable, FieldID),
 		sqlgraph.Edge(sqlgraph.O2M, false, AssignedSubscriptionsTable, AssignedSubscriptionsColumn),
+	)
+}
+func newUsageCardsStep() *sqlgraph.Step {
+	return sqlgraph.NewStep(
+		sqlgraph.From(Table, FieldID),
+		sqlgraph.To(UsageCardsInverseTable, FieldID),
+		sqlgraph.Edge(sqlgraph.O2M, false, UsageCardsTable, UsageCardsColumn),
+	)
+}
+func newAssignedUsageCardsStep() *sqlgraph.Step {
+	return sqlgraph.NewStep(
+		sqlgraph.From(Table, FieldID),
+		sqlgraph.To(AssignedUsageCardsInverseTable, FieldID),
+		sqlgraph.Edge(sqlgraph.O2M, false, AssignedUsageCardsTable, AssignedUsageCardsColumn),
 	)
 }
 func newAnnouncementReadsStep() *sqlgraph.Step {

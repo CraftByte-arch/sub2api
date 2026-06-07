@@ -52,11 +52,11 @@
           type="button"
           class="studio-custom-select-option"
           :class="{ active: modelValue === option.value, disabled: option.disabled }"
-          :disabled="option.disabled"
           :data-disabled-reason="option.disabledReason"
           role="option"
           :aria-selected="modelValue === option.value"
           :aria-disabled="option.disabled ? 'true' : undefined"
+          :tabindex="option.disabled ? -1 : 0"
           :title="option.disabledReason"
           @click="selectValue(option.value)"
         >

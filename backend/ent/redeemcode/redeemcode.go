@@ -34,12 +34,16 @@ const (
 	FieldExpiresAt = "expires_at"
 	// FieldGroupID holds the string denoting the group_id field in the database.
 	FieldGroupID = "group_id"
+	// FieldUsageCardPlanID holds the string denoting the usage_card_plan_id field in the database.
+	FieldUsageCardPlanID = "usage_card_plan_id"
 	// FieldValidityDays holds the string denoting the validity_days field in the database.
 	FieldValidityDays = "validity_days"
 	// EdgeUser holds the string denoting the user edge name in mutations.
 	EdgeUser = "user"
 	// EdgeGroup holds the string denoting the group edge name in mutations.
 	EdgeGroup = "group"
+	// EdgeUsageCardPlan holds the string denoting the usage_card_plan edge name in mutations.
+	EdgeUsageCardPlan = "usage_card_plan"
 	// Table holds the table name of the redeemcode in the database.
 	Table = "redeem_codes"
 	// UserTable is the table that holds the user relation/edge.
@@ -56,6 +60,13 @@ const (
 	GroupInverseTable = "groups"
 	// GroupColumn is the table column denoting the group relation/edge.
 	GroupColumn = "group_id"
+	// UsageCardPlanTable is the table that holds the usage_card_plan relation/edge.
+	UsageCardPlanTable = "redeem_codes"
+	// UsageCardPlanInverseTable is the table name for the UsageCardPlan entity.
+	// It exists in this package in order to avoid circular dependency with the "usagecardplan" package.
+	UsageCardPlanInverseTable = "usage_card_plans"
+	// UsageCardPlanColumn is the table column denoting the usage_card_plan relation/edge.
+	UsageCardPlanColumn = "usage_card_plan_id"
 )
 
 // Columns holds all SQL columns for redeemcode fields.
@@ -71,6 +82,7 @@ var Columns = []string{
 	FieldCreatedAt,
 	FieldExpiresAt,
 	FieldGroupID,
+	FieldUsageCardPlanID,
 	FieldValidityDays,
 }
 
@@ -161,6 +173,11 @@ func ByGroupID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldGroupID, opts...).ToFunc()
 }
 
+// ByUsageCardPlanID orders the results by the usage_card_plan_id field.
+func ByUsageCardPlanID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldUsageCardPlanID, opts...).ToFunc()
+}
+
 // ByValidityDays orders the results by the validity_days field.
 func ByValidityDays(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldValidityDays, opts...).ToFunc()
@@ -179,6 +196,13 @@ func ByGroupField(field string, opts ...sql.OrderTermOption) OrderOption {
 		sqlgraph.OrderByNeighborTerms(s, newGroupStep(), sql.OrderByField(field, opts...))
 	}
 }
+
+// ByUsageCardPlanField orders the results by usage_card_plan field.
+func ByUsageCardPlanField(field string, opts ...sql.OrderTermOption) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborTerms(s, newUsageCardPlanStep(), sql.OrderByField(field, opts...))
+	}
+}
 func newUserStep() *sqlgraph.Step {
 	return sqlgraph.NewStep(
 		sqlgraph.From(Table, FieldID),
@@ -191,5 +215,12 @@ func newGroupStep() *sqlgraph.Step {
 		sqlgraph.From(Table, FieldID),
 		sqlgraph.To(GroupInverseTable, FieldID),
 		sqlgraph.Edge(sqlgraph.M2O, true, GroupTable, GroupColumn),
+	)
+}
+func newUsageCardPlanStep() *sqlgraph.Step {
+	return sqlgraph.NewStep(
+		sqlgraph.From(Table, FieldID),
+		sqlgraph.To(UsageCardPlanInverseTable, FieldID),
+		sqlgraph.Edge(sqlgraph.M2O, true, UsageCardPlanTable, UsageCardPlanColumn),
 	)
 }

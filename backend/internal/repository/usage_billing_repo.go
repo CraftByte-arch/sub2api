@@ -113,11 +113,16 @@ func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, t
 	}
 
 	if cmd.BalanceCost > 0 {
-		newBalance, err := deductUsageBillingBalance(ctx, tx, cmd.UserID, cmd.BalanceCost)
+		newBalance, usageCardID, err := r.applyUsageBillingWallet(ctx, tx, cmd)
 		if err != nil {
 			return err
 		}
-		result.NewBalance = &newBalance
+		if newBalance != nil {
+			result.NewBalance = newBalance
+		}
+		if usageCardID != nil {
+			result.UsageCardID = usageCardID
+		}
 	}
 
 	if cmd.APIKeyQuotaCost > 0 {
@@ -143,6 +148,97 @@ func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, t
 	}
 
 	return nil
+}
+
+func (r *usageBillingRepository) applyUsageBillingWallet(ctx context.Context, tx *sql.Tx, cmd *service.UsageBillingCommand) (*float64, *int64, error) {
+	if cmd == nil || cmd.BalanceCost <= 0 {
+		return nil, nil, nil
+	}
+	if !cmd.UsageCardBillingEnabled || cmd.UsageCardCost <= 0 {
+		newBalance, err := deductUsageBillingBalance(ctx, tx, cmd.UserID, cmd.BalanceCost)
+		return &newBalance, nil, err
+	}
+	priority := service.NormalizeBillingPriority(cmd.BillingPriority)
+	switch priority {
+	case service.BillingPriorityUsageCardOnly:
+		cardID, err := deductFirstAvailableUsageCard(ctx, tx, cmd.UserID, cmd.UsageCardCost)
+		return nil, cardID, err
+	case service.BillingPriorityUsageCardFirst:
+		cardID, err := deductFirstAvailableUsageCard(ctx, tx, cmd.UserID, cmd.UsageCardCost)
+		if err == nil {
+			return nil, cardID, nil
+		}
+		if !errors.Is(err, service.ErrUsageCardUnavailable) {
+			return nil, nil, err
+		}
+		newBalance, err := deductUsageBillingBalance(ctx, tx, cmd.UserID, cmd.BalanceCost)
+		return &newBalance, nil, err
+	case service.BillingPriorityBalanceOnly:
+		newBalance, err := deductUsageBillingBalance(ctx, tx, cmd.UserID, cmd.BalanceCost)
+		return &newBalance, nil, err
+	default:
+		if hasPositiveBalance(ctx, tx, cmd.UserID) {
+			newBalance, err := deductUsageBillingBalance(ctx, tx, cmd.UserID, cmd.BalanceCost)
+			return &newBalance, nil, err
+		}
+		cardID, err := deductFirstAvailableUsageCard(ctx, tx, cmd.UserID, cmd.UsageCardCost)
+		if err == nil {
+			return nil, cardID, nil
+		}
+		if !errors.Is(err, service.ErrUsageCardUnavailable) {
+			return nil, nil, err
+		}
+		newBalance, err := deductUsageBillingBalance(ctx, tx, cmd.UserID, cmd.BalanceCost)
+		return &newBalance, nil, err
+	}
+}
+
+func hasPositiveBalance(ctx context.Context, tx *sql.Tx, userID int64) bool {
+	var ok bool
+	if err := tx.QueryRowContext(ctx, `
+		SELECT balance > 0
+		FROM users
+		WHERE id = $1 AND deleted_at IS NULL
+	`, userID).Scan(&ok); err != nil {
+		return false
+	}
+	return ok
+}
+
+func deductFirstAvailableUsageCard(ctx context.Context, tx *sql.Tx, userID int64, amount float64) (*int64, error) {
+	var cardID int64
+	err := tx.QueryRowContext(ctx, `
+		WITH selected AS (
+			SELECT id
+			FROM user_usage_cards
+			WHERE user_id = $1
+				AND deleted_at IS NULL
+				AND status = 'active'
+				AND starts_at <= NOW()
+				AND expires_at > NOW()
+				AND used_usd < total_limit_usd
+			ORDER BY expires_at ASC, (total_limit_usd - used_usd) ASC, created_at ASC, id ASC
+			FOR UPDATE SKIP LOCKED
+			LIMIT 1
+		)
+		UPDATE user_usage_cards c
+		SET used_usd = c.used_usd + $2,
+			status = CASE
+				WHEN c.used_usd + $2 >= c.total_limit_usd THEN 'exhausted'
+				ELSE c.status
+			END,
+			updated_at = NOW()
+		FROM selected
+		WHERE c.id = selected.id
+		RETURNING c.id
+	`, userID, amount).Scan(&cardID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, service.ErrUsageCardUnavailable
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &cardID, nil
 }
 
 func incrementUsageBillingSubscription(ctx context.Context, tx *sql.Tx, subscriptionID int64, costUSD float64) error {

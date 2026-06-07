@@ -20,7 +20,7 @@ export type OrderStatus =
 
 export type PaymentType = 'alipay' | 'wxpay' | 'alipay_direct' | 'wxpay_direct' | 'stripe' | 'easypay' | 'airwallex'
 
-export type OrderType = 'balance' | 'subscription'
+export type OrderType = 'balance' | 'subscription' | 'usage_card'
 
 // ==================== Configuration ====================
 
@@ -63,6 +63,7 @@ export interface CheckoutInfoResponse {
   global_min: number
   global_max: number
   plans: SubscriptionPlan[]
+  usage_card_plans: UsageCardPlan[]
   balance_disabled: boolean
   balance_recharge_multiplier: number
   recharge_fee_rate: number
@@ -71,6 +72,8 @@ export interface CheckoutInfoResponse {
   stripe_publishable_key: string
   /** When true, Alipay payments on mobile always show the QR code instead of redirecting */
   alipay_force_qrcode?: boolean
+  legacy_subscription_purchase_enabled?: boolean
+  usage_card_payment_enabled?: boolean
 }
 
 // ==================== Orders ====================
@@ -119,6 +122,18 @@ export interface SubscriptionPlan {
   validity_unit: string
   /** Stored as JSON string in backend; API layer should parse before use */
   features: string[]
+  for_sale: boolean
+  sort_order: number
+}
+
+export interface UsageCardPlan {
+  id: number
+  name: string
+  description: string
+  price: number
+  amount_usd: number
+  validity_days: number
+  features: string
   for_sale: boolean
   sort_order: number
 }

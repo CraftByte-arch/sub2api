@@ -83,3 +83,68 @@ func TestBuildUsageBillingCommand_SubscriptionAppliesRateMultiplier(t *testing.T
 		})
 	}
 }
+
+func TestBuildUsageBillingCommand_UsageCardCostTracksActualCost(t *testing.T) {
+	t.Parallel()
+
+	groupID := int64(7)
+
+	tests := []struct {
+		name                string
+		usageCardEnabled    bool
+		usageCardDisabled   bool
+		wantUsageCardCost   float64
+		wantUsageCardEnable bool
+	}{
+		{
+			name:                "enabled balance billing exposes usage card cost",
+			usageCardEnabled:    true,
+			usageCardDisabled:   false,
+			wantUsageCardCost:   2.0,
+			wantUsageCardEnable: true,
+		},
+		{
+			name:                "disabled group suppresses usage card cost",
+			usageCardEnabled:    true,
+			usageCardDisabled:   true,
+			wantUsageCardCost:   0,
+			wantUsageCardEnable: false,
+		},
+		{
+			name:                "global off suppresses usage card cost",
+			usageCardEnabled:    false,
+			usageCardDisabled:   false,
+			wantUsageCardCost:   0,
+			wantUsageCardEnable: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			p := &postUsageBillingParams{
+				Cost:                    &CostBreakdown{TotalCost: 1.0, ActualCost: 2.0},
+				User:                    &User{ID: 1},
+				APIKey:                  &APIKey{ID: 2, GroupID: &groupID, Group: &Group{ID: groupID, UsageCardDisabled: tt.usageCardDisabled}},
+				Account:                 &Account{ID: 3},
+				UsageCardBillingEnabled: tt.usageCardEnabled,
+				IsSubscriptionBill:      false,
+			}
+
+			cmd := buildUsageBillingCommand("req-usage-card", nil, p)
+			if cmd == nil {
+				t.Fatal("buildUsageBillingCommand returned nil")
+			}
+			if cmd.BalanceCost != 2.0 {
+				t.Errorf("BalanceCost = %v, want 2", cmd.BalanceCost)
+			}
+			if cmd.UsageCardCost != tt.wantUsageCardCost {
+				t.Errorf("UsageCardCost = %v, want %v", cmd.UsageCardCost, tt.wantUsageCardCost)
+			}
+			if cmd.UsageCardBillingEnabled != tt.wantUsageCardEnable {
+				t.Errorf("UsageCardBillingEnabled = %v, want %v", cmd.UsageCardBillingEnabled, tt.wantUsageCardEnable)
+			}
+		})
+	}
+}

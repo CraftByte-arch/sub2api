@@ -24,6 +24,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/userattributevalue"
 	"github.com/Wei-Shaw/sub2api/ent/userplatformquota"
 	"github.com/Wei-Shaw/sub2api/ent/usersubscription"
+	"github.com/Wei-Shaw/sub2api/ent/userusagecard"
 )
 
 // UserCreate is the builder for creating a User entity.
@@ -398,6 +399,36 @@ func (_c *UserCreate) AddAssignedSubscriptions(v ...*UserSubscription) *UserCrea
 		ids[i] = v[i].ID
 	}
 	return _c.AddAssignedSubscriptionIDs(ids...)
+}
+
+// AddUsageCardIDs adds the "usage_cards" edge to the UserUsageCard entity by IDs.
+func (_c *UserCreate) AddUsageCardIDs(ids ...int64) *UserCreate {
+	_c.mutation.AddUsageCardIDs(ids...)
+	return _c
+}
+
+// AddUsageCards adds the "usage_cards" edges to the UserUsageCard entity.
+func (_c *UserCreate) AddUsageCards(v ...*UserUsageCard) *UserCreate {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _c.AddUsageCardIDs(ids...)
+}
+
+// AddAssignedUsageCardIDs adds the "assigned_usage_cards" edge to the UserUsageCard entity by IDs.
+func (_c *UserCreate) AddAssignedUsageCardIDs(ids ...int64) *UserCreate {
+	_c.mutation.AddAssignedUsageCardIDs(ids...)
+	return _c
+}
+
+// AddAssignedUsageCards adds the "assigned_usage_cards" edges to the UserUsageCard entity.
+func (_c *UserCreate) AddAssignedUsageCards(v ...*UserUsageCard) *UserCreate {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _c.AddAssignedUsageCardIDs(ids...)
 }
 
 // AddAnnouncementReadIDs adds the "announcement_reads" edge to the AnnouncementRead entity by IDs.
@@ -900,6 +931,38 @@ func (_c *UserCreate) createSpec() (*User, *sqlgraph.CreateSpec) {
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
 				IDSpec: sqlgraph.NewFieldSpec(usersubscription.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges = append(_spec.Edges, edge)
+	}
+	if nodes := _c.mutation.UsageCardsIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   user.UsageCardsTable,
+			Columns: []string{user.UsageCardsColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(userusagecard.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges = append(_spec.Edges, edge)
+	}
+	if nodes := _c.mutation.AssignedUsageCardsIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   user.AssignedUsageCardsTable,
+			Columns: []string{user.AssignedUsageCardsColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(userusagecard.FieldID, field.TypeInt64),
 			},
 		}
 		for _, k := range nodes {

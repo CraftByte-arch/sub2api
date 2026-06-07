@@ -481,7 +481,7 @@ const exportToExcel = async () => {
       t('admin.usage.cacheReadTokens'), t('admin.usage.cacheCreationTokens'),
       t('admin.usage.inputCost'), t('admin.usage.outputCost'),
       t('admin.usage.cacheReadCost'), t('admin.usage.cacheCreationCost'),
-      t('usage.rate'), t('usage.accountMultiplier'), t('usage.original'), t('usage.userBilled'), t('usage.accountBilled'),
+      t('usage.rate'), t('usage.accountMultiplier'), t('usage.original'), t('usage.userBilled'), t('usage.accountBilled'), t('usage.deductionSource'),
       t('usage.firstToken'), t('usage.duration'),
       t('admin.usage.requestId'), t('usage.userAgent'), t('admin.usage.ipAddress')
     ]
@@ -501,7 +501,7 @@ const exportToExcel = async () => {
         log.cache_read_cost?.toFixed(6) || '0.000000', log.cache_creation_cost?.toFixed(6) || '0.000000',
         log.rate_multiplier?.toPrecision(4) || '1.00', (log.account_rate_multiplier ?? 1).toPrecision(4),
         log.total_cost?.toFixed(6) || '0.000000', log.actual_cost?.toFixed(6) || '0.000000',
-        ((log.account_stats_cost ?? log.total_cost) * (log.account_rate_multiplier ?? 1)).toFixed(6), log.first_token_ms ?? '', log.duration_ms,
+        ((log.account_stats_cost ?? log.total_cost) * (log.account_rate_multiplier ?? 1)).toFixed(6), getDeductionSourceLabel(log), log.first_token_ms ?? '', log.duration_ms,
         log.request_id || '', log.user_agent || '', log.ip_address || ''
       ])
       if (rows.length) {
@@ -520,6 +520,16 @@ const exportToExcel = async () => {
     }
   } catch (error) { console.error('Failed to export:', error); appStore.showError('Export Failed') }
   finally { if(exportAbortController === c) { exportAbortController = null; exporting.value = false; exportProgress.show = false } }
+}
+
+const getDeductionSourceKey = (row: Pick<AdminUsageLog, 'subscription_id' | 'usage_card_id'> | null | undefined): 'usageCard' | 'subscription' | 'balance' => {
+  if (row?.usage_card_id) return 'usageCard'
+  if (row?.subscription_id) return 'subscription'
+  return 'balance'
+}
+
+const getDeductionSourceLabel = (row: Pick<AdminUsageLog, 'subscription_id' | 'usage_card_id'> | null | undefined): string => {
+  return t(`usage.deductionSources.${getDeductionSourceKey(row)}`)
 }
 
 // Column visibility

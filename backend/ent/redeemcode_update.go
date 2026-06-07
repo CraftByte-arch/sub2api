@@ -14,6 +14,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/group"
 	"github.com/Wei-Shaw/sub2api/ent/predicate"
 	"github.com/Wei-Shaw/sub2api/ent/redeemcode"
+	"github.com/Wei-Shaw/sub2api/ent/usagecardplan"
 	"github.com/Wei-Shaw/sub2api/ent/user"
 )
 
@@ -193,6 +194,26 @@ func (_u *RedeemCodeUpdate) ClearGroupID() *RedeemCodeUpdate {
 	return _u
 }
 
+// SetUsageCardPlanID sets the "usage_card_plan_id" field.
+func (_u *RedeemCodeUpdate) SetUsageCardPlanID(v int64) *RedeemCodeUpdate {
+	_u.mutation.SetUsageCardPlanID(v)
+	return _u
+}
+
+// SetNillableUsageCardPlanID sets the "usage_card_plan_id" field if the given value is not nil.
+func (_u *RedeemCodeUpdate) SetNillableUsageCardPlanID(v *int64) *RedeemCodeUpdate {
+	if v != nil {
+		_u.SetUsageCardPlanID(*v)
+	}
+	return _u
+}
+
+// ClearUsageCardPlanID clears the value of the "usage_card_plan_id" field.
+func (_u *RedeemCodeUpdate) ClearUsageCardPlanID() *RedeemCodeUpdate {
+	_u.mutation.ClearUsageCardPlanID()
+	return _u
+}
+
 // SetValidityDays sets the "validity_days" field.
 func (_u *RedeemCodeUpdate) SetValidityDays(v int) *RedeemCodeUpdate {
 	_u.mutation.ResetValidityDays()
@@ -238,6 +259,11 @@ func (_u *RedeemCodeUpdate) SetGroup(v *Group) *RedeemCodeUpdate {
 	return _u.SetGroupID(v.ID)
 }
 
+// SetUsageCardPlan sets the "usage_card_plan" edge to the UsageCardPlan entity.
+func (_u *RedeemCodeUpdate) SetUsageCardPlan(v *UsageCardPlan) *RedeemCodeUpdate {
+	return _u.SetUsageCardPlanID(v.ID)
+}
+
 // Mutation returns the RedeemCodeMutation object of the builder.
 func (_u *RedeemCodeUpdate) Mutation() *RedeemCodeMutation {
 	return _u.mutation
@@ -252,6 +278,12 @@ func (_u *RedeemCodeUpdate) ClearUser() *RedeemCodeUpdate {
 // ClearGroup clears the "group" edge to the Group entity.
 func (_u *RedeemCodeUpdate) ClearGroup() *RedeemCodeUpdate {
 	_u.mutation.ClearGroup()
+	return _u
+}
+
+// ClearUsageCardPlan clears the "usage_card_plan" edge to the UsageCardPlan entity.
+func (_u *RedeemCodeUpdate) ClearUsageCardPlan() *RedeemCodeUpdate {
+	_u.mutation.ClearUsageCardPlan()
 	return _u
 }
 
@@ -404,6 +436,35 @@ func (_u *RedeemCodeUpdate) sqlSave(ctx context.Context) (_node int, err error) 
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
 				IDSpec: sqlgraph.NewFieldSpec(group.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Add = append(_spec.Edges.Add, edge)
+	}
+	if _u.mutation.UsageCardPlanCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2O,
+			Inverse: true,
+			Table:   redeemcode.UsageCardPlanTable,
+			Columns: []string{redeemcode.UsageCardPlanColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(usagecardplan.FieldID, field.TypeInt64),
+			},
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.UsageCardPlanIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2O,
+			Inverse: true,
+			Table:   redeemcode.UsageCardPlanTable,
+			Columns: []string{redeemcode.UsageCardPlanColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(usagecardplan.FieldID, field.TypeInt64),
 			},
 		}
 		for _, k := range nodes {
@@ -594,6 +655,26 @@ func (_u *RedeemCodeUpdateOne) ClearGroupID() *RedeemCodeUpdateOne {
 	return _u
 }
 
+// SetUsageCardPlanID sets the "usage_card_plan_id" field.
+func (_u *RedeemCodeUpdateOne) SetUsageCardPlanID(v int64) *RedeemCodeUpdateOne {
+	_u.mutation.SetUsageCardPlanID(v)
+	return _u
+}
+
+// SetNillableUsageCardPlanID sets the "usage_card_plan_id" field if the given value is not nil.
+func (_u *RedeemCodeUpdateOne) SetNillableUsageCardPlanID(v *int64) *RedeemCodeUpdateOne {
+	if v != nil {
+		_u.SetUsageCardPlanID(*v)
+	}
+	return _u
+}
+
+// ClearUsageCardPlanID clears the value of the "usage_card_plan_id" field.
+func (_u *RedeemCodeUpdateOne) ClearUsageCardPlanID() *RedeemCodeUpdateOne {
+	_u.mutation.ClearUsageCardPlanID()
+	return _u
+}
+
 // SetValidityDays sets the "validity_days" field.
 func (_u *RedeemCodeUpdateOne) SetValidityDays(v int) *RedeemCodeUpdateOne {
 	_u.mutation.ResetValidityDays()
@@ -639,6 +720,11 @@ func (_u *RedeemCodeUpdateOne) SetGroup(v *Group) *RedeemCodeUpdateOne {
 	return _u.SetGroupID(v.ID)
 }
 
+// SetUsageCardPlan sets the "usage_card_plan" edge to the UsageCardPlan entity.
+func (_u *RedeemCodeUpdateOne) SetUsageCardPlan(v *UsageCardPlan) *RedeemCodeUpdateOne {
+	return _u.SetUsageCardPlanID(v.ID)
+}
+
 // Mutation returns the RedeemCodeMutation object of the builder.
 func (_u *RedeemCodeUpdateOne) Mutation() *RedeemCodeMutation {
 	return _u.mutation
@@ -653,6 +739,12 @@ func (_u *RedeemCodeUpdateOne) ClearUser() *RedeemCodeUpdateOne {
 // ClearGroup clears the "group" edge to the Group entity.
 func (_u *RedeemCodeUpdateOne) ClearGroup() *RedeemCodeUpdateOne {
 	_u.mutation.ClearGroup()
+	return _u
+}
+
+// ClearUsageCardPlan clears the "usage_card_plan" edge to the UsageCardPlan entity.
+func (_u *RedeemCodeUpdateOne) ClearUsageCardPlan() *RedeemCodeUpdateOne {
+	_u.mutation.ClearUsageCardPlan()
 	return _u
 }
 
@@ -835,6 +927,35 @@ func (_u *RedeemCodeUpdateOne) sqlSave(ctx context.Context) (_node *RedeemCode, 
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
 				IDSpec: sqlgraph.NewFieldSpec(group.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Add = append(_spec.Edges.Add, edge)
+	}
+	if _u.mutation.UsageCardPlanCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2O,
+			Inverse: true,
+			Table:   redeemcode.UsageCardPlanTable,
+			Columns: []string{redeemcode.UsageCardPlanColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(usagecardplan.FieldID, field.TypeInt64),
+			},
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.UsageCardPlanIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2O,
+			Inverse: true,
+			Table:   redeemcode.UsageCardPlanTable,
+			Columns: []string{redeemcode.UsageCardPlanColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(usagecardplan.FieldID, field.TypeInt64),
 			},
 		}
 		for _, k := range nodes {

@@ -333,6 +333,18 @@ func (f TLSFingerprintProfileFunc) Mutate(ctx context.Context, m ent.Mutation) (
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.TLSFingerprintProfileMutation", m)
 }
 
+// The UsageCardPlanFunc type is an adapter to allow the use of ordinary
+// function as UsageCardPlan mutator.
+type UsageCardPlanFunc func(context.Context, *ent.UsageCardPlanMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f UsageCardPlanFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.UsageCardPlanMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.UsageCardPlanMutation", m)
+}
+
 // The UsageCleanupTaskFunc type is an adapter to allow the use of ordinary
 // function as UsageCleanupTask mutator.
 type UsageCleanupTaskFunc func(context.Context, *ent.UsageCleanupTaskMutation) (ent.Value, error)
@@ -427,6 +439,18 @@ func (f UserSubscriptionFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.V
 		return f(ctx, mv)
 	}
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.UserSubscriptionMutation", m)
+}
+
+// The UserUsageCardFunc type is an adapter to allow the use of ordinary
+// function as UserUsageCard mutator.
+type UserUsageCardFunc func(context.Context, *ent.UserUsageCardMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f UserUsageCardFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.UserUsageCardMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.UserUsageCardMutation", m)
 }
 
 // Condition is a hook condition function.

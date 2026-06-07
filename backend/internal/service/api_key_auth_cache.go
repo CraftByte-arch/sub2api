@@ -4,16 +4,17 @@ import "time"
 
 // APIKeyAuthSnapshot API Key 认证缓存快照（仅包含认证所需字段）
 type APIKeyAuthSnapshot struct {
-	Version     int                      `json:"version"`
-	APIKeyID    int64                    `json:"api_key_id"`
-	UserID      int64                    `json:"user_id"`
-	GroupID     *int64                   `json:"group_id,omitempty"`
-	Name        string                   `json:"name"`
-	Status      string                   `json:"status"`
-	IPWhitelist []string                 `json:"ip_whitelist,omitempty"`
-	IPBlacklist []string                 `json:"ip_blacklist,omitempty"`
-	User        APIKeyAuthUserSnapshot   `json:"user"`
-	Group       *APIKeyAuthGroupSnapshot `json:"group,omitempty"`
+	Version         int                      `json:"version"`
+	APIKeyID        int64                    `json:"api_key_id"`
+	UserID          int64                    `json:"user_id"`
+	GroupID         *int64                   `json:"group_id,omitempty"`
+	Name            string                   `json:"name"`
+	Status          string                   `json:"status"`
+	BillingPriority string                   `json:"billing_priority,omitempty"`
+	IPWhitelist     []string                 `json:"ip_whitelist,omitempty"`
+	IPBlacklist     []string                 `json:"ip_blacklist,omitempty"`
+	User            APIKeyAuthUserSnapshot   `json:"user"`
+	Group           *APIKeyAuthGroupSnapshot `json:"group,omitempty"`
 
 	// Quota fields for API Key independent quota feature
 	Quota     float64 `json:"quota"`      // Quota limit in USD (0 = unlimited)
@@ -59,6 +60,7 @@ type APIKeyAuthGroupSnapshot struct {
 	Name                            string   `json:"name"`
 	Platform                        string   `json:"platform"`
 	Status                          string   `json:"status"`
+	UsageCardDisabled               bool     `json:"usage_card_disabled"`
 	SubscriptionType                string   `json:"subscription_type"`
 	RateMultiplier                  float64  `json:"rate_multiplier"`
 	DailyLimitUSD                   *float64 `json:"daily_limit_usd,omitempty"`

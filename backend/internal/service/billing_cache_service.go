@@ -102,6 +102,7 @@ type BillingCacheService struct {
 	cache                 BillingCache
 	userRepo              UserRepository
 	subRepo               UserSubscriptionRepository
+	usageCardService      *UsageCardService
 	apiKeyRateLimitLoader apiKeyRateLimitLoader
 	userRPMCache          UserRPMCache
 	userGroupRateRepo     UserGroupRateRepository
@@ -147,6 +148,13 @@ func NewBillingCacheService(
 	svc.circuitBreaker = newBillingCircuitBreaker(cfg.Billing.CircuitBreaker)
 	svc.startCacheWriteWorkers()
 	return svc
+}
+
+func (s *BillingCacheService) SetUsageCardService(usageCardService *UsageCardService) {
+	if s == nil {
+		return
+	}
+	s.usageCardService = usageCardService
 }
 
 // Stop 关闭缓存写入工作池
@@ -722,7 +730,7 @@ func (s *BillingCacheService) CheckBillingEligibility(ctx context.Context, user 
 			return err
 		}
 	} else {
-		if err := s.checkBalanceEligibility(ctx, user.ID); err != nil {
+		if err := s.checkWalletEligibility(ctx, user, apiKey); err != nil {
 			return err
 		}
 	}
@@ -746,6 +754,70 @@ func (s *BillingCacheService) CheckBillingEligibility(ctx context.Context, user 
 		return err
 	}
 
+	return nil
+}
+
+func (s *BillingCacheService) checkWalletEligibility(ctx context.Context, user *User, apiKey *APIKey) error {
+	if user == nil {
+		return ErrInsufficientBalance
+	}
+	if apiKey != nil && apiKey.Group != nil && apiKey.Group.UsageCardDisabled {
+		return s.checkBalanceEligibility(ctx, user.ID)
+	}
+	priority := s.resolveWalletBillingPriority(ctx, apiKey)
+	if priority == BillingPriorityUsageCardOnly {
+		return s.checkUsageCardEligibility(ctx, user.ID)
+	}
+	if priority == BillingPriorityUsageCardFirst {
+		if err := s.checkUsageCardEligibility(ctx, user.ID); err == nil {
+			return nil
+		}
+		return s.checkBalanceEligibility(ctx, user.ID)
+	}
+	if err := s.checkBalanceEligibility(ctx, user.ID); err == nil {
+		return nil
+	} else if priority == BillingPriorityBalanceOnly {
+		return err
+	}
+	return s.checkUsageCardEligibility(ctx, user.ID)
+}
+
+func (s *BillingCacheService) resolveWalletBillingPriority(ctx context.Context, apiKey *APIKey) string {
+	if apiKey != nil && apiKey.Group != nil && apiKey.Group.UsageCardDisabled {
+		return BillingPriorityBalanceFirst
+	}
+	priority := BillingPriorityAuto
+	if apiKey != nil {
+		priority = NormalizeBillingPriority(apiKey.BillingPriority)
+	}
+	if priority == BillingPriorityAuto {
+		if s != nil && s.usageCardService != nil {
+			return s.usageCardService.DefaultPriority(ctx)
+		}
+		return BillingPriorityBalanceFirst
+	}
+	return priority
+}
+
+func (s *BillingCacheService) ResolveWalletBillingPriority(ctx context.Context, apiKey *APIKey) string {
+	return s.resolveWalletBillingPriority(ctx, apiKey)
+}
+
+func (s *BillingCacheService) IsUsageCardBillingEnabled(ctx context.Context) bool {
+	return s != nil && s.usageCardService != nil && s.usageCardService.IsBillingEnabled(ctx)
+}
+
+func (s *BillingCacheService) checkUsageCardEligibility(ctx context.Context, userID int64) error {
+	if s == nil || s.usageCardService == nil || !s.usageCardService.IsBillingEnabled(ctx) {
+		return ErrUsageCardUnavailable
+	}
+	ok, err := s.usageCardService.HasAvailableCard(ctx, userID, time.Now())
+	if err != nil {
+		return ErrBillingServiceUnavailable.WithCause(err)
+	}
+	if !ok {
+		return ErrUsageCardUnavailable
+	}
 	return nil
 }
 

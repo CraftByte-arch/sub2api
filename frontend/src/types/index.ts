@@ -2,6 +2,8 @@
  * Core Type Definitions for Sub2API Frontend
  */
 
+import type { UsageCardPlan as UsageCardPlanType } from './payment'
+
 // ==================== Common Types ====================
 
 export interface SelectOption {
@@ -209,6 +211,15 @@ export interface PublicSettings {
   doc_url: string
   home_content: string
   hide_ccs_import_button: boolean
+  purchase_subscription_enabled?: boolean
+  purchase_subscription_url?: string
+  legacy_subscription_purchase_enabled?: boolean
+  legacy_subscription_visible?: boolean
+  usage_card_enabled?: boolean
+  usage_card_payment_enabled?: boolean
+  usage_card_redeem_enabled?: boolean
+  usage_card_billing_enabled?: boolean
+  usage_card_default_priority?: string
   payment_enabled: boolean
   risk_control_enabled: boolean
   table_default_page_size: number
@@ -504,6 +515,7 @@ export interface Group {
   rate_multiplier: number
   rpm_limit?: number // Group-level RPM cap (0 = unlimited); overrides user-level rpm_limit when set
   is_exclusive: boolean
+  usage_card_disabled?: boolean
   status: 'active' | 'inactive'
   subscription_type: SubscriptionType
   daily_limit_usd: number | null
@@ -588,7 +600,15 @@ export interface ApiKey {
   reset_5h_at: string | null
   reset_1d_at: string | null
   reset_7d_at: string | null
+  billing_priority: BillingPriority
 }
+
+export type BillingPriority =
+  | 'auto'
+  | 'usage_card_first'
+  | 'balance_first'
+  | 'usage_card_only'
+  | 'balance_only'
 
 export interface CreateApiKeyRequest {
   name: string
@@ -601,6 +621,7 @@ export interface CreateApiKeyRequest {
   rate_limit_5h?: number
   rate_limit_1d?: number
   rate_limit_7d?: number
+  billing_priority?: BillingPriority
 }
 
 export interface UpdateApiKeyRequest {
@@ -616,6 +637,7 @@ export interface UpdateApiKeyRequest {
   rate_limit_1d?: number
   rate_limit_7d?: number
   reset_rate_limit_usage?: boolean
+  billing_priority?: BillingPriority
 }
 
 export interface CreateGroupRequest {
@@ -624,6 +646,7 @@ export interface CreateGroupRequest {
   platform?: GroupPlatform
   rate_multiplier?: number
   is_exclusive?: boolean
+  usage_card_disabled?: boolean
   subscription_type?: SubscriptionType
   daily_limit_usd?: number | null
   weekly_limit_usd?: number | null
@@ -658,6 +681,7 @@ export interface UpdateGroupRequest {
   platform?: GroupPlatform
   rate_multiplier?: number
   is_exclusive?: boolean
+  usage_card_disabled?: boolean
   status?: 'active' | 'inactive'
   subscription_type?: SubscriptionType
   daily_limit_usd?: number | null
@@ -1186,7 +1210,12 @@ export interface CodexSessionImportResult {
 
 // ==================== Usage & Redeem Types ====================
 
-export type RedeemCodeType = 'balance' | 'concurrency' | 'subscription' | 'invitation'
+export type RedeemCodeType =
+  | 'balance'
+  | 'concurrency'
+  | 'subscription'
+  | 'invitation'
+  | 'usage_card'
 export type UsageRequestType = 'unknown' | 'sync' | 'stream' | 'ws_v2'
 export type ImageSizeSource = 'output' | 'input' | 'default' | 'legacy'
 export type ImageSizeBreakdown = Record<string, number>
@@ -1205,6 +1234,7 @@ export interface UsageLog {
 
   group_id: number | null
   subscription_id: number | null
+  usage_card_id?: number | null
 
   input_tokens: number
   output_tokens: number
@@ -1319,9 +1349,11 @@ export interface RedeemCode {
   updated_at?: string
   notes?: string
   group_id?: number | null // 订阅类型专用
+  usage_card_plan_id?: number | null // 余额卡类型专用
   validity_days?: number // 订阅类型专用
   user?: User
   group?: Group // 关联的分组
+  usage_card_plan?: UsageCardPlanType
 }
 
 export interface GenerateRedeemCodesRequest {
@@ -1329,6 +1361,7 @@ export interface GenerateRedeemCodesRequest {
   type: RedeemCodeType
   value: number
   group_id?: number | null // 订阅类型专用
+  usage_card_plan_id?: number | null // 余额卡类型专用
   validity_days?: number // 订阅类型专用
   expires_at?: string | null
   expires_in_days?: number
@@ -1875,7 +1908,7 @@ export interface UpdateScheduledTestPlanRequest {
 }
 
 // Payment types
-export type { SubscriptionPlan, PaymentOrder, CheckoutInfoResponse } from './payment'
+export type { SubscriptionPlan, UsageCardPlan, PaymentOrder, CheckoutInfoResponse } from './payment'
 
 export type {
   PlatformQuotaItem,

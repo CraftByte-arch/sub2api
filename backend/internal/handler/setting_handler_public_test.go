@@ -82,6 +82,47 @@ func TestSettingHandler_GetPublicSettings_ExposesForceEmailOnThirdPartySignup(t 
 	require.True(t, resp.Data.ForceEmailOnThirdPartySignup)
 }
 
+func TestSettingHandler_GetPublicSettings_ExposesUsageCardFlags(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	repo := &settingHandlerPublicRepoStub{
+		values: map[string]string{
+			service.SettingKeyUsageCardEnabled:         "true",
+			service.SettingKeyUsageCardPaymentEnabled:  "true",
+			service.SettingKeyUsageCardRedeemEnabled:   "true",
+			service.SettingKeyUsageCardBillingEnabled:  "true",
+			service.SettingKeyUsageCardDefaultPriority: service.BillingPriorityUsageCardOnly,
+		},
+	}
+	h := NewSettingHandler(service.NewSettingService(repo, &config.Config{}), "test-version")
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/settings/public", nil)
+
+	h.GetPublicSettings(c)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+
+	var resp struct {
+		Code int `json:"code"`
+		Data struct {
+			UsageCardEnabled         bool   `json:"usage_card_enabled"`
+			UsageCardPaymentEnabled  bool   `json:"usage_card_payment_enabled"`
+			UsageCardRedeemEnabled   bool   `json:"usage_card_redeem_enabled"`
+			UsageCardBillingEnabled  bool   `json:"usage_card_billing_enabled"`
+			UsageCardDefaultPriority string `json:"usage_card_default_priority"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &resp))
+	require.Equal(t, 0, resp.Code)
+	require.True(t, resp.Data.UsageCardEnabled)
+	require.True(t, resp.Data.UsageCardPaymentEnabled)
+	require.True(t, resp.Data.UsageCardRedeemEnabled)
+	require.True(t, resp.Data.UsageCardBillingEnabled)
+	require.Equal(t, service.BillingPriorityUsageCardOnly, resp.Data.UsageCardDefaultPriority)
+}
+
 func TestSettingHandler_GetPublicSettings_ExposesWeChatOAuthModeCapabilities(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	h := NewSettingHandler(service.NewSettingService(&settingHandlerPublicRepoStub{

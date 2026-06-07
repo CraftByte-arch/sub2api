@@ -17,6 +17,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/usagelog"
 	"github.com/Wei-Shaw/sub2api/ent/user"
 	"github.com/Wei-Shaw/sub2api/ent/usersubscription"
+	"github.com/Wei-Shaw/sub2api/ent/userusagecard"
 )
 
 // UsageLogCreate is the builder for creating a UsageLog entity.
@@ -165,6 +166,20 @@ func (_c *UsageLogCreate) SetSubscriptionID(v int64) *UsageLogCreate {
 func (_c *UsageLogCreate) SetNillableSubscriptionID(v *int64) *UsageLogCreate {
 	if v != nil {
 		_c.SetSubscriptionID(*v)
+	}
+	return _c
+}
+
+// SetUsageCardID sets the "usage_card_id" field.
+func (_c *UsageLogCreate) SetUsageCardID(v int64) *UsageLogCreate {
+	_c.mutation.SetUsageCardID(v)
+	return _c
+}
+
+// SetNillableUsageCardID sets the "usage_card_id" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableUsageCardID(v *int64) *UsageLogCreate {
+	if v != nil {
+		_c.SetUsageCardID(*v)
 	}
 	return _c
 }
@@ -576,6 +591,11 @@ func (_c *UsageLogCreate) SetGroup(v *Group) *UsageLogCreate {
 // SetSubscription sets the "subscription" edge to the UserSubscription entity.
 func (_c *UsageLogCreate) SetSubscription(v *UserSubscription) *UsageLogCreate {
 	return _c.SetSubscriptionID(v.ID)
+}
+
+// SetUsageCard sets the "usage_card" edge to the UserUsageCard entity.
+func (_c *UsageLogCreate) SetUsageCard(v *UserUsageCard) *UsageLogCreate {
+	return _c.SetUsageCardID(v.ID)
 }
 
 // Mutation returns the UsageLogMutation object of the builder.
@@ -1088,6 +1108,23 @@ func (_c *UsageLogCreate) createSpec() (*UsageLog, *sqlgraph.CreateSpec) {
 		_node.SubscriptionID = &nodes[0]
 		_spec.Edges = append(_spec.Edges, edge)
 	}
+	if nodes := _c.mutation.UsageCardIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2O,
+			Inverse: true,
+			Table:   usagelog.UsageCardTable,
+			Columns: []string{usagelog.UsageCardColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(userusagecard.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_node.UsageCardID = &nodes[0]
+		_spec.Edges = append(_spec.Edges, edge)
+	}
 	return _node, _spec
 }
 
@@ -1347,6 +1384,24 @@ func (u *UsageLogUpsert) UpdateSubscriptionID() *UsageLogUpsert {
 // ClearSubscriptionID clears the value of the "subscription_id" field.
 func (u *UsageLogUpsert) ClearSubscriptionID() *UsageLogUpsert {
 	u.SetNull(usagelog.FieldSubscriptionID)
+	return u
+}
+
+// SetUsageCardID sets the "usage_card_id" field.
+func (u *UsageLogUpsert) SetUsageCardID(v int64) *UsageLogUpsert {
+	u.Set(usagelog.FieldUsageCardID, v)
+	return u
+}
+
+// UpdateUsageCardID sets the "usage_card_id" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateUsageCardID() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldUsageCardID)
+	return u
+}
+
+// ClearUsageCardID clears the value of the "usage_card_id" field.
+func (u *UsageLogUpsert) ClearUsageCardID() *UsageLogUpsert {
+	u.SetNull(usagelog.FieldUsageCardID)
 	return u
 }
 
@@ -2129,6 +2184,27 @@ func (u *UsageLogUpsertOne) UpdateSubscriptionID() *UsageLogUpsertOne {
 func (u *UsageLogUpsertOne) ClearSubscriptionID() *UsageLogUpsertOne {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.ClearSubscriptionID()
+	})
+}
+
+// SetUsageCardID sets the "usage_card_id" field.
+func (u *UsageLogUpsertOne) SetUsageCardID(v int64) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetUsageCardID(v)
+	})
+}
+
+// UpdateUsageCardID sets the "usage_card_id" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateUsageCardID() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateUsageCardID()
+	})
+}
+
+// ClearUsageCardID clears the value of the "usage_card_id" field.
+func (u *UsageLogUpsertOne) ClearUsageCardID() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearUsageCardID()
 	})
 }
 
@@ -3159,6 +3235,27 @@ func (u *UsageLogUpsertBulk) UpdateSubscriptionID() *UsageLogUpsertBulk {
 func (u *UsageLogUpsertBulk) ClearSubscriptionID() *UsageLogUpsertBulk {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.ClearSubscriptionID()
+	})
+}
+
+// SetUsageCardID sets the "usage_card_id" field.
+func (u *UsageLogUpsertBulk) SetUsageCardID(v int64) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetUsageCardID(v)
+	})
+}
+
+// UpdateUsageCardID sets the "usage_card_id" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateUsageCardID() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateUsageCardID()
+	})
+}
+
+// ClearUsageCardID clears the value of the "usage_card_id" field.
+func (u *UsageLogUpsertBulk) ClearUsageCardID() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearUsageCardID()
 	})
 }
 

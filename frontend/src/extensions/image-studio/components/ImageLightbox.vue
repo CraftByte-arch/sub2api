@@ -23,16 +23,36 @@
           <Icon name="edit" size="sm" />
           编辑
         </button>
-        <a
+        <div
           v-if="image.downloadName"
-          class="lightbox-action"
-          :href="image.src"
-          :download="image.downloadName"
-          data-testid="lightbox-download"
+          class="download-menu lightbox-download-menu"
+          :class="{ open: downloadMenuOpen }"
+          @pointerdown.stop
         >
-          <Icon name="download" size="sm" />
-          下载
-        </a>
+          <button
+            type="button"
+            class="lightbox-action"
+            data-testid="lightbox-download"
+            aria-haspopup="menu"
+            :aria-expanded="downloadMenuOpen"
+            @click.stop="downloadMenuOpen = !downloadMenuOpen"
+          >
+            <Icon name="download" size="sm" />
+            下载
+          </button>
+          <div class="download-menu-options" role="menu" aria-label="选择下载格式">
+            <button
+              v-for="format in downloadFormats"
+              :key="format.value"
+              type="button"
+              role="menuitem"
+              :data-testid="`lightbox-download-${format.value}-button`"
+              @click="selectDownloadFormat(format.value)"
+            >
+              {{ format.label }}
+            </button>
+          </div>
+        </div>
         <button type="button" class="lightbox-action" data-testid="lightbox-zoom-out" @click="$emit('zoom', -0.25)">
           -
         </button>
@@ -71,17 +91,18 @@
 
 <script setup lang="ts">
 import Icon from '@/components/icons/Icon.vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
 import type { CSSProperties } from 'vue'
 import type { ImageStudioLightboxImage } from '../types'
 
-defineProps<{
+const props = defineProps<{
   image: ImageStudioLightboxImage | null
   zoom: number
   dragging: boolean
   imageStyle: CSSProperties
 }>()
 
-defineEmits<{
+const emit = defineEmits<{
   close: []
   edit: []
   reset: []
@@ -90,5 +111,32 @@ defineEmits<{
   'drag-start': [event: PointerEvent]
   'drag-move': [event: PointerEvent]
   'drag-end': [event: PointerEvent]
+  download: [image: ImageStudioLightboxImage, format: string]
 }>()
+
+const downloadFormats = [
+  { value: 'jpeg', label: 'JPEG' },
+  { value: 'webp', label: 'WebP' },
+  { value: 'png', label: 'PNG' }
+]
+
+const downloadMenuOpen = ref(false)
+
+onMounted(() => {
+  document.addEventListener('pointerdown', closeDownloadMenu)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', closeDownloadMenu)
+})
+
+function closeDownloadMenu() {
+  downloadMenuOpen.value = false
+}
+
+function selectDownloadFormat(format: string) {
+  if (!props.image) return
+  downloadMenuOpen.value = false
+  emit('download', props.image, format)
+}
 </script>

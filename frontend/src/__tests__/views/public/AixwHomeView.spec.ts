@@ -17,7 +17,12 @@ describe('AixwHomeView', () => {
     expect(wrapper.text()).toContain('Move faster.')
     
     // Check for logo image
-    expect(wrapper.find('img[alt="AIXW Logo"]').exists()).toBe(true)
+    const logo = wrapper.find('img[alt="AIXW Logo"]')
+    expect(logo.exists()).toBe(true)
+    expect(logo.attributes('src')).toContain('aixw-logo-alpha')
+
+    const page = wrapper.get('[data-testid="aixw-home-page"]')
+    expect(page.attributes('style')).toContain('hero-background')
     
     // Check for button text
     expect(wrapper.text()).toContain('Get started')

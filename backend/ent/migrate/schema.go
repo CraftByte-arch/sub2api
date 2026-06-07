@@ -18,6 +18,7 @@ var (
 		{Name: "key", Type: field.TypeString, Unique: true, Size: 128},
 		{Name: "name", Type: field.TypeString, Size: 100},
 		{Name: "status", Type: field.TypeString, Size: 20, Default: "active"},
+		{Name: "billing_priority", Type: field.TypeString, Size: 30, Default: "auto"},
 		{Name: "last_used_at", Type: field.TypeTime, Nullable: true},
 		{Name: "ip_whitelist", Type: field.TypeJSON, Nullable: true},
 		{Name: "ip_blacklist", Type: field.TypeJSON, Nullable: true},
@@ -44,13 +45,13 @@ var (
 		ForeignKeys: []*schema.ForeignKey{
 			{
 				Symbol:     "api_keys_groups_api_keys",
-				Columns:    []*schema.Column{APIKeysColumns[22]},
+				Columns:    []*schema.Column{APIKeysColumns[23]},
 				RefColumns: []*schema.Column{GroupsColumns[0]},
 				OnDelete:   schema.SetNull,
 			},
 			{
 				Symbol:     "api_keys_users_api_keys",
-				Columns:    []*schema.Column{APIKeysColumns[23]},
+				Columns:    []*schema.Column{APIKeysColumns[24]},
 				RefColumns: []*schema.Column{UsersColumns[0]},
 				OnDelete:   schema.NoAction,
 			},
@@ -59,17 +60,22 @@ var (
 			{
 				Name:    "apikey_user_id",
 				Unique:  false,
-				Columns: []*schema.Column{APIKeysColumns[23]},
+				Columns: []*schema.Column{APIKeysColumns[24]},
 			},
 			{
 				Name:    "apikey_group_id",
 				Unique:  false,
-				Columns: []*schema.Column{APIKeysColumns[22]},
+				Columns: []*schema.Column{APIKeysColumns[23]},
 			},
 			{
 				Name:    "apikey_status",
 				Unique:  false,
 				Columns: []*schema.Column{APIKeysColumns[6]},
+			},
+			{
+				Name:    "apikey_billing_priority",
+				Unique:  false,
+				Columns: []*schema.Column{APIKeysColumns[7]},
 			},
 			{
 				Name:    "apikey_deleted_at",
@@ -79,17 +85,17 @@ var (
 			{
 				Name:    "apikey_last_used_at",
 				Unique:  false,
-				Columns: []*schema.Column{APIKeysColumns[7]},
+				Columns: []*schema.Column{APIKeysColumns[8]},
 			},
 			{
 				Name:    "apikey_quota_quota_used",
 				Unique:  false,
-				Columns: []*schema.Column{APIKeysColumns[10], APIKeysColumns[11]},
+				Columns: []*schema.Column{APIKeysColumns[11], APIKeysColumns[12]},
 			},
 			{
 				Name:    "apikey_expires_at",
 				Unique:  false,
-				Columns: []*schema.Column{APIKeysColumns[12]},
+				Columns: []*schema.Column{APIKeysColumns[13]},
 			},
 		},
 	}
@@ -671,6 +677,7 @@ var (
 		{Name: "messages_dispatch_model_config", Type: field.TypeJSON, SchemaType: map[string]string{"postgres": "jsonb"}},
 		{Name: "models_list_config", Type: field.TypeJSON, SchemaType: map[string]string{"postgres": "jsonb"}},
 		{Name: "rpm_limit", Type: field.TypeInt, Default: 0},
+		{Name: "usage_card_disabled", Type: field.TypeBool, Default: false},
 	}
 	// GroupsTable holds the schema information for the "groups" table.
 	GroupsTable = &schema.Table{
@@ -697,6 +704,11 @@ var (
 				Name:    "group_is_exclusive",
 				Unique:  false,
 				Columns: []*schema.Column{GroupsColumns[7]},
+			},
+			{
+				Name:    "group_usage_card_disabled",
+				Unique:  false,
+				Columns: []*schema.Column{GroupsColumns[36]},
 			},
 			{
 				Name:    "group_deleted_at",
@@ -1136,6 +1148,7 @@ var (
 		{Name: "expires_at", Type: field.TypeTime, Nullable: true, SchemaType: map[string]string{"postgres": "timestamptz"}},
 		{Name: "validity_days", Type: field.TypeInt, Default: 30},
 		{Name: "group_id", Type: field.TypeInt64, Nullable: true},
+		{Name: "usage_card_plan_id", Type: field.TypeInt64, Nullable: true},
 		{Name: "used_by", Type: field.TypeInt64, Nullable: true},
 	}
 	// RedeemCodesTable holds the schema information for the "redeem_codes" table.
@@ -1151,8 +1164,14 @@ var (
 				OnDelete:   schema.SetNull,
 			},
 			{
-				Symbol:     "redeem_codes_users_redeem_codes",
+				Symbol:     "redeem_codes_usage_card_plans_redeem_codes",
 				Columns:    []*schema.Column{RedeemCodesColumns[11]},
+				RefColumns: []*schema.Column{UsageCardPlansColumns[0]},
+				OnDelete:   schema.SetNull,
+			},
+			{
+				Symbol:     "redeem_codes_users_redeem_codes",
+				Columns:    []*schema.Column{RedeemCodesColumns[12]},
 				RefColumns: []*schema.Column{UsersColumns[0]},
 				OnDelete:   schema.SetNull,
 			},
@@ -1166,12 +1185,17 @@ var (
 			{
 				Name:    "redeemcode_used_by",
 				Unique:  false,
-				Columns: []*schema.Column{RedeemCodesColumns[11]},
+				Columns: []*schema.Column{RedeemCodesColumns[12]},
 			},
 			{
 				Name:    "redeemcode_group_id",
 				Unique:  false,
 				Columns: []*schema.Column{RedeemCodesColumns[10]},
+			},
+			{
+				Name:    "redeemcode_usage_card_plan_id",
+				Unique:  false,
+				Columns: []*schema.Column{RedeemCodesColumns[11]},
 			},
 			{
 				Name:    "redeemcode_expires_at",
@@ -1266,6 +1290,38 @@ var (
 		Columns:    TLSFingerprintProfilesColumns,
 		PrimaryKey: []*schema.Column{TLSFingerprintProfilesColumns[0]},
 	}
+	// UsageCardPlansColumns holds the columns for the "usage_card_plans" table.
+	UsageCardPlansColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt64, Increment: true},
+		{Name: "name", Type: field.TypeString, Size: 100},
+		{Name: "description", Type: field.TypeString, Default: "", SchemaType: map[string]string{"postgres": "text"}},
+		{Name: "price", Type: field.TypeFloat64, SchemaType: map[string]string{"postgres": "decimal(20,2)"}},
+		{Name: "amount_usd", Type: field.TypeFloat64, SchemaType: map[string]string{"postgres": "decimal(20,8)"}},
+		{Name: "validity_days", Type: field.TypeInt, Default: 30},
+		{Name: "features", Type: field.TypeString, Default: "", SchemaType: map[string]string{"postgres": "text"}},
+		{Name: "for_sale", Type: field.TypeBool, Default: true},
+		{Name: "sort_order", Type: field.TypeInt, Default: 0},
+		{Name: "created_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "updated_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
+	}
+	// UsageCardPlansTable holds the schema information for the "usage_card_plans" table.
+	UsageCardPlansTable = &schema.Table{
+		Name:       "usage_card_plans",
+		Columns:    UsageCardPlansColumns,
+		PrimaryKey: []*schema.Column{UsageCardPlansColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "usagecardplan_for_sale",
+				Unique:  false,
+				Columns: []*schema.Column{UsageCardPlansColumns[7]},
+			},
+			{
+				Name:    "usagecardplan_sort_order",
+				Unique:  false,
+				Columns: []*schema.Column{UsageCardPlansColumns[8]},
+			},
+		},
+	}
 	// UsageCleanupTasksColumns holds the columns for the "usage_cleanup_tasks" table.
 	UsageCleanupTasksColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt64, Increment: true},
@@ -1348,6 +1404,7 @@ var (
 		{Name: "group_id", Type: field.TypeInt64, Nullable: true},
 		{Name: "user_id", Type: field.TypeInt64},
 		{Name: "subscription_id", Type: field.TypeInt64, Nullable: true},
+		{Name: "usage_card_id", Type: field.TypeInt64, Nullable: true},
 	}
 	// UsageLogsTable holds the schema information for the "usage_logs" table.
 	UsageLogsTable = &schema.Table{
@@ -1385,6 +1442,12 @@ var (
 				RefColumns: []*schema.Column{UserSubscriptionsColumns[0]},
 				OnDelete:   schema.SetNull,
 			},
+			{
+				Symbol:     "usage_logs_user_usage_cards_usage_logs",
+				Columns:    []*schema.Column{UsageLogsColumns[42]},
+				RefColumns: []*schema.Column{UserUsageCardsColumns[0]},
+				OnDelete:   schema.SetNull,
+			},
 		},
 		Indexes: []*schema.Index{
 			{
@@ -1411,6 +1474,11 @@ var (
 				Name:    "usagelog_subscription_id",
 				Unique:  false,
 				Columns: []*schema.Column{UsageLogsColumns[41]},
+			},
+			{
+				Name:    "usagelog_usage_card_id",
+				Unique:  false,
+				Columns: []*schema.Column{UsageLogsColumns[42]},
 			},
 			{
 				Name:    "usagelog_created_at",
@@ -1749,6 +1817,99 @@ var (
 			},
 		},
 	}
+	// UserUsageCardsColumns holds the columns for the "user_usage_cards" table.
+	UserUsageCardsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt64, Increment: true},
+		{Name: "deleted_at", Type: field.TypeTime, Nullable: true, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "name", Type: field.TypeString, Size: 100, Default: ""},
+		{Name: "starts_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "expires_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "total_limit_usd", Type: field.TypeFloat64, SchemaType: map[string]string{"postgres": "decimal(20,8)"}},
+		{Name: "used_usd", Type: field.TypeFloat64, Default: 0, SchemaType: map[string]string{"postgres": "decimal(20,8)"}},
+		{Name: "status", Type: field.TypeString, Size: 20, Default: "active"},
+		{Name: "source", Type: field.TypeString, Size: 20, Default: "admin"},
+		{Name: "source_order_id", Type: field.TypeInt64, Nullable: true},
+		{Name: "source_redeem_code", Type: field.TypeString, Nullable: true, Size: 64},
+		{Name: "notes", Type: field.TypeString, Nullable: true, SchemaType: map[string]string{"postgres": "text"}},
+		{Name: "created_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "updated_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "plan_id", Type: field.TypeInt64, Nullable: true},
+		{Name: "user_id", Type: field.TypeInt64},
+		{Name: "assigned_by", Type: field.TypeInt64, Nullable: true},
+	}
+	// UserUsageCardsTable holds the schema information for the "user_usage_cards" table.
+	UserUsageCardsTable = &schema.Table{
+		Name:       "user_usage_cards",
+		Columns:    UserUsageCardsColumns,
+		PrimaryKey: []*schema.Column{UserUsageCardsColumns[0]},
+		ForeignKeys: []*schema.ForeignKey{
+			{
+				Symbol:     "user_usage_cards_usage_card_plans_usage_cards",
+				Columns:    []*schema.Column{UserUsageCardsColumns[14]},
+				RefColumns: []*schema.Column{UsageCardPlansColumns[0]},
+				OnDelete:   schema.SetNull,
+			},
+			{
+				Symbol:     "user_usage_cards_users_usage_cards",
+				Columns:    []*schema.Column{UserUsageCardsColumns[15]},
+				RefColumns: []*schema.Column{UsersColumns[0]},
+				OnDelete:   schema.NoAction,
+			},
+			{
+				Symbol:     "user_usage_cards_users_assigned_usage_cards",
+				Columns:    []*schema.Column{UserUsageCardsColumns[16]},
+				RefColumns: []*schema.Column{UsersColumns[0]},
+				OnDelete:   schema.SetNull,
+			},
+		},
+		Indexes: []*schema.Index{
+			{
+				Name:    "userusagecard_user_id",
+				Unique:  false,
+				Columns: []*schema.Column{UserUsageCardsColumns[15]},
+			},
+			{
+				Name:    "userusagecard_plan_id",
+				Unique:  false,
+				Columns: []*schema.Column{UserUsageCardsColumns[14]},
+			},
+			{
+				Name:    "userusagecard_status",
+				Unique:  false,
+				Columns: []*schema.Column{UserUsageCardsColumns[7]},
+			},
+			{
+				Name:    "userusagecard_expires_at",
+				Unique:  false,
+				Columns: []*schema.Column{UserUsageCardsColumns[4]},
+			},
+			{
+				Name:    "userusagecard_user_id_status_expires_at",
+				Unique:  false,
+				Columns: []*schema.Column{UserUsageCardsColumns[15], UserUsageCardsColumns[7], UserUsageCardsColumns[4]},
+			},
+			{
+				Name:    "userusagecard_source_order_id",
+				Unique:  false,
+				Columns: []*schema.Column{UserUsageCardsColumns[9]},
+			},
+			{
+				Name:    "userusagecard_source_redeem_code",
+				Unique:  false,
+				Columns: []*schema.Column{UserUsageCardsColumns[10]},
+			},
+			{
+				Name:    "userusagecard_assigned_by",
+				Unique:  false,
+				Columns: []*schema.Column{UserUsageCardsColumns[16]},
+			},
+			{
+				Name:    "userusagecard_deleted_at",
+				Unique:  false,
+				Columns: []*schema.Column{UserUsageCardsColumns[1]},
+			},
+		},
+	}
 	// Tables holds all the tables in the schema.
 	Tables = []*schema.Table{
 		APIKeysTable,
@@ -1778,6 +1939,7 @@ var (
 		SettingsTable,
 		SubscriptionPlansTable,
 		TLSFingerprintProfilesTable,
+		UsageCardPlansTable,
 		UsageCleanupTasksTable,
 		UsageLogsTable,
 		UsersTable,
@@ -1786,6 +1948,7 @@ var (
 		UserAttributeValuesTable,
 		UserPlatformQuotasTable,
 		UserSubscriptionsTable,
+		UserUsageCardsTable,
 	}
 )
 
@@ -1875,7 +2038,8 @@ func init() {
 		Table: "proxies",
 	}
 	RedeemCodesTable.ForeignKeys[0].RefTable = GroupsTable
-	RedeemCodesTable.ForeignKeys[1].RefTable = UsersTable
+	RedeemCodesTable.ForeignKeys[1].RefTable = UsageCardPlansTable
+	RedeemCodesTable.ForeignKeys[2].RefTable = UsersTable
 	RedeemCodesTable.Annotation = &entsql.Annotation{
 		Table: "redeem_codes",
 	}
@@ -1891,6 +2055,9 @@ func init() {
 	TLSFingerprintProfilesTable.Annotation = &entsql.Annotation{
 		Table: "tls_fingerprint_profiles",
 	}
+	UsageCardPlansTable.Annotation = &entsql.Annotation{
+		Table: "usage_card_plans",
+	}
 	UsageCleanupTasksTable.Annotation = &entsql.Annotation{
 		Table: "usage_cleanup_tasks",
 	}
@@ -1899,6 +2066,7 @@ func init() {
 	UsageLogsTable.ForeignKeys[2].RefTable = GroupsTable
 	UsageLogsTable.ForeignKeys[3].RefTable = UsersTable
 	UsageLogsTable.ForeignKeys[4].RefTable = UserSubscriptionsTable
+	UsageLogsTable.ForeignKeys[5].RefTable = UserUsageCardsTable
 	UsageLogsTable.Annotation = &entsql.Annotation{
 		Table: "usage_logs",
 	}
@@ -1927,5 +2095,11 @@ func init() {
 	UserSubscriptionsTable.ForeignKeys[2].RefTable = UsersTable
 	UserSubscriptionsTable.Annotation = &entsql.Annotation{
 		Table: "user_subscriptions",
+	}
+	UserUsageCardsTable.ForeignKeys[0].RefTable = UsageCardPlansTable
+	UserUsageCardsTable.ForeignKeys[1].RefTable = UsersTable
+	UserUsageCardsTable.ForeignKeys[2].RefTable = UsersTable
+	UserUsageCardsTable.Annotation = &entsql.Annotation{
+		Table: "user_usage_cards",
 	}
 }

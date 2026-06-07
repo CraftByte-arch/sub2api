@@ -278,26 +278,31 @@
           </template>
 
           <template #cell-cost="{ row }">
-            <div class="flex items-center gap-1.5 text-sm">
-              <span class="font-medium text-green-600 dark:text-green-400">
-                ${{ row.actual_cost.toFixed(6) }}
-              </span>
-              <!-- Cost Detail Tooltip -->
-              <div
-                class="group relative"
-                @mouseenter="showTooltip($event, row)"
-                @mouseleave="hideTooltip"
-              >
+            <div class="text-sm">
+              <div class="flex items-center gap-1.5">
+                <span class="font-medium text-green-600 dark:text-green-400">
+                  ${{ row.actual_cost.toFixed(6) }}
+                </span>
+                <!-- Cost Detail Tooltip -->
                 <div
-                  class="flex h-4 w-4 cursor-help items-center justify-center rounded-full bg-gray-100 transition-colors group-hover:bg-blue-100 dark:bg-gray-700 dark:group-hover:bg-blue-900/50"
+                  class="group relative"
+                  @mouseenter="showTooltip($event, row)"
+                  @mouseleave="hideTooltip"
                 >
-                  <Icon
-                    name="infoCircle"
-                    size="xs"
-                    class="text-gray-400 group-hover:text-blue-500 dark:text-gray-500 dark:group-hover:text-blue-400"
-                  />
+                  <div
+                    class="flex h-4 w-4 cursor-help items-center justify-center rounded-full bg-gray-100 transition-colors group-hover:bg-blue-100 dark:bg-gray-700 dark:group-hover:bg-blue-900/50"
+                  >
+                    <Icon
+                      name="infoCircle"
+                      size="xs"
+                      class="text-gray-400 group-hover:text-blue-500 dark:text-gray-500 dark:group-hover:text-blue-400"
+                    />
+                  </div>
                 </div>
               </div>
+              <span class="mt-1 inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-medium" :class="getDeductionSourceBadgeClass(row)">
+                {{ getDeductionSourceLabel(row) }}
+              </span>
             </div>
           </template>
 
@@ -689,6 +694,23 @@ const getDisplayBillingMode = (row: Pick<UsageLog, 'billing_mode' | 'image_count
   return row?.billing_mode
 }
 
+const getDeductionSourceKey = (row: Pick<UsageLog, 'subscription_id' | 'usage_card_id'> | null | undefined): 'usageCard' | 'subscription' | 'balance' => {
+  if (row?.usage_card_id) return 'usageCard'
+  if (row?.subscription_id) return 'subscription'
+  return 'balance'
+}
+
+const getDeductionSourceLabel = (row: Pick<UsageLog, 'subscription_id' | 'usage_card_id'> | null | undefined): string => {
+  return t(`usage.deductionSources.${getDeductionSourceKey(row)}`)
+}
+
+const getDeductionSourceBadgeClass = (row: Pick<UsageLog, 'subscription_id' | 'usage_card_id'> | null | undefined): string => {
+  const source = getDeductionSourceKey(row)
+  if (source === 'usageCard') return 'bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-200'
+  if (source === 'subscription') return 'bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-200'
+  return 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200'
+}
+
 const formatUserAgent = (ua: string): string => {
   return ua
 }
@@ -902,6 +924,7 @@ const exportToCSV = async () => {
       'Inbound Endpoint',
       'Type',
       'Billing Mode',
+      'Deduction Source',
       'Input Tokens',
       'Output Tokens',
       'Cache Read Tokens',
@@ -921,6 +944,7 @@ const exportToCSV = async () => {
         log.inbound_endpoint || '',
         getRequestTypeExportText(log),
         getBillingModeLabel(getDisplayBillingMode(log), t),
+        getDeductionSourceLabel(log),
         log.input_tokens,
         log.output_tokens,
         log.cache_read_tokens,

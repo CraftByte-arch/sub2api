@@ -63,7 +63,8 @@ interface MockAuthState {
 function simulateGuard(
   toPath: string,
   toMeta: Record<string, any>,
-  authState: MockAuthState
+  authState: MockAuthState,
+  publicSettings: { legacy_subscription_visible?: boolean } = {}
 ): string | null {
   const requiresAuth = toMeta.requiresAuth !== false
   const requiresAdmin = toMeta.requiresAdmin === true
@@ -112,6 +113,13 @@ function simulateGuard(
   // 需要管理员但不是管理员
   if (requiresAdmin && !authState.isAdmin) {
     return '/dashboard'
+  }
+
+  if (publicSettings.legacy_subscription_visible === false) {
+    const restrictedLegacySubscriptionPaths = ['/admin/subscriptions', '/subscriptions']
+    if (restrictedLegacySubscriptionPaths.some((path) => toPath.startsWith(path))) {
+      return authState.isAdmin ? '/admin/dashboard' : '/dashboard'
+    }
   }
 
   // 简易模式限制
@@ -332,6 +340,42 @@ describe('路由守卫逻辑', () => {
       }
       const redirect = simulateGuard('/keys', {}, authState)
       expect(redirect).toBeNull()
+    })
+  })
+
+  describe('旧订阅入口开关', () => {
+    it('关闭旧订阅入口后普通用户访问 /subscriptions 重定向到 /dashboard', () => {
+      const authState: MockAuthState = {
+        isAuthenticated: true,
+        isAdmin: false,
+        isSimpleMode: false,
+        backendModeEnabled: false,
+        hasPendingAuthSession: false,
+      }
+      const redirect = simulateGuard(
+        '/subscriptions',
+        {},
+        authState,
+        { legacy_subscription_visible: false },
+      )
+      expect(redirect).toBe('/dashboard')
+    })
+
+    it('关闭旧订阅入口后管理员访问 /admin/subscriptions 重定向到 /admin/dashboard', () => {
+      const authState: MockAuthState = {
+        isAuthenticated: true,
+        isAdmin: true,
+        isSimpleMode: false,
+        backendModeEnabled: false,
+        hasPendingAuthSession: false,
+      }
+      const redirect = simulateGuard(
+        '/admin/subscriptions',
+        { requiresAdmin: true },
+        authState,
+        { legacy_subscription_visible: false },
+      )
+      expect(redirect).toBe('/admin/dashboard')
     })
   })
 

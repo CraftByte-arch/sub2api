@@ -142,6 +142,11 @@ type cachedOpenAIQuotaAutoPauseSettings struct {
 	expiresAt int64
 }
 
+type cachedOpenAILongContextBillingSettings struct {
+	settings  OpenAILongContextBillingRuntime
+	expiresAt int64
+}
+
 const openAICodexUserAgentCacheTTL = 60 * time.Second
 const openAICodexUserAgentErrorTTL = 5 * time.Second
 const openAICodexUserAgentDBTimeout = 5 * time.Second
@@ -162,6 +167,11 @@ const openAIQuotaAutoPauseSettingsErrorTTL = 5 * time.Second
 const openAIQuotaAutoPauseSettingsDBTimeout = 5 * time.Second
 
 const openAIQuotaAutoPauseSettingsRefreshKey = "openai_quota_auto_pause_settings"
+
+const openAILongContextBillingCacheTTL = 60 * time.Second
+const openAILongContextBillingErrorTTL = 5 * time.Second
+const openAILongContextBillingDBTimeout = 5 * time.Second
+const openAILongContextBillingCacheKey = "openai_long_context_billing"
 
 // DefaultSubscriptionGroupReader validates group references used by default subscriptions.
 type DefaultSubscriptionGroupReader interface {
@@ -187,6 +197,8 @@ type SettingService struct {
 	openAICodexUASF             singleflight.Group
 	openAIAllowCodexPluginCache atomic.Value // *cachedOpenAIAllowCodexPlugin
 	openAIAllowCodexPluginSF    singleflight.Group
+	openAILongContextCache      atomic.Value // *cachedOpenAILongContextBillingSettings
+	openAILongContextSF         singleflight.Group
 
 	// openAIQuotaAutoPauseSettingsCache holds the most recently observed quota auto-pause
 	// settings. GetOpenAIQuotaAutoPauseSettings reads this atomic.Value on the request hot
@@ -322,6 +334,10 @@ const (
 	defaultGoogleOAuthFrontend   = "/auth/oauth/callback"
 	defaultLoginAgreementMode    = "modal"
 	defaultLoginAgreementDate    = "2026-03-31"
+
+	defaultOpenAILongContextBillingThreshold  = openAIGPT54LongContextInputThreshold
+	defaultOpenAILongContextBillingMultiplier = openAIGPT54LongContextInputMultiplier
+	defaultOpenAILongContextOutputMultiplier  = openAIGPT54LongContextOutputMultiplier
 )
 
 func normalizeLoginAgreementMode(raw string) string {
@@ -720,6 +736,13 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		SettingKeyHideCcsImportButton,
 		SettingKeyPurchaseSubscriptionEnabled,
 		SettingKeyPurchaseSubscriptionURL,
+		SettingKeyLegacySubscriptionPurchaseEnabled,
+		SettingKeyLegacySubscriptionVisible,
+		SettingKeyUsageCardEnabled,
+		SettingKeyUsageCardPaymentEnabled,
+		SettingKeyUsageCardRedeemEnabled,
+		SettingKeyUsageCardBillingEnabled,
+		SettingKeyUsageCardDefaultPriority,
 		SettingKeyTableDefaultPageSize,
 		SettingKeyTablePageSizeOptions,
 		SettingKeyCustomMenuItems,
@@ -819,51 +842,58 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 	}
 
 	return &PublicSettings{
-		RegistrationEnabled:              settings[SettingKeyRegistrationEnabled] == "true",
-		EmailVerifyEnabled:               emailVerifyEnabled,
-		ForceEmailOnThirdPartySignup:     settings[SettingKeyForceEmailOnThirdPartySignup] == "true",
-		RegistrationEmailSuffixWhitelist: registrationEmailSuffixWhitelist,
-		PromoCodeEnabled:                 settings[SettingKeyPromoCodeEnabled] != "false", // 默认启用
-		PasswordResetEnabled:             passwordResetEnabled,
-		InvitationCodeEnabled:            settings[SettingKeyInvitationCodeEnabled] == "true",
-		TotpEnabled:                      settings[SettingKeyTotpEnabled] == "true",
-		LoginAgreementEnabled:            settings[SettingKeyLoginAgreementEnabled] == "true" && len(loginAgreementDocuments) > 0,
-		LoginAgreementMode:               normalizeLoginAgreementMode(settings[SettingKeyLoginAgreementMode]),
-		LoginAgreementUpdatedAt:          loginAgreementUpdatedAt,
-		LoginAgreementRevision:           buildLoginAgreementRevision(loginAgreementUpdatedAt, loginAgreementDocuments),
-		LoginAgreementDocuments:          loginAgreementDocuments,
-		TurnstileEnabled:                 settings[SettingKeyTurnstileEnabled] == "true",
-		TurnstileSiteKey:                 settings[SettingKeyTurnstileSiteKey],
-		SiteName:                         s.getStringOrDefault(settings, SettingKeySiteName, "Sub2API"),
-		SiteLogo:                         settings[SettingKeySiteLogo],
-		SiteSubtitle:                     s.getStringOrDefault(settings, SettingKeySiteSubtitle, "Subscription to API Conversion Platform"),
-		APIBaseURL:                       settings[SettingKeyAPIBaseURL],
-		ContactInfo:                      settings[SettingKeyContactInfo],
-		DocURL:                           settings[SettingKeyDocURL],
-		HomeContent:                      settings[SettingKeyHomeContent],
-		HideCcsImportButton:              settings[SettingKeyHideCcsImportButton] == "true",
-		PurchaseSubscriptionEnabled:      settings[SettingKeyPurchaseSubscriptionEnabled] == "true",
-		PurchaseSubscriptionURL:          strings.TrimSpace(settings[SettingKeyPurchaseSubscriptionURL]),
-		TableDefaultPageSize:             tableDefaultPageSize,
-		TablePageSizeOptions:             tablePageSizeOptions,
-		CustomMenuItems:                  settings[SettingKeyCustomMenuItems],
-		CustomEndpoints:                  settings[SettingKeyCustomEndpoints],
-		LinuxDoOAuthEnabled:              linuxDoEnabled,
-		DingTalkOAuthEnabled:             dingTalkEnabled,
-		WeChatOAuthEnabled:               weChatEnabled,
-		WeChatOAuthOpenEnabled:           weChatOpenEnabled,
-		WeChatOAuthMPEnabled:             weChatMPEnabled,
-		WeChatOAuthMobileEnabled:         weChatMobileEnabled,
-		BackendModeEnabled:               settings[SettingKeyBackendModeEnabled] == "true",
-		PaymentEnabled:                   settings[SettingPaymentEnabled] == "true",
-		OIDCOAuthEnabled:                 oidcEnabled,
-		OIDCOAuthProviderName:            oidcProviderName,
-		GitHubOAuthEnabled:               gitHubEnabled,
-		GoogleOAuthEnabled:               googleEnabled,
-		BalanceLowNotifyEnabled:          settings[SettingKeyBalanceLowNotifyEnabled] == "true",
-		AccountQuotaNotifyEnabled:        settings[SettingKeyAccountQuotaNotifyEnabled] == "true",
-		BalanceLowNotifyThreshold:        balanceLowNotifyThreshold,
-		BalanceLowNotifyRechargeURL:      settings[SettingKeyBalanceLowNotifyRechargeURL],
+		RegistrationEnabled:               settings[SettingKeyRegistrationEnabled] == "true",
+		EmailVerifyEnabled:                emailVerifyEnabled,
+		ForceEmailOnThirdPartySignup:      settings[SettingKeyForceEmailOnThirdPartySignup] == "true",
+		RegistrationEmailSuffixWhitelist:  registrationEmailSuffixWhitelist,
+		PromoCodeEnabled:                  settings[SettingKeyPromoCodeEnabled] != "false", // 默认启用
+		PasswordResetEnabled:              passwordResetEnabled,
+		InvitationCodeEnabled:             settings[SettingKeyInvitationCodeEnabled] == "true",
+		TotpEnabled:                       settings[SettingKeyTotpEnabled] == "true",
+		LoginAgreementEnabled:             settings[SettingKeyLoginAgreementEnabled] == "true" && len(loginAgreementDocuments) > 0,
+		LoginAgreementMode:                normalizeLoginAgreementMode(settings[SettingKeyLoginAgreementMode]),
+		LoginAgreementUpdatedAt:           loginAgreementUpdatedAt,
+		LoginAgreementRevision:            buildLoginAgreementRevision(loginAgreementUpdatedAt, loginAgreementDocuments),
+		LoginAgreementDocuments:           loginAgreementDocuments,
+		TurnstileEnabled:                  settings[SettingKeyTurnstileEnabled] == "true",
+		TurnstileSiteKey:                  settings[SettingKeyTurnstileSiteKey],
+		SiteName:                          s.getStringOrDefault(settings, SettingKeySiteName, "Sub2API"),
+		SiteLogo:                          settings[SettingKeySiteLogo],
+		SiteSubtitle:                      s.getStringOrDefault(settings, SettingKeySiteSubtitle, "Subscription to API Conversion Platform"),
+		APIBaseURL:                        settings[SettingKeyAPIBaseURL],
+		ContactInfo:                       settings[SettingKeyContactInfo],
+		DocURL:                            settings[SettingKeyDocURL],
+		HomeContent:                       settings[SettingKeyHomeContent],
+		HideCcsImportButton:               settings[SettingKeyHideCcsImportButton] == "true",
+		PurchaseSubscriptionEnabled:       settings[SettingKeyPurchaseSubscriptionEnabled] == "true",
+		PurchaseSubscriptionURL:           strings.TrimSpace(settings[SettingKeyPurchaseSubscriptionURL]),
+		LegacySubscriptionPurchaseEnabled: settings[SettingKeyLegacySubscriptionPurchaseEnabled] != "false",
+		LegacySubscriptionVisible:         settings[SettingKeyLegacySubscriptionVisible] != "false",
+		UsageCardEnabled:                  settings[SettingKeyUsageCardEnabled] == "true",
+		UsageCardPaymentEnabled:           settings[SettingKeyUsageCardPaymentEnabled] == "true",
+		UsageCardRedeemEnabled:            settings[SettingKeyUsageCardRedeemEnabled] == "true",
+		UsageCardBillingEnabled:           settings[SettingKeyUsageCardBillingEnabled] == "true",
+		UsageCardDefaultPriority:          s.getStringOrDefault(settings, SettingKeyUsageCardDefaultPriority, BillingPriorityUsageCardFirst),
+		TableDefaultPageSize:              tableDefaultPageSize,
+		TablePageSizeOptions:              tablePageSizeOptions,
+		CustomMenuItems:                   settings[SettingKeyCustomMenuItems],
+		CustomEndpoints:                   settings[SettingKeyCustomEndpoints],
+		LinuxDoOAuthEnabled:               linuxDoEnabled,
+		DingTalkOAuthEnabled:              dingTalkEnabled,
+		WeChatOAuthEnabled:                weChatEnabled,
+		WeChatOAuthOpenEnabled:            weChatOpenEnabled,
+		WeChatOAuthMPEnabled:              weChatMPEnabled,
+		WeChatOAuthMobileEnabled:          weChatMobileEnabled,
+		BackendModeEnabled:                settings[SettingKeyBackendModeEnabled] == "true",
+		PaymentEnabled:                    settings[SettingPaymentEnabled] == "true",
+		OIDCOAuthEnabled:                  oidcEnabled,
+		OIDCOAuthProviderName:             oidcProviderName,
+		GitHubOAuthEnabled:                gitHubEnabled,
+		GoogleOAuthEnabled:                googleEnabled,
+		BalanceLowNotifyEnabled:           settings[SettingKeyBalanceLowNotifyEnabled] == "true",
+		AccountQuotaNotifyEnabled:         settings[SettingKeyAccountQuotaNotifyEnabled] == "true",
+		BalanceLowNotifyThreshold:         balanceLowNotifyThreshold,
+		BalanceLowNotifyRechargeURL:       settings[SettingKeyBalanceLowNotifyRechargeURL],
 
 		ChannelMonitorEnabled:                !isFalseSettingValue(settings[SettingKeyChannelMonitorEnabled]),
 		ChannelMonitorDefaultIntervalSeconds: parseChannelMonitorInterval(settings[SettingKeyChannelMonitorDefaultIntervalSeconds]),
@@ -908,6 +938,22 @@ func clampChannelMonitorInterval(v int) int {
 	return v
 }
 
+func parsePositiveIntSetting(raw string, fallback int) int {
+	v, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || v <= 0 {
+		return fallback
+	}
+	return v
+}
+
+func parsePositiveFloatSetting(raw string, fallback float64) float64 {
+	v, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+	if err != nil || v <= 0 {
+		return fallback
+	}
+	return v
+}
+
 // ChannelMonitorRuntime is the lightweight view of the channel monitor feature
 // consumed by the runner and user-facing handlers.
 type ChannelMonitorRuntime struct {
@@ -948,6 +994,70 @@ func (s *SettingService) GetAvailableChannelsRuntime(ctx context.Context) Availa
 	return AvailableChannelsRuntime{
 		Enabled: vals[SettingKeyAvailableChannelsEnabled] == "true",
 	}
+}
+
+// OpenAILongContextBillingRuntime is the lightweight view consumed by OpenAI
+// GPT model-specific billing. Defaults preserve the previous hard-coded behavior.
+type OpenAILongContextBillingRuntime struct {
+	Enabled          bool
+	Threshold        int
+	InputMultiplier  float64
+	OutputMultiplier float64
+}
+
+func (s *SettingService) GetOpenAILongContextBillingRuntime(ctx context.Context) OpenAILongContextBillingRuntime {
+	fallback := OpenAILongContextBillingRuntime{
+		Enabled:          true,
+		Threshold:        defaultOpenAILongContextBillingThreshold,
+		InputMultiplier:  defaultOpenAILongContextBillingMultiplier,
+		OutputMultiplier: defaultOpenAILongContextOutputMultiplier,
+	}
+	if s == nil || s.settingRepo == nil {
+		return fallback
+	}
+	if cached, ok := s.openAILongContextCache.Load().(*cachedOpenAILongContextBillingSettings); ok && cached != nil {
+		if time.Now().UnixNano() < cached.expiresAt {
+			return cached.settings
+		}
+	}
+	result, _, _ := s.openAILongContextSF.Do(openAILongContextBillingCacheKey, func() (any, error) {
+		if cached, ok := s.openAILongContextCache.Load().(*cachedOpenAILongContextBillingSettings); ok && cached != nil {
+			if time.Now().UnixNano() < cached.expiresAt {
+				return cached.settings, nil
+			}
+		}
+		dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), openAILongContextBillingDBTimeout)
+		defer cancel()
+		vals, err := s.settingRepo.GetMultiple(dbCtx, []string{
+			SettingKeyOpenAILongContextBillingEnabled,
+			SettingKeyOpenAILongContextBillingThreshold,
+			SettingKeyOpenAILongContextBillingMultiplier,
+			SettingKeyOpenAILongContextOutputMultiplier,
+		})
+		if err != nil {
+			slog.Warn("failed to get openai long context billing settings", "error", err)
+			s.openAILongContextCache.Store(&cachedOpenAILongContextBillingSettings{
+				settings:  fallback,
+				expiresAt: time.Now().Add(openAILongContextBillingErrorTTL).UnixNano(),
+			})
+			return fallback, nil
+		}
+		runtime := OpenAILongContextBillingRuntime{
+			Enabled:          !isFalseSettingValue(vals[SettingKeyOpenAILongContextBillingEnabled]),
+			Threshold:        parsePositiveIntSetting(vals[SettingKeyOpenAILongContextBillingThreshold], defaultOpenAILongContextBillingThreshold),
+			InputMultiplier:  parsePositiveFloatSetting(vals[SettingKeyOpenAILongContextBillingMultiplier], defaultOpenAILongContextBillingMultiplier),
+			OutputMultiplier: parsePositiveFloatSetting(vals[SettingKeyOpenAILongContextOutputMultiplier], defaultOpenAILongContextOutputMultiplier),
+		}
+		s.openAILongContextCache.Store(&cachedOpenAILongContextBillingSettings{
+			settings:  runtime,
+			expiresAt: time.Now().Add(openAILongContextBillingCacheTTL).UnixNano(),
+		})
+		return runtime, nil
+	})
+	if runtime, ok := result.(OpenAILongContextBillingRuntime); ok {
+		return runtime
+	}
+	return fallback
 }
 
 // GetAntigravityUserAgentVersion 返回 Antigravity 上游请求使用的版本号。
@@ -1121,51 +1231,58 @@ func (s *SettingService) SetVersion(version string) {
 // A unit test diffs this struct's JSON keys against dto.PublicSettings to catch
 // drift automatically (see setting_service_injection_test.go).
 type PublicSettingsInjectionPayload struct {
-	RegistrationEnabled              bool                     `json:"registration_enabled"`
-	EmailVerifyEnabled               bool                     `json:"email_verify_enabled"`
-	RegistrationEmailSuffixWhitelist []string                 `json:"registration_email_suffix_whitelist"`
-	PromoCodeEnabled                 bool                     `json:"promo_code_enabled"`
-	PasswordResetEnabled             bool                     `json:"password_reset_enabled"`
-	InvitationCodeEnabled            bool                     `json:"invitation_code_enabled"`
-	TotpEnabled                      bool                     `json:"totp_enabled"`
-	LoginAgreementEnabled            bool                     `json:"login_agreement_enabled"`
-	LoginAgreementMode               string                   `json:"login_agreement_mode"`
-	LoginAgreementUpdatedAt          string                   `json:"login_agreement_updated_at"`
-	LoginAgreementRevision           string                   `json:"login_agreement_revision"`
-	LoginAgreementDocuments          []LoginAgreementDocument `json:"login_agreement_documents"`
-	TurnstileEnabled                 bool                     `json:"turnstile_enabled"`
-	TurnstileSiteKey                 string                   `json:"turnstile_site_key"`
-	SiteName                         string                   `json:"site_name"`
-	SiteLogo                         string                   `json:"site_logo"`
-	SiteSubtitle                     string                   `json:"site_subtitle"`
-	APIBaseURL                       string                   `json:"api_base_url"`
-	ContactInfo                      string                   `json:"contact_info"`
-	DocURL                           string                   `json:"doc_url"`
-	HomeContent                      string                   `json:"home_content"`
-	HideCcsImportButton              bool                     `json:"hide_ccs_import_button"`
-	PurchaseSubscriptionEnabled      bool                     `json:"purchase_subscription_enabled"`
-	PurchaseSubscriptionURL          string                   `json:"purchase_subscription_url"`
-	TableDefaultPageSize             int                      `json:"table_default_page_size"`
-	TablePageSizeOptions             []int                    `json:"table_page_size_options"`
-	CustomMenuItems                  json.RawMessage          `json:"custom_menu_items"`
-	CustomEndpoints                  json.RawMessage          `json:"custom_endpoints"`
-	LinuxDoOAuthEnabled              bool                     `json:"linuxdo_oauth_enabled"`
-	DingTalkOAuthEnabled             bool                     `json:"dingtalk_oauth_enabled"`
-	WeChatOAuthEnabled               bool                     `json:"wechat_oauth_enabled"`
-	WeChatOAuthOpenEnabled           bool                     `json:"wechat_oauth_open_enabled"`
-	WeChatOAuthMPEnabled             bool                     `json:"wechat_oauth_mp_enabled"`
-	WeChatOAuthMobileEnabled         bool                     `json:"wechat_oauth_mobile_enabled"`
-	OIDCOAuthEnabled                 bool                     `json:"oidc_oauth_enabled"`
-	OIDCOAuthProviderName            string                   `json:"oidc_oauth_provider_name"`
-	GitHubOAuthEnabled               bool                     `json:"github_oauth_enabled"`
-	GoogleOAuthEnabled               bool                     `json:"google_oauth_enabled"`
-	BackendModeEnabled               bool                     `json:"backend_mode_enabled"`
-	PaymentEnabled                   bool                     `json:"payment_enabled"`
-	Version                          string                   `json:"version"`
-	BalanceLowNotifyEnabled          bool                     `json:"balance_low_notify_enabled"`
-	AccountQuotaNotifyEnabled        bool                     `json:"account_quota_notify_enabled"`
-	BalanceLowNotifyThreshold        float64                  `json:"balance_low_notify_threshold"`
-	BalanceLowNotifyRechargeURL      string                   `json:"balance_low_notify_recharge_url"`
+	RegistrationEnabled               bool                     `json:"registration_enabled"`
+	EmailVerifyEnabled                bool                     `json:"email_verify_enabled"`
+	RegistrationEmailSuffixWhitelist  []string                 `json:"registration_email_suffix_whitelist"`
+	PromoCodeEnabled                  bool                     `json:"promo_code_enabled"`
+	PasswordResetEnabled              bool                     `json:"password_reset_enabled"`
+	InvitationCodeEnabled             bool                     `json:"invitation_code_enabled"`
+	TotpEnabled                       bool                     `json:"totp_enabled"`
+	LoginAgreementEnabled             bool                     `json:"login_agreement_enabled"`
+	LoginAgreementMode                string                   `json:"login_agreement_mode"`
+	LoginAgreementUpdatedAt           string                   `json:"login_agreement_updated_at"`
+	LoginAgreementRevision            string                   `json:"login_agreement_revision"`
+	LoginAgreementDocuments           []LoginAgreementDocument `json:"login_agreement_documents"`
+	TurnstileEnabled                  bool                     `json:"turnstile_enabled"`
+	TurnstileSiteKey                  string                   `json:"turnstile_site_key"`
+	SiteName                          string                   `json:"site_name"`
+	SiteLogo                          string                   `json:"site_logo"`
+	SiteSubtitle                      string                   `json:"site_subtitle"`
+	APIBaseURL                        string                   `json:"api_base_url"`
+	ContactInfo                       string                   `json:"contact_info"`
+	DocURL                            string                   `json:"doc_url"`
+	HomeContent                       string                   `json:"home_content"`
+	HideCcsImportButton               bool                     `json:"hide_ccs_import_button"`
+	PurchaseSubscriptionEnabled       bool                     `json:"purchase_subscription_enabled"`
+	PurchaseSubscriptionURL           string                   `json:"purchase_subscription_url"`
+	LegacySubscriptionPurchaseEnabled bool                     `json:"legacy_subscription_purchase_enabled"`
+	LegacySubscriptionVisible         bool                     `json:"legacy_subscription_visible"`
+	UsageCardEnabled                  bool                     `json:"usage_card_enabled"`
+	UsageCardPaymentEnabled           bool                     `json:"usage_card_payment_enabled"`
+	UsageCardRedeemEnabled            bool                     `json:"usage_card_redeem_enabled"`
+	UsageCardBillingEnabled           bool                     `json:"usage_card_billing_enabled"`
+	UsageCardDefaultPriority          string                   `json:"usage_card_default_priority"`
+	TableDefaultPageSize              int                      `json:"table_default_page_size"`
+	TablePageSizeOptions              []int                    `json:"table_page_size_options"`
+	CustomMenuItems                   json.RawMessage          `json:"custom_menu_items"`
+	CustomEndpoints                   json.RawMessage          `json:"custom_endpoints"`
+	LinuxDoOAuthEnabled               bool                     `json:"linuxdo_oauth_enabled"`
+	DingTalkOAuthEnabled              bool                     `json:"dingtalk_oauth_enabled"`
+	WeChatOAuthEnabled                bool                     `json:"wechat_oauth_enabled"`
+	WeChatOAuthOpenEnabled            bool                     `json:"wechat_oauth_open_enabled"`
+	WeChatOAuthMPEnabled              bool                     `json:"wechat_oauth_mp_enabled"`
+	WeChatOAuthMobileEnabled          bool                     `json:"wechat_oauth_mobile_enabled"`
+	OIDCOAuthEnabled                  bool                     `json:"oidc_oauth_enabled"`
+	OIDCOAuthProviderName             string                   `json:"oidc_oauth_provider_name"`
+	GitHubOAuthEnabled                bool                     `json:"github_oauth_enabled"`
+	GoogleOAuthEnabled                bool                     `json:"google_oauth_enabled"`
+	BackendModeEnabled                bool                     `json:"backend_mode_enabled"`
+	PaymentEnabled                    bool                     `json:"payment_enabled"`
+	Version                           string                   `json:"version"`
+	BalanceLowNotifyEnabled           bool                     `json:"balance_low_notify_enabled"`
+	AccountQuotaNotifyEnabled         bool                     `json:"account_quota_notify_enabled"`
+	BalanceLowNotifyThreshold         float64                  `json:"balance_low_notify_threshold"`
+	BalanceLowNotifyRechargeURL       string                   `json:"balance_low_notify_recharge_url"`
 
 	// Feature flags — MUST match the opt-in/opt-out registry in
 	// frontend/src/utils/featureFlags.ts. Missing a field here is the bug
@@ -1186,51 +1303,58 @@ func (s *SettingService) GetPublicSettingsForInjection(ctx context.Context) (any
 	}
 
 	return &PublicSettingsInjectionPayload{
-		RegistrationEnabled:              settings.RegistrationEnabled,
-		EmailVerifyEnabled:               settings.EmailVerifyEnabled,
-		RegistrationEmailSuffixWhitelist: settings.RegistrationEmailSuffixWhitelist,
-		PromoCodeEnabled:                 settings.PromoCodeEnabled,
-		PasswordResetEnabled:             settings.PasswordResetEnabled,
-		InvitationCodeEnabled:            settings.InvitationCodeEnabled,
-		TotpEnabled:                      settings.TotpEnabled,
-		LoginAgreementEnabled:            settings.LoginAgreementEnabled,
-		LoginAgreementMode:               settings.LoginAgreementMode,
-		LoginAgreementUpdatedAt:          settings.LoginAgreementUpdatedAt,
-		LoginAgreementRevision:           settings.LoginAgreementRevision,
-		LoginAgreementDocuments:          settings.LoginAgreementDocuments,
-		TurnstileEnabled:                 settings.TurnstileEnabled,
-		TurnstileSiteKey:                 settings.TurnstileSiteKey,
-		SiteName:                         settings.SiteName,
-		SiteLogo:                         settings.SiteLogo,
-		SiteSubtitle:                     settings.SiteSubtitle,
-		APIBaseURL:                       settings.APIBaseURL,
-		ContactInfo:                      settings.ContactInfo,
-		DocURL:                           settings.DocURL,
-		HomeContent:                      settings.HomeContent,
-		HideCcsImportButton:              settings.HideCcsImportButton,
-		PurchaseSubscriptionEnabled:      settings.PurchaseSubscriptionEnabled,
-		PurchaseSubscriptionURL:          settings.PurchaseSubscriptionURL,
-		TableDefaultPageSize:             settings.TableDefaultPageSize,
-		TablePageSizeOptions:             settings.TablePageSizeOptions,
-		CustomMenuItems:                  filterUserVisibleMenuItems(settings.CustomMenuItems),
-		CustomEndpoints:                  safeRawJSONArray(settings.CustomEndpoints),
-		LinuxDoOAuthEnabled:              settings.LinuxDoOAuthEnabled,
-		DingTalkOAuthEnabled:             settings.DingTalkOAuthEnabled,
-		WeChatOAuthEnabled:               settings.WeChatOAuthEnabled,
-		WeChatOAuthOpenEnabled:           settings.WeChatOAuthOpenEnabled,
-		WeChatOAuthMPEnabled:             settings.WeChatOAuthMPEnabled,
-		WeChatOAuthMobileEnabled:         settings.WeChatOAuthMobileEnabled,
-		OIDCOAuthEnabled:                 settings.OIDCOAuthEnabled,
-		OIDCOAuthProviderName:            settings.OIDCOAuthProviderName,
-		GitHubOAuthEnabled:               settings.GitHubOAuthEnabled,
-		GoogleOAuthEnabled:               settings.GoogleOAuthEnabled,
-		BackendModeEnabled:               settings.BackendModeEnabled,
-		PaymentEnabled:                   settings.PaymentEnabled,
-		Version:                          s.version,
-		BalanceLowNotifyEnabled:          settings.BalanceLowNotifyEnabled,
-		AccountQuotaNotifyEnabled:        settings.AccountQuotaNotifyEnabled,
-		BalanceLowNotifyThreshold:        settings.BalanceLowNotifyThreshold,
-		BalanceLowNotifyRechargeURL:      settings.BalanceLowNotifyRechargeURL,
+		RegistrationEnabled:               settings.RegistrationEnabled,
+		EmailVerifyEnabled:                settings.EmailVerifyEnabled,
+		RegistrationEmailSuffixWhitelist:  settings.RegistrationEmailSuffixWhitelist,
+		PromoCodeEnabled:                  settings.PromoCodeEnabled,
+		PasswordResetEnabled:              settings.PasswordResetEnabled,
+		InvitationCodeEnabled:             settings.InvitationCodeEnabled,
+		TotpEnabled:                       settings.TotpEnabled,
+		LoginAgreementEnabled:             settings.LoginAgreementEnabled,
+		LoginAgreementMode:                settings.LoginAgreementMode,
+		LoginAgreementUpdatedAt:           settings.LoginAgreementUpdatedAt,
+		LoginAgreementRevision:            settings.LoginAgreementRevision,
+		LoginAgreementDocuments:           settings.LoginAgreementDocuments,
+		TurnstileEnabled:                  settings.TurnstileEnabled,
+		TurnstileSiteKey:                  settings.TurnstileSiteKey,
+		SiteName:                          settings.SiteName,
+		SiteLogo:                          settings.SiteLogo,
+		SiteSubtitle:                      settings.SiteSubtitle,
+		APIBaseURL:                        settings.APIBaseURL,
+		ContactInfo:                       settings.ContactInfo,
+		DocURL:                            settings.DocURL,
+		HomeContent:                       settings.HomeContent,
+		HideCcsImportButton:               settings.HideCcsImportButton,
+		PurchaseSubscriptionEnabled:       settings.PurchaseSubscriptionEnabled,
+		PurchaseSubscriptionURL:           settings.PurchaseSubscriptionURL,
+		LegacySubscriptionPurchaseEnabled: settings.LegacySubscriptionPurchaseEnabled,
+		LegacySubscriptionVisible:         settings.LegacySubscriptionVisible,
+		UsageCardEnabled:                  settings.UsageCardEnabled,
+		UsageCardPaymentEnabled:           settings.UsageCardPaymentEnabled,
+		UsageCardRedeemEnabled:            settings.UsageCardRedeemEnabled,
+		UsageCardBillingEnabled:           settings.UsageCardBillingEnabled,
+		UsageCardDefaultPriority:          settings.UsageCardDefaultPriority,
+		TableDefaultPageSize:              settings.TableDefaultPageSize,
+		TablePageSizeOptions:              settings.TablePageSizeOptions,
+		CustomMenuItems:                   filterUserVisibleMenuItems(settings.CustomMenuItems),
+		CustomEndpoints:                   safeRawJSONArray(settings.CustomEndpoints),
+		LinuxDoOAuthEnabled:               settings.LinuxDoOAuthEnabled,
+		DingTalkOAuthEnabled:              settings.DingTalkOAuthEnabled,
+		WeChatOAuthEnabled:                settings.WeChatOAuthEnabled,
+		WeChatOAuthOpenEnabled:            settings.WeChatOAuthOpenEnabled,
+		WeChatOAuthMPEnabled:              settings.WeChatOAuthMPEnabled,
+		WeChatOAuthMobileEnabled:          settings.WeChatOAuthMobileEnabled,
+		OIDCOAuthEnabled:                  settings.OIDCOAuthEnabled,
+		OIDCOAuthProviderName:             settings.OIDCOAuthProviderName,
+		GitHubOAuthEnabled:                settings.GitHubOAuthEnabled,
+		GoogleOAuthEnabled:                settings.GoogleOAuthEnabled,
+		BackendModeEnabled:                settings.BackendModeEnabled,
+		PaymentEnabled:                    settings.PaymentEnabled,
+		Version:                           s.version,
+		BalanceLowNotifyEnabled:           settings.BalanceLowNotifyEnabled,
+		AccountQuotaNotifyEnabled:         settings.AccountQuotaNotifyEnabled,
+		BalanceLowNotifyThreshold:         settings.BalanceLowNotifyThreshold,
+		BalanceLowNotifyRechargeURL:       settings.BalanceLowNotifyRechargeURL,
 
 		ChannelMonitorEnabled:                settings.ChannelMonitorEnabled,
 		ChannelMonitorDefaultIntervalSeconds: settings.ChannelMonitorDefaultIntervalSeconds,
@@ -1802,6 +1926,17 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingKeyHideCcsImportButton] = strconv.FormatBool(settings.HideCcsImportButton)
 	updates[SettingKeyPurchaseSubscriptionEnabled] = strconv.FormatBool(settings.PurchaseSubscriptionEnabled)
 	updates[SettingKeyPurchaseSubscriptionURL] = strings.TrimSpace(settings.PurchaseSubscriptionURL)
+	updates[SettingKeyLegacySubscriptionPurchaseEnabled] = strconv.FormatBool(settings.LegacySubscriptionPurchaseEnabled)
+	updates[SettingKeyLegacySubscriptionVisible] = strconv.FormatBool(settings.LegacySubscriptionVisible)
+	updates[SettingKeyUsageCardEnabled] = strconv.FormatBool(settings.UsageCardEnabled)
+	updates[SettingKeyUsageCardPaymentEnabled] = strconv.FormatBool(settings.UsageCardPaymentEnabled)
+	updates[SettingKeyUsageCardRedeemEnabled] = strconv.FormatBool(settings.UsageCardRedeemEnabled)
+	updates[SettingKeyUsageCardBillingEnabled] = strconv.FormatBool(settings.UsageCardBillingEnabled)
+	updates[SettingKeyUsageCardDefaultPriority] = NormalizeBillingPriority(settings.UsageCardDefaultPriority)
+	updates[SettingKeyOpenAILongContextBillingEnabled] = strconv.FormatBool(settings.OpenAILongContextBillingEnabled)
+	updates[SettingKeyOpenAILongContextBillingThreshold] = strconv.Itoa(parsePositiveIntSetting(strconv.Itoa(settings.OpenAILongContextBillingThreshold), defaultOpenAILongContextBillingThreshold))
+	updates[SettingKeyOpenAILongContextBillingMultiplier] = strconv.FormatFloat(parsePositiveFloatSetting(strconv.FormatFloat(settings.OpenAILongContextBillingMultiplier, 'f', -1, 64), defaultOpenAILongContextBillingMultiplier), 'f', -1, 64)
+	updates[SettingKeyOpenAILongContextOutputMultiplier] = strconv.FormatFloat(parsePositiveFloatSetting(strconv.FormatFloat(settings.OpenAILongContextOutputMultiplier, 'f', -1, 64), defaultOpenAILongContextOutputMultiplier), 'f', -1, 64)
 	tableDefaultPageSize, tablePageSizeOptions := normalizeTablePreferences(
 		settings.TableDefaultPageSize,
 		settings.TablePageSizeOptions,
@@ -2046,6 +2181,16 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 	openAIAdvancedSchedulerSettingCache.Store(&cachedOpenAIAdvancedSchedulerSetting{
 		enabled:   settings.OpenAIAdvancedSchedulerEnabled,
 		expiresAt: time.Now().Add(openAIAdvancedSchedulerSettingCacheTTL).UnixNano(),
+	})
+	s.openAILongContextSF.Forget(openAILongContextBillingCacheKey)
+	s.openAILongContextCache.Store(&cachedOpenAILongContextBillingSettings{
+		settings: OpenAILongContextBillingRuntime{
+			Enabled:          settings.OpenAILongContextBillingEnabled,
+			Threshold:        parsePositiveIntSetting(strconv.Itoa(settings.OpenAILongContextBillingThreshold), defaultOpenAILongContextBillingThreshold),
+			InputMultiplier:  parsePositiveFloatSetting(strconv.FormatFloat(settings.OpenAILongContextBillingMultiplier, 'f', -1, 64), defaultOpenAILongContextBillingMultiplier),
+			OutputMultiplier: parsePositiveFloatSetting(strconv.FormatFloat(settings.OpenAILongContextOutputMultiplier, 'f', -1, 64), defaultOpenAILongContextOutputMultiplier),
+		},
+		expiresAt: time.Now().Add(openAILongContextBillingCacheTTL).UnixNano(),
 	})
 	// Invalidate the quota auto-pause cache and let the next read trigger a fresh load.
 	// We can't know from here whether ops_advanced_settings was also touched, so be
@@ -2674,6 +2819,17 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeySiteLogo:                                  "",
 		SettingKeyPurchaseSubscriptionEnabled:               "false",
 		SettingKeyPurchaseSubscriptionURL:                   "",
+		SettingKeyLegacySubscriptionPurchaseEnabled:         "true",
+		SettingKeyLegacySubscriptionVisible:                 "true",
+		SettingKeyUsageCardEnabled:                          "false",
+		SettingKeyUsageCardPaymentEnabled:                   "false",
+		SettingKeyUsageCardRedeemEnabled:                    "false",
+		SettingKeyUsageCardBillingEnabled:                   "false",
+		SettingKeyUsageCardDefaultPriority:                  BillingPriorityUsageCardFirst,
+		SettingKeyOpenAILongContextBillingEnabled:           "true",
+		SettingKeyOpenAILongContextBillingThreshold:         strconv.Itoa(defaultOpenAILongContextBillingThreshold),
+		SettingKeyOpenAILongContextBillingMultiplier:        strconv.FormatFloat(defaultOpenAILongContextBillingMultiplier, 'f', -1, 64),
+		SettingKeyOpenAILongContextOutputMultiplier:         strconv.FormatFloat(defaultOpenAILongContextOutputMultiplier, 'f', -1, 64),
 		SettingKeyTableDefaultPageSize:                      "20",
 		SettingKeyTablePageSizeOptions:                      "[10,20,50,100]",
 		SettingKeyCustomMenuItems:                           "[]",
@@ -2836,41 +2992,52 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 		apiKeyACLTrustForwardedIP = s.cfg.Security.TrustForwardedIPForAPIKeyACL
 	}
 	result := &SystemSettings{
-		RegistrationEnabled:              settings[SettingKeyRegistrationEnabled] == "true",
-		EmailVerifyEnabled:               emailVerifyEnabled,
-		RegistrationEmailSuffixWhitelist: ParseRegistrationEmailSuffixWhitelist(settings[SettingKeyRegistrationEmailSuffixWhitelist]),
-		PromoCodeEnabled:                 settings[SettingKeyPromoCodeEnabled] != "false", // 默认启用
-		PasswordResetEnabled:             emailVerifyEnabled && settings[SettingKeyPasswordResetEnabled] == "true",
-		FrontendURL:                      settings[SettingKeyFrontendURL],
-		InvitationCodeEnabled:            settings[SettingKeyInvitationCodeEnabled] == "true",
-		TotpEnabled:                      settings[SettingKeyTotpEnabled] == "true",
-		LoginAgreementEnabled:            settings[SettingKeyLoginAgreementEnabled] == "true",
-		LoginAgreementMode:               normalizeLoginAgreementMode(settings[SettingKeyLoginAgreementMode]),
-		LoginAgreementUpdatedAt:          loginAgreementUpdatedAt,
-		LoginAgreementDocuments:          loginAgreementDocuments,
-		SMTPHost:                         settings[SettingKeySMTPHost],
-		SMTPUsername:                     settings[SettingKeySMTPUsername],
-		SMTPFrom:                         settings[SettingKeySMTPFrom],
-		SMTPFromName:                     settings[SettingKeySMTPFromName],
-		SMTPUseTLS:                       settings[SettingKeySMTPUseTLS] == "true",
-		SMTPPasswordConfigured:           settings[SettingKeySMTPPassword] != "",
-		TurnstileEnabled:                 settings[SettingKeyTurnstileEnabled] == "true",
-		TurnstileSiteKey:                 settings[SettingKeyTurnstileSiteKey],
-		TurnstileSecretKeyConfigured:     settings[SettingKeyTurnstileSecretKey] != "",
-		APIKeyACLTrustForwardedIP:        apiKeyACLTrustForwardedIP,
-		SiteName:                         s.getStringOrDefault(settings, SettingKeySiteName, "Sub2API"),
-		SiteLogo:                         settings[SettingKeySiteLogo],
-		SiteSubtitle:                     s.getStringOrDefault(settings, SettingKeySiteSubtitle, "Subscription to API Conversion Platform"),
-		APIBaseURL:                       settings[SettingKeyAPIBaseURL],
-		ContactInfo:                      settings[SettingKeyContactInfo],
-		DocURL:                           settings[SettingKeyDocURL],
-		HomeContent:                      settings[SettingKeyHomeContent],
-		HideCcsImportButton:              settings[SettingKeyHideCcsImportButton] == "true",
-		PurchaseSubscriptionEnabled:      settings[SettingKeyPurchaseSubscriptionEnabled] == "true",
-		PurchaseSubscriptionURL:          strings.TrimSpace(settings[SettingKeyPurchaseSubscriptionURL]),
-		CustomMenuItems:                  settings[SettingKeyCustomMenuItems],
-		CustomEndpoints:                  settings[SettingKeyCustomEndpoints],
-		BackendModeEnabled:               settings[SettingKeyBackendModeEnabled] == "true",
+		RegistrationEnabled:                settings[SettingKeyRegistrationEnabled] == "true",
+		EmailVerifyEnabled:                 emailVerifyEnabled,
+		RegistrationEmailSuffixWhitelist:   ParseRegistrationEmailSuffixWhitelist(settings[SettingKeyRegistrationEmailSuffixWhitelist]),
+		PromoCodeEnabled:                   settings[SettingKeyPromoCodeEnabled] != "false", // 默认启用
+		PasswordResetEnabled:               emailVerifyEnabled && settings[SettingKeyPasswordResetEnabled] == "true",
+		FrontendURL:                        settings[SettingKeyFrontendURL],
+		InvitationCodeEnabled:              settings[SettingKeyInvitationCodeEnabled] == "true",
+		TotpEnabled:                        settings[SettingKeyTotpEnabled] == "true",
+		LoginAgreementEnabled:              settings[SettingKeyLoginAgreementEnabled] == "true",
+		LoginAgreementMode:                 normalizeLoginAgreementMode(settings[SettingKeyLoginAgreementMode]),
+		LoginAgreementUpdatedAt:            loginAgreementUpdatedAt,
+		LoginAgreementDocuments:            loginAgreementDocuments,
+		SMTPHost:                           settings[SettingKeySMTPHost],
+		SMTPUsername:                       settings[SettingKeySMTPUsername],
+		SMTPFrom:                           settings[SettingKeySMTPFrom],
+		SMTPFromName:                       settings[SettingKeySMTPFromName],
+		SMTPUseTLS:                         settings[SettingKeySMTPUseTLS] == "true",
+		SMTPPasswordConfigured:             settings[SettingKeySMTPPassword] != "",
+		TurnstileEnabled:                   settings[SettingKeyTurnstileEnabled] == "true",
+		TurnstileSiteKey:                   settings[SettingKeyTurnstileSiteKey],
+		TurnstileSecretKeyConfigured:       settings[SettingKeyTurnstileSecretKey] != "",
+		APIKeyACLTrustForwardedIP:          apiKeyACLTrustForwardedIP,
+		SiteName:                           s.getStringOrDefault(settings, SettingKeySiteName, "Sub2API"),
+		SiteLogo:                           settings[SettingKeySiteLogo],
+		SiteSubtitle:                       s.getStringOrDefault(settings, SettingKeySiteSubtitle, "Subscription to API Conversion Platform"),
+		APIBaseURL:                         settings[SettingKeyAPIBaseURL],
+		ContactInfo:                        settings[SettingKeyContactInfo],
+		DocURL:                             settings[SettingKeyDocURL],
+		HomeContent:                        settings[SettingKeyHomeContent],
+		HideCcsImportButton:                settings[SettingKeyHideCcsImportButton] == "true",
+		PurchaseSubscriptionEnabled:        settings[SettingKeyPurchaseSubscriptionEnabled] == "true",
+		PurchaseSubscriptionURL:            strings.TrimSpace(settings[SettingKeyPurchaseSubscriptionURL]),
+		LegacySubscriptionPurchaseEnabled:  settings[SettingKeyLegacySubscriptionPurchaseEnabled] != "false",
+		LegacySubscriptionVisible:          settings[SettingKeyLegacySubscriptionVisible] != "false",
+		UsageCardEnabled:                   settings[SettingKeyUsageCardEnabled] == "true",
+		UsageCardPaymentEnabled:            settings[SettingKeyUsageCardPaymentEnabled] == "true",
+		UsageCardRedeemEnabled:             settings[SettingKeyUsageCardRedeemEnabled] == "true",
+		UsageCardBillingEnabled:            settings[SettingKeyUsageCardBillingEnabled] == "true",
+		UsageCardDefaultPriority:           s.getStringOrDefault(settings, SettingKeyUsageCardDefaultPriority, BillingPriorityUsageCardFirst),
+		OpenAILongContextBillingEnabled:    !isFalseSettingValue(settings[SettingKeyOpenAILongContextBillingEnabled]),
+		OpenAILongContextBillingThreshold:  parsePositiveIntSetting(settings[SettingKeyOpenAILongContextBillingThreshold], defaultOpenAILongContextBillingThreshold),
+		OpenAILongContextBillingMultiplier: parsePositiveFloatSetting(settings[SettingKeyOpenAILongContextBillingMultiplier], defaultOpenAILongContextBillingMultiplier),
+		OpenAILongContextOutputMultiplier:  parsePositiveFloatSetting(settings[SettingKeyOpenAILongContextOutputMultiplier], defaultOpenAILongContextOutputMultiplier),
+		CustomMenuItems:                    settings[SettingKeyCustomMenuItems],
+		CustomEndpoints:                    settings[SettingKeyCustomEndpoints],
+		BackendModeEnabled:                 settings[SettingKeyBackendModeEnabled] == "true",
 	}
 	result.TableDefaultPageSize, result.TablePageSizeOptions = parseTablePreferences(
 		settings[SettingKeyTableDefaultPageSize],

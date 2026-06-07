@@ -28,6 +28,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/userattributevalue"
 	"github.com/Wei-Shaw/sub2api/ent/userplatformquota"
 	"github.com/Wei-Shaw/sub2api/ent/usersubscription"
+	"github.com/Wei-Shaw/sub2api/ent/userusagecard"
 )
 
 // UserQuery is the builder for querying User entities.
@@ -41,6 +42,8 @@ type UserQuery struct {
 	withRedeemCodes           *RedeemCodeQuery
 	withSubscriptions         *UserSubscriptionQuery
 	withAssignedSubscriptions *UserSubscriptionQuery
+	withUsageCards            *UserUsageCardQuery
+	withAssignedUsageCards    *UserUsageCardQuery
 	withAnnouncementReads     *AnnouncementReadQuery
 	withAllowedGroups         *GroupQuery
 	withUsageLogs             *UsageLogQuery
@@ -169,6 +172,50 @@ func (_q *UserQuery) QueryAssignedSubscriptions() *UserSubscriptionQuery {
 			sqlgraph.From(user.Table, user.FieldID, selector),
 			sqlgraph.To(usersubscription.Table, usersubscription.FieldID),
 			sqlgraph.Edge(sqlgraph.O2M, false, user.AssignedSubscriptionsTable, user.AssignedSubscriptionsColumn),
+		)
+		fromU = sqlgraph.SetNeighbors(_q.driver.Dialect(), step)
+		return fromU, nil
+	}
+	return query
+}
+
+// QueryUsageCards chains the current query on the "usage_cards" edge.
+func (_q *UserQuery) QueryUsageCards() *UserUsageCardQuery {
+	query := (&UserUsageCardClient{config: _q.config}).Query()
+	query.path = func(ctx context.Context) (fromU *sql.Selector, err error) {
+		if err := _q.prepareQuery(ctx); err != nil {
+			return nil, err
+		}
+		selector := _q.sqlQuery(ctx)
+		if err := selector.Err(); err != nil {
+			return nil, err
+		}
+		step := sqlgraph.NewStep(
+			sqlgraph.From(user.Table, user.FieldID, selector),
+			sqlgraph.To(userusagecard.Table, userusagecard.FieldID),
+			sqlgraph.Edge(sqlgraph.O2M, false, user.UsageCardsTable, user.UsageCardsColumn),
+		)
+		fromU = sqlgraph.SetNeighbors(_q.driver.Dialect(), step)
+		return fromU, nil
+	}
+	return query
+}
+
+// QueryAssignedUsageCards chains the current query on the "assigned_usage_cards" edge.
+func (_q *UserQuery) QueryAssignedUsageCards() *UserUsageCardQuery {
+	query := (&UserUsageCardClient{config: _q.config}).Query()
+	query.path = func(ctx context.Context) (fromU *sql.Selector, err error) {
+		if err := _q.prepareQuery(ctx); err != nil {
+			return nil, err
+		}
+		selector := _q.sqlQuery(ctx)
+		if err := selector.Err(); err != nil {
+			return nil, err
+		}
+		step := sqlgraph.NewStep(
+			sqlgraph.From(user.Table, user.FieldID, selector),
+			sqlgraph.To(userusagecard.Table, userusagecard.FieldID),
+			sqlgraph.Edge(sqlgraph.O2M, false, user.AssignedUsageCardsTable, user.AssignedUsageCardsColumn),
 		)
 		fromU = sqlgraph.SetNeighbors(_q.driver.Dialect(), step)
 		return fromU, nil
@@ -592,6 +639,8 @@ func (_q *UserQuery) Clone() *UserQuery {
 		withRedeemCodes:           _q.withRedeemCodes.Clone(),
 		withSubscriptions:         _q.withSubscriptions.Clone(),
 		withAssignedSubscriptions: _q.withAssignedSubscriptions.Clone(),
+		withUsageCards:            _q.withUsageCards.Clone(),
+		withAssignedUsageCards:    _q.withAssignedUsageCards.Clone(),
 		withAnnouncementReads:     _q.withAnnouncementReads.Clone(),
 		withAllowedGroups:         _q.withAllowedGroups.Clone(),
 		withUsageLogs:             _q.withUsageLogs.Clone(),
@@ -649,6 +698,28 @@ func (_q *UserQuery) WithAssignedSubscriptions(opts ...func(*UserSubscriptionQue
 		opt(query)
 	}
 	_q.withAssignedSubscriptions = query
+	return _q
+}
+
+// WithUsageCards tells the query-builder to eager-load the nodes that are connected to
+// the "usage_cards" edge. The optional arguments are used to configure the query builder of the edge.
+func (_q *UserQuery) WithUsageCards(opts ...func(*UserUsageCardQuery)) *UserQuery {
+	query := (&UserUsageCardClient{config: _q.config}).Query()
+	for _, opt := range opts {
+		opt(query)
+	}
+	_q.withUsageCards = query
+	return _q
+}
+
+// WithAssignedUsageCards tells the query-builder to eager-load the nodes that are connected to
+// the "assigned_usage_cards" edge. The optional arguments are used to configure the query builder of the edge.
+func (_q *UserQuery) WithAssignedUsageCards(opts ...func(*UserUsageCardQuery)) *UserQuery {
+	query := (&UserUsageCardClient{config: _q.config}).Query()
+	for _, opt := range opts {
+		opt(query)
+	}
+	_q.withAssignedUsageCards = query
 	return _q
 }
 
@@ -840,11 +911,13 @@ func (_q *UserQuery) sqlAll(ctx context.Context, hooks ...queryHook) ([]*User, e
 	var (
 		nodes       = []*User{}
 		_spec       = _q.querySpec()
-		loadedTypes = [14]bool{
+		loadedTypes = [16]bool{
 			_q.withAPIKeys != nil,
 			_q.withRedeemCodes != nil,
 			_q.withSubscriptions != nil,
 			_q.withAssignedSubscriptions != nil,
+			_q.withUsageCards != nil,
+			_q.withAssignedUsageCards != nil,
 			_q.withAnnouncementReads != nil,
 			_q.withAllowedGroups != nil,
 			_q.withUsageLogs != nil,
@@ -905,6 +978,20 @@ func (_q *UserQuery) sqlAll(ctx context.Context, hooks ...queryHook) ([]*User, e
 			func(n *User, e *UserSubscription) {
 				n.Edges.AssignedSubscriptions = append(n.Edges.AssignedSubscriptions, e)
 			}); err != nil {
+			return nil, err
+		}
+	}
+	if query := _q.withUsageCards; query != nil {
+		if err := _q.loadUsageCards(ctx, query, nodes,
+			func(n *User) { n.Edges.UsageCards = []*UserUsageCard{} },
+			func(n *User, e *UserUsageCard) { n.Edges.UsageCards = append(n.Edges.UsageCards, e) }); err != nil {
+			return nil, err
+		}
+	}
+	if query := _q.withAssignedUsageCards; query != nil {
+		if err := _q.loadAssignedUsageCards(ctx, query, nodes,
+			func(n *User) { n.Edges.AssignedUsageCards = []*UserUsageCard{} },
+			func(n *User, e *UserUsageCard) { n.Edges.AssignedUsageCards = append(n.Edges.AssignedUsageCards, e) }); err != nil {
 			return nil, err
 		}
 	}
@@ -1091,6 +1178,69 @@ func (_q *UserQuery) loadAssignedSubscriptions(ctx context.Context, query *UserS
 	}
 	query.Where(predicate.UserSubscription(func(s *sql.Selector) {
 		s.Where(sql.InValues(s.C(user.AssignedSubscriptionsColumn), fks...))
+	}))
+	neighbors, err := query.All(ctx)
+	if err != nil {
+		return err
+	}
+	for _, n := range neighbors {
+		fk := n.AssignedBy
+		if fk == nil {
+			return fmt.Errorf(`foreign-key "assigned_by" is nil for node %v`, n.ID)
+		}
+		node, ok := nodeids[*fk]
+		if !ok {
+			return fmt.Errorf(`unexpected referenced foreign-key "assigned_by" returned %v for node %v`, *fk, n.ID)
+		}
+		assign(node, n)
+	}
+	return nil
+}
+func (_q *UserQuery) loadUsageCards(ctx context.Context, query *UserUsageCardQuery, nodes []*User, init func(*User), assign func(*User, *UserUsageCard)) error {
+	fks := make([]driver.Value, 0, len(nodes))
+	nodeids := make(map[int64]*User)
+	for i := range nodes {
+		fks = append(fks, nodes[i].ID)
+		nodeids[nodes[i].ID] = nodes[i]
+		if init != nil {
+			init(nodes[i])
+		}
+	}
+	if len(query.ctx.Fields) > 0 {
+		query.ctx.AppendFieldOnce(userusagecard.FieldUserID)
+	}
+	query.Where(predicate.UserUsageCard(func(s *sql.Selector) {
+		s.Where(sql.InValues(s.C(user.UsageCardsColumn), fks...))
+	}))
+	neighbors, err := query.All(ctx)
+	if err != nil {
+		return err
+	}
+	for _, n := range neighbors {
+		fk := n.UserID
+		node, ok := nodeids[fk]
+		if !ok {
+			return fmt.Errorf(`unexpected referenced foreign-key "user_id" returned %v for node %v`, fk, n.ID)
+		}
+		assign(node, n)
+	}
+	return nil
+}
+func (_q *UserQuery) loadAssignedUsageCards(ctx context.Context, query *UserUsageCardQuery, nodes []*User, init func(*User), assign func(*User, *UserUsageCard)) error {
+	fks := make([]driver.Value, 0, len(nodes))
+	nodeids := make(map[int64]*User)
+	for i := range nodes {
+		fks = append(fks, nodes[i].ID)
+		nodeids[nodes[i].ID] = nodes[i]
+		if init != nil {
+			init(nodes[i])
+		}
+	}
+	if len(query.ctx.Fields) > 0 {
+		query.ctx.AppendFieldOnce(userusagecard.FieldAssignedBy)
+	}
+	query.Where(predicate.UserUsageCard(func(s *sql.Selector) {
+		s.Where(sql.InValues(s.C(user.AssignedUsageCardsColumn), fks...))
 	}))
 	neighbors, err := query.All(ctx)
 	if err != nil {

@@ -509,6 +509,31 @@
           />
           <p class="input-hint">{{ t("admin.groups.form.rpmLimitHint") }}</p>
         </div>
+        <div v-if="createForm.subscription_type !== 'subscription'">
+          <div class="flex items-start gap-3 rounded-lg border border-gray-200 p-3 dark:border-dark-700">
+            <button
+              type="button"
+              @click="createForm.usage_card_disabled = !createForm.usage_card_disabled"
+              :class="[
+                'relative mt-0.5 inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors',
+                createForm.usage_card_disabled ? 'bg-primary-500' : 'bg-gray-300 dark:bg-dark-600',
+              ]"
+            >
+              <span
+                :class="[
+                  'inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform',
+                  createForm.usage_card_disabled ? 'translate-x-6' : 'translate-x-1',
+                ]"
+              />
+            </button>
+            <div>
+              <div class="text-sm font-medium text-gray-900 dark:text-white">{{ t("admin.groups.form.usageCardDisabled") }}</div>
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                {{ t("admin.groups.form.usageCardDisabledHint") }}
+              </p>
+            </div>
+          </div>
+        </div>
         <div
           v-if="createForm.subscription_type !== 'subscription'"
           data-tour="group-form-exclusive"
@@ -1794,6 +1819,31 @@
             :placeholder="t('admin.groups.form.rpmLimitPlaceholder')"
           />
           <p class="input-hint">{{ t("admin.groups.form.rpmLimitHint") }}</p>
+        </div>
+        <div v-if="editForm.subscription_type !== 'subscription'">
+          <div class="flex items-start gap-3 rounded-lg border border-gray-200 p-3 dark:border-dark-700">
+            <button
+              type="button"
+              @click="editForm.usage_card_disabled = !editForm.usage_card_disabled"
+              :class="[
+                'relative mt-0.5 inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors',
+                editForm.usage_card_disabled ? 'bg-primary-500' : 'bg-gray-300 dark:bg-dark-600',
+              ]"
+            >
+              <span
+                :class="[
+                  'inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform',
+                  editForm.usage_card_disabled ? 'translate-x-6' : 'translate-x-1',
+                ]"
+              />
+            </button>
+            <div>
+              <div class="text-sm font-medium text-gray-900 dark:text-white">{{ t("admin.groups.form.usageCardDisabled") }}</div>
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                {{ t("admin.groups.form.usageCardDisabledHint") }}
+              </p>
+            </div>
+          </div>
         </div>
         <div v-if="editForm.subscription_type !== 'subscription'">
           <div class="mb-1.5 flex items-center gap-1">
@@ -3329,6 +3379,7 @@ const createForm = reactive({
   platform: "anthropic" as GroupPlatform,
   rate_multiplier: 1.0,
   is_exclusive: false,
+  usage_card_disabled: false,
   subscription_type: "standard" as SubscriptionType,
   daily_limit_usd: null as number | null,
   weekly_limit_usd: null as number | null,
@@ -3659,6 +3710,7 @@ const editForm = reactive({
   platform: "anthropic" as GroupPlatform,
   rate_multiplier: 1.0,
   is_exclusive: false,
+  usage_card_disabled: false,
   status: "active" as "active" | "inactive",
   subscription_type: "standard" as SubscriptionType,
   daily_limit_usd: null as number | null,
@@ -3912,6 +3964,7 @@ const closeCreateModal = () => {
   createForm.platform = "anthropic";
   createForm.rate_multiplier = 1.0;
   createForm.is_exclusive = false;
+  createForm.usage_card_disabled = false;
   createForm.subscription_type = "standard";
   createForm.daily_limit_usd = null;
   createForm.weekly_limit_usd = null;
@@ -4037,6 +4090,7 @@ const handleEdit = async (group: AdminGroup) => {
   editForm.platform = group.platform;
   editForm.rate_multiplier = group.rate_multiplier;
   editForm.is_exclusive = group.is_exclusive;
+  editForm.usage_card_disabled = group.usage_card_disabled ?? false;
   editForm.status = group.status;
   editForm.subscription_type = group.subscription_type || "standard";
   editForm.daily_limit_usd = group.daily_limit_usd;

@@ -199,6 +199,17 @@ func (s *PaymentConfigService) IsPaymentEnabled(ctx context.Context) bool {
 	return val == "true"
 }
 
+func (s *PaymentConfigService) IsLegacySubscriptionPurchaseEnabled(ctx context.Context) bool {
+	if s == nil || s.settingRepo == nil {
+		return true
+	}
+	val, err := s.settingRepo.GetValue(ctx, SettingKeyLegacySubscriptionPurchaseEnabled)
+	if err != nil {
+		return true
+	}
+	return val != "false"
+}
+
 // GetPaymentConfig returns the full payment configuration.
 func (s *PaymentConfigService) GetPaymentConfig(ctx context.Context) (*PaymentConfig, error) {
 	keys := []string{

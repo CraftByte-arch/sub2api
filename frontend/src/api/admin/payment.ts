@@ -108,6 +108,11 @@ export const adminPaymentAPI = {
     return apiClient.post(`/admin/payment/orders/${id}/refund`, data)
   },
 
+  /** Get provider instance IDs that allow admin refund */
+  getRefundEligibleProviders() {
+    return apiClient.get<{ provider_instance_ids: string[] }>('/admin/payment/orders/refund-eligible-providers')
+  },
+
   // ==================== Channels ====================
 
   /** Get all payment channels */

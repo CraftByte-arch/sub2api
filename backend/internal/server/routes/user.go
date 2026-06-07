@@ -114,6 +114,11 @@ func RegisterUserRoutes(
 			subscriptions.GET("/summary", h.Subscription.GetSummary)
 		}
 
+		usageCards := authenticated.Group("/usage-cards")
+		{
+			usageCards.GET("", h.UsageCard.ListMyCards)
+		}
+
 		// 渠道监控（用户只读）
 		monitors := authenticated.Group("/channel-monitors")
 		{

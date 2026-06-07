@@ -34,7 +34,7 @@ func (s *PaymentService) CreateOrder(ctx context.Context, req CreateOrderRequest
 	if !cfg.Enabled {
 		return nil, infraerrors.Forbidden("PAYMENT_DISABLED", "payment system is disabled")
 	}
-	plan, err := s.validateOrderInput(ctx, req, cfg)
+	product, err := s.validateOrderInput(ctx, req, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -53,9 +53,9 @@ func (s *PaymentService) CreateOrder(ctx context.Context, req CreateOrderRequest
 	}
 	orderAmount := req.Amount
 	limitAmount := req.Amount
-	if plan != nil {
-		orderAmount = plan.Price
-		limitAmount = plan.Price
+	if product != nil {
+		orderAmount = product.creditAmount()
+		limitAmount = product.paymentAmount()
 	} else if req.OrderType == payment.OrderTypeBalance {
 		orderAmount = calculateCreditedBalance(req.Amount, cfg.BalanceRechargeMultiplier)
 	}
@@ -98,11 +98,11 @@ func (s *PaymentService) CreateOrder(ctx context.Context, req CreateOrderRequest
 	if oauthResp != nil {
 		return oauthResp, nil
 	}
-	order, err := s.createOrderInTx(ctx, req, user, plan, cfg, orderAmount, limitAmount, feeRate, payAmount, sel)
+	order, err := s.createOrderInTx(ctx, req, user, product, cfg, orderAmount, limitAmount, feeRate, payAmount, sel)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := s.invokeProvider(ctx, order, req, cfg, limitAmount, payAmountStr, payAmount, plan, sel)
+	resp, err := s.invokeProvider(ctx, order, req, cfg, limitAmount, payAmountStr, payAmount, product, sel)
 	if err != nil {
 		_, _ = s.entClient.PaymentOrder.UpdateOneID(order.ID).
 			SetStatus(OrderStatusFailed).
@@ -112,12 +112,54 @@ func (s *PaymentService) CreateOrder(ctx context.Context, req CreateOrderRequest
 	return resp, nil
 }
 
-func (s *PaymentService) validateOrderInput(ctx context.Context, req CreateOrderRequest, cfg *PaymentConfig) (*dbent.SubscriptionPlan, error) {
+type paymentOrderProduct struct {
+	subscriptionPlan *dbent.SubscriptionPlan
+	usageCardPlan    *UsageCardPlan
+}
+
+func (p *paymentOrderProduct) paymentAmount() float64 {
+	if p == nil {
+		return 0
+	}
+	if p.subscriptionPlan != nil {
+		return p.subscriptionPlan.Price
+	}
+	if p.usageCardPlan != nil {
+		return p.usageCardPlan.Price
+	}
+	return 0
+}
+
+func (p *paymentOrderProduct) creditAmount() float64 {
+	if p == nil {
+		return 0
+	}
+	if p.subscriptionPlan != nil {
+		return p.subscriptionPlan.Price
+	}
+	if p.usageCardPlan != nil {
+		return p.usageCardPlan.AmountUSD
+	}
+	return 0
+}
+
+func (s *PaymentService) validateOrderInput(ctx context.Context, req CreateOrderRequest, cfg *PaymentConfig) (*paymentOrderProduct, error) {
 	if req.OrderType == payment.OrderTypeBalance && cfg.BalanceDisabled {
 		return nil, infraerrors.Forbidden("BALANCE_PAYMENT_DISABLED", "balance recharge has been disabled")
 	}
 	if req.OrderType == payment.OrderTypeSubscription {
-		return s.validateSubOrder(ctx, req)
+		plan, err := s.validateSubOrder(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		return &paymentOrderProduct{subscriptionPlan: plan}, nil
+	}
+	if req.OrderType == payment.OrderTypeUsageCard {
+		plan, err := s.validateUsageCardOrder(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		return &paymentOrderProduct{usageCardPlan: plan}, nil
 	}
 	if math.IsNaN(req.Amount) || math.IsInf(req.Amount, 0) || req.Amount <= 0 {
 		return nil, infraerrors.BadRequest("INVALID_AMOUNT", "amount must be a positive number")
@@ -129,7 +171,27 @@ func (s *PaymentService) validateOrderInput(ctx context.Context, req CreateOrder
 	return nil, nil
 }
 
+func (s *PaymentService) validateUsageCardOrder(ctx context.Context, req CreateOrderRequest) (*UsageCardPlan, error) {
+	if s.usageCardService == nil || !s.usageCardService.IsPaymentEnabled(ctx) {
+		return nil, ErrUsageCardPaymentDisabled
+	}
+	if req.PlanID == 0 {
+		return nil, infraerrors.BadRequest("INVALID_INPUT", "usage card order requires a plan")
+	}
+	plan, err := s.usageCardService.GetPlanForSale(ctx, req.PlanID)
+	if err != nil {
+		return nil, infraerrors.NotFound("PLAN_NOT_AVAILABLE", "usage card plan not found or not for sale")
+	}
+	if plan.Price <= 0 || plan.AmountUSD <= 0 {
+		return nil, infraerrors.BadRequest("INVALID_USAGE_CARD_PLAN", "usage card plan is invalid")
+	}
+	return plan, nil
+}
+
 func (s *PaymentService) validateSubOrder(ctx context.Context, req CreateOrderRequest) (*dbent.SubscriptionPlan, error) {
+	if s.configService != nil && !s.configService.IsLegacySubscriptionPurchaseEnabled(ctx) {
+		return nil, infraerrors.Forbidden("LEGACY_SUBSCRIPTION_PURCHASE_DISABLED", "subscription purchase has been disabled")
+	}
 	if req.PlanID == 0 {
 		return nil, infraerrors.BadRequest("INVALID_INPUT", "subscription order requires a plan")
 	}
@@ -147,7 +209,7 @@ func (s *PaymentService) validateSubOrder(ctx context.Context, req CreateOrderRe
 	return plan, nil
 }
 
-func (s *PaymentService) createOrderInTx(ctx context.Context, req CreateOrderRequest, user *User, plan *dbent.SubscriptionPlan, cfg *PaymentConfig, orderAmount, limitAmount, feeRate, payAmount float64, sel *payment.InstanceSelection) (*dbent.PaymentOrder, error) {
+func (s *PaymentService) createOrderInTx(ctx context.Context, req CreateOrderRequest, user *User, product *paymentOrderProduct, cfg *PaymentConfig, orderAmount, limitAmount, feeRate, payAmount float64, sel *payment.InstanceSelection) (*dbent.PaymentOrder, error) {
 	tx, err := s.entClient.Tx(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin transaction: %w", err)
@@ -204,8 +266,12 @@ func (s *PaymentService) createOrderInTx(ctx context.Context, req CreateOrderReq
 	if providerSnapshot != nil {
 		b.SetProviderSnapshot(providerSnapshot)
 	}
-	if plan != nil {
+	if product != nil && product.subscriptionPlan != nil {
+		plan := product.subscriptionPlan
 		b.SetPlanID(plan.ID).SetSubscriptionGroupID(plan.GroupID).SetSubscriptionDays(psComputeValidityDays(plan.ValidityDays, plan.ValidityUnit))
+	}
+	if product != nil && product.usageCardPlan != nil {
+		b.SetPlanID(product.usageCardPlan.ID)
 	}
 	order, err := b.Save(ctx)
 	if err != nil {
@@ -395,7 +461,7 @@ func (s *PaymentService) usesOfficialWxpayVisibleMethod(ctx context.Context) boo
 	return inst.ProviderKey == payment.TypeWxpay
 }
 
-func (s *PaymentService) invokeProvider(ctx context.Context, order *dbent.PaymentOrder, req CreateOrderRequest, cfg *PaymentConfig, limitAmount float64, payAmountStr string, payAmount float64, plan *dbent.SubscriptionPlan, sel *payment.InstanceSelection) (*CreateOrderResponse, error) {
+func (s *PaymentService) invokeProvider(ctx context.Context, order *dbent.PaymentOrder, req CreateOrderRequest, cfg *PaymentConfig, limitAmount float64, payAmountStr string, payAmount float64, product *paymentOrderProduct, sel *payment.InstanceSelection) (*CreateOrderResponse, error) {
 	prov, err := provider.CreateProvider(sel.ProviderKey, sel.InstanceID, sel.Config)
 	if err != nil {
 		slog.Error("[PaymentService] CreateProvider failed", "provider", sel.ProviderKey, "instance", sel.InstanceID, "error", err)
@@ -411,7 +477,7 @@ func (s *PaymentService) invokeProvider(ctx context.Context, order *dbent.Paymen
 		return nil, infraerrors.ServiceUnavailable("PAYMENT_PROVIDER_MISCONFIGURED", "provider_misconfigured").
 			WithMetadata(map[string]string{"provider": sel.ProviderKey, "instance_id": sel.InstanceID})
 	}
-	subject := s.buildPaymentSubject(plan, limitAmount, cfg, sel)
+	subject := s.buildPaymentSubject(product, limitAmount, cfg, sel)
 	outTradeNo := order.OutTradeNo
 	canonicalReturnURL, err := CanonicalizeReturnURL(req.ReturnURL, req.SrcHost, req.SrcURL)
 	if err != nil {
@@ -500,12 +566,17 @@ func selectedInstanceSupportedTypes(sel *payment.InstanceSelection) string {
 	return sel.SupportedTypes
 }
 
-func (s *PaymentService) buildPaymentSubject(plan *dbent.SubscriptionPlan, limitAmount float64, cfg *PaymentConfig, sel *payment.InstanceSelection) string {
-	if plan != nil {
+func (s *PaymentService) buildPaymentSubject(product *paymentOrderProduct, limitAmount float64, cfg *PaymentConfig, sel *payment.InstanceSelection) string {
+	if product != nil && product.subscriptionPlan != nil {
+		plan := product.subscriptionPlan
 		productName := plan.ProductName
 		if productName == "" {
 			productName = "Sub2API Subscription " + plan.Name
 		}
+		return applyPaymentProductNameAffix(productName, cfg)
+	}
+	if product != nil && product.usageCardPlan != nil {
+		productName := "Sub2API Usage Card " + product.usageCardPlan.Name
 		return applyPaymentProductNameAffix(productName, cfg)
 	}
 	currency := payment.DefaultPaymentCurrency

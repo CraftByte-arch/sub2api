@@ -116,9 +116,9 @@ function buildImageGenerationTool(
     type: 'image_generation',
     model: input.model,
     action: isImageStudioEditInput(input) ? 'edit' : 'generate',
-    ...commonImageControls(input, options),
     moderation: 'low',
-    ...extras
+    ...extras,
+    ...commonImageControls(input, options)
   })
 }
 

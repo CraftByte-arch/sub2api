@@ -42,6 +42,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/setting"
 	"github.com/Wei-Shaw/sub2api/ent/subscriptionplan"
 	"github.com/Wei-Shaw/sub2api/ent/tlsfingerprintprofile"
+	"github.com/Wei-Shaw/sub2api/ent/usagecardplan"
 	"github.com/Wei-Shaw/sub2api/ent/usagecleanuptask"
 	"github.com/Wei-Shaw/sub2api/ent/usagelog"
 	"github.com/Wei-Shaw/sub2api/ent/user"
@@ -50,6 +51,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/userattributevalue"
 	"github.com/Wei-Shaw/sub2api/ent/userplatformquota"
 	"github.com/Wei-Shaw/sub2api/ent/usersubscription"
+	"github.com/Wei-Shaw/sub2api/ent/userusagecard"
 
 	stdsql "database/sql"
 )
@@ -113,6 +115,8 @@ type Client struct {
 	SubscriptionPlan *SubscriptionPlanClient
 	// TLSFingerprintProfile is the client for interacting with the TLSFingerprintProfile builders.
 	TLSFingerprintProfile *TLSFingerprintProfileClient
+	// UsageCardPlan is the client for interacting with the UsageCardPlan builders.
+	UsageCardPlan *UsageCardPlanClient
 	// UsageCleanupTask is the client for interacting with the UsageCleanupTask builders.
 	UsageCleanupTask *UsageCleanupTaskClient
 	// UsageLog is the client for interacting with the UsageLog builders.
@@ -129,6 +133,8 @@ type Client struct {
 	UserPlatformQuota *UserPlatformQuotaClient
 	// UserSubscription is the client for interacting with the UserSubscription builders.
 	UserSubscription *UserSubscriptionClient
+	// UserUsageCard is the client for interacting with the UserUsageCard builders.
+	UserUsageCard *UserUsageCardClient
 }
 
 // NewClient creates a new client configured with the given options.
@@ -167,6 +173,7 @@ func (c *Client) init() {
 	c.Setting = NewSettingClient(c.config)
 	c.SubscriptionPlan = NewSubscriptionPlanClient(c.config)
 	c.TLSFingerprintProfile = NewTLSFingerprintProfileClient(c.config)
+	c.UsageCardPlan = NewUsageCardPlanClient(c.config)
 	c.UsageCleanupTask = NewUsageCleanupTaskClient(c.config)
 	c.UsageLog = NewUsageLogClient(c.config)
 	c.User = NewUserClient(c.config)
@@ -175,6 +182,7 @@ func (c *Client) init() {
 	c.UserAttributeValue = NewUserAttributeValueClient(c.config)
 	c.UserPlatformQuota = NewUserPlatformQuotaClient(c.config)
 	c.UserSubscription = NewUserSubscriptionClient(c.config)
+	c.UserUsageCard = NewUserUsageCardClient(c.config)
 }
 
 type (
@@ -294,6 +302,7 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 		Setting:                       NewSettingClient(cfg),
 		SubscriptionPlan:              NewSubscriptionPlanClient(cfg),
 		TLSFingerprintProfile:         NewTLSFingerprintProfileClient(cfg),
+		UsageCardPlan:                 NewUsageCardPlanClient(cfg),
 		UsageCleanupTask:              NewUsageCleanupTaskClient(cfg),
 		UsageLog:                      NewUsageLogClient(cfg),
 		User:                          NewUserClient(cfg),
@@ -302,6 +311,7 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 		UserAttributeValue:            NewUserAttributeValueClient(cfg),
 		UserPlatformQuota:             NewUserPlatformQuotaClient(cfg),
 		UserSubscription:              NewUserSubscriptionClient(cfg),
+		UserUsageCard:                 NewUserUsageCardClient(cfg),
 	}, nil
 }
 
@@ -348,6 +358,7 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 		Setting:                       NewSettingClient(cfg),
 		SubscriptionPlan:              NewSubscriptionPlanClient(cfg),
 		TLSFingerprintProfile:         NewTLSFingerprintProfileClient(cfg),
+		UsageCardPlan:                 NewUsageCardPlanClient(cfg),
 		UsageCleanupTask:              NewUsageCleanupTaskClient(cfg),
 		UsageLog:                      NewUsageLogClient(cfg),
 		User:                          NewUserClient(cfg),
@@ -356,6 +367,7 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 		UserAttributeValue:            NewUserAttributeValueClient(cfg),
 		UserPlatformQuota:             NewUserPlatformQuotaClient(cfg),
 		UserSubscription:              NewUserSubscriptionClient(cfg),
+		UserUsageCard:                 NewUserUsageCardClient(cfg),
 	}, nil
 }
 
@@ -392,9 +404,10 @@ func (c *Client) Use(hooks ...Hook) {
 		c.IdempotencyRecord, c.IdentityAdoptionDecision, c.PaymentAuditLog,
 		c.PaymentOrder, c.PaymentProviderInstance, c.PendingAuthSession, c.PromoCode,
 		c.PromoCodeUsage, c.Proxy, c.RedeemCode, c.SecuritySecret, c.Setting,
-		c.SubscriptionPlan, c.TLSFingerprintProfile, c.UsageCleanupTask, c.UsageLog,
-		c.User, c.UserAllowedGroup, c.UserAttributeDefinition, c.UserAttributeValue,
-		c.UserPlatformQuota, c.UserSubscription,
+		c.SubscriptionPlan, c.TLSFingerprintProfile, c.UsageCardPlan,
+		c.UsageCleanupTask, c.UsageLog, c.User, c.UserAllowedGroup,
+		c.UserAttributeDefinition, c.UserAttributeValue, c.UserPlatformQuota,
+		c.UserSubscription, c.UserUsageCard,
 	} {
 		n.Use(hooks...)
 	}
@@ -411,9 +424,10 @@ func (c *Client) Intercept(interceptors ...Interceptor) {
 		c.IdempotencyRecord, c.IdentityAdoptionDecision, c.PaymentAuditLog,
 		c.PaymentOrder, c.PaymentProviderInstance, c.PendingAuthSession, c.PromoCode,
 		c.PromoCodeUsage, c.Proxy, c.RedeemCode, c.SecuritySecret, c.Setting,
-		c.SubscriptionPlan, c.TLSFingerprintProfile, c.UsageCleanupTask, c.UsageLog,
-		c.User, c.UserAllowedGroup, c.UserAttributeDefinition, c.UserAttributeValue,
-		c.UserPlatformQuota, c.UserSubscription,
+		c.SubscriptionPlan, c.TLSFingerprintProfile, c.UsageCardPlan,
+		c.UsageCleanupTask, c.UsageLog, c.User, c.UserAllowedGroup,
+		c.UserAttributeDefinition, c.UserAttributeValue, c.UserPlatformQuota,
+		c.UserSubscription, c.UserUsageCard,
 	} {
 		n.Intercept(interceptors...)
 	}
@@ -476,6 +490,8 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 		return c.SubscriptionPlan.mutate(ctx, m)
 	case *TLSFingerprintProfileMutation:
 		return c.TLSFingerprintProfile.mutate(ctx, m)
+	case *UsageCardPlanMutation:
+		return c.UsageCardPlan.mutate(ctx, m)
 	case *UsageCleanupTaskMutation:
 		return c.UsageCleanupTask.mutate(ctx, m)
 	case *UsageLogMutation:
@@ -492,6 +508,8 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 		return c.UserPlatformQuota.mutate(ctx, m)
 	case *UserSubscriptionMutation:
 		return c.UserSubscription.mutate(ctx, m)
+	case *UserUsageCardMutation:
+		return c.UserUsageCard.mutate(ctx, m)
 	default:
 		return nil, fmt.Errorf("ent: unknown mutation type %T", m)
 	}
@@ -4146,6 +4164,22 @@ func (c *RedeemCodeClient) QueryGroup(_m *RedeemCode) *GroupQuery {
 	return query
 }
 
+// QueryUsageCardPlan queries the usage_card_plan edge of a RedeemCode.
+func (c *RedeemCodeClient) QueryUsageCardPlan(_m *RedeemCode) *UsageCardPlanQuery {
+	query := (&UsageCardPlanClient{config: c.config}).Query()
+	query.path = func(context.Context) (fromV *sql.Selector, _ error) {
+		id := _m.ID
+		step := sqlgraph.NewStep(
+			sqlgraph.From(redeemcode.Table, redeemcode.FieldID, id),
+			sqlgraph.To(usagecardplan.Table, usagecardplan.FieldID),
+			sqlgraph.Edge(sqlgraph.M2O, true, redeemcode.UsageCardPlanTable, redeemcode.UsageCardPlanColumn),
+		)
+		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
+		return fromV, nil
+	}
+	return query
+}
+
 // Hooks returns the client hooks.
 func (c *RedeemCodeClient) Hooks() []Hook {
 	return c.hooks.RedeemCode
@@ -4703,6 +4737,171 @@ func (c *TLSFingerprintProfileClient) mutate(ctx context.Context, m *TLSFingerpr
 	}
 }
 
+// UsageCardPlanClient is a client for the UsageCardPlan schema.
+type UsageCardPlanClient struct {
+	config
+}
+
+// NewUsageCardPlanClient returns a client for the UsageCardPlan from the given config.
+func NewUsageCardPlanClient(c config) *UsageCardPlanClient {
+	return &UsageCardPlanClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `usagecardplan.Hooks(f(g(h())))`.
+func (c *UsageCardPlanClient) Use(hooks ...Hook) {
+	c.hooks.UsageCardPlan = append(c.hooks.UsageCardPlan, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `usagecardplan.Intercept(f(g(h())))`.
+func (c *UsageCardPlanClient) Intercept(interceptors ...Interceptor) {
+	c.inters.UsageCardPlan = append(c.inters.UsageCardPlan, interceptors...)
+}
+
+// Create returns a builder for creating a UsageCardPlan entity.
+func (c *UsageCardPlanClient) Create() *UsageCardPlanCreate {
+	mutation := newUsageCardPlanMutation(c.config, OpCreate)
+	return &UsageCardPlanCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of UsageCardPlan entities.
+func (c *UsageCardPlanClient) CreateBulk(builders ...*UsageCardPlanCreate) *UsageCardPlanCreateBulk {
+	return &UsageCardPlanCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *UsageCardPlanClient) MapCreateBulk(slice any, setFunc func(*UsageCardPlanCreate, int)) *UsageCardPlanCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &UsageCardPlanCreateBulk{err: fmt.Errorf("calling to UsageCardPlanClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*UsageCardPlanCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &UsageCardPlanCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for UsageCardPlan.
+func (c *UsageCardPlanClient) Update() *UsageCardPlanUpdate {
+	mutation := newUsageCardPlanMutation(c.config, OpUpdate)
+	return &UsageCardPlanUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *UsageCardPlanClient) UpdateOne(_m *UsageCardPlan) *UsageCardPlanUpdateOne {
+	mutation := newUsageCardPlanMutation(c.config, OpUpdateOne, withUsageCardPlan(_m))
+	return &UsageCardPlanUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *UsageCardPlanClient) UpdateOneID(id int64) *UsageCardPlanUpdateOne {
+	mutation := newUsageCardPlanMutation(c.config, OpUpdateOne, withUsageCardPlanID(id))
+	return &UsageCardPlanUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for UsageCardPlan.
+func (c *UsageCardPlanClient) Delete() *UsageCardPlanDelete {
+	mutation := newUsageCardPlanMutation(c.config, OpDelete)
+	return &UsageCardPlanDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *UsageCardPlanClient) DeleteOne(_m *UsageCardPlan) *UsageCardPlanDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *UsageCardPlanClient) DeleteOneID(id int64) *UsageCardPlanDeleteOne {
+	builder := c.Delete().Where(usagecardplan.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &UsageCardPlanDeleteOne{builder}
+}
+
+// Query returns a query builder for UsageCardPlan.
+func (c *UsageCardPlanClient) Query() *UsageCardPlanQuery {
+	return &UsageCardPlanQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeUsageCardPlan},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a UsageCardPlan entity by its id.
+func (c *UsageCardPlanClient) Get(ctx context.Context, id int64) (*UsageCardPlan, error) {
+	return c.Query().Where(usagecardplan.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *UsageCardPlanClient) GetX(ctx context.Context, id int64) *UsageCardPlan {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// QueryUsageCards queries the usage_cards edge of a UsageCardPlan.
+func (c *UsageCardPlanClient) QueryUsageCards(_m *UsageCardPlan) *UserUsageCardQuery {
+	query := (&UserUsageCardClient{config: c.config}).Query()
+	query.path = func(context.Context) (fromV *sql.Selector, _ error) {
+		id := _m.ID
+		step := sqlgraph.NewStep(
+			sqlgraph.From(usagecardplan.Table, usagecardplan.FieldID, id),
+			sqlgraph.To(userusagecard.Table, userusagecard.FieldID),
+			sqlgraph.Edge(sqlgraph.O2M, false, usagecardplan.UsageCardsTable, usagecardplan.UsageCardsColumn),
+		)
+		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
+		return fromV, nil
+	}
+	return query
+}
+
+// QueryRedeemCodes queries the redeem_codes edge of a UsageCardPlan.
+func (c *UsageCardPlanClient) QueryRedeemCodes(_m *UsageCardPlan) *RedeemCodeQuery {
+	query := (&RedeemCodeClient{config: c.config}).Query()
+	query.path = func(context.Context) (fromV *sql.Selector, _ error) {
+		id := _m.ID
+		step := sqlgraph.NewStep(
+			sqlgraph.From(usagecardplan.Table, usagecardplan.FieldID, id),
+			sqlgraph.To(redeemcode.Table, redeemcode.FieldID),
+			sqlgraph.Edge(sqlgraph.O2M, false, usagecardplan.RedeemCodesTable, usagecardplan.RedeemCodesColumn),
+		)
+		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
+		return fromV, nil
+	}
+	return query
+}
+
+// Hooks returns the client hooks.
+func (c *UsageCardPlanClient) Hooks() []Hook {
+	return c.hooks.UsageCardPlan
+}
+
+// Interceptors returns the client interceptors.
+func (c *UsageCardPlanClient) Interceptors() []Interceptor {
+	return c.inters.UsageCardPlan
+}
+
+func (c *UsageCardPlanClient) mutate(ctx context.Context, m *UsageCardPlanMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&UsageCardPlanCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&UsageCardPlanUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&UsageCardPlanUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&UsageCardPlanDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown UsageCardPlan mutation op: %q", m.Op())
+	}
+}
+
 // UsageCleanupTaskClient is a client for the UsageCleanupTask schema.
 type UsageCleanupTaskClient struct {
 	config
@@ -5024,6 +5223,22 @@ func (c *UsageLogClient) QuerySubscription(_m *UsageLog) *UserSubscriptionQuery 
 	return query
 }
 
+// QueryUsageCard queries the usage_card edge of a UsageLog.
+func (c *UsageLogClient) QueryUsageCard(_m *UsageLog) *UserUsageCardQuery {
+	query := (&UserUsageCardClient{config: c.config}).Query()
+	query.path = func(context.Context) (fromV *sql.Selector, _ error) {
+		id := _m.ID
+		step := sqlgraph.NewStep(
+			sqlgraph.From(usagelog.Table, usagelog.FieldID, id),
+			sqlgraph.To(userusagecard.Table, userusagecard.FieldID),
+			sqlgraph.Edge(sqlgraph.M2O, true, usagelog.UsageCardTable, usagelog.UsageCardColumn),
+		)
+		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
+		return fromV, nil
+	}
+	return query
+}
+
 // Hooks returns the client hooks.
 func (c *UsageLogClient) Hooks() []Hook {
 	return c.hooks.UsageLog
@@ -5214,6 +5429,38 @@ func (c *UserClient) QueryAssignedSubscriptions(_m *User) *UserSubscriptionQuery
 			sqlgraph.From(user.Table, user.FieldID, id),
 			sqlgraph.To(usersubscription.Table, usersubscription.FieldID),
 			sqlgraph.Edge(sqlgraph.O2M, false, user.AssignedSubscriptionsTable, user.AssignedSubscriptionsColumn),
+		)
+		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
+		return fromV, nil
+	}
+	return query
+}
+
+// QueryUsageCards queries the usage_cards edge of a User.
+func (c *UserClient) QueryUsageCards(_m *User) *UserUsageCardQuery {
+	query := (&UserUsageCardClient{config: c.config}).Query()
+	query.path = func(context.Context) (fromV *sql.Selector, _ error) {
+		id := _m.ID
+		step := sqlgraph.NewStep(
+			sqlgraph.From(user.Table, user.FieldID, id),
+			sqlgraph.To(userusagecard.Table, userusagecard.FieldID),
+			sqlgraph.Edge(sqlgraph.O2M, false, user.UsageCardsTable, user.UsageCardsColumn),
+		)
+		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
+		return fromV, nil
+	}
+	return query
+}
+
+// QueryAssignedUsageCards queries the assigned_usage_cards edge of a User.
+func (c *UserClient) QueryAssignedUsageCards(_m *User) *UserUsageCardQuery {
+	query := (&UserUsageCardClient{config: c.config}).Query()
+	query.path = func(context.Context) (fromV *sql.Selector, _ error) {
+		id := _m.ID
+		step := sqlgraph.NewStep(
+			sqlgraph.From(user.Table, user.FieldID, id),
+			sqlgraph.To(userusagecard.Table, userusagecard.FieldID),
+			sqlgraph.Edge(sqlgraph.O2M, false, user.AssignedUsageCardsTable, user.AssignedUsageCardsColumn),
 		)
 		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
 		return fromV, nil
@@ -6190,6 +6437,205 @@ func (c *UserSubscriptionClient) mutate(ctx context.Context, m *UserSubscription
 	}
 }
 
+// UserUsageCardClient is a client for the UserUsageCard schema.
+type UserUsageCardClient struct {
+	config
+}
+
+// NewUserUsageCardClient returns a client for the UserUsageCard from the given config.
+func NewUserUsageCardClient(c config) *UserUsageCardClient {
+	return &UserUsageCardClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `userusagecard.Hooks(f(g(h())))`.
+func (c *UserUsageCardClient) Use(hooks ...Hook) {
+	c.hooks.UserUsageCard = append(c.hooks.UserUsageCard, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `userusagecard.Intercept(f(g(h())))`.
+func (c *UserUsageCardClient) Intercept(interceptors ...Interceptor) {
+	c.inters.UserUsageCard = append(c.inters.UserUsageCard, interceptors...)
+}
+
+// Create returns a builder for creating a UserUsageCard entity.
+func (c *UserUsageCardClient) Create() *UserUsageCardCreate {
+	mutation := newUserUsageCardMutation(c.config, OpCreate)
+	return &UserUsageCardCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of UserUsageCard entities.
+func (c *UserUsageCardClient) CreateBulk(builders ...*UserUsageCardCreate) *UserUsageCardCreateBulk {
+	return &UserUsageCardCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *UserUsageCardClient) MapCreateBulk(slice any, setFunc func(*UserUsageCardCreate, int)) *UserUsageCardCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &UserUsageCardCreateBulk{err: fmt.Errorf("calling to UserUsageCardClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*UserUsageCardCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &UserUsageCardCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for UserUsageCard.
+func (c *UserUsageCardClient) Update() *UserUsageCardUpdate {
+	mutation := newUserUsageCardMutation(c.config, OpUpdate)
+	return &UserUsageCardUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *UserUsageCardClient) UpdateOne(_m *UserUsageCard) *UserUsageCardUpdateOne {
+	mutation := newUserUsageCardMutation(c.config, OpUpdateOne, withUserUsageCard(_m))
+	return &UserUsageCardUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *UserUsageCardClient) UpdateOneID(id int64) *UserUsageCardUpdateOne {
+	mutation := newUserUsageCardMutation(c.config, OpUpdateOne, withUserUsageCardID(id))
+	return &UserUsageCardUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for UserUsageCard.
+func (c *UserUsageCardClient) Delete() *UserUsageCardDelete {
+	mutation := newUserUsageCardMutation(c.config, OpDelete)
+	return &UserUsageCardDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *UserUsageCardClient) DeleteOne(_m *UserUsageCard) *UserUsageCardDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *UserUsageCardClient) DeleteOneID(id int64) *UserUsageCardDeleteOne {
+	builder := c.Delete().Where(userusagecard.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &UserUsageCardDeleteOne{builder}
+}
+
+// Query returns a query builder for UserUsageCard.
+func (c *UserUsageCardClient) Query() *UserUsageCardQuery {
+	return &UserUsageCardQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeUserUsageCard},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a UserUsageCard entity by its id.
+func (c *UserUsageCardClient) Get(ctx context.Context, id int64) (*UserUsageCard, error) {
+	return c.Query().Where(userusagecard.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *UserUsageCardClient) GetX(ctx context.Context, id int64) *UserUsageCard {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// QueryUser queries the user edge of a UserUsageCard.
+func (c *UserUsageCardClient) QueryUser(_m *UserUsageCard) *UserQuery {
+	query := (&UserClient{config: c.config}).Query()
+	query.path = func(context.Context) (fromV *sql.Selector, _ error) {
+		id := _m.ID
+		step := sqlgraph.NewStep(
+			sqlgraph.From(userusagecard.Table, userusagecard.FieldID, id),
+			sqlgraph.To(user.Table, user.FieldID),
+			sqlgraph.Edge(sqlgraph.M2O, true, userusagecard.UserTable, userusagecard.UserColumn),
+		)
+		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
+		return fromV, nil
+	}
+	return query
+}
+
+// QueryPlan queries the plan edge of a UserUsageCard.
+func (c *UserUsageCardClient) QueryPlan(_m *UserUsageCard) *UsageCardPlanQuery {
+	query := (&UsageCardPlanClient{config: c.config}).Query()
+	query.path = func(context.Context) (fromV *sql.Selector, _ error) {
+		id := _m.ID
+		step := sqlgraph.NewStep(
+			sqlgraph.From(userusagecard.Table, userusagecard.FieldID, id),
+			sqlgraph.To(usagecardplan.Table, usagecardplan.FieldID),
+			sqlgraph.Edge(sqlgraph.M2O, true, userusagecard.PlanTable, userusagecard.PlanColumn),
+		)
+		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
+		return fromV, nil
+	}
+	return query
+}
+
+// QueryAssignedByUser queries the assigned_by_user edge of a UserUsageCard.
+func (c *UserUsageCardClient) QueryAssignedByUser(_m *UserUsageCard) *UserQuery {
+	query := (&UserClient{config: c.config}).Query()
+	query.path = func(context.Context) (fromV *sql.Selector, _ error) {
+		id := _m.ID
+		step := sqlgraph.NewStep(
+			sqlgraph.From(userusagecard.Table, userusagecard.FieldID, id),
+			sqlgraph.To(user.Table, user.FieldID),
+			sqlgraph.Edge(sqlgraph.M2O, true, userusagecard.AssignedByUserTable, userusagecard.AssignedByUserColumn),
+		)
+		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
+		return fromV, nil
+	}
+	return query
+}
+
+// QueryUsageLogs queries the usage_logs edge of a UserUsageCard.
+func (c *UserUsageCardClient) QueryUsageLogs(_m *UserUsageCard) *UsageLogQuery {
+	query := (&UsageLogClient{config: c.config}).Query()
+	query.path = func(context.Context) (fromV *sql.Selector, _ error) {
+		id := _m.ID
+		step := sqlgraph.NewStep(
+			sqlgraph.From(userusagecard.Table, userusagecard.FieldID, id),
+			sqlgraph.To(usagelog.Table, usagelog.FieldID),
+			sqlgraph.Edge(sqlgraph.O2M, false, userusagecard.UsageLogsTable, userusagecard.UsageLogsColumn),
+		)
+		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
+		return fromV, nil
+	}
+	return query
+}
+
+// Hooks returns the client hooks.
+func (c *UserUsageCardClient) Hooks() []Hook {
+	hooks := c.hooks.UserUsageCard
+	return append(hooks[:len(hooks):len(hooks)], userusagecard.Hooks[:]...)
+}
+
+// Interceptors returns the client interceptors.
+func (c *UserUsageCardClient) Interceptors() []Interceptor {
+	inters := c.inters.UserUsageCard
+	return append(inters[:len(inters):len(inters)], userusagecard.Interceptors[:]...)
+}
+
+func (c *UserUsageCardClient) mutate(ctx context.Context, m *UserUsageCardMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&UserUsageCardCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&UserUsageCardUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&UserUsageCardUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&UserUsageCardDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown UserUsageCard mutation op: %q", m.Op())
+	}
+}
+
 // hooks and interceptors per client, for fast access.
 type (
 	hooks struct {
@@ -6199,9 +6645,9 @@ type (
 		Group, IdempotencyRecord, IdentityAdoptionDecision, PaymentAuditLog,
 		PaymentOrder, PaymentProviderInstance, PendingAuthSession, PromoCode,
 		PromoCodeUsage, Proxy, RedeemCode, SecuritySecret, Setting, SubscriptionPlan,
-		TLSFingerprintProfile, UsageCleanupTask, UsageLog, User, UserAllowedGroup,
-		UserAttributeDefinition, UserAttributeValue, UserPlatformQuota,
-		UserSubscription []ent.Hook
+		TLSFingerprintProfile, UsageCardPlan, UsageCleanupTask, UsageLog, User,
+		UserAllowedGroup, UserAttributeDefinition, UserAttributeValue,
+		UserPlatformQuota, UserSubscription, UserUsageCard []ent.Hook
 	}
 	inters struct {
 		APIKey, Account, AccountGroup, Announcement, AnnouncementRead, AuthIdentity,
@@ -6210,9 +6656,9 @@ type (
 		Group, IdempotencyRecord, IdentityAdoptionDecision, PaymentAuditLog,
 		PaymentOrder, PaymentProviderInstance, PendingAuthSession, PromoCode,
 		PromoCodeUsage, Proxy, RedeemCode, SecuritySecret, Setting, SubscriptionPlan,
-		TLSFingerprintProfile, UsageCleanupTask, UsageLog, User, UserAllowedGroup,
-		UserAttributeDefinition, UserAttributeValue, UserPlatformQuota,
-		UserSubscription []ent.Interceptor
+		TLSFingerprintProfile, UsageCardPlan, UsageCleanupTask, UsageLog, User,
+		UserAllowedGroup, UserAttributeDefinition, UserAttributeValue,
+		UserPlatformQuota, UserSubscription, UserUsageCard []ent.Interceptor
 	}
 )
 

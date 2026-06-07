@@ -113,6 +113,20 @@ func (_c *APIKeyCreate) SetNillableStatus(v *string) *APIKeyCreate {
 	return _c
 }
 
+// SetBillingPriority sets the "billing_priority" field.
+func (_c *APIKeyCreate) SetBillingPriority(v string) *APIKeyCreate {
+	_c.mutation.SetBillingPriority(v)
+	return _c
+}
+
+// SetNillableBillingPriority sets the "billing_priority" field if the given value is not nil.
+func (_c *APIKeyCreate) SetNillableBillingPriority(v *string) *APIKeyCreate {
+	if v != nil {
+		_c.SetBillingPriority(*v)
+	}
+	return _c
+}
+
 // SetLastUsedAt sets the "last_used_at" field.
 func (_c *APIKeyCreate) SetLastUsedAt(v time.Time) *APIKeyCreate {
 	_c.mutation.SetLastUsedAt(v)
@@ -387,6 +401,10 @@ func (_c *APIKeyCreate) defaults() error {
 		v := apikey.DefaultStatus
 		_c.mutation.SetStatus(v)
 	}
+	if _, ok := _c.mutation.BillingPriority(); !ok {
+		v := apikey.DefaultBillingPriority
+		_c.mutation.SetBillingPriority(v)
+	}
 	if _, ok := _c.mutation.Quota(); !ok {
 		v := apikey.DefaultQuota
 		_c.mutation.SetQuota(v)
@@ -455,6 +473,14 @@ func (_c *APIKeyCreate) check() error {
 	if v, ok := _c.mutation.Status(); ok {
 		if err := apikey.StatusValidator(v); err != nil {
 			return &ValidationError{Name: "status", err: fmt.Errorf(`ent: validator failed for field "APIKey.status": %w`, err)}
+		}
+	}
+	if _, ok := _c.mutation.BillingPriority(); !ok {
+		return &ValidationError{Name: "billing_priority", err: errors.New(`ent: missing required field "APIKey.billing_priority"`)}
+	}
+	if v, ok := _c.mutation.BillingPriority(); ok {
+		if err := apikey.BillingPriorityValidator(v); err != nil {
+			return &ValidationError{Name: "billing_priority", err: fmt.Errorf(`ent: validator failed for field "APIKey.billing_priority": %w`, err)}
 		}
 	}
 	if _, ok := _c.mutation.Quota(); !ok {
@@ -534,6 +560,10 @@ func (_c *APIKeyCreate) createSpec() (*APIKey, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.Status(); ok {
 		_spec.SetField(apikey.FieldStatus, field.TypeString, value)
 		_node.Status = value
+	}
+	if value, ok := _c.mutation.BillingPriority(); ok {
+		_spec.SetField(apikey.FieldBillingPriority, field.TypeString, value)
+		_node.BillingPriority = value
 	}
 	if value, ok := _c.mutation.LastUsedAt(); ok {
 		_spec.SetField(apikey.FieldLastUsedAt, field.TypeTime, value)
@@ -790,6 +820,18 @@ func (u *APIKeyUpsert) SetStatus(v string) *APIKeyUpsert {
 // UpdateStatus sets the "status" field to the value that was provided on create.
 func (u *APIKeyUpsert) UpdateStatus() *APIKeyUpsert {
 	u.SetExcluded(apikey.FieldStatus)
+	return u
+}
+
+// SetBillingPriority sets the "billing_priority" field.
+func (u *APIKeyUpsert) SetBillingPriority(v string) *APIKeyUpsert {
+	u.Set(apikey.FieldBillingPriority, v)
+	return u
+}
+
+// UpdateBillingPriority sets the "billing_priority" field to the value that was provided on create.
+func (u *APIKeyUpsert) UpdateBillingPriority() *APIKeyUpsert {
+	u.SetExcluded(apikey.FieldBillingPriority)
 	return u
 }
 
@@ -1217,6 +1259,20 @@ func (u *APIKeyUpsertOne) SetStatus(v string) *APIKeyUpsertOne {
 func (u *APIKeyUpsertOne) UpdateStatus() *APIKeyUpsertOne {
 	return u.Update(func(s *APIKeyUpsert) {
 		s.UpdateStatus()
+	})
+}
+
+// SetBillingPriority sets the "billing_priority" field.
+func (u *APIKeyUpsertOne) SetBillingPriority(v string) *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.SetBillingPriority(v)
+	})
+}
+
+// UpdateBillingPriority sets the "billing_priority" field to the value that was provided on create.
+func (u *APIKeyUpsertOne) UpdateBillingPriority() *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.UpdateBillingPriority()
 	})
 }
 
@@ -1855,6 +1911,20 @@ func (u *APIKeyUpsertBulk) SetStatus(v string) *APIKeyUpsertBulk {
 func (u *APIKeyUpsertBulk) UpdateStatus() *APIKeyUpsertBulk {
 	return u.Update(func(s *APIKeyUpsert) {
 		s.UpdateStatus()
+	})
+}
+
+// SetBillingPriority sets the "billing_priority" field.
+func (u *APIKeyUpsertBulk) SetBillingPriority(v string) *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.SetBillingPriority(v)
+	})
+}
+
+// UpdateBillingPriority sets the "billing_priority" field to the value that was provided on create.
+func (u *APIKeyUpsertBulk) UpdateBillingPriority() *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.UpdateBillingPriority()
 	})
 }
 

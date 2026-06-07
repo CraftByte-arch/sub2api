@@ -38,3 +38,18 @@ func TestAPIKeyFromService_MapsNilLastUsedAt(t *testing.T) {
 	require.NotNil(t, out)
 	require.Nil(t, out.LastUsedAt)
 }
+
+func TestAPIKeyFromService_MapsBillingPriority(t *testing.T) {
+	src := &service.APIKey{
+		ID:              1,
+		UserID:          2,
+		Key:             "sk-map-billing-priority",
+		Name:            "MapperBillingPriority",
+		Status:          service.StatusActive,
+		BillingPriority: service.BillingPriorityUsageCardFirst,
+	}
+
+	out := APIKeyFromService(src)
+	require.NotNil(t, out)
+	require.Equal(t, service.BillingPriorityUsageCardFirst, out.BillingPriority)
+}

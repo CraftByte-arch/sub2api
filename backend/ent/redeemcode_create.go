@@ -13,6 +13,7 @@ import (
 	"entgo.io/ent/schema/field"
 	"github.com/Wei-Shaw/sub2api/ent/group"
 	"github.com/Wei-Shaw/sub2api/ent/redeemcode"
+	"github.com/Wei-Shaw/sub2api/ent/usagecardplan"
 	"github.com/Wei-Shaw/sub2api/ent/user"
 )
 
@@ -156,6 +157,20 @@ func (_c *RedeemCodeCreate) SetNillableGroupID(v *int64) *RedeemCodeCreate {
 	return _c
 }
 
+// SetUsageCardPlanID sets the "usage_card_plan_id" field.
+func (_c *RedeemCodeCreate) SetUsageCardPlanID(v int64) *RedeemCodeCreate {
+	_c.mutation.SetUsageCardPlanID(v)
+	return _c
+}
+
+// SetNillableUsageCardPlanID sets the "usage_card_plan_id" field if the given value is not nil.
+func (_c *RedeemCodeCreate) SetNillableUsageCardPlanID(v *int64) *RedeemCodeCreate {
+	if v != nil {
+		_c.SetUsageCardPlanID(*v)
+	}
+	return _c
+}
+
 // SetValidityDays sets the "validity_days" field.
 func (_c *RedeemCodeCreate) SetValidityDays(v int) *RedeemCodeCreate {
 	_c.mutation.SetValidityDays(v)
@@ -192,6 +207,11 @@ func (_c *RedeemCodeCreate) SetUser(v *User) *RedeemCodeCreate {
 // SetGroup sets the "group" edge to the Group entity.
 func (_c *RedeemCodeCreate) SetGroup(v *Group) *RedeemCodeCreate {
 	return _c.SetGroupID(v.ID)
+}
+
+// SetUsageCardPlan sets the "usage_card_plan" edge to the UsageCardPlan entity.
+func (_c *RedeemCodeCreate) SetUsageCardPlan(v *UsageCardPlan) *RedeemCodeCreate {
+	return _c.SetUsageCardPlanID(v.ID)
 }
 
 // Mutation returns the RedeemCodeMutation object of the builder.
@@ -381,6 +401,23 @@ func (_c *RedeemCodeCreate) createSpec() (*RedeemCode, *sqlgraph.CreateSpec) {
 			edge.Target.Nodes = append(edge.Target.Nodes, k)
 		}
 		_node.GroupID = &nodes[0]
+		_spec.Edges = append(_spec.Edges, edge)
+	}
+	if nodes := _c.mutation.UsageCardPlanIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2O,
+			Inverse: true,
+			Table:   redeemcode.UsageCardPlanTable,
+			Columns: []string{redeemcode.UsageCardPlanColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(usagecardplan.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_node.UsageCardPlanID = &nodes[0]
 		_spec.Edges = append(_spec.Edges, edge)
 	}
 	return _node, _spec
@@ -576,6 +613,24 @@ func (u *RedeemCodeUpsert) UpdateGroupID() *RedeemCodeUpsert {
 // ClearGroupID clears the value of the "group_id" field.
 func (u *RedeemCodeUpsert) ClearGroupID() *RedeemCodeUpsert {
 	u.SetNull(redeemcode.FieldGroupID)
+	return u
+}
+
+// SetUsageCardPlanID sets the "usage_card_plan_id" field.
+func (u *RedeemCodeUpsert) SetUsageCardPlanID(v int64) *RedeemCodeUpsert {
+	u.Set(redeemcode.FieldUsageCardPlanID, v)
+	return u
+}
+
+// UpdateUsageCardPlanID sets the "usage_card_plan_id" field to the value that was provided on create.
+func (u *RedeemCodeUpsert) UpdateUsageCardPlanID() *RedeemCodeUpsert {
+	u.SetExcluded(redeemcode.FieldUsageCardPlanID)
+	return u
+}
+
+// ClearUsageCardPlanID clears the value of the "usage_card_plan_id" field.
+func (u *RedeemCodeUpsert) ClearUsageCardPlanID() *RedeemCodeUpsert {
+	u.SetNull(redeemcode.FieldUsageCardPlanID)
 	return u
 }
 
@@ -807,6 +862,27 @@ func (u *RedeemCodeUpsertOne) UpdateGroupID() *RedeemCodeUpsertOne {
 func (u *RedeemCodeUpsertOne) ClearGroupID() *RedeemCodeUpsertOne {
 	return u.Update(func(s *RedeemCodeUpsert) {
 		s.ClearGroupID()
+	})
+}
+
+// SetUsageCardPlanID sets the "usage_card_plan_id" field.
+func (u *RedeemCodeUpsertOne) SetUsageCardPlanID(v int64) *RedeemCodeUpsertOne {
+	return u.Update(func(s *RedeemCodeUpsert) {
+		s.SetUsageCardPlanID(v)
+	})
+}
+
+// UpdateUsageCardPlanID sets the "usage_card_plan_id" field to the value that was provided on create.
+func (u *RedeemCodeUpsertOne) UpdateUsageCardPlanID() *RedeemCodeUpsertOne {
+	return u.Update(func(s *RedeemCodeUpsert) {
+		s.UpdateUsageCardPlanID()
+	})
+}
+
+// ClearUsageCardPlanID clears the value of the "usage_card_plan_id" field.
+func (u *RedeemCodeUpsertOne) ClearUsageCardPlanID() *RedeemCodeUpsertOne {
+	return u.Update(func(s *RedeemCodeUpsert) {
+		s.ClearUsageCardPlanID()
 	})
 }
 
@@ -1207,6 +1283,27 @@ func (u *RedeemCodeUpsertBulk) UpdateGroupID() *RedeemCodeUpsertBulk {
 func (u *RedeemCodeUpsertBulk) ClearGroupID() *RedeemCodeUpsertBulk {
 	return u.Update(func(s *RedeemCodeUpsert) {
 		s.ClearGroupID()
+	})
+}
+
+// SetUsageCardPlanID sets the "usage_card_plan_id" field.
+func (u *RedeemCodeUpsertBulk) SetUsageCardPlanID(v int64) *RedeemCodeUpsertBulk {
+	return u.Update(func(s *RedeemCodeUpsert) {
+		s.SetUsageCardPlanID(v)
+	})
+}
+
+// UpdateUsageCardPlanID sets the "usage_card_plan_id" field to the value that was provided on create.
+func (u *RedeemCodeUpsertBulk) UpdateUsageCardPlanID() *RedeemCodeUpsertBulk {
+	return u.Update(func(s *RedeemCodeUpsert) {
+		s.UpdateUsageCardPlanID()
+	})
+}
+
+// ClearUsageCardPlanID clears the value of the "usage_card_plan_id" field.
+func (u *RedeemCodeUpsertBulk) ClearUsageCardPlanID() *RedeemCodeUpsertBulk {
+	return u.Update(func(s *RedeemCodeUpsert) {
+		s.ClearUsageCardPlanID()
 	})
 }
 

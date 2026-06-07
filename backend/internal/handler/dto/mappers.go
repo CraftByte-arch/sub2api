@@ -79,31 +79,32 @@ func APIKeyFromService(k *service.APIKey) *APIKey {
 		return nil
 	}
 	out := &APIKey{
-		ID:            k.ID,
-		UserID:        k.UserID,
-		Key:           k.Key,
-		Name:          k.Name,
-		GroupID:       k.GroupID,
-		Status:        k.Status,
-		IPWhitelist:   k.IPWhitelist,
-		IPBlacklist:   k.IPBlacklist,
-		LastUsedAt:    k.LastUsedAt,
-		Quota:         k.Quota,
-		QuotaUsed:     k.QuotaUsed,
-		ExpiresAt:     k.ExpiresAt,
-		CreatedAt:     k.CreatedAt,
-		UpdatedAt:     k.UpdatedAt,
-		RateLimit5h:   k.RateLimit5h,
-		RateLimit1d:   k.RateLimit1d,
-		RateLimit7d:   k.RateLimit7d,
-		Usage5h:       k.EffectiveUsage5h(),
-		Usage1d:       k.EffectiveUsage1d(),
-		Usage7d:       k.EffectiveUsage7d(),
-		Window5hStart: k.Window5hStart,
-		Window1dStart: k.Window1dStart,
-		Window7dStart: k.Window7dStart,
-		User:          UserFromServiceShallow(k.User),
-		Group:         GroupFromServiceShallow(k.Group),
+		ID:              k.ID,
+		UserID:          k.UserID,
+		Key:             k.Key,
+		Name:            k.Name,
+		GroupID:         k.GroupID,
+		Status:          k.Status,
+		BillingPriority: service.NormalizeBillingPriority(k.BillingPriority),
+		IPWhitelist:     k.IPWhitelist,
+		IPBlacklist:     k.IPBlacklist,
+		LastUsedAt:      k.LastUsedAt,
+		Quota:           k.Quota,
+		QuotaUsed:       k.QuotaUsed,
+		ExpiresAt:       k.ExpiresAt,
+		CreatedAt:       k.CreatedAt,
+		UpdatedAt:       k.UpdatedAt,
+		RateLimit5h:     k.RateLimit5h,
+		RateLimit1d:     k.RateLimit1d,
+		RateLimit7d:     k.RateLimit7d,
+		Usage5h:         k.EffectiveUsage5h(),
+		Usage1d:         k.EffectiveUsage1d(),
+		Usage7d:         k.EffectiveUsage7d(),
+		Window5hStart:   k.Window5hStart,
+		Window1dStart:   k.Window1dStart,
+		Window7dStart:   k.Window7dStart,
+		User:            UserFromServiceShallow(k.User),
+		Group:           GroupFromServiceShallow(k.Group),
 	}
 	if k.Window5hStart != nil && !service.IsWindowExpired(k.Window5hStart, service.RateLimitWindow5h) {
 		t := k.Window5hStart.Add(service.RateLimitWindow5h)
@@ -174,6 +175,7 @@ func groupFromServiceBase(g *service.Group) Group {
 		RateMultiplier:                  g.RateMultiplier,
 		IsExclusive:                     g.IsExclusive,
 		Status:                          g.Status,
+		UsageCardDisabled:               g.UsageCardDisabled,
 		SubscriptionType:                g.SubscriptionType,
 		DailyLimitUSD:                   g.DailyLimitUSD,
 		WeeklyLimitUSD:                  g.WeeklyLimitUSD,
@@ -527,19 +529,21 @@ func RedeemCodeFromServiceAdmin(rc *service.RedeemCode) *AdminRedeemCode {
 
 func redeemCodeFromServiceBase(rc *service.RedeemCode) RedeemCode {
 	out := RedeemCode{
-		ID:           rc.ID,
-		Code:         rc.Code,
-		Type:         rc.Type,
-		Value:        rc.Value,
-		Status:       rc.Status,
-		UsedBy:       rc.UsedBy,
-		UsedAt:       rc.UsedAt,
-		CreatedAt:    rc.CreatedAt,
-		ExpiresAt:    rc.ExpiresAt,
-		GroupID:      rc.GroupID,
-		ValidityDays: rc.ValidityDays,
-		User:         UserFromServiceShallow(rc.User),
-		Group:        GroupFromServiceShallow(rc.Group),
+		ID:              rc.ID,
+		Code:            rc.Code,
+		Type:            rc.Type,
+		Value:           rc.Value,
+		Status:          rc.Status,
+		UsedBy:          rc.UsedBy,
+		UsedAt:          rc.UsedAt,
+		CreatedAt:       rc.CreatedAt,
+		ExpiresAt:       rc.ExpiresAt,
+		GroupID:         rc.GroupID,
+		UsageCardPlanID: rc.UsageCardPlanID,
+		ValidityDays:    rc.ValidityDays,
+		User:            UserFromServiceShallow(rc.User),
+		Group:           GroupFromServiceShallow(rc.Group),
+		UsageCardPlan:   UsageCardPlanFromService(rc.UsageCardPlan),
 	}
 	if rc.IsExpired() {
 		out.Status = service.StatusExpired
@@ -552,6 +556,23 @@ func redeemCodeFromServiceBase(rc *service.RedeemCode) RedeemCode {
 	}
 
 	return out
+}
+
+func UsageCardPlanFromService(plan *service.UsageCardPlan) *UsageCardPlan {
+	if plan == nil {
+		return nil
+	}
+	return &UsageCardPlan{
+		ID:           plan.ID,
+		Name:         plan.Name,
+		Description:  plan.Description,
+		Price:        plan.Price,
+		AmountUSD:    plan.AmountUSD,
+		ValidityDays: plan.ValidityDays,
+		Features:     plan.Features,
+		ForSale:      plan.ForSale,
+		SortOrder:    plan.SortOrder,
+	}
 }
 
 // AccountSummaryFromService returns a minimal AccountSummary for usage log display.
@@ -587,6 +608,7 @@ func usageLogFromServiceUser(l *service.UsageLog) UsageLog {
 		UpstreamEndpoint:      l.UpstreamEndpoint,
 		GroupID:               l.GroupID,
 		SubscriptionID:        l.SubscriptionID,
+		UsageCardID:           l.UsageCardID,
 		InputTokens:           l.InputTokens,
 		OutputTokens:          l.OutputTokens,
 		CacheCreationTokens:   l.CacheCreationTokens,

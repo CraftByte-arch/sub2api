@@ -138,6 +138,7 @@ type RedeemService struct {
 	subscriptionService  *SubscriptionService
 	cache                RedeemCache
 	billingCacheService  *BillingCacheService
+	usageCardService     *UsageCardService
 	entClient            *dbent.Client
 	authCacheInvalidator APIKeyAuthCacheInvalidator
 	affiliateService     *AffiliateService
@@ -164,6 +165,16 @@ func NewRedeemService(
 		authCacheInvalidator: authCacheInvalidator,
 		affiliateService:     affiliateService,
 	}
+}
+
+// SetUsageCardService attaches the optional usage-card feature service.
+// It is intentionally a setter to keep the existing constructor compatible
+// while the feature is rolled out behind settings flags.
+func (s *RedeemService) SetUsageCardService(usageCardService *UsageCardService) {
+	if s == nil {
+		return
+	}
+	s.usageCardService = usageCardService
 }
 
 // GenerateRandomCode 生成随机兑换码
@@ -198,7 +209,9 @@ func (s *RedeemService) GenerateCodes(ctx context.Context, req GenerateCodesRequ
 	if req.Type != RedeemTypeInvitation && req.Value == 0 {
 		return nil, errors.New("value must not be zero")
 	}
-
+	if req.Type == RedeemTypeUsageCard && req.Value <= 0 {
+		return nil, errors.New("usage card value must be greater than zero")
+	}
 	if req.Count > 1000 {
 		return nil, errors.New("cannot generate more than 1000 codes at once")
 	}
@@ -251,7 +264,26 @@ func (s *RedeemService) CreateCode(ctx context.Context, code *RedeemCode) error 
 	if code.Type == "" {
 		code.Type = RedeemTypeBalance
 	}
-	if code.Type != RedeemTypeInvitation && code.Value == 0 {
+	if code.Type == RedeemTypeUsageCard && code.ValidityDays != 0 {
+		return errors.New("usage card validity_days must be empty")
+	}
+	if code.Type == RedeemTypeUsageCard {
+		if code.GroupID != nil {
+			return errors.New("group_id must be empty for usage card type")
+		}
+		if code.UsageCardPlanID == nil || *code.UsageCardPlanID <= 0 {
+			return errors.New("usage_card_plan_id is required for usage card type")
+		}
+		if s.usageCardService == nil {
+			return ErrUsageCardDisabled
+		}
+		plan, err := s.usageCardService.GetPlanByID(ctx, *code.UsageCardPlanID)
+		if err != nil {
+			return err
+		}
+		code.Value = plan.AmountUSD
+		code.UsageCardPlan = plan
+	} else if code.Type != RedeemTypeInvitation && code.Value == 0 {
 		return errors.New("value must not be zero")
 	}
 	if code.Status == "" {
@@ -411,6 +443,17 @@ func (s *RedeemService) Redeem(ctx context.Context, userID int64, code string) (
 	if redeemCode.Type == RedeemTypeSubscription && redeemCode.GroupID == nil {
 		return nil, infraerrors.BadRequest("REDEEM_CODE_INVALID", "invalid subscription redeem code: missing group_id")
 	}
+	if redeemCode.Type == RedeemTypeUsageCard {
+		if redeemCode.GroupID != nil {
+			return nil, infraerrors.BadRequest("REDEEM_CODE_INVALID", "invalid usage card redeem code: group_id must be empty")
+		}
+		if redeemCode.UsageCardPlanID == nil || *redeemCode.UsageCardPlanID <= 0 {
+			return nil, infraerrors.BadRequest("REDEEM_CODE_INVALID", "invalid usage card redeem code: missing usage_card_plan_id")
+		}
+		if s.usageCardService == nil {
+			return nil, ErrUsageCardDisabled
+		}
+	}
 
 	// 获取用户信息
 	user, err := s.userRepo.GetByID(ctx, userID)
@@ -480,6 +523,15 @@ func (s *RedeemService) Redeem(ctx context.Context, userID int64, code string) (
 			if err != nil {
 				return nil, fmt.Errorf("assign or extend subscription: %w", err)
 			}
+		}
+
+	case RedeemTypeUsageCard:
+		plan, err := s.usageCardService.GetPlanByID(txCtx, *redeemCode.UsageCardPlanID)
+		if err != nil {
+			return nil, fmt.Errorf("get usage card plan: %w", err)
+		}
+		if _, err := s.usageCardService.IssueFromRedeemPlan(txCtx, userID, redeemCode.Code, plan, redeemCode.Notes); err != nil {
+			return nil, fmt.Errorf("issue usage card: %w", err)
 		}
 
 	default:

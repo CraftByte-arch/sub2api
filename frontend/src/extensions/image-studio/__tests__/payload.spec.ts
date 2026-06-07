@@ -123,6 +123,32 @@ describe('image studio payload builders', () => {
     ])
   })
 
+  it('keeps explicit controls above advanced tool overrides', () => {
+    const payload = buildResponsesGenerationPayload({
+      model: 'gpt-image-2',
+      prompt: 'a quiet tea house',
+      size: '2048x2048',
+      quality: 'high',
+      outputFormat: 'png',
+      count: 1,
+      advancedParams: {
+        tool: {
+          quality: 'medium',
+          size: '1024x1024',
+          output_format: 'jpeg'
+        }
+      }
+    })
+
+    expect(payload.tools).toEqual([
+      expect.objectContaining({
+        quality: 'high',
+        size: '2048x2048',
+        output_format: 'png'
+      })
+    ])
+  })
+
   it('builds a Responses edit payload with input image data URLs', async () => {
     const originalFileReader = globalThis.FileReader
     globalThis.FileReader = MockFileReader as unknown as typeof FileReader

@@ -31,6 +31,8 @@ const (
 	FieldGroupID = "group_id"
 	// FieldStatus holds the string denoting the status field in the database.
 	FieldStatus = "status"
+	// FieldBillingPriority holds the string denoting the billing_priority field in the database.
+	FieldBillingPriority = "billing_priority"
 	// FieldLastUsedAt holds the string denoting the last_used_at field in the database.
 	FieldLastUsedAt = "last_used_at"
 	// FieldIPWhitelist holds the string denoting the ip_whitelist field in the database.
@@ -103,6 +105,7 @@ var Columns = []string{
 	FieldName,
 	FieldGroupID,
 	FieldStatus,
+	FieldBillingPriority,
 	FieldLastUsedAt,
 	FieldIPWhitelist,
 	FieldIPBlacklist,
@@ -152,6 +155,10 @@ var (
 	DefaultStatus string
 	// StatusValidator is a validator for the "status" field. It is called by the builders before save.
 	StatusValidator func(string) error
+	// DefaultBillingPriority holds the default value on creation for the "billing_priority" field.
+	DefaultBillingPriority string
+	// BillingPriorityValidator is a validator for the "billing_priority" field. It is called by the builders before save.
+	BillingPriorityValidator func(string) error
 	// DefaultQuota holds the default value on creation for the "quota" field.
 	DefaultQuota float64
 	// DefaultQuotaUsed holds the default value on creation for the "quota_used" field.
@@ -216,6 +223,11 @@ func ByGroupID(opts ...sql.OrderTermOption) OrderOption {
 // ByStatus orders the results by the status field.
 func ByStatus(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldStatus, opts...).ToFunc()
+}
+
+// ByBillingPriority orders the results by the billing_priority field.
+func ByBillingPriority(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldBillingPriority, opts...).ToFunc()
 }
 
 // ByLastUsedAt orders the results by the last_used_at field.

@@ -9,6 +9,7 @@ import (
 const (
 	BillingTypeBalance      int8 = 0 // 钱包余额
 	BillingTypeSubscription int8 = 1 // 订阅套餐
+	BillingTypeUsageCard    int8 = 2 // 余额卡
 )
 
 type RequestType int16
@@ -125,6 +126,7 @@ type UsageLog struct {
 
 	GroupID        *int64
 	SubscriptionID *int64
+	UsageCardID    *int64
 
 	InputTokens         int
 	OutputTokens        int

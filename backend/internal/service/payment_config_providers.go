@@ -394,6 +394,21 @@ func (s *PaymentConfigService) GetUserRefundEligibleInstanceIDs(ctx context.Cont
 	return ids, nil
 }
 
+// GetAdminRefundEligibleInstanceIDs returns provider instance IDs that allow admin refund.
+func (s *PaymentConfigService) GetAdminRefundEligibleInstanceIDs(ctx context.Context) ([]string, error) {
+	instances, err := s.entClient.PaymentProviderInstance.Query().
+		Where(paymentproviderinstance.RefundEnabledEQ(true)).
+		Select(paymentproviderinstance.FieldID).All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(instances))
+	for _, inst := range instances {
+		ids = append(ids, strconv.FormatInt(int64(inst.ID), 10))
+	}
+	return ids, nil
+}
+
 func (s *PaymentConfigService) mergeConfig(ctx context.Context, id int64, newConfig map[string]string) (map[string]string, error) {
 	inst, err := s.entClient.PaymentProviderInstance.Get(ctx, id)
 	if err != nil {

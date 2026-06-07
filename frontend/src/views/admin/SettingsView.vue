@@ -4754,6 +4754,71 @@
                 </div>
                 <Toggle v-model="form.hide_ccs_import_button" />
               </div>
+
+              <div
+                class="flex items-center justify-between border-t border-gray-100 pt-4 dark:border-dark-700"
+              >
+                <div>
+                  <label class="font-medium text-gray-900 dark:text-white">{{
+                    t("admin.settings.site.legacySubscriptionPurchaseEnabled")
+                  }}</label>
+                  <p class="text-sm text-gray-500 dark:text-gray-400">
+                    {{
+                      t(
+                        "admin.settings.site.legacySubscriptionPurchaseEnabledHint",
+                      )
+                    }}
+                  </p>
+                </div>
+                <Toggle v-model="form.legacy_subscription_purchase_enabled" />
+              </div>
+
+              <div
+                class="flex items-center justify-between border-t border-gray-100 pt-4 dark:border-dark-700"
+              >
+                <div>
+                  <label class="font-medium text-gray-900 dark:text-white">{{
+                    t("admin.settings.site.legacySubscriptionVisible")
+                  }}</label>
+                  <p class="text-sm text-gray-500 dark:text-gray-400">
+                    {{ t("admin.settings.site.legacySubscriptionVisibleHint") }}
+                  </p>
+                </div>
+                <Toggle v-model="form.legacy_subscription_visible" />
+              </div>
+
+              <div
+                class="grid gap-4 border-t border-gray-100 pt-4 dark:border-dark-700 md:grid-cols-2"
+              >
+                <label class="flex items-center justify-between gap-4 rounded-lg bg-gray-50 p-3 dark:bg-dark-800">
+                  <span>
+                    <span class="block font-medium text-gray-900 dark:text-white">{{ t("admin.settings.site.usageCardEnabled") }}</span>
+                    <span class="block text-sm text-gray-500 dark:text-gray-400">{{ t("admin.settings.site.usageCardEnabledHint") }}</span>
+                  </span>
+                  <Toggle v-model="form.usage_card_enabled" />
+                </label>
+                <label class="flex items-center justify-between gap-4 rounded-lg bg-gray-50 p-3 dark:bg-dark-800">
+                  <span>
+                    <span class="block font-medium text-gray-900 dark:text-white">{{ t("admin.settings.site.usageCardPaymentEnabled") }}</span>
+                    <span class="block text-sm text-gray-500 dark:text-gray-400">{{ t("admin.settings.site.usageCardPaymentEnabledHint") }}</span>
+                  </span>
+                  <Toggle v-model="form.usage_card_payment_enabled" />
+                </label>
+                <label class="flex items-center justify-between gap-4 rounded-lg bg-gray-50 p-3 dark:bg-dark-800">
+                  <span>
+                    <span class="block font-medium text-gray-900 dark:text-white">{{ t("admin.settings.site.usageCardRedeemEnabled") }}</span>
+                    <span class="block text-sm text-gray-500 dark:text-gray-400">{{ t("admin.settings.site.usageCardRedeemEnabledHint") }}</span>
+                  </span>
+                  <Toggle v-model="form.usage_card_redeem_enabled" />
+                </label>
+                <label class="flex items-center justify-between gap-4 rounded-lg bg-gray-50 p-3 dark:bg-dark-800">
+                  <span>
+                    <span class="block font-medium text-gray-900 dark:text-white">{{ t("admin.settings.site.usageCardBillingEnabled") }}</span>
+                    <span class="block text-sm text-gray-500 dark:text-gray-400">{{ t("admin.settings.site.usageCardBillingEnabledHint") }}</span>
+                  </span>
+                  <Toggle v-model="form.usage_card_billing_enabled" />
+                </label>
+              </div>
             </div>
           </div>
 
@@ -5234,6 +5299,80 @@
                 </p>
               </div>
               <Toggle v-model="form.available_channels_enabled" />
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
+            <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+              {{ t('admin.settings.features.openaiLongContextBilling.title') }}
+            </h2>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              {{ t('admin.settings.features.openaiLongContextBilling.description') }}
+            </p>
+          </div>
+          <div class="space-y-5 p-6">
+            <div class="flex items-center justify-between gap-4">
+              <div>
+                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ t('admin.settings.features.openaiLongContextBilling.enabled') }}
+                </label>
+                <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{ t('admin.settings.features.openaiLongContextBilling.enabledHint') }}
+                </p>
+              </div>
+              <Toggle v-model="form.openai_long_context_billing_enabled" />
+            </div>
+
+            <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
+              <div>
+                <label class="input-label">
+                  {{ t('admin.settings.features.openaiLongContextBilling.threshold') }}
+                </label>
+                <input
+                  v-model.number="form.openai_long_context_billing_threshold"
+                  type="number"
+                  min="1"
+                  class="input"
+                  :disabled="!form.openai_long_context_billing_enabled"
+                />
+                <p class="mt-1 text-xs text-gray-400">
+                  {{ t('admin.settings.features.openaiLongContextBilling.thresholdHint') }}
+                </p>
+              </div>
+              <div>
+                <label class="input-label">
+                  {{ t('admin.settings.features.openaiLongContextBilling.inputMultiplier') }}
+                </label>
+                <input
+                  v-model.number="form.openai_long_context_billing_multiplier"
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  class="input"
+                  :disabled="!form.openai_long_context_billing_enabled"
+                />
+                <p class="mt-1 text-xs text-gray-400">
+                  {{ t('admin.settings.features.openaiLongContextBilling.inputMultiplierHint') }}
+                </p>
+              </div>
+              <div>
+                <label class="input-label">
+                  {{ t('admin.settings.features.openaiLongContextBilling.outputMultiplier') }}
+                </label>
+                <input
+                  v-model.number="form.openai_long_context_output_multiplier"
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  class="input"
+                  :disabled="!form.openai_long_context_billing_enabled"
+                />
+                <p class="mt-1 text-xs text-gray-400">
+                  {{ t('admin.settings.features.openaiLongContextBilling.outputMultiplierHint') }}
+                </p>
+              </div>
             </div>
           </div>
         </div>
@@ -7014,6 +7153,17 @@ const form = reactive<SettingsForm>({
   home_content: "",
   backend_mode_enabled: false,
   hide_ccs_import_button: false,
+  legacy_subscription_purchase_enabled: true,
+  legacy_subscription_visible: true,
+  usage_card_enabled: false,
+  usage_card_payment_enabled: false,
+  usage_card_redeem_enabled: false,
+  usage_card_billing_enabled: false,
+  usage_card_default_priority: "usage_card_first",
+  openai_long_context_billing_enabled: true,
+  openai_long_context_billing_threshold: 272000,
+  openai_long_context_billing_multiplier: 2,
+  openai_long_context_output_multiplier: 1.5,
   payment_enabled: false,
   risk_control_enabled: false,
   payment_min_amount: 1,
@@ -8158,6 +8308,13 @@ async function saveSettings() {
       home_content: form.home_content,
       backend_mode_enabled: form.backend_mode_enabled,
       hide_ccs_import_button: form.hide_ccs_import_button,
+      legacy_subscription_purchase_enabled:
+        form.legacy_subscription_purchase_enabled,
+      legacy_subscription_visible: form.legacy_subscription_visible,
+      usage_card_enabled: form.usage_card_enabled,
+      usage_card_payment_enabled: form.usage_card_payment_enabled,
+      usage_card_redeem_enabled: form.usage_card_redeem_enabled,
+      usage_card_billing_enabled: form.usage_card_billing_enabled,
       table_default_page_size: form.table_default_page_size,
       table_page_size_options: form.table_page_size_options,
       custom_menu_items: form.custom_menu_items,
@@ -8329,6 +8486,14 @@ async function saveSettings() {
         Number(form.channel_monitor_default_interval_seconds) || 60,
       // Available Channels feature switch
       available_channels_enabled: form.available_channels_enabled,
+      openai_long_context_billing_enabled:
+        form.openai_long_context_billing_enabled,
+      openai_long_context_billing_threshold:
+        Number(form.openai_long_context_billing_threshold) || 272000,
+      openai_long_context_billing_multiplier:
+        Number(form.openai_long_context_billing_multiplier) || 2,
+      openai_long_context_output_multiplier:
+        Number(form.openai_long_context_output_multiplier) || 1.5,
       // Affiliate (邀请返利) feature switch
       affiliate_enabled: form.affiliate_enabled,
     };

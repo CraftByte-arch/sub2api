@@ -17,6 +17,7 @@ import (
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/authidentity"
 	"github.com/Wei-Shaw/sub2api/ent/authidentitychannel"
+	"github.com/Wei-Shaw/sub2api/ent/usagecardplan"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
@@ -189,15 +190,16 @@ type AdminBoundAuthIdentityChannel struct {
 }
 
 type CreateGroupInput struct {
-	Name             string
-	Description      string
-	Platform         string
-	RateMultiplier   float64
-	IsExclusive      bool
-	SubscriptionType string   // standard/subscription
-	DailyLimitUSD    *float64 // 日限额 (USD)
-	WeeklyLimitUSD   *float64 // 周限额 (USD)
-	MonthlyLimitUSD  *float64 // 月限额 (USD)
+	Name              string
+	Description       string
+	Platform          string
+	RateMultiplier    float64
+	IsExclusive       bool
+	UsageCardDisabled bool
+	SubscriptionType  string   // standard/subscription
+	DailyLimitUSD     *float64 // 日限额 (USD)
+	WeeklyLimitUSD    *float64 // 周限额 (USD)
+	MonthlyLimitUSD   *float64 // 月限额 (USD)
 	// 图片生成计费配置（仅 antigravity 平台使用）
 	AllowImageGeneration bool
 	ImageRateIndependent bool
@@ -229,16 +231,17 @@ type CreateGroupInput struct {
 }
 
 type UpdateGroupInput struct {
-	Name             string
-	Description      string
-	Platform         string
-	RateMultiplier   *float64 // 使用指针以支持设置为0
-	IsExclusive      *bool
-	Status           string
-	SubscriptionType string   // standard/subscription
-	DailyLimitUSD    *float64 // 日限额 (USD)
-	WeeklyLimitUSD   *float64 // 周限额 (USD)
-	MonthlyLimitUSD  *float64 // 月限额 (USD)
+	Name              string
+	Description       string
+	Platform          string
+	RateMultiplier    *float64 // 使用指针以支持设置为0
+	IsExclusive       *bool
+	UsageCardDisabled *bool
+	Status            string
+	SubscriptionType  string   // standard/subscription
+	DailyLimitUSD     *float64 // 日限额 (USD)
+	WeeklyLimitUSD    *float64 // 周限额 (USD)
+	MonthlyLimitUSD   *float64 // 月限额 (USD)
 	// 图片生成计费配置（仅 antigravity 平台使用）
 	AllowImageGeneration *bool
 	ImageRateIndependent *bool
@@ -403,12 +406,13 @@ type UpdateProxyInput struct {
 }
 
 type GenerateRedeemCodesInput struct {
-	Count        int
-	Type         string
-	Value        float64
-	GroupID      *int64 // 订阅类型专用：关联的分组ID
-	ValidityDays int    // 订阅类型专用：有效天数
-	ExpiresAt    *time.Time
+	Count           int
+	Type            string
+	Value           float64
+	GroupID         *int64 // 订阅类型专用：关联的分组ID
+	UsageCardPlanID *int64 // 余额卡类型专用：关联的余额卡套餐ID
+	ValidityDays    int    // 订阅类型专用：有效天数
+	ExpiresAt       *time.Time
 }
 
 type ProxyBatchDeleteResult struct {
@@ -1768,6 +1772,7 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		Platform:                        platform,
 		RateMultiplier:                  input.RateMultiplier,
 		IsExclusive:                     input.IsExclusive,
+		UsageCardDisabled:               input.UsageCardDisabled,
 		Status:                          StatusActive,
 		SubscriptionType:                subscriptionType,
 		DailyLimitUSD:                   dailyLimit,
@@ -1938,6 +1943,9 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	}
 	if input.IsExclusive != nil {
 		group.IsExclusive = *input.IsExclusive
+	}
+	if input.UsageCardDisabled != nil {
+		group.UsageCardDisabled = *input.UsageCardDisabled
 	}
 	if input.Status != "" {
 		group.Status = input.Status
@@ -3090,6 +3098,7 @@ func (s *adminServiceImpl) GenerateRedeemCodes(ctx context.Context, input *Gener
 		return nil, ErrRedeemCodeExpired
 	}
 
+	var usageCardPlan *UsageCardPlan
 	// 如果是订阅类型，验证必须有 GroupID
 	if input.Type == RedeemTypeSubscription {
 		if input.GroupID == nil {
@@ -3103,6 +3112,23 @@ func (s *adminServiceImpl) GenerateRedeemCodes(ctx context.Context, input *Gener
 		if !group.IsSubscriptionType() {
 			return nil, errors.New("group must be subscription type")
 		}
+	}
+	if input.Type == RedeemTypeUsageCard {
+		if input.GroupID != nil {
+			return nil, errors.New("group_id must be empty for usage card type")
+		}
+		if input.UsageCardPlanID == nil || *input.UsageCardPlanID <= 0 {
+			return nil, errors.New("usage_card_plan_id is required for usage card type")
+		}
+		if input.ValidityDays != 0 {
+			return nil, errors.New("validity_days must be empty for usage card type")
+		}
+		plan, err := s.getUsageCardPlanForRedeem(ctx, *input.UsageCardPlanID)
+		if err != nil {
+			return nil, err
+		}
+		usageCardPlan = plan
+		input.Value = plan.AmountUSD
 	}
 
 	codes := make([]RedeemCode, 0, input.Count)
@@ -3118,7 +3144,7 @@ func (s *adminServiceImpl) GenerateRedeemCodes(ctx context.Context, input *Gener
 			Status:    StatusUnused,
 			ExpiresAt: input.ExpiresAt,
 		}
-		// 订阅类型专用字段
+		// 订阅类型使用 validity_days 表示兑换后的权益有效期。
 		if input.Type == RedeemTypeSubscription {
 			code.GroupID = input.GroupID
 			code.ValidityDays = input.ValidityDays
@@ -3126,12 +3152,44 @@ func (s *adminServiceImpl) GenerateRedeemCodes(ctx context.Context, input *Gener
 				code.ValidityDays = 30 // 默认30天
 			}
 		}
+		if input.Type == RedeemTypeUsageCard {
+			code.UsageCardPlanID = input.UsageCardPlanID
+			code.UsageCardPlan = usageCardPlan
+		}
 		if err := s.redeemCodeRepo.Create(ctx, &code); err != nil {
 			return nil, err
 		}
 		codes = append(codes, code)
 	}
 	return codes, nil
+}
+
+func (s *adminServiceImpl) getUsageCardPlanForRedeem(ctx context.Context, id int64) (*UsageCardPlan, error) {
+	if s == nil || s.entClient == nil {
+		return nil, ErrUsageCardPlanNotFound
+	}
+	plan, err := s.entClient.UsageCardPlan.Query().
+		Where(usagecardplan.IDEQ(id)).
+		Only(ctx)
+	if err != nil {
+		if dbent.IsNotFound(err) {
+			return nil, ErrUsageCardPlanNotFound
+		}
+		return nil, err
+	}
+	return &UsageCardPlan{
+		ID:           plan.ID,
+		Name:         plan.Name,
+		Description:  plan.Description,
+		Price:        plan.Price,
+		AmountUSD:    plan.AmountUsd,
+		ValidityDays: plan.ValidityDays,
+		Features:     plan.Features,
+		ForSale:      plan.ForSale,
+		SortOrder:    plan.SortOrder,
+		CreatedAt:    plan.CreatedAt,
+		UpdatedAt:    plan.UpdatedAt,
+	}, nil
 }
 
 func (s *adminServiceImpl) DeleteRedeemCode(ctx context.Context, id int64) error {

@@ -164,6 +164,7 @@ var ErrModelPricingUnavailable = errors.New("pricing not found")
 type BillingService struct {
 	cfg            *config.Config
 	pricingService *PricingService
+	settingService *SettingService
 	fallbackPrices map[string]*ModelPricing // 硬编码回退价格
 }
 
@@ -179,6 +180,10 @@ func NewBillingService(cfg *config.Config, pricingService *PricingService) *Bill
 	s.initFallbackPricing()
 
 	return s
+}
+
+func (s *BillingService) SetSettingService(settingService *SettingService) {
+	s.settingService = settingService
 }
 
 // initFallbackPricing 初始化硬编码回退价格（当动态价格不可用时使用）
@@ -674,19 +679,35 @@ func (s *BillingService) applyModelSpecificPricingPolicy(model string, pricing *
 	if !isOpenAIGPT54Model(model) {
 		return pricing
 	}
-	if pricing.LongContextInputThreshold > 0 && pricing.LongContextInputMultiplier > 0 && pricing.LongContextOutputMultiplier > 0 {
+	runtime := OpenAILongContextBillingRuntime{
+		Enabled:          true,
+		Threshold:        openAIGPT54LongContextInputThreshold,
+		InputMultiplier:  openAIGPT54LongContextInputMultiplier,
+		OutputMultiplier: openAIGPT54LongContextOutputMultiplier,
+	}
+	if s != nil && s.settingService != nil {
+		runtime = s.settingService.GetOpenAILongContextBillingRuntime(context.Background())
+	}
+	hasCustomLongContextPolicy := pricing.LongContextInputThreshold > 0 &&
+		pricing.LongContextInputMultiplier > 0 &&
+		pricing.LongContextOutputMultiplier > 0 &&
+		(pricing.LongContextInputThreshold != openAIGPT54LongContextInputThreshold ||
+			pricing.LongContextInputMultiplier != openAIGPT54LongContextInputMultiplier ||
+			pricing.LongContextOutputMultiplier != openAIGPT54LongContextOutputMultiplier)
+	if hasCustomLongContextPolicy {
 		return pricing
 	}
+	if !runtime.Enabled {
+		cloned := *pricing
+		cloned.LongContextInputThreshold = 0
+		cloned.LongContextInputMultiplier = 0
+		cloned.LongContextOutputMultiplier = 0
+		return &cloned
+	}
 	cloned := *pricing
-	if cloned.LongContextInputThreshold <= 0 {
-		cloned.LongContextInputThreshold = openAIGPT54LongContextInputThreshold
-	}
-	if cloned.LongContextInputMultiplier <= 0 {
-		cloned.LongContextInputMultiplier = openAIGPT54LongContextInputMultiplier
-	}
-	if cloned.LongContextOutputMultiplier <= 0 {
-		cloned.LongContextOutputMultiplier = openAIGPT54LongContextOutputMultiplier
-	}
+	cloned.LongContextInputThreshold = runtime.Threshold
+	cloned.LongContextInputMultiplier = runtime.InputMultiplier
+	cloned.LongContextOutputMultiplier = runtime.OutputMultiplier
 	return &cloned
 }
 

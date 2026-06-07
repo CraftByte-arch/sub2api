@@ -40,6 +40,8 @@ const (
 	FieldGroupID = "group_id"
 	// FieldSubscriptionID holds the string denoting the subscription_id field in the database.
 	FieldSubscriptionID = "subscription_id"
+	// FieldUsageCardID holds the string denoting the usage_card_id field in the database.
+	FieldUsageCardID = "usage_card_id"
 	// FieldInputTokens holds the string denoting the input_tokens field in the database.
 	FieldInputTokens = "input_tokens"
 	// FieldOutputTokens holds the string denoting the output_tokens field in the database.
@@ -106,6 +108,8 @@ const (
 	EdgeGroup = "group"
 	// EdgeSubscription holds the string denoting the subscription edge name in mutations.
 	EdgeSubscription = "subscription"
+	// EdgeUsageCard holds the string denoting the usage_card edge name in mutations.
+	EdgeUsageCard = "usage_card"
 	// Table holds the table name of the usagelog in the database.
 	Table = "usage_logs"
 	// UserTable is the table that holds the user relation/edge.
@@ -143,6 +147,13 @@ const (
 	SubscriptionInverseTable = "user_subscriptions"
 	// SubscriptionColumn is the table column denoting the subscription relation/edge.
 	SubscriptionColumn = "subscription_id"
+	// UsageCardTable is the table that holds the usage_card relation/edge.
+	UsageCardTable = "usage_logs"
+	// UsageCardInverseTable is the table name for the UserUsageCard entity.
+	// It exists in this package in order to avoid circular dependency with the "userusagecard" package.
+	UsageCardInverseTable = "user_usage_cards"
+	// UsageCardColumn is the table column denoting the usage_card relation/edge.
+	UsageCardColumn = "usage_card_id"
 )
 
 // Columns holds all SQL columns for usagelog fields.
@@ -161,6 +172,7 @@ var Columns = []string{
 	FieldBillingMode,
 	FieldGroupID,
 	FieldSubscriptionID,
+	FieldUsageCardID,
 	FieldInputTokens,
 	FieldOutputTokens,
 	FieldCacheCreationTokens,
@@ -339,6 +351,11 @@ func BySubscriptionID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldSubscriptionID, opts...).ToFunc()
 }
 
+// ByUsageCardID orders the results by the usage_card_id field.
+func ByUsageCardID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldUsageCardID, opts...).ToFunc()
+}
+
 // ByInputTokens orders the results by the input_tokens field.
 func ByInputTokens(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldInputTokens, opts...).ToFunc()
@@ -508,6 +525,13 @@ func BySubscriptionField(field string, opts ...sql.OrderTermOption) OrderOption 
 		sqlgraph.OrderByNeighborTerms(s, newSubscriptionStep(), sql.OrderByField(field, opts...))
 	}
 }
+
+// ByUsageCardField orders the results by usage_card field.
+func ByUsageCardField(field string, opts ...sql.OrderTermOption) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborTerms(s, newUsageCardStep(), sql.OrderByField(field, opts...))
+	}
+}
 func newUserStep() *sqlgraph.Step {
 	return sqlgraph.NewStep(
 		sqlgraph.From(Table, FieldID),
@@ -541,5 +565,12 @@ func newSubscriptionStep() *sqlgraph.Step {
 		sqlgraph.From(Table, FieldID),
 		sqlgraph.To(SubscriptionInverseTable, FieldID),
 		sqlgraph.Edge(sqlgraph.M2O, true, SubscriptionTable, SubscriptionColumn),
+	)
+}
+func newUsageCardStep() *sqlgraph.Step {
+	return sqlgraph.NewStep(
+		sqlgraph.From(Table, FieldID),
+		sqlgraph.To(UsageCardInverseTable, FieldID),
+		sqlgraph.Edge(sqlgraph.M2O, true, UsageCardTable, UsageCardColumn),
 	)
 }

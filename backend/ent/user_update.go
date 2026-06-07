@@ -25,6 +25,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/userattributevalue"
 	"github.com/Wei-Shaw/sub2api/ent/userplatformquota"
 	"github.com/Wei-Shaw/sub2api/ent/usersubscription"
+	"github.com/Wei-Shaw/sub2api/ent/userusagecard"
 )
 
 // UserUpdate is the builder for updating User entities.
@@ -471,6 +472,36 @@ func (_u *UserUpdate) AddAssignedSubscriptions(v ...*UserSubscription) *UserUpda
 	return _u.AddAssignedSubscriptionIDs(ids...)
 }
 
+// AddUsageCardIDs adds the "usage_cards" edge to the UserUsageCard entity by IDs.
+func (_u *UserUpdate) AddUsageCardIDs(ids ...int64) *UserUpdate {
+	_u.mutation.AddUsageCardIDs(ids...)
+	return _u
+}
+
+// AddUsageCards adds the "usage_cards" edges to the UserUsageCard entity.
+func (_u *UserUpdate) AddUsageCards(v ...*UserUsageCard) *UserUpdate {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.AddUsageCardIDs(ids...)
+}
+
+// AddAssignedUsageCardIDs adds the "assigned_usage_cards" edge to the UserUsageCard entity by IDs.
+func (_u *UserUpdate) AddAssignedUsageCardIDs(ids ...int64) *UserUpdate {
+	_u.mutation.AddAssignedUsageCardIDs(ids...)
+	return _u
+}
+
+// AddAssignedUsageCards adds the "assigned_usage_cards" edges to the UserUsageCard entity.
+func (_u *UserUpdate) AddAssignedUsageCards(v ...*UserUsageCard) *UserUpdate {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.AddAssignedUsageCardIDs(ids...)
+}
+
 // AddAnnouncementReadIDs adds the "announcement_reads" edge to the AnnouncementRead entity by IDs.
 func (_u *UserUpdate) AddAnnouncementReadIDs(ids ...int64) *UserUpdate {
 	_u.mutation.AddAnnouncementReadIDs(ids...)
@@ -693,6 +724,48 @@ func (_u *UserUpdate) RemoveAssignedSubscriptions(v ...*UserSubscription) *UserU
 		ids[i] = v[i].ID
 	}
 	return _u.RemoveAssignedSubscriptionIDs(ids...)
+}
+
+// ClearUsageCards clears all "usage_cards" edges to the UserUsageCard entity.
+func (_u *UserUpdate) ClearUsageCards() *UserUpdate {
+	_u.mutation.ClearUsageCards()
+	return _u
+}
+
+// RemoveUsageCardIDs removes the "usage_cards" edge to UserUsageCard entities by IDs.
+func (_u *UserUpdate) RemoveUsageCardIDs(ids ...int64) *UserUpdate {
+	_u.mutation.RemoveUsageCardIDs(ids...)
+	return _u
+}
+
+// RemoveUsageCards removes "usage_cards" edges to UserUsageCard entities.
+func (_u *UserUpdate) RemoveUsageCards(v ...*UserUsageCard) *UserUpdate {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.RemoveUsageCardIDs(ids...)
+}
+
+// ClearAssignedUsageCards clears all "assigned_usage_cards" edges to the UserUsageCard entity.
+func (_u *UserUpdate) ClearAssignedUsageCards() *UserUpdate {
+	_u.mutation.ClearAssignedUsageCards()
+	return _u
+}
+
+// RemoveAssignedUsageCardIDs removes the "assigned_usage_cards" edge to UserUsageCard entities by IDs.
+func (_u *UserUpdate) RemoveAssignedUsageCardIDs(ids ...int64) *UserUpdate {
+	_u.mutation.RemoveAssignedUsageCardIDs(ids...)
+	return _u
+}
+
+// RemoveAssignedUsageCards removes "assigned_usage_cards" edges to UserUsageCard entities.
+func (_u *UserUpdate) RemoveAssignedUsageCards(v ...*UserUsageCard) *UserUpdate {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.RemoveAssignedUsageCardIDs(ids...)
 }
 
 // ClearAnnouncementReads clears all "announcement_reads" edges to the AnnouncementRead entity.
@@ -1245,6 +1318,96 @@ func (_u *UserUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
 				IDSpec: sqlgraph.NewFieldSpec(usersubscription.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Add = append(_spec.Edges.Add, edge)
+	}
+	if _u.mutation.UsageCardsCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   user.UsageCardsTable,
+			Columns: []string{user.UsageCardsColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(userusagecard.FieldID, field.TypeInt64),
+			},
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.RemovedUsageCardsIDs(); len(nodes) > 0 && !_u.mutation.UsageCardsCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   user.UsageCardsTable,
+			Columns: []string{user.UsageCardsColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(userusagecard.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.UsageCardsIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   user.UsageCardsTable,
+			Columns: []string{user.UsageCardsColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(userusagecard.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Add = append(_spec.Edges.Add, edge)
+	}
+	if _u.mutation.AssignedUsageCardsCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   user.AssignedUsageCardsTable,
+			Columns: []string{user.AssignedUsageCardsColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(userusagecard.FieldID, field.TypeInt64),
+			},
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.RemovedAssignedUsageCardsIDs(); len(nodes) > 0 && !_u.mutation.AssignedUsageCardsCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   user.AssignedUsageCardsTable,
+			Columns: []string{user.AssignedUsageCardsColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(userusagecard.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.AssignedUsageCardsIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   user.AssignedUsageCardsTable,
+			Columns: []string{user.AssignedUsageCardsColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(userusagecard.FieldID, field.TypeInt64),
 			},
 		}
 		for _, k := range nodes {
@@ -2120,6 +2283,36 @@ func (_u *UserUpdateOne) AddAssignedSubscriptions(v ...*UserSubscription) *UserU
 	return _u.AddAssignedSubscriptionIDs(ids...)
 }
 
+// AddUsageCardIDs adds the "usage_cards" edge to the UserUsageCard entity by IDs.
+func (_u *UserUpdateOne) AddUsageCardIDs(ids ...int64) *UserUpdateOne {
+	_u.mutation.AddUsageCardIDs(ids...)
+	return _u
+}
+
+// AddUsageCards adds the "usage_cards" edges to the UserUsageCard entity.
+func (_u *UserUpdateOne) AddUsageCards(v ...*UserUsageCard) *UserUpdateOne {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.AddUsageCardIDs(ids...)
+}
+
+// AddAssignedUsageCardIDs adds the "assigned_usage_cards" edge to the UserUsageCard entity by IDs.
+func (_u *UserUpdateOne) AddAssignedUsageCardIDs(ids ...int64) *UserUpdateOne {
+	_u.mutation.AddAssignedUsageCardIDs(ids...)
+	return _u
+}
+
+// AddAssignedUsageCards adds the "assigned_usage_cards" edges to the UserUsageCard entity.
+func (_u *UserUpdateOne) AddAssignedUsageCards(v ...*UserUsageCard) *UserUpdateOne {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.AddAssignedUsageCardIDs(ids...)
+}
+
 // AddAnnouncementReadIDs adds the "announcement_reads" edge to the AnnouncementRead entity by IDs.
 func (_u *UserUpdateOne) AddAnnouncementReadIDs(ids ...int64) *UserUpdateOne {
 	_u.mutation.AddAnnouncementReadIDs(ids...)
@@ -2342,6 +2535,48 @@ func (_u *UserUpdateOne) RemoveAssignedSubscriptions(v ...*UserSubscription) *Us
 		ids[i] = v[i].ID
 	}
 	return _u.RemoveAssignedSubscriptionIDs(ids...)
+}
+
+// ClearUsageCards clears all "usage_cards" edges to the UserUsageCard entity.
+func (_u *UserUpdateOne) ClearUsageCards() *UserUpdateOne {
+	_u.mutation.ClearUsageCards()
+	return _u
+}
+
+// RemoveUsageCardIDs removes the "usage_cards" edge to UserUsageCard entities by IDs.
+func (_u *UserUpdateOne) RemoveUsageCardIDs(ids ...int64) *UserUpdateOne {
+	_u.mutation.RemoveUsageCardIDs(ids...)
+	return _u
+}
+
+// RemoveUsageCards removes "usage_cards" edges to UserUsageCard entities.
+func (_u *UserUpdateOne) RemoveUsageCards(v ...*UserUsageCard) *UserUpdateOne {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.RemoveUsageCardIDs(ids...)
+}
+
+// ClearAssignedUsageCards clears all "assigned_usage_cards" edges to the UserUsageCard entity.
+func (_u *UserUpdateOne) ClearAssignedUsageCards() *UserUpdateOne {
+	_u.mutation.ClearAssignedUsageCards()
+	return _u
+}
+
+// RemoveAssignedUsageCardIDs removes the "assigned_usage_cards" edge to UserUsageCard entities by IDs.
+func (_u *UserUpdateOne) RemoveAssignedUsageCardIDs(ids ...int64) *UserUpdateOne {
+	_u.mutation.RemoveAssignedUsageCardIDs(ids...)
+	return _u
+}
+
+// RemoveAssignedUsageCards removes "assigned_usage_cards" edges to UserUsageCard entities.
+func (_u *UserUpdateOne) RemoveAssignedUsageCards(v ...*UserUsageCard) *UserUpdateOne {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.RemoveAssignedUsageCardIDs(ids...)
 }
 
 // ClearAnnouncementReads clears all "announcement_reads" edges to the AnnouncementRead entity.
@@ -2924,6 +3159,96 @@ func (_u *UserUpdateOne) sqlSave(ctx context.Context) (_node *User, err error) {
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
 				IDSpec: sqlgraph.NewFieldSpec(usersubscription.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Add = append(_spec.Edges.Add, edge)
+	}
+	if _u.mutation.UsageCardsCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   user.UsageCardsTable,
+			Columns: []string{user.UsageCardsColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(userusagecard.FieldID, field.TypeInt64),
+			},
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.RemovedUsageCardsIDs(); len(nodes) > 0 && !_u.mutation.UsageCardsCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   user.UsageCardsTable,
+			Columns: []string{user.UsageCardsColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(userusagecard.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.UsageCardsIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   user.UsageCardsTable,
+			Columns: []string{user.UsageCardsColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(userusagecard.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Add = append(_spec.Edges.Add, edge)
+	}
+	if _u.mutation.AssignedUsageCardsCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   user.AssignedUsageCardsTable,
+			Columns: []string{user.AssignedUsageCardsColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(userusagecard.FieldID, field.TypeInt64),
+			},
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.RemovedAssignedUsageCardsIDs(); len(nodes) > 0 && !_u.mutation.AssignedUsageCardsCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   user.AssignedUsageCardsTable,
+			Columns: []string{user.AssignedUsageCardsColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(userusagecard.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.AssignedUsageCardsIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   user.AssignedUsageCardsTable,
+			Columns: []string{user.AssignedUsageCardsColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(userusagecard.FieldID, field.TypeInt64),
 			},
 		}
 		for _, k := range nodes {

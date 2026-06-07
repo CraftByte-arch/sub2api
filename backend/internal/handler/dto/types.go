@@ -49,20 +49,21 @@ type AdminUser struct {
 }
 
 type APIKey struct {
-	ID          int64      `json:"id"`
-	UserID      int64      `json:"user_id"`
-	Key         string     `json:"key"`
-	Name        string     `json:"name"`
-	GroupID     *int64     `json:"group_id"`
-	Status      string     `json:"status"`
-	IPWhitelist []string   `json:"ip_whitelist"`
-	IPBlacklist []string   `json:"ip_blacklist"`
-	LastUsedAt  *time.Time `json:"last_used_at"`
-	Quota       float64    `json:"quota"`      // Quota limit in USD (0 = unlimited)
-	QuotaUsed   float64    `json:"quota_used"` // Used quota amount in USD
-	ExpiresAt   *time.Time `json:"expires_at"` // Expiration time (nil = never expires)
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
+	ID              int64      `json:"id"`
+	UserID          int64      `json:"user_id"`
+	Key             string     `json:"key"`
+	Name            string     `json:"name"`
+	GroupID         *int64     `json:"group_id"`
+	Status          string     `json:"status"`
+	BillingPriority string     `json:"billing_priority"`
+	IPWhitelist     []string   `json:"ip_whitelist"`
+	IPBlacklist     []string   `json:"ip_blacklist"`
+	LastUsedAt      *time.Time `json:"last_used_at"`
+	Quota           float64    `json:"quota"`      // Quota limit in USD (0 = unlimited)
+	QuotaUsed       float64    `json:"quota_used"` // Used quota amount in USD
+	ExpiresAt       *time.Time `json:"expires_at"` // Expiration time (nil = never expires)
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
 
 	// Rate limit fields
 	RateLimit5h   float64    `json:"rate_limit_5h"`
@@ -83,13 +84,14 @@ type APIKey struct {
 }
 
 type Group struct {
-	ID             int64   `json:"id"`
-	Name           string  `json:"name"`
-	Description    string  `json:"description"`
-	Platform       string  `json:"platform"`
-	RateMultiplier float64 `json:"rate_multiplier"`
-	IsExclusive    bool    `json:"is_exclusive"`
-	Status         string  `json:"status"`
+	ID                int64   `json:"id"`
+	Name              string  `json:"name"`
+	Description       string  `json:"description"`
+	Platform          string  `json:"platform"`
+	RateMultiplier    float64 `json:"rate_multiplier"`
+	IsExclusive       bool    `json:"is_exclusive"`
+	Status            string  `json:"status"`
+	UsageCardDisabled bool    `json:"usage_card_disabled"`
 
 	SubscriptionType string   `json:"subscription_type"`
 	DailyLimitUSD    *float64 `json:"daily_limit_usd"`
@@ -344,15 +346,29 @@ type RedeemCode struct {
 	CreatedAt time.Time  `json:"created_at"`
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 
-	GroupID      *int64 `json:"group_id"`
-	ValidityDays int    `json:"validity_days"`
+	GroupID         *int64 `json:"group_id"`
+	UsageCardPlanID *int64 `json:"usage_card_plan_id,omitempty"`
+	ValidityDays    int    `json:"validity_days"`
 
 	// Notes is only populated for admin_balance/admin_concurrency types
 	// so users can see why they were charged or credited
 	Notes *string `json:"notes,omitempty"`
 
-	User  *User  `json:"user,omitempty"`
-	Group *Group `json:"group,omitempty"`
+	User          *User          `json:"user,omitempty"`
+	Group         *Group         `json:"group,omitempty"`
+	UsageCardPlan *UsageCardPlan `json:"usage_card_plan,omitempty"`
+}
+
+type UsageCardPlan struct {
+	ID           int64   `json:"id"`
+	Name         string  `json:"name"`
+	Description  string  `json:"description"`
+	Price        float64 `json:"price"`
+	AmountUSD    float64 `json:"amount_usd"`
+	ValidityDays int     `json:"validity_days"`
+	Features     string  `json:"features"`
+	ForSale      bool    `json:"for_sale"`
+	SortOrder    int     `json:"sort_order"`
 }
 
 // AdminRedeemCode 是管理员接口使用的 redeem code DTO（包含 notes 等字段）。
@@ -436,6 +452,7 @@ type UsageLog struct {
 
 	GroupID        *int64 `json:"group_id"`
 	SubscriptionID *int64 `json:"subscription_id"`
+	UsageCardID    *int64 `json:"usage_card_id"`
 
 	InputTokens         int `json:"input_tokens"`
 	OutputTokens        int `json:"output_tokens"`

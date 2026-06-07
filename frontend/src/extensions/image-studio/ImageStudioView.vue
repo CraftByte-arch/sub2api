@@ -195,6 +195,7 @@
                 :download-file-name="downloadFileName"
                 @edit-output="handleEditOutput"
                 @open-lightbox="openOutputLightbox"
+                @download-output="downloadOutputAsFormat"
               >
                 <template #actions>
                   <nav
@@ -207,22 +208,24 @@
                     <button
                       type="button"
                       class="preview-mode-tab"
-                      :class="{ active: activeTab === 'generate' }"
+                      :class="{ active: activeTab === 'generate', running: creationSessions.generate.submitting }"
                       data-testid="tab-generate"
                       @click="setActiveTab('generate')"
                     >
                       <Icon name="sparkles" size="sm" />
                       文生图
+                      <span v-if="creationSessions.generate.submitting" class="mode-running-dot" aria-label="文生图生成中"></span>
                     </button>
                     <button
                       type="button"
                       class="preview-mode-tab"
-                      :class="{ active: activeTab === 'edit' }"
+                      :class="{ active: activeTab === 'edit', running: creationSessions.edit.submitting }"
                       data-testid="tab-edit"
                       @click="setActiveTab('edit')"
                     >
                       <Icon name="upload" size="sm" />
                       图生图
+                      <span v-if="creationSessions.edit.submitting" class="mode-running-dot" aria-label="图生图生成中"></span>
                     </button>
                   </nav>
                 </template>
@@ -256,6 +259,8 @@
               :selected-key-value="selectedKeyValue"
               :loading-keys="loadingKeys"
               :active-keys="activeKeys"
+              :model="model"
+              :model-options="modelOptionsForSelection"
               :ratio-options="ratioOptions"
               :selected-ratio="selectedRatio"
               :selected-ratio-value="selectedRatioValue"
@@ -265,19 +270,21 @@
               :quality="quality"
               :quality-options="qualityOptions"
               :background="background"
-              :background-options="backgroundOptions"
+              :background-options="backgroundOptionsForSelection"
               :output-format="outputFormat"
               :output-format-options="outputFormatOptionsForSelection"
               :advanced-json="advancedJson"
               @open-history-lightbox="openHistoryLightbox"
               @edit-history-image="handleEditHistoryImage"
               @delete-history-record="deleteHistoryRecord"
+              @download-history-image="downloadHistoryImageAsFormat"
               @update:selected-key-value="selectedKeyValue = $event"
+              @update:model="updateModel"
               @update:selected-ratio-value="selectedRatioValue = $event"
               @update:selected-resolution-value="updateSelectedResolutionValue"
               @update:advanced-open="advancedOpen = $event"
               @update:quality="quality = $event"
-              @update:background="background = $event"
+              @update:background="updateBackground"
               @update:output-format="updateOutputFormat"
               @update:advanced-json="advancedJson = $event"
             />
@@ -367,6 +374,7 @@
             @drag-start="startLightboxDrag"
             @drag-move="moveLightboxDrag"
             @drag-end="endLightboxDrag"
+            @download="downloadLightboxImageAsFormat"
           />
         </div>
       </section>
@@ -375,7 +383,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { keysAPI } from '@/api'
 import Icon from '@/components/icons/Icon.vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
@@ -406,8 +414,29 @@ import type {
 } from './types'
 import type { TemplateDraftPayload, TemplateMode, TemplateSyncState } from './templateTypes'
 
+type CreationMode = Exclude<ImageStudioMode, 'history'>
+
+interface ImageStudioCreationSession {
+  submitting: boolean
+  errorMessage: string
+  outputs: ImageStudioOutput[]
+  streamState: ImageStudioStreamState
+}
+
+function createCreationSession(): ImageStudioCreationSession {
+  return {
+    submitting: false,
+    errorMessage: '',
+    outputs: [],
+    streamState: {
+      phase: 'idle',
+      message: '等待提交生成任务'
+    }
+  }
+}
+
 const activeTab = ref<ImageStudioMode>('generate')
-const lastCreationTab = ref<Exclude<ImageStudioMode, 'history'>>('generate')
+const lastCreationTab = ref<CreationMode>('generate')
 const suppressReferenceTransition = ref(false)
 let suppressReferenceTransitionTimer: number | undefined
 const model = ref('gpt-image-2')
@@ -421,15 +450,12 @@ const advancedJson = ref('')
 const advancedOpen = ref(false)
 const composerExpanded = ref(false)
 const loadingKeys = ref(false)
-const submitting = ref(false)
 const polishingPrompt = ref(false)
 const promptPolishModel = ref('gpt-5.4-mini')
-const errorMessage = ref('')
 const apiKeys = ref<StudioApiKey[]>([])
-const outputs = ref<ImageStudioOutput[]>([])
-const generationStreamState = ref<ImageStudioStreamState>({
-  phase: 'idle',
-  message: '等待提交生成任务'
+const creationSessions = reactive<Record<CreationMode, ImageStudioCreationSession>>({
+  generate: createCreationSession(),
+  edit: createCreationSession()
 })
 const historyRecords = ref<ImageStudioHistoryRecord[]>([])
 const selectedHistoryId = ref('')
@@ -580,9 +606,15 @@ const backgroundOptions = [
 ]
 
 const outputFormatOptions = [
-  { value: 'png', label: 'PNG' },
+  { value: 'jpeg', label: 'JPEG' },
   { value: 'webp', label: 'WebP' },
-  { value: 'jpeg', label: 'JPEG' }
+  { value: 'png', label: 'PNG' }
+]
+
+const modelOptions = [
+  { value: 'gpt-image-2', label: 'GPT Image 2' },
+  { value: 'gpt-image-1.5', label: 'GPT Image 1.5' },
+  { value: 'gpt-image-1', label: 'GPT Image 1' }
 ]
 
 const promptPolishModelOptions = [
@@ -595,13 +627,7 @@ const activeKeys = computed(() => apiKeys.value.filter((key) => key.status === '
 const selectedKey = computed(() => activeKeys.value.find((key) => key.key === selectedKeyValue.value) ?? null)
 const selectedRatio = computed(() => ratioOptions.find((item) => item.value === selectedRatioValue.value) ?? ratioOptions[0])
 const selectedResolutionOptions = computed(() =>
-  (resolutionMap[selectedRatio.value.value] ?? []).map((option) => ({
-    ...option,
-    disabled: outputFormat.value === 'png' && is4kResolution(option),
-    disabledReason: outputFormat.value === 'png' && is4kResolution(option)
-      ? '4K 分辨率暂不支持 PNG 输出'
-      : undefined
-  }))
+  resolutionMap[selectedRatio.value.value] ?? []
 )
 const selectedResolution = computed(() =>
   selectedResolutionOptions.value.find((option) => option.value === selectedResolutionValue.value) ??
@@ -611,6 +637,12 @@ const selectedResolution = computed(() =>
 const selectedHistoryRecord = computed(() =>
   historyRecords.value.find((record) => record.id === selectedHistoryId.value) ?? historyRecords.value[0] ?? null
 )
+const activeCreationMode = computed<CreationMode>(() => activeTab.value === 'edit' ? 'edit' : 'generate')
+const activeCreationSession = computed(() => creationSessions[activeCreationMode.value])
+const submitting = computed(() => activeCreationSession.value.submitting)
+const outputs = computed(() => activeCreationSession.value.outputs)
+const errorMessage = computed(() => activeCreationSession.value.errorMessage)
+const generationStreamState = computed(() => activeCreationSession.value.streamState)
 const historyTabLabel = computed(() => {
   if (activeTab.value !== 'history') return '记录'
   return lastCreationTab.value === 'edit' ? '返回图生图' : '返回文生图'
@@ -664,9 +696,25 @@ const submitDisabled = computed(() => {
 const outputFormatOptionsForSelection = computed(() =>
   outputFormatOptions.map((option) => ({
     ...option,
-    disabled: option.value === 'png' && is4kResolutionValue(selectedResolutionValue.value),
-    disabledReason: option.value === 'png' && is4kResolutionValue(selectedResolutionValue.value)
-      ? '4K 分辨率暂不支持 PNG 输出'
+    disabled: Boolean(outputFormatDisabledReason(option.value)),
+    disabledReason: outputFormatDisabledReason(option.value)
+  }))
+)
+
+const backgroundOptionsForSelection = computed(() =>
+  backgroundOptions.map((option) => ({
+    ...option,
+    disabled: Boolean(backgroundDisabledReason(option.value)),
+    disabledReason: backgroundDisabledReason(option.value)
+  }))
+)
+
+const modelOptionsForSelection = computed(() =>
+  modelOptions.map((option) => ({
+    ...option,
+    disabled: option.value === 'gpt-image-2' && background.value === 'transparent',
+    disabledReason: option.value === 'gpt-image-2' && background.value === 'transparent'
+      ? '透明背景暂不支持 GPT Image 2'
       : undefined
   }))
 )
@@ -708,8 +756,14 @@ watch(selectedRatioValue, () => {
 }, { immediate: true })
 
 watch(outputFormat, () => {
-  if (outputFormat.value === 'png' && is4kResolutionValue(selectedResolutionValue.value)) {
-    syncResolutionToSelectedRatio()
+  if (outputFormat.value === 'jpeg' && background.value === 'transparent') {
+    background.value = ''
+  }
+})
+
+watch(model, () => {
+  if (model.value === 'gpt-image-2' && background.value === 'transparent') {
+    background.value = ''
   }
 })
 
@@ -733,10 +787,6 @@ watch(
 
 function setActiveTab(nextTab: ImageStudioMode) {
   const previousTab = activeTab.value
-  if (nextTab !== activeTab.value && (nextTab === 'generate' || nextTab === 'edit')) {
-    outputs.value = []
-    errorMessage.value = ''
-  }
   if (nextTab === 'generate' || nextTab === 'edit') {
     lastCreationTab.value = nextTab
   }
@@ -782,7 +832,7 @@ function syncTemplateDrawerLayout() {
 
 async function loadKeys() {
   loadingKeys.value = true
-  errorMessage.value = ''
+  setSessionError(activeCreationSession.value, '')
   try {
     const response = await keysAPI.list(1, 100)
     apiKeys.value = (response.items as StudioApiKey[]).filter((key) => key.status === 'active')
@@ -791,7 +841,7 @@ async function loadKeys() {
     ) ?? apiKeys.value[0]
     selectedKeyValue.value = preferred?.key ?? ''
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '加载 API Key 失败'
+    setSessionError(activeCreationSession.value, error instanceof Error ? error.message : '加载 API Key 失败')
   } finally {
     loadingKeys.value = false
   }
@@ -799,13 +849,15 @@ async function loadKeys() {
 
 async function handleSubmit() {
   if (submitDisabled.value) return
+  const submitMode: CreationMode = activeTab.value === 'edit' ? 'edit' : 'generate'
+  const session = creationSessions[submitMode]
   templateDrawerOpen.value = false
   promptHistoryOpen.value = false
   pendingOverwritePromptId.value = ''
-  submitting.value = true
-  errorMessage.value = ''
-  outputs.value = []
-  updateGenerationStreamState('created', '正在理解你的提示词...')
+  session.submitting = true
+  setSessionError(session, '')
+  session.outputs = []
+  updateGenerationStreamState(session, 'created', '正在理解你的提示词...')
   try {
     const advancedParams = parseAdvancedJson(advancedJson.value)
     const commonInput = {
@@ -819,83 +871,91 @@ async function handleSubmit() {
       advancedParams
     }
     const requestedOutputFormat = commonInput.outputFormat || 'jpeg'
-    const isEditMode = activeTab.value === 'edit'
     const requestInput = {
       ...commonInput,
       outputFormat: requestedOutputFormat
     }
 
-    const response = isEditMode
-      ? await submitEdit(requestInput)
-      : await submitGeneration(requestInput)
+    const response = submitMode === 'edit'
+      ? await submitEdit(requestInput, session)
+      : await submitGeneration(requestInput, session)
 
-    updateGenerationStreamState('image_done', '画面已经生成，正在整理格式...')
+    updateGenerationStreamState(session, 'image_done', '画面已经生成，正在整理格式...')
     const extractedOutputs = extractImageStudioOutputs(response)
-    outputs.value = await restoreOutputsToRequestedFormat(extractedOutputs, requestedOutputFormat)
-    updateGenerationStreamState('completed', '生成完成')
-    persistHistoryRecord(commonInput, outputs.value)
-    addPromptHistoryRecord(commonInput.prompt, activeTab.value === 'edit' ? 'edit' : 'generate', 'generated')
+    session.outputs = await restoreOutputsToRequestedFormat(extractedOutputs, requestedOutputFormat)
+    updateGenerationStreamState(session, 'completed', '生成完成')
+    persistHistoryRecord(commonInput, session.outputs, submitMode)
+    addPromptHistoryRecord(commonInput.prompt, submitMode, 'generated')
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '生成失败'
-    updateGenerationStreamState('failed', errorMessage.value)
+    setSessionError(session, error instanceof Error ? error.message : '生成失败')
+    updateGenerationStreamState(session, 'failed', session.errorMessage)
   } finally {
-    submitting.value = false
+    session.submitting = false
   }
 }
 
-function updateGenerationStreamState(phase: ImageStudioStreamState['phase'], message: string, detail = '') {
+function setSessionError(session: ImageStudioCreationSession, message: string) {
+  session.errorMessage = message
+}
+
+function updateGenerationStreamState(
+  session: ImageStudioCreationSession,
+  phase: ImageStudioStreamState['phase'],
+  message: string,
+  detail = ''
+) {
   const now = Date.now()
-  generationStreamState.value = {
+  session.streamState = {
     phase,
     message,
     detail,
-    startedAt: generationStreamState.value.startedAt ?? now,
+    startedAt: session.streamState.startedAt ?? now,
     updatedAt: now
   }
 }
 
-function handleResponsesStreamEvent(event: ImageStudioStreamEvent) {
+function handleResponsesStreamEvent(event: ImageStudioStreamEvent, session: ImageStudioCreationSession) {
   switch (event.type) {
     case 'response.created':
-      updateGenerationStreamState('created', '正在理解你的提示词...')
+      updateGenerationStreamState(session, 'created', '正在理解你的提示词...')
       break
     case 'response.in_progress':
-      updateGenerationStreamState('preparing', '正在整理画面方向...')
+      updateGenerationStreamState(session, 'preparing', '正在整理画面方向...')
       break
     case 'response.output_item.added':
       if (event.data.item?.type === 'image_generation_call') {
-        updateGenerationStreamState('image_task_created', '正在搭建画面构图...')
+        updateGenerationStreamState(session, 'image_task_created', '正在搭建画面构图...')
       }
       break
     case 'response.image_generation_call.in_progress':
-      updateGenerationStreamState('image_in_progress', '正在安排主体、光线和风格...')
+      updateGenerationStreamState(session, 'image_in_progress', '正在安排主体、光线和风格...')
       break
     case 'response.image_generation_call.generating':
-      updateGenerationStreamState('generating', '正在绘制画面...')
+      updateGenerationStreamState(session, 'generating', '正在绘制画面...')
       break
     case 'keepalive':
-      if (generationStreamState.value.phase === 'generating' || generationStreamState.value.phase === 'image_in_progress') {
-        updateGenerationStreamState(generationStreamState.value.phase, '正在处理更多细节...')
+      if (session.streamState.phase === 'generating' || session.streamState.phase === 'image_in_progress') {
+        updateGenerationStreamState(session, session.streamState.phase, '正在处理更多细节...')
       }
       break
     case 'response.image_generation_call.partial_image':
-      handlePartialImageEvent(event)
+      handlePartialImageEvent(event, session)
       break
     case 'response.output_item.done':
       if (event.data.item?.type === 'image_generation_call') {
-        handleImageDoneEvent(event)
+        handleImageDoneEvent(event, session)
       }
       break
     case 'response.completed':
-      updateGenerationStreamState('completed', '画面完成，正在呈现结果...')
+      updateGenerationStreamState(session, 'completed', '画面完成，正在呈现结果...')
       break
   }
 }
 
-function handlePartialImageEvent(event: ImageStudioStreamEvent) {
+function handlePartialImageEvent(event: ImageStudioStreamEvent, session: ImageStudioCreationSession) {
   const b64 = typeof event.data.partial_image_b64 === 'string' ? event.data.partial_image_b64 : ''
   if (!b64) return
-  outputs.value = [{
+  session.outputs = [{
     id: `partial-${event.data.item_id || event.data.sequence_number || Date.now()}`,
     kind: 'b64_json',
     src: toImageDataUrl(b64, mimeTypeFromStreamOutputFormat(event.data.output_format)),
@@ -903,18 +963,19 @@ function handlePartialImageEvent(event: ImageStudioStreamEvent) {
     raw: event.data
   }]
   updateGenerationStreamState(
+    session,
     'partial_preview',
     '已经有一个预览版本，正在继续打磨细节...',
     imageStreamDetail(event.data)
   )
 }
 
-function handleImageDoneEvent(event: ImageStudioStreamEvent) {
+function handleImageDoneEvent(event: ImageStudioStreamEvent, session: ImageStudioCreationSession) {
   const item = event.data.item
   const result = typeof item?.result === 'string' ? item.result : ''
   if (!result) return
   const mimeType = mimeTypeFromStreamOutputFormat(item.output_format)
-  outputs.value = [{
+  session.outputs = [{
     id: typeof item.id === 'string' ? item.id : `image-${Date.now()}`,
     kind: 'b64_json',
     src: toImageDataUrl(result, mimeType),
@@ -923,6 +984,7 @@ function handleImageDoneEvent(event: ImageStudioStreamEvent) {
     raw: item
   }]
   updateGenerationStreamState(
+    session,
     'image_done',
     '画面已经生成，正在做最后整理...',
     imageStreamDetail(item)
@@ -961,7 +1023,7 @@ function normalizedPromptForSubmit(): string {
 async function polishPrompt() {
   if (!prompt.value.trim() || !selectedKeyValue.value || polishingPrompt.value) return
   polishingPrompt.value = true
-  errorMessage.value = ''
+  setSessionError(activeCreationSession.value, '')
   const mode = activeTab.value === 'edit' ? 'edit' : 'generate'
   const originalPrompt = prompt.value.trim()
   try {
@@ -990,7 +1052,7 @@ async function polishPrompt() {
     setPromptValue(polished, 'external')
     addPromptHistoryRecord(originalPrompt, mode, 'polished')
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '润色提示词失败'
+    setSessionError(activeCreationSession.value, error instanceof Error ? error.message : '润色提示词失败')
   } finally {
     polishingPrompt.value = false
   }
@@ -1085,11 +1147,11 @@ async function submitGeneration(commonInput: {
   outputFormat: string
   count: number
   advancedParams: Record<string, any>
-}) {
+}, session: ImageStudioCreationSession) {
   return sendResponsesImageRequest({
     apiKey: selectedKeyValue.value,
     body: buildResponsesGenerationPayload(commonInput),
-    onStreamEvent: handleResponsesStreamEvent
+    onStreamEvent: (event) => handleResponsesStreamEvent(event, session)
   })
 }
 
@@ -1102,7 +1164,7 @@ async function submitEdit(commonInput: {
   outputFormat: string
   count: number
   advancedParams: Record<string, any>
-}) {
+}, session: ImageStudioCreationSession) {
   if (referenceFiles.value.length === 0) throw new Error('请先添加参考图')
   const compressedReferences = await compressReferenceImagesForUpload(referenceFiles.value)
   const input = { ...commonInput, image: compressedReferences, mask: maskFile.value }
@@ -1110,7 +1172,7 @@ async function submitEdit(commonInput: {
   return sendResponsesImageRequest({
     apiKey: selectedKeyValue.value,
     body: await buildResponsesEditPayload(input),
-    onStreamEvent: handleResponsesStreamEvent
+    onStreamEvent: (event) => handleResponsesStreamEvent(event, session)
   })
 }
 
@@ -1313,7 +1375,7 @@ function selectHistoryRecord(record: ImageStudioHistoryRecord) {
 
 function reuseHistoryRecord(record: ImageStudioHistoryRecord) {
   setPromptValue(record.prompt, 'external')
-  model.value = record.model
+  updateModel(record.model)
   updateOutputFormat(record.outputFormat || 'jpeg')
   const matchedRatio = findRatioByResolution(record.size)
   if (matchedRatio) {
@@ -1332,13 +1394,36 @@ function findRatioByResolution(size: string) {
 }
 
 function updateSelectedResolutionValue(value: string) {
-  if (outputFormat.value === 'png' && is4kResolutionValue(value)) return
   selectedResolutionValue.value = value
 }
 
+function updateModel(value: string) {
+  if (value === 'gpt-image-2' && background.value === 'transparent') return
+  model.value = value
+}
+
+function updateBackground(value: string) {
+  if (backgroundDisabledReason(value)) return
+  background.value = value
+}
+
 function updateOutputFormat(value: string) {
-  if (value === 'png' && is4kResolutionValue(selectedResolutionValue.value)) return
+  if (outputFormatDisabledReason(value)) return
   outputFormat.value = value
+}
+
+function backgroundDisabledReason(value: string) {
+  if (value !== 'transparent') return ''
+  if (model.value === 'gpt-image-2') return 'GPT Image 2 暂不支持透明背景'
+  if (outputFormat.value === 'jpeg') return 'JPEG 不支持透明背景'
+  return ''
+}
+
+function outputFormatDisabledReason(value: string) {
+  if (value === 'jpeg' && background.value === 'transparent') {
+    return '透明背景暂不支持 JPEG 输出'
+  }
+  return ''
 }
 
 function createResolutionOption(value: string, description: string): ImageStudioSelectOption {
@@ -1363,20 +1448,10 @@ function syncResolutionToSelectedRatio() {
   selectedResolutionValue.value = options[0].value
 }
 
-function is4kResolution(option: ImageStudioSelectOption) {
-  return option.tier === '4K' || is4kResolutionValue(option.value)
-}
-
-function is4kResolutionValue(value: string) {
-  const [width, height] = value.split('x').map(Number)
-  if (!Number.isFinite(width) || !Number.isFinite(height)) return false
-  return width * height > 2560 * 1440
-}
-
 async function handleEditOutput(output: ImageStudioOutput, index: number) {
   setActiveTab('edit')
-  outputs.value = []
-  errorMessage.value = ''
+  creationSessions.edit.outputs = []
+  setSessionError(creationSessions.edit, '')
   try {
     const file = await outputToReferenceFile(output, index)
     if (referenceFiles.value.length >= maxReferenceImages) {
@@ -1387,7 +1462,7 @@ async function handleEditOutput(output: ImageStudioOutput, index: number) {
       appendReferenceImage(file, output.src)
     }
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '无法把图片加入参考图'
+    setSessionError(creationSessions.edit, error instanceof Error ? error.message : '无法把图片加入参考图')
   }
 }
 
@@ -1584,6 +1659,94 @@ async function restoreOutputsToRequestedFormat(
   }))
 }
 
+async function downloadOutputAsFormat(output: ImageStudioOutput, index: number, format: string) {
+  const targetFormat = normalizeDownloadFormat(format)
+  const fileName = `image-studio-${index + 1}.${extensionFromFormat(targetFormat)}`
+  await downloadImageSourceAsFormat(output.src, output.mimeType, targetFormat, fileName)
+}
+
+async function downloadHistoryImageAsFormat(record: ImageStudioHistoryRecord, format: string) {
+  const image = record.images[0]
+  if (!image?.src) return
+  const targetFormat = normalizeDownloadFormat(format)
+  const fileName = `image-studio-history-${record.id}.${extensionFromFormat(targetFormat)}`
+  await downloadImageSourceAsFormat(image.src, image.mimeType, targetFormat, fileName)
+}
+
+async function downloadLightboxImageAsFormat(image: ImageStudioLightboxImage, format: string) {
+  if (!image.downloadName) return
+  const targetFormat = normalizeDownloadFormat(format)
+  const sourceMimeType = lightboxImageMimeType(image)
+  const baseName = image.downloadName.replace(/\.[^.]+$/, '') || 'image-studio'
+  await downloadImageSourceAsFormat(
+    image.src,
+    sourceMimeType,
+    targetFormat,
+    `${baseName}.${extensionFromFormat(targetFormat)}`
+  )
+}
+
+function lightboxImageMimeType(image: ImageStudioLightboxImage): string | undefined {
+  if (image.kind === 'output') return image.output.mimeType
+  if (image.kind === 'history') return image.record.images[0]?.mimeType
+  return undefined
+}
+
+async function downloadImageSourceAsFormat(
+  src: string,
+  sourceMimeType: string | undefined,
+  targetFormat: string,
+  fileName: string
+) {
+  const targetMimeType = mimeTypeFromOutputFormat(targetFormat)
+  const sourceFormat = formatFromMimeType(sourceMimeType)
+  const canDirectDownload = sourceFormat === targetFormat || !sourceMimeType
+  if (canDirectDownload) {
+    triggerBrowserDownload(src, fileName)
+    return
+  }
+
+  const sourceBlob = await imageSourceToBlob(src)
+  const convertedBlob = await renderImageBlobToFormat(sourceBlob, targetMimeType, qualityForDownloadFormat(targetFormat))
+  const objectUrl = URL.createObjectURL(convertedBlob)
+  try {
+    triggerBrowserDownload(objectUrl, fileName)
+  } finally {
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000)
+  }
+}
+
+async function imageSourceToBlob(src: string): Promise<Blob> {
+  if (src.startsWith('data:')) {
+    const { bytes, mimeType } = parseDataUrlBytes(src)
+    return new Blob([bytes], { type: mimeType })
+  }
+  const response = await fetch(src)
+  if (!response.ok) throw new Error('无法读取图片')
+  return response.blob()
+}
+
+function triggerBrowserDownload(href: string, fileName: string) {
+  const link = document.createElement('a')
+  link.href = href
+  link.download = fileName
+  link.rel = 'noopener'
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+}
+
+function normalizeDownloadFormat(format: string) {
+  const normalized = format.trim().toLowerCase()
+  if (normalized === 'webp') return 'webp'
+  if (normalized === 'png') return 'png'
+  return 'jpeg'
+}
+
+function qualityForDownloadFormat(format: string) {
+  return format === 'png' ? undefined : 1
+}
+
 function parseDataUrlBytes(dataUrl: string): { bytes: Uint8Array, mimeType: string } {
   const match = dataUrl.match(/^data:([^;,]+)?(?:;base64)?,(.*)$/)
   if (!match) throw new Error('图片数据格式不正确')
@@ -1694,13 +1857,14 @@ function persistHistoryRecord(
     count: number
     outputFormat: string
   },
-  generatedOutputs: ImageStudioOutput[]
+  generatedOutputs: ImageStudioOutput[],
+  mode: Exclude<ImageStudioMode, 'history'>
 ) {
   if (typeof window === 'undefined' || generatedOutputs.length === 0) return
   const record: ImageStudioHistoryRecord = {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     createdAt: new Date().toISOString(),
-    mode: activeTab.value === 'edit' ? 'edit' : 'generate',
+    mode,
     prompt: input.prompt,
     model: input.model,
     size: input.size,
@@ -1989,11 +2153,20 @@ function historyDownloadFileName(record: ImageStudioHistoryRecord): string {
   return `image-studio-history-${record.id}.${extensionFromMimeType(record.images[0]?.mimeType)}`
 }
 
-function extensionFromMimeType(mimeType?: string): string {
+function extensionFromFormat(format: string): string {
+  return format === 'jpeg' ? 'jpg' : format
+}
+
+function formatFromMimeType(mimeType?: string): string {
   const normalized = (mimeType || '').toLowerCase()
   if (normalized.includes('webp')) return 'webp'
-  if (normalized.includes('jpeg') || normalized.includes('jpg')) return 'jpg'
-  return 'png'
+  if (normalized.includes('jpeg') || normalized.includes('jpg')) return 'jpeg'
+  if (normalized.includes('png')) return 'png'
+  return ''
+}
+
+function extensionFromMimeType(mimeType?: string): string {
+  return extensionFromFormat(formatFromMimeType(mimeType) || 'png')
 }
 </script>
 

@@ -221,6 +221,17 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		HideCcsImportButton:                    settings.HideCcsImportButton,
 		PurchaseSubscriptionEnabled:            settings.PurchaseSubscriptionEnabled,
 		PurchaseSubscriptionURL:                settings.PurchaseSubscriptionURL,
+		LegacySubscriptionPurchaseEnabled:      settings.LegacySubscriptionPurchaseEnabled,
+		LegacySubscriptionVisible:              settings.LegacySubscriptionVisible,
+		UsageCardEnabled:                       settings.UsageCardEnabled,
+		UsageCardPaymentEnabled:                settings.UsageCardPaymentEnabled,
+		UsageCardRedeemEnabled:                 settings.UsageCardRedeemEnabled,
+		UsageCardBillingEnabled:                settings.UsageCardBillingEnabled,
+		UsageCardDefaultPriority:               settings.UsageCardDefaultPriority,
+		OpenAILongContextBillingEnabled:        settings.OpenAILongContextBillingEnabled,
+		OpenAILongContextBillingThreshold:      settings.OpenAILongContextBillingThreshold,
+		OpenAILongContextBillingMultiplier:     settings.OpenAILongContextBillingMultiplier,
+		OpenAILongContextOutputMultiplier:      settings.OpenAILongContextOutputMultiplier,
 		TableDefaultPageSize:                   settings.TableDefaultPageSize,
 		TablePageSizeOptions:                   settings.TablePageSizeOptions,
 		CustomMenuItems:                        dto.ParseCustomMenuItems(settings.CustomMenuItems),
@@ -490,20 +501,31 @@ type UpdateSettingsRequest struct {
 	GoogleOAuthFrontendRedirectURL string `json:"google_oauth_frontend_redirect_url"`
 
 	// OEM设置
-	SiteName                    string                `json:"site_name"`
-	SiteLogo                    string                `json:"site_logo"`
-	SiteSubtitle                string                `json:"site_subtitle"`
-	APIBaseURL                  string                `json:"api_base_url"`
-	ContactInfo                 string                `json:"contact_info"`
-	DocURL                      string                `json:"doc_url"`
-	HomeContent                 string                `json:"home_content"`
-	HideCcsImportButton         bool                  `json:"hide_ccs_import_button"`
-	PurchaseSubscriptionEnabled *bool                 `json:"purchase_subscription_enabled"`
-	PurchaseSubscriptionURL     *string               `json:"purchase_subscription_url"`
-	TableDefaultPageSize        int                   `json:"table_default_page_size"`
-	TablePageSizeOptions        []int                 `json:"table_page_size_options"`
-	CustomMenuItems             *[]dto.CustomMenuItem `json:"custom_menu_items"`
-	CustomEndpoints             *[]dto.CustomEndpoint `json:"custom_endpoints"`
+	SiteName                           string                `json:"site_name"`
+	SiteLogo                           string                `json:"site_logo"`
+	SiteSubtitle                       string                `json:"site_subtitle"`
+	APIBaseURL                         string                `json:"api_base_url"`
+	ContactInfo                        string                `json:"contact_info"`
+	DocURL                             string                `json:"doc_url"`
+	HomeContent                        string                `json:"home_content"`
+	HideCcsImportButton                bool                  `json:"hide_ccs_import_button"`
+	PurchaseSubscriptionEnabled        *bool                 `json:"purchase_subscription_enabled"`
+	PurchaseSubscriptionURL            *string               `json:"purchase_subscription_url"`
+	LegacySubscriptionPurchaseEnabled  *bool                 `json:"legacy_subscription_purchase_enabled"`
+	LegacySubscriptionVisible          *bool                 `json:"legacy_subscription_visible"`
+	UsageCardEnabled                   *bool                 `json:"usage_card_enabled"`
+	UsageCardPaymentEnabled            *bool                 `json:"usage_card_payment_enabled"`
+	UsageCardRedeemEnabled             *bool                 `json:"usage_card_redeem_enabled"`
+	UsageCardBillingEnabled            *bool                 `json:"usage_card_billing_enabled"`
+	UsageCardDefaultPriority           *string               `json:"usage_card_default_priority"`
+	OpenAILongContextBillingEnabled    *bool                 `json:"openai_long_context_billing_enabled"`
+	OpenAILongContextBillingThreshold  *int                  `json:"openai_long_context_billing_threshold"`
+	OpenAILongContextBillingMultiplier *float64              `json:"openai_long_context_billing_multiplier"`
+	OpenAILongContextOutputMultiplier  *float64              `json:"openai_long_context_output_multiplier"`
+	TableDefaultPageSize               int                   `json:"table_default_page_size"`
+	TablePageSizeOptions               []int                 `json:"table_page_size_options"`
+	CustomMenuItems                    *[]dto.CustomMenuItem `json:"custom_menu_items"`
+	CustomEndpoints                    *[]dto.CustomEndpoint `json:"custom_endpoints"`
 
 	// 默认配置
 	DefaultConcurrency                        int                               `json:"default_concurrency"`
@@ -1233,6 +1255,62 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 	if req.PurchaseSubscriptionURL != nil {
 		purchaseURL = strings.TrimSpace(*req.PurchaseSubscriptionURL)
 	}
+	legacySubscriptionVisible := previousSettings.LegacySubscriptionVisible
+	if req.LegacySubscriptionVisible != nil {
+		legacySubscriptionVisible = *req.LegacySubscriptionVisible
+	}
+	legacySubscriptionPurchaseEnabled := previousSettings.LegacySubscriptionPurchaseEnabled
+	if req.LegacySubscriptionPurchaseEnabled != nil {
+		legacySubscriptionPurchaseEnabled = *req.LegacySubscriptionPurchaseEnabled
+	}
+	usageCardEnabled := previousSettings.UsageCardEnabled
+	if req.UsageCardEnabled != nil {
+		usageCardEnabled = *req.UsageCardEnabled
+	}
+	usageCardPaymentEnabled := previousSettings.UsageCardPaymentEnabled
+	if req.UsageCardPaymentEnabled != nil {
+		usageCardPaymentEnabled = *req.UsageCardPaymentEnabled
+	}
+	usageCardRedeemEnabled := previousSettings.UsageCardRedeemEnabled
+	if req.UsageCardRedeemEnabled != nil {
+		usageCardRedeemEnabled = *req.UsageCardRedeemEnabled
+	}
+	usageCardBillingEnabled := previousSettings.UsageCardBillingEnabled
+	if req.UsageCardBillingEnabled != nil {
+		usageCardBillingEnabled = *req.UsageCardBillingEnabled
+	}
+	usageCardDefaultPriority := previousSettings.UsageCardDefaultPriority
+	if req.UsageCardDefaultPriority != nil {
+		usageCardDefaultPriority = service.NormalizeBillingPriority(*req.UsageCardDefaultPriority)
+	}
+	openaiLongContextBillingEnabled := previousSettings.OpenAILongContextBillingEnabled
+	if req.OpenAILongContextBillingEnabled != nil {
+		openaiLongContextBillingEnabled = *req.OpenAILongContextBillingEnabled
+	}
+	openaiLongContextBillingThreshold := previousSettings.OpenAILongContextBillingThreshold
+	if req.OpenAILongContextBillingThreshold != nil {
+		openaiLongContextBillingThreshold = *req.OpenAILongContextBillingThreshold
+	}
+	openaiLongContextBillingMultiplier := previousSettings.OpenAILongContextBillingMultiplier
+	if req.OpenAILongContextBillingMultiplier != nil {
+		openaiLongContextBillingMultiplier = *req.OpenAILongContextBillingMultiplier
+	}
+	openaiLongContextOutputMultiplier := previousSettings.OpenAILongContextOutputMultiplier
+	if req.OpenAILongContextOutputMultiplier != nil {
+		openaiLongContextOutputMultiplier = *req.OpenAILongContextOutputMultiplier
+	}
+	if openaiLongContextBillingThreshold <= 0 {
+		response.BadRequest(c, "OpenAI long context billing threshold must be greater than 0")
+		return
+	}
+	if openaiLongContextBillingMultiplier <= 0 {
+		response.BadRequest(c, "OpenAI long context input multiplier must be greater than 0")
+		return
+	}
+	if openaiLongContextOutputMultiplier <= 0 {
+		response.BadRequest(c, "OpenAI long context output multiplier must be greater than 0")
+		return
+	}
 
 	// - 启用时要求 URL 合法且非空
 	// - 禁用时允许为空；若提供了 URL 也做基本校验，避免误配置
@@ -1568,6 +1646,17 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		HideCcsImportButton:                    req.HideCcsImportButton,
 		PurchaseSubscriptionEnabled:            purchaseEnabled,
 		PurchaseSubscriptionURL:                purchaseURL,
+		LegacySubscriptionPurchaseEnabled:      legacySubscriptionPurchaseEnabled,
+		LegacySubscriptionVisible:              legacySubscriptionVisible,
+		UsageCardEnabled:                       usageCardEnabled,
+		UsageCardPaymentEnabled:                usageCardPaymentEnabled,
+		UsageCardRedeemEnabled:                 usageCardRedeemEnabled,
+		UsageCardBillingEnabled:                usageCardBillingEnabled,
+		UsageCardDefaultPriority:               usageCardDefaultPriority,
+		OpenAILongContextBillingEnabled:        openaiLongContextBillingEnabled,
+		OpenAILongContextBillingThreshold:      openaiLongContextBillingThreshold,
+		OpenAILongContextBillingMultiplier:     openaiLongContextBillingMultiplier,
+		OpenAILongContextOutputMultiplier:      openaiLongContextOutputMultiplier,
 		TableDefaultPageSize:                   req.TableDefaultPageSize,
 		TablePageSizeOptions:                   req.TablePageSizeOptions,
 		CustomMenuItems:                        customMenuJSON,
@@ -2005,6 +2094,17 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		HideCcsImportButton:                    updatedSettings.HideCcsImportButton,
 		PurchaseSubscriptionEnabled:            updatedSettings.PurchaseSubscriptionEnabled,
 		PurchaseSubscriptionURL:                updatedSettings.PurchaseSubscriptionURL,
+		LegacySubscriptionPurchaseEnabled:      updatedSettings.LegacySubscriptionPurchaseEnabled,
+		LegacySubscriptionVisible:              updatedSettings.LegacySubscriptionVisible,
+		UsageCardEnabled:                       updatedSettings.UsageCardEnabled,
+		UsageCardPaymentEnabled:                updatedSettings.UsageCardPaymentEnabled,
+		UsageCardRedeemEnabled:                 updatedSettings.UsageCardRedeemEnabled,
+		UsageCardBillingEnabled:                updatedSettings.UsageCardBillingEnabled,
+		UsageCardDefaultPriority:               updatedSettings.UsageCardDefaultPriority,
+		OpenAILongContextBillingEnabled:        updatedSettings.OpenAILongContextBillingEnabled,
+		OpenAILongContextBillingThreshold:      updatedSettings.OpenAILongContextBillingThreshold,
+		OpenAILongContextBillingMultiplier:     updatedSettings.OpenAILongContextBillingMultiplier,
+		OpenAILongContextOutputMultiplier:      updatedSettings.OpenAILongContextOutputMultiplier,
 		TableDefaultPageSize:                   updatedSettings.TableDefaultPageSize,
 		TablePageSizeOptions:                   updatedSettings.TablePageSizeOptions,
 		CustomMenuItems:                        dto.ParseCustomMenuItems(updatedSettings.CustomMenuItems),
@@ -2475,6 +2575,24 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	}
 	if before.PurchaseSubscriptionURL != after.PurchaseSubscriptionURL {
 		changed = append(changed, "purchase_subscription_url")
+	}
+	if before.LegacySubscriptionPurchaseEnabled != after.LegacySubscriptionPurchaseEnabled {
+		changed = append(changed, "legacy_subscription_purchase_enabled")
+	}
+	if before.LegacySubscriptionVisible != after.LegacySubscriptionVisible {
+		changed = append(changed, "legacy_subscription_visible")
+	}
+	if before.OpenAILongContextBillingEnabled != after.OpenAILongContextBillingEnabled {
+		changed = append(changed, "openai_long_context_billing_enabled")
+	}
+	if before.OpenAILongContextBillingThreshold != after.OpenAILongContextBillingThreshold {
+		changed = append(changed, "openai_long_context_billing_threshold")
+	}
+	if before.OpenAILongContextBillingMultiplier != after.OpenAILongContextBillingMultiplier {
+		changed = append(changed, "openai_long_context_billing_multiplier")
+	}
+	if before.OpenAILongContextOutputMultiplier != after.OpenAILongContextOutputMultiplier {
+		changed = append(changed, "openai_long_context_output_multiplier")
 	}
 	if before.TableDefaultPageSize != after.TableDefaultPageSize {
 		changed = append(changed, "table_default_page_size")

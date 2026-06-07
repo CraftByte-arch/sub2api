@@ -101,6 +101,7 @@ function checkoutInfoFixture() {
       global_min: 0,
       global_max: 0,
       plans: [],
+      usage_card_plans: [],
       balance_disabled: false,
       balance_recharge_multiplier: 1,
       recharge_fee_rate: 0,
@@ -136,6 +137,15 @@ function checkoutInfoWithPlansFixture() {
           group_name: 'OpenAI',
         },
       ],
+    },
+  }
+}
+
+function checkoutInfoWithUsageCardPaymentEnabledFixture() {
+  return {
+    data: {
+      ...checkoutInfoFixture().data,
+      usage_card_payment_enabled: true,
     },
   }
 }
@@ -202,6 +212,24 @@ describe('PaymentView WeChat JSAPI flow', () => {
     ;(window as Window & { WeixinJSBridge?: { invoke: typeof bridgeInvoke } }).WeixinJSBridge = {
       invoke: bridgeInvoke,
     }
+  })
+
+  it('shows usage card tab when purchase entry is enabled without plans', async () => {
+    routeState.query = {}
+    getCheckoutInfo.mockResolvedValue(checkoutInfoWithUsageCardPaymentEnabledFixture())
+
+    const wrapper = shallowMount(PaymentView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          Teleport: true,
+          Transition: false,
+        },
+      },
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('余额卡')
   })
 
   it('resets payment state and redirects to /payment/result after JSAPI reports success', async () => {

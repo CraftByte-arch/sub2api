@@ -19,23 +19,27 @@ type UsageBillingCommand struct {
 	RequestFingerprint string
 	RequestPayloadHash string
 
-	UserID              int64
-	AccountID           int64
-	SubscriptionID      *int64
-	AccountType         string
-	Model               string
-	ServiceTier         string
-	ReasoningEffort     string
-	BillingType         int8
-	InputTokens         int
-	OutputTokens        int
-	CacheCreationTokens int
-	CacheReadTokens     int
-	ImageCount          int
-	MediaType           string
+	UserID                  int64
+	AccountID               int64
+	SubscriptionID          *int64
+	UsageCardID             *int64
+	AccountType             string
+	Model                   string
+	ServiceTier             string
+	ReasoningEffort         string
+	BillingType             int8
+	BillingPriority         string
+	UsageCardBillingEnabled bool
+	InputTokens             int
+	OutputTokens            int
+	CacheCreationTokens     int
+	CacheReadTokens         int
+	ImageCount              int
+	MediaType               string
 
 	BalanceCost         float64
 	SubscriptionCost    float64
+	UsageCardCost       float64
 	APIKeyQuotaCost     float64
 	APIKeyRateLimitCost float64
 	AccountQuotaCost    float64
@@ -56,7 +60,7 @@ func buildUsageBillingFingerprint(c *UsageBillingCommand) string {
 		return ""
 	}
 	raw := fmt.Sprintf(
-		"%d|%d|%d|%s|%s|%s|%s|%d|%d|%d|%d|%d|%d|%s|%d|%0.10f|%0.10f|%0.10f|%0.10f|%0.10f",
+		"%d|%d|%d|%s|%s|%s|%s|%d|%s|%t|%d|%d|%d|%d|%d|%s|%d|%d|%0.10f|%0.10f|%0.10f|%0.10f|%0.10f|%0.10f",
 		c.UserID,
 		c.AccountID,
 		c.APIKeyID,
@@ -65,6 +69,8 @@ func buildUsageBillingFingerprint(c *UsageBillingCommand) string {
 		strings.TrimSpace(c.ServiceTier),
 		strings.TrimSpace(c.ReasoningEffort),
 		c.BillingType,
+		strings.TrimSpace(c.BillingPriority),
+		c.UsageCardBillingEnabled,
 		c.InputTokens,
 		c.OutputTokens,
 		c.CacheCreationTokens,
@@ -72,8 +78,10 @@ func buildUsageBillingFingerprint(c *UsageBillingCommand) string {
 		c.ImageCount,
 		strings.TrimSpace(c.MediaType),
 		valueOrZero(c.SubscriptionID),
+		valueOrZero(c.UsageCardID),
 		c.BalanceCost,
 		c.SubscriptionCost,
+		c.UsageCardCost,
 		c.APIKeyQuotaCost,
 		c.APIKeyRateLimitCost,
 		c.AccountQuotaCost,
@@ -115,6 +123,7 @@ type UsageBillingApplyResult struct {
 	Applied              bool
 	APIKeyQuotaExhausted bool
 	NewBalance           *float64           // post-deduction balance (nil = no balance deduction)
+	UsageCardID          *int64             // deducted usage card id (nil = no usage-card deduction)
 	QuotaState           *AccountQuotaState // post-increment quota state (nil = no quota increment)
 }
 

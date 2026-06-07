@@ -40,6 +40,7 @@ const (
 	RedeemTypeConcurrency  = "concurrency"
 	RedeemTypeSubscription = "subscription"
 	RedeemTypeInvitation   = "invitation"
+	RedeemTypeUsageCard    = "usage_card"
 )
 
 // PromoCode status constants
@@ -65,6 +66,32 @@ const (
 	SubscriptionStatusActive    = "active"
 	SubscriptionStatusExpired   = "expired"
 	SubscriptionStatusSuspended = "suspended"
+)
+
+// Usage card status constants
+const (
+	UsageCardStatusActive    = "active"
+	UsageCardStatusExhausted = "exhausted"
+	UsageCardStatusExpired   = "expired"
+	UsageCardStatusSuspended = "suspended"
+	UsageCardStatusCancelled = "cancelled"
+)
+
+// Usage card source constants
+const (
+	UsageCardSourcePayment   = "payment"
+	UsageCardSourceRedeem    = "redeem"
+	UsageCardSourceAdmin     = "admin"
+	UsageCardSourceMigration = "migration"
+)
+
+// API key billing priority constants
+const (
+	BillingPriorityAuto           = "auto"
+	BillingPriorityUsageCardFirst = "usage_card_first"
+	BillingPriorityBalanceFirst   = "balance_first"
+	BillingPriorityUsageCardOnly  = "usage_card_only"
+	BillingPriorityBalanceOnly    = "balance_only"
 )
 
 // DefaultAntigravityModelMapping 是 Antigravity 平台的默认模型映射

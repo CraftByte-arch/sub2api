@@ -163,6 +163,8 @@ type CreateAPIKeyRequest struct {
 	RateLimit5h float64 `json:"rate_limit_5h"`
 	RateLimit1d float64 `json:"rate_limit_1d"`
 	RateLimit7d float64 `json:"rate_limit_7d"`
+
+	BillingPriority string `json:"billing_priority"`
 }
 
 // UpdateAPIKeyRequest 更新API Key请求
@@ -184,6 +186,7 @@ type UpdateAPIKeyRequest struct {
 	RateLimit1d         *float64 `json:"rate_limit_1d"`
 	RateLimit7d         *float64 `json:"rate_limit_7d"`
 	ResetRateLimitUsage *bool    `json:"reset_rate_limit_usage"` // Reset all usage counters to 0
+	BillingPriority     *string  `json:"billing_priority"`
 }
 
 // APIKeyService API Key服务
@@ -347,9 +350,10 @@ func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIK
 		}
 	}
 
+	var group *Group
 	// 验证分组权限（如果指定了分组）
 	if req.GroupID != nil {
-		group, err := s.groupRepo.GetByID(ctx, *req.GroupID)
+		group, err = s.groupRepo.GetByID(ctx, *req.GroupID)
 		if err != nil {
 			return nil, fmt.Errorf("get group: %w", err)
 		}
@@ -395,20 +399,26 @@ func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIK
 		}
 	}
 
+	billingPriority := NormalizeBillingPriority(req.BillingPriority)
+	if group != nil && group.UsageCardDisabled {
+		billingPriority = BillingPriorityBalanceFirst
+	}
+
 	// 创建API Key记录
 	apiKey := &APIKey{
-		UserID:      userID,
-		Key:         key,
-		Name:        req.Name,
-		GroupID:     req.GroupID,
-		Status:      StatusActive,
-		IPWhitelist: req.IPWhitelist,
-		IPBlacklist: req.IPBlacklist,
-		Quota:       req.Quota,
-		QuotaUsed:   0,
-		RateLimit5h: req.RateLimit5h,
-		RateLimit1d: req.RateLimit1d,
-		RateLimit7d: req.RateLimit7d,
+		UserID:          userID,
+		Key:             key,
+		Name:            req.Name,
+		GroupID:         req.GroupID,
+		Status:          StatusActive,
+		BillingPriority: billingPriority,
+		IPWhitelist:     req.IPWhitelist,
+		IPBlacklist:     req.IPBlacklist,
+		Quota:           req.Quota,
+		QuotaUsed:       0,
+		RateLimit5h:     req.RateLimit5h,
+		RateLimit1d:     req.RateLimit1d,
+		RateLimit7d:     req.RateLimit7d,
 	}
 
 	// Set expiration time if specified
@@ -541,6 +551,7 @@ func (s *APIKeyService) Update(ctx context.Context, id int64, userID int64, req 
 		apiKey.Name = *req.Name
 	}
 
+	var group *Group
 	if req.GroupID != nil {
 		// 验证分组权限
 		user, err := s.userRepo.GetByID(ctx, userID)
@@ -548,7 +559,7 @@ func (s *APIKeyService) Update(ctx context.Context, id int64, userID int64, req 
 			return nil, fmt.Errorf("get user: %w", err)
 		}
 
-		group, err := s.groupRepo.GetByID(ctx, *req.GroupID)
+		group, err = s.groupRepo.GetByID(ctx, *req.GroupID)
 		if err != nil {
 			return nil, fmt.Errorf("get group: %w", err)
 		}
@@ -558,6 +569,8 @@ func (s *APIKeyService) Update(ctx context.Context, id int64, userID int64, req 
 		}
 
 		apiKey.GroupID = req.GroupID
+	} else if apiKey.GroupID != nil {
+		group, _ = s.groupRepo.GetByID(ctx, *apiKey.GroupID)
 	}
 
 	if req.Status != nil {
@@ -566,6 +579,12 @@ func (s *APIKeyService) Update(ctx context.Context, id int64, userID int64, req 
 		if s.cache != nil {
 			_ = s.cache.DeleteCreateAttemptCount(ctx, apiKey.UserID)
 		}
+	}
+	if req.BillingPriority != nil {
+		apiKey.BillingPriority = NormalizeBillingPriority(*req.BillingPriority)
+	}
+	if group != nil && group.UsageCardDisabled {
+		apiKey.BillingPriority = BillingPriorityBalanceFirst
 	}
 
 	// Update quota fields

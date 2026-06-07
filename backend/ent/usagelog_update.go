@@ -17,6 +17,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/usagelog"
 	"github.com/Wei-Shaw/sub2api/ent/user"
 	"github.com/Wei-Shaw/sub2api/ent/usersubscription"
+	"github.com/Wei-Shaw/sub2api/ent/userusagecard"
 )
 
 // UsageLogUpdate is the builder for updating UsageLog entities.
@@ -266,6 +267,26 @@ func (_u *UsageLogUpdate) SetNillableSubscriptionID(v *int64) *UsageLogUpdate {
 // ClearSubscriptionID clears the value of the "subscription_id" field.
 func (_u *UsageLogUpdate) ClearSubscriptionID() *UsageLogUpdate {
 	_u.mutation.ClearSubscriptionID()
+	return _u
+}
+
+// SetUsageCardID sets the "usage_card_id" field.
+func (_u *UsageLogUpdate) SetUsageCardID(v int64) *UsageLogUpdate {
+	_u.mutation.SetUsageCardID(v)
+	return _u
+}
+
+// SetNillableUsageCardID sets the "usage_card_id" field if the given value is not nil.
+func (_u *UsageLogUpdate) SetNillableUsageCardID(v *int64) *UsageLogUpdate {
+	if v != nil {
+		_u.SetUsageCardID(*v)
+	}
+	return _u
+}
+
+// ClearUsageCardID clears the value of the "usage_card_id" field.
+func (_u *UsageLogUpdate) ClearUsageCardID() *UsageLogUpdate {
+	_u.mutation.ClearUsageCardID()
 	return _u
 }
 
@@ -850,6 +871,11 @@ func (_u *UsageLogUpdate) SetSubscription(v *UserSubscription) *UsageLogUpdate {
 	return _u.SetSubscriptionID(v.ID)
 }
 
+// SetUsageCard sets the "usage_card" edge to the UserUsageCard entity.
+func (_u *UsageLogUpdate) SetUsageCard(v *UserUsageCard) *UsageLogUpdate {
+	return _u.SetUsageCardID(v.ID)
+}
+
 // Mutation returns the UsageLogMutation object of the builder.
 func (_u *UsageLogUpdate) Mutation() *UsageLogMutation {
 	return _u.mutation
@@ -882,6 +908,12 @@ func (_u *UsageLogUpdate) ClearGroup() *UsageLogUpdate {
 // ClearSubscription clears the "subscription" edge to the UserSubscription entity.
 func (_u *UsageLogUpdate) ClearSubscription() *UsageLogUpdate {
 	_u.mutation.ClearSubscription()
+	return _u
+}
+
+// ClearUsageCard clears the "usage_card" edge to the UserUsageCard entity.
+func (_u *UsageLogUpdate) ClearUsageCard() *UsageLogUpdate {
+	_u.mutation.ClearUsageCard()
 	return _u
 }
 
@@ -1358,6 +1390,35 @@ func (_u *UsageLogUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 		}
 		_spec.Edges.Add = append(_spec.Edges.Add, edge)
 	}
+	if _u.mutation.UsageCardCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2O,
+			Inverse: true,
+			Table:   usagelog.UsageCardTable,
+			Columns: []string{usagelog.UsageCardColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(userusagecard.FieldID, field.TypeInt64),
+			},
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.UsageCardIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2O,
+			Inverse: true,
+			Table:   usagelog.UsageCardTable,
+			Columns: []string{usagelog.UsageCardColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(userusagecard.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Add = append(_spec.Edges.Add, edge)
+	}
 	if _node, err = sqlgraph.UpdateNodes(ctx, _u.driver, _spec); err != nil {
 		if _, ok := err.(*sqlgraph.NotFoundError); ok {
 			err = &NotFoundError{usagelog.Label}
@@ -1612,6 +1673,26 @@ func (_u *UsageLogUpdateOne) SetNillableSubscriptionID(v *int64) *UsageLogUpdate
 // ClearSubscriptionID clears the value of the "subscription_id" field.
 func (_u *UsageLogUpdateOne) ClearSubscriptionID() *UsageLogUpdateOne {
 	_u.mutation.ClearSubscriptionID()
+	return _u
+}
+
+// SetUsageCardID sets the "usage_card_id" field.
+func (_u *UsageLogUpdateOne) SetUsageCardID(v int64) *UsageLogUpdateOne {
+	_u.mutation.SetUsageCardID(v)
+	return _u
+}
+
+// SetNillableUsageCardID sets the "usage_card_id" field if the given value is not nil.
+func (_u *UsageLogUpdateOne) SetNillableUsageCardID(v *int64) *UsageLogUpdateOne {
+	if v != nil {
+		_u.SetUsageCardID(*v)
+	}
+	return _u
+}
+
+// ClearUsageCardID clears the value of the "usage_card_id" field.
+func (_u *UsageLogUpdateOne) ClearUsageCardID() *UsageLogUpdateOne {
+	_u.mutation.ClearUsageCardID()
 	return _u
 }
 
@@ -2196,6 +2277,11 @@ func (_u *UsageLogUpdateOne) SetSubscription(v *UserSubscription) *UsageLogUpdat
 	return _u.SetSubscriptionID(v.ID)
 }
 
+// SetUsageCard sets the "usage_card" edge to the UserUsageCard entity.
+func (_u *UsageLogUpdateOne) SetUsageCard(v *UserUsageCard) *UsageLogUpdateOne {
+	return _u.SetUsageCardID(v.ID)
+}
+
 // Mutation returns the UsageLogMutation object of the builder.
 func (_u *UsageLogUpdateOne) Mutation() *UsageLogMutation {
 	return _u.mutation
@@ -2228,6 +2314,12 @@ func (_u *UsageLogUpdateOne) ClearGroup() *UsageLogUpdateOne {
 // ClearSubscription clears the "subscription" edge to the UserSubscription entity.
 func (_u *UsageLogUpdateOne) ClearSubscription() *UsageLogUpdateOne {
 	_u.mutation.ClearSubscription()
+	return _u
+}
+
+// ClearUsageCard clears the "usage_card" edge to the UserUsageCard entity.
+func (_u *UsageLogUpdateOne) ClearUsageCard() *UsageLogUpdateOne {
+	_u.mutation.ClearUsageCard()
 	return _u
 }
 
@@ -2727,6 +2819,35 @@ func (_u *UsageLogUpdateOne) sqlSave(ctx context.Context) (_node *UsageLog, err 
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
 				IDSpec: sqlgraph.NewFieldSpec(usersubscription.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Add = append(_spec.Edges.Add, edge)
+	}
+	if _u.mutation.UsageCardCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2O,
+			Inverse: true,
+			Table:   usagelog.UsageCardTable,
+			Columns: []string{usagelog.UsageCardColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(userusagecard.FieldID, field.TypeInt64),
+			},
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.UsageCardIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2O,
+			Inverse: true,
+			Table:   usagelog.UsageCardTable,
+			Columns: []string{usagelog.UsageCardColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(userusagecard.FieldID, field.TypeInt64),
 			},
 		}
 		for _, k := range nodes {

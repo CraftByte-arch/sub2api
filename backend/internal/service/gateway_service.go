@@ -8289,16 +8289,18 @@ type usageLogBestEffortWriter interface {
 
 // postUsageBillingParams 统一扣费所需的参数
 type postUsageBillingParams struct {
-	Cost                  *CostBreakdown
-	User                  *User
-	APIKey                *APIKey
-	Account               *Account
-	Subscription          *UserSubscription
-	RequestPayloadHash    string
-	IsSubscriptionBill    bool
-	AccountRateMultiplier float64
-	APIKeyService         APIKeyQuotaUpdater
-	Platform              string // 来自 APIKey 关联 Group 的平台标识
+	Cost                    *CostBreakdown
+	User                    *User
+	APIKey                  *APIKey
+	Account                 *Account
+	Subscription            *UserSubscription
+	RequestPayloadHash      string
+	IsSubscriptionBill      bool
+	UsageCardBillingEnabled bool
+	BillingPriority         string
+	AccountRateMultiplier   float64
+	APIKeyService           APIKeyQuotaUpdater
+	Platform                string // 来自 APIKey 关联 Group 的平台标识
 }
 
 // PlatformFromAPIKey 从 APIKey 关联的 Group 推导 platform 名称。
@@ -8381,7 +8383,7 @@ func postUsageBilling(ctx context.Context, p *postUsageBillingParams, deps *bill
 		}
 	}
 
-	// Platform quota 累加（legacy 兜底路径）：仅对 standard（余额）模式生效；订阅模式豁免；仅对有 limit 的用户写
+	// Platform quota 累加（legacy 兜底路径）：余额和余额卡扣费均计入；订阅模式豁免；仅对有 limit 的用户写
 	//   - HasUserPlatformQuotaLimit 守卫:与正常路径对齐，无 limit 公司跳过
 	//   - 新增 Redis 同步写:enforcement 走 Redis，legacy 路径也必须同步写，否则 preflight 看不到消费
 	//   - flusher_enabled=false（降级）:保留原有同步直写 DB
@@ -8437,6 +8439,19 @@ func resolveUsageBillingPayloadFingerprint(ctx context.Context, requestPayloadHa
 	return ""
 }
 
+func resolveRecordUsageBillingPriority(ctx context.Context, billingCacheService *BillingCacheService, apiKey *APIKey) string {
+	if billingCacheService != nil {
+		return billingCacheService.ResolveWalletBillingPriority(ctx, apiKey)
+	}
+	if apiKey != nil {
+		priority := NormalizeBillingPriority(apiKey.BillingPriority)
+		if priority != BillingPriorityAuto {
+			return priority
+		}
+	}
+	return BillingPriorityUsageCardFirst
+}
+
 func buildUsageBillingCommand(requestID string, usageLog *UsageLog, p *postUsageBillingParams) *UsageBillingCommand {
 	if p == nil || p.Cost == nil || p.APIKey == nil || p.User == nil || p.Account == nil {
 		return nil
@@ -8453,6 +8468,9 @@ func buildUsageBillingCommand(requestID string, usageLog *UsageLog, p *postUsage
 	if usageLog != nil {
 		cmd.Model = usageLog.Model
 		cmd.BillingType = usageLog.BillingType
+		if usageLog.UsageCardID != nil {
+			cmd.UsageCardID = usageLog.UsageCardID
+		}
 		cmd.InputTokens = usageLog.InputTokens
 		cmd.OutputTokens = usageLog.OutputTokens
 		cmd.CacheCreationTokens = usageLog.CacheCreationTokens
@@ -8473,11 +8491,23 @@ func buildUsageBillingCommand(requestID string, usageLog *UsageLog, p *postUsage
 	// user-specific) rate multiplier consumes subscription quota at the expected
 	// speed. TotalCost remains the raw (pre-multiplier) value; downstream guards
 	// on "> 0" still correctly skip free subscriptions (RateMultiplier == 0).
+	cmd.UsageCardBillingEnabled = p.UsageCardBillingEnabled
+	if p.APIKey != nil && p.APIKey.Group != nil && p.APIKey.Group.UsageCardDisabled {
+		cmd.UsageCardBillingEnabled = false
+	}
+	cmd.BillingPriority = NormalizeBillingPriority(p.BillingPriority)
+	if cmd.BillingPriority == BillingPriorityAuto {
+		cmd.BillingPriority = BillingPriorityUsageCardFirst
+	}
+
 	if p.IsSubscriptionBill && p.Subscription != nil && p.Cost.TotalCost > 0 {
 		cmd.SubscriptionID = &p.Subscription.ID
 		cmd.SubscriptionCost = p.Cost.ActualCost
 	} else if p.Cost.ActualCost > 0 {
 		cmd.BalanceCost = p.Cost.ActualCost
+		if cmd.UsageCardBillingEnabled {
+			cmd.UsageCardCost = p.Cost.ActualCost
+		}
 	}
 
 	if p.shouldDeductAPIKeyQuota() {
@@ -8517,6 +8547,10 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 		deps.deferredService.ScheduleLastUsedUpdate(p.Account.ID)
 		return false, nil
 	}
+	if usageLog != nil && result.UsageCardID != nil {
+		usageLog.UsageCardID = result.UsageCardID
+		usageLog.BillingType = BillingTypeUsageCard
+	}
 
 	if result.APIKeyQuotaExhausted {
 		if invalidator, ok := p.APIKeyService.(apiKeyAuthCacheInvalidator); ok && p.APIKey != nil && p.APIKey.Key != "" {
@@ -8533,7 +8567,9 @@ func finalizePostUsageBilling(ctx context.Context, p *postUsageBillingParams, de
 		return
 	}
 
-	if p.IsSubscriptionBill {
+	if result != nil && result.UsageCardID != nil {
+		// Usage cards are deducted in the billing repository transaction.
+	} else if p.IsSubscriptionBill {
 		if p.Cost.ActualCost > 0 && p.User != nil && p.APIKey != nil && p.APIKey.GroupID != nil {
 			deps.billingCacheService.QueueUpdateSubscriptionUsage(p.User.ID, *p.APIKey.GroupID, p.Cost.ActualCost)
 		}
@@ -8547,7 +8583,7 @@ func finalizePostUsageBilling(ctx context.Context, p *postUsageBillingParams, de
 
 	deps.deferredService.ScheduleLastUsedUpdate(p.Account.ID)
 
-	// Platform quota 累加：仅在 standard（余额）模式生效；订阅模式豁免；仅对有 limit 的用户写
+	// Platform quota 累加：余额和余额卡扣费均计入；订阅模式豁免；仅对有 limit 的用户写
 	// Redis 同步写 + DB 异步持久化（flag=false 降级）或 flusher 异步刷（flag=true）:
 	//   - HasUserPlatformQuotaLimit 守卫:无 limit 的公司跳过,避免无效写入 + 浪费 Redis 容量
 	//   - Redis 同步:确保下次 preflight 立即看到最新 usage,把 TOCTOU 超支窗口
@@ -8596,7 +8632,7 @@ func notifyBalanceLow(p *postUsageBillingParams, deps *billingDeps, result *Usag
 			slog.Error("panic in notifyBalanceLow", "recover", r)
 		}
 	}()
-	if p.IsSubscriptionBill || p.Cost.ActualCost <= 0 || p.User == nil || deps.balanceNotifyService == nil {
+	if p.IsSubscriptionBill || (result != nil && result.UsageCardID != nil) || p.Cost.ActualCost <= 0 || p.User == nil || deps.balanceNotifyService == nil {
 		slog.Debug("notifyBalanceLow: skipped",
 			"is_subscription", p.IsSubscriptionBill,
 			"actual_cost", p.Cost.ActualCost,
@@ -8924,16 +8960,18 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	}
 	requestID := usageLog.RequestID
 	_, billingErr := applyUsageBilling(ctx, requestID, usageLog, &postUsageBillingParams{
-		Cost:                  cost,
-		User:                  user,
-		APIKey:                apiKey,
-		Account:               account,
-		Subscription:          subscription,
-		RequestPayloadHash:    resolveUsageBillingPayloadFingerprint(ctx, input.RequestPayloadHash),
-		IsSubscriptionBill:    isSubscriptionBilling,
-		AccountRateMultiplier: accountRateMultiplier,
-		APIKeyService:         input.APIKeyService,
-		Platform:              quotaPlatform,
+		Cost:                    cost,
+		User:                    user,
+		APIKey:                  apiKey,
+		Account:                 account,
+		Subscription:            subscription,
+		RequestPayloadHash:      resolveUsageBillingPayloadFingerprint(ctx, input.RequestPayloadHash),
+		IsSubscriptionBill:      isSubscriptionBilling,
+		UsageCardBillingEnabled: s.billingCacheService != nil && s.billingCacheService.IsUsageCardBillingEnabled(ctx),
+		BillingPriority:         resolveRecordUsageBillingPriority(ctx, s.billingCacheService, apiKey),
+		AccountRateMultiplier:   accountRateMultiplier,
+		APIKeyService:           input.APIKeyService,
+		Platform:                quotaPlatform,
 	}, s.billingDeps(), s.usageBillingRepo)
 
 	if billingErr != nil {

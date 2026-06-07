@@ -119,6 +119,11 @@ export const FeatureFlags = {
     mode: 'opt-in',
     label: 'Affiliate',
   }),
+  usageCard: defineFlag({
+    key: 'usage_card_enabled',
+    mode: 'opt-in',
+    label: 'Usage Card',
+  }),
 } as const
 
 export type RegisteredFeatureFlag = keyof typeof FeatureFlags
@@ -137,6 +142,25 @@ export function isFeatureFlagEnabled(flag: FeatureFlagDefinition): boolean {
   // Settings not yet loaded → fall back to the flag's declared mode:
   //   opt-out → visible by default, opt-in → hidden by default.
   return flag.mode === 'opt-out'
+}
+
+/**
+ * Usage-card UI is controlled by a feature family, not only the master switch.
+ * Admins can enable purchase/redeem/billing independently while rolling out the
+ * feature. Treat any enabled usage-card switch as enough to expose the related
+ * management/user pages; hide them only when the backend explicitly reports all
+ * usage-card switches as disabled.
+ */
+export function isUsageCardFeatureVisible(): boolean {
+  const appStore = useAppStore()
+  const settings = appStore.cachedPublicSettings
+  if (!settings) return false
+  return (
+    settings.usage_card_enabled === true ||
+    settings.usage_card_payment_enabled === true ||
+    settings.usage_card_redeem_enabled === true ||
+    settings.usage_card_billing_enabled === true
+  )
 }
 
 /**

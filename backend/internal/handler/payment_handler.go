@@ -19,17 +19,19 @@ import (
 
 // PaymentHandler handles user-facing payment requests.
 type PaymentHandler struct {
-	channelService *service.ChannelService
-	paymentService *service.PaymentService
-	configService  *service.PaymentConfigService
+	channelService   *service.ChannelService
+	paymentService   *service.PaymentService
+	configService    *service.PaymentConfigService
+	usageCardService *service.UsageCardService
 }
 
 // NewPaymentHandler creates a new PaymentHandler.
-func NewPaymentHandler(paymentService *service.PaymentService, configService *service.PaymentConfigService, channelService *service.ChannelService) *PaymentHandler {
+func NewPaymentHandler(paymentService *service.PaymentService, configService *service.PaymentConfigService, channelService *service.ChannelService, usageCardService *service.UsageCardService) *PaymentHandler {
 	return &PaymentHandler{
-		channelService: channelService,
-		paymentService: paymentService,
-		configService:  configService,
+		channelService:   channelService,
+		paymentService:   paymentService,
+		configService:    configService,
+		usageCardService: usageCardService,
 	}
 }
 
@@ -47,11 +49,6 @@ func (h *PaymentHandler) GetPaymentConfig(c *gin.Context) {
 // GetPlans returns subscription plans available for sale.
 // GET /api/v1/payment/plans
 func (h *PaymentHandler) GetPlans(c *gin.Context) {
-	plans, err := h.configService.ListPlansForSale(c.Request.Context())
-	if err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
 	// Enrich plans with group platform for frontend color coding
 	type planWithPlatform struct {
 		ID            int64    `json:"id"`
@@ -67,6 +64,15 @@ func (h *PaymentHandler) GetPlans(c *gin.Context) {
 		ProductName   string   `json:"product_name"`
 		ForSale       bool     `json:"for_sale"`
 		SortOrder     int      `json:"sort_order"`
+	}
+	if !h.configService.IsLegacySubscriptionPurchaseEnabled(c.Request.Context()) {
+		response.Success(c, []planWithPlatform{})
+		return
+	}
+	plans, err := h.configService.ListPlansForSale(c.Request.Context())
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
 	}
 	platformMap := h.configService.GetGroupPlatformMap(c.Request.Context(), plans)
 	result := make([]planWithPlatform, 0, len(plans))
@@ -113,7 +119,11 @@ func (h *PaymentHandler) GetCheckoutInfo(c *gin.Context) {
 	}
 
 	// Fetch plans with group info
-	plans, _ := h.configService.ListPlansForSale(ctx)
+	legacySubscriptionPurchaseEnabled := h.configService.IsLegacySubscriptionPurchaseEnabled(ctx)
+	var plans []*dbent.SubscriptionPlan
+	if legacySubscriptionPurchaseEnabled {
+		plans, _ = h.configService.ListPlansForSale(ctx)
+	}
 	groupInfo := h.configService.GetGroupInfoMap(ctx, plans)
 	planList := make([]checkoutPlan, 0, len(plans))
 	for _, p := range plans {
@@ -129,34 +139,81 @@ func (h *PaymentHandler) GetCheckoutInfo(c *gin.Context) {
 			ProductName: p.ProductName,
 		})
 	}
+	usageCardPlans := make([]usageCardPlanResponse, 0)
+	usageCardPaymentEnabled := false
+	if h.usageCardService != nil {
+		usageCardPaymentEnabled = h.usageCardService.IsPaymentEnabled(ctx)
+		cardPlans, err := h.usageCardService.ListPlansForSale(ctx)
+		if err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
+		usageCardPlans = usageCardPlanResponses(cardPlans)
+	}
 
 	response.Success(c, checkoutInfoResponse{
-		Methods:                   limitsResp.Methods,
-		GlobalMin:                 limitsResp.GlobalMin,
-		GlobalMax:                 limitsResp.GlobalMax,
-		Plans:                     planList,
-		BalanceDisabled:           cfg.BalanceDisabled,
-		BalanceRechargeMultiplier: cfg.BalanceRechargeMultiplier,
-		RechargeFeeRate:           cfg.RechargeFeeRate,
-		HelpText:                  cfg.HelpText,
-		HelpImageURL:              cfg.HelpImageURL,
-		StripePublishableKey:      cfg.StripePublishableKey,
-		AlipayForceQRCode:         cfg.AlipayForceQRCode,
+		Methods:                           limitsResp.Methods,
+		GlobalMin:                         limitsResp.GlobalMin,
+		GlobalMax:                         limitsResp.GlobalMax,
+		Plans:                             planList,
+		UsageCardPlans:                    usageCardPlans,
+		BalanceDisabled:                   cfg.BalanceDisabled,
+		BalanceRechargeMultiplier:         cfg.BalanceRechargeMultiplier,
+		RechargeFeeRate:                   cfg.RechargeFeeRate,
+		HelpText:                          cfg.HelpText,
+		HelpImageURL:                      cfg.HelpImageURL,
+		StripePublishableKey:              cfg.StripePublishableKey,
+		AlipayForceQRCode:                 cfg.AlipayForceQRCode,
+		LegacySubscriptionPurchaseEnabled: legacySubscriptionPurchaseEnabled,
+		UsageCardPaymentEnabled:           usageCardPaymentEnabled,
 	})
 }
 
 type checkoutInfoResponse struct {
-	Methods                   map[string]service.MethodLimits `json:"methods"`
-	GlobalMin                 float64                         `json:"global_min"`
-	GlobalMax                 float64                         `json:"global_max"`
-	Plans                     []checkoutPlan                  `json:"plans"`
-	BalanceDisabled           bool                            `json:"balance_disabled"`
-	BalanceRechargeMultiplier float64                         `json:"balance_recharge_multiplier"`
-	RechargeFeeRate           float64                         `json:"recharge_fee_rate"`
-	HelpText                  string                          `json:"help_text"`
-	HelpImageURL              string                          `json:"help_image_url"`
-	StripePublishableKey      string                          `json:"stripe_publishable_key"`
-	AlipayForceQRCode         bool                            `json:"alipay_force_qrcode"`
+	Methods                           map[string]service.MethodLimits `json:"methods"`
+	GlobalMin                         float64                         `json:"global_min"`
+	GlobalMax                         float64                         `json:"global_max"`
+	Plans                             []checkoutPlan                  `json:"plans"`
+	UsageCardPlans                    []usageCardPlanResponse         `json:"usage_card_plans"`
+	BalanceDisabled                   bool                            `json:"balance_disabled"`
+	BalanceRechargeMultiplier         float64                         `json:"balance_recharge_multiplier"`
+	RechargeFeeRate                   float64                         `json:"recharge_fee_rate"`
+	HelpText                          string                          `json:"help_text"`
+	HelpImageURL                      string                          `json:"help_image_url"`
+	StripePublishableKey              string                          `json:"stripe_publishable_key"`
+	AlipayForceQRCode                 bool                            `json:"alipay_force_qrcode"`
+	LegacySubscriptionPurchaseEnabled bool                            `json:"legacy_subscription_purchase_enabled"`
+	UsageCardPaymentEnabled           bool                            `json:"usage_card_payment_enabled"`
+}
+
+type usageCardPlanResponse struct {
+	ID           int64   `json:"id"`
+	Name         string  `json:"name"`
+	Description  string  `json:"description"`
+	Price        float64 `json:"price"`
+	AmountUSD    float64 `json:"amount_usd"`
+	ValidityDays int     `json:"validity_days"`
+	Features     string  `json:"features"`
+	ForSale      bool    `json:"for_sale"`
+	SortOrder    int     `json:"sort_order"`
+}
+
+func usageCardPlanResponses(plans []service.UsageCardPlan) []usageCardPlanResponse {
+	out := make([]usageCardPlanResponse, 0, len(plans))
+	for i := range plans {
+		out = append(out, usageCardPlanResponse{
+			ID:           plans[i].ID,
+			Name:         plans[i].Name,
+			Description:  plans[i].Description,
+			Price:        plans[i].Price,
+			AmountUSD:    plans[i].AmountUSD,
+			ValidityDays: plans[i].ValidityDays,
+			Features:     plans[i].Features,
+			ForSale:      plans[i].ForSale,
+			SortOrder:    plans[i].SortOrder,
+		})
+	}
+	return out
 }
 
 type checkoutPlan struct {

@@ -120,6 +120,11 @@ func SubscriptionID(v int64) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldEQ(FieldSubscriptionID, v))
 }
 
+// UsageCardID applies equality check predicate on the "usage_card_id" field. It's identical to UsageCardIDEQ.
+func UsageCardID(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldUsageCardID, v))
+}
+
 // InputTokens applies equality check predicate on the "input_tokens" field. It's identical to InputTokensEQ.
 func InputTokens(v int) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldEQ(FieldInputTokens, v))
@@ -928,6 +933,36 @@ func SubscriptionIDIsNil() predicate.UsageLog {
 // SubscriptionIDNotNil applies the NotNil predicate on the "subscription_id" field.
 func SubscriptionIDNotNil() predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldNotNull(FieldSubscriptionID))
+}
+
+// UsageCardIDEQ applies the EQ predicate on the "usage_card_id" field.
+func UsageCardIDEQ(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldUsageCardID, v))
+}
+
+// UsageCardIDNEQ applies the NEQ predicate on the "usage_card_id" field.
+func UsageCardIDNEQ(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNEQ(FieldUsageCardID, v))
+}
+
+// UsageCardIDIn applies the In predicate on the "usage_card_id" field.
+func UsageCardIDIn(vs ...int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIn(FieldUsageCardID, vs...))
+}
+
+// UsageCardIDNotIn applies the NotIn predicate on the "usage_card_id" field.
+func UsageCardIDNotIn(vs ...int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotIn(FieldUsageCardID, vs...))
+}
+
+// UsageCardIDIsNil applies the IsNil predicate on the "usage_card_id" field.
+func UsageCardIDIsNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIsNull(FieldUsageCardID))
+}
+
+// UsageCardIDNotNil applies the NotNil predicate on the "usage_card_id" field.
+func UsageCardIDNotNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotNull(FieldUsageCardID))
 }
 
 // InputTokensEQ applies the EQ predicate on the "input_tokens" field.
@@ -2307,6 +2342,29 @@ func HasSubscription() predicate.UsageLog {
 func HasSubscriptionWith(preds ...predicate.UserSubscription) predicate.UsageLog {
 	return predicate.UsageLog(func(s *sql.Selector) {
 		step := newSubscriptionStep()
+		sqlgraph.HasNeighborsWith(s, step, func(s *sql.Selector) {
+			for _, p := range preds {
+				p(s)
+			}
+		})
+	})
+}
+
+// HasUsageCard applies the HasEdge predicate on the "usage_card" edge.
+func HasUsageCard() predicate.UsageLog {
+	return predicate.UsageLog(func(s *sql.Selector) {
+		step := sqlgraph.NewStep(
+			sqlgraph.From(Table, FieldID),
+			sqlgraph.Edge(sqlgraph.M2O, true, UsageCardTable, UsageCardColumn),
+		)
+		sqlgraph.HasNeighbors(s, step)
+	})
+}
+
+// HasUsageCardWith applies the HasEdge predicate on the "usage_card" edge with a given conditions (other predicates).
+func HasUsageCardWith(preds ...predicate.UserUsageCard) predicate.UsageLog {
+	return predicate.UsageLog(func(s *sql.Selector) {
+		step := newUsageCardStep()
 		sqlgraph.HasNeighborsWith(s, step, func(s *sql.Selector) {
 			for _, p := range preds {
 				p(s)

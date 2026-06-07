@@ -19,12 +19,15 @@
           ({{ t('payment.orders.fee') }} {{ row.fee_rate }}%)
         </span>
         <div v-if="row.amount !== row.pay_amount" class="text-xs text-gray-500">
-          {{ t('payment.orders.creditedAmount') }}: {{ row.order_type === 'balance' ? '$' : '¥' }}{{ row.amount.toFixed(2) }}
+          {{ t('payment.orders.creditedAmount') }}: {{ orderAmountPrefix(row.order_type) }}{{ row.amount.toFixed(2) }}
         </div>
       </div>
     </template>
     <template #cell-payment_type="{ value }">
       <span class="text-sm text-gray-700 dark:text-gray-300">{{ t('payment.methods.' + value, value) }}</span>
+    </template>
+    <template #cell-order_type="{ value }">
+      <span class="badge badge-gray">{{ orderTypeLabel(value) }}</span>
     </template>
     <template #cell-status="{ value }">
       <OrderStatusBadge :status="value" />
@@ -56,6 +59,17 @@ const props = defineProps<{
 
 function formatDate(dateStr: string) { return new Date(dateStr).toLocaleString() }
 
+function orderTypeLabel(value: string): string {
+  if (value === 'balance') return t('payment.admin.balanceOrder')
+  if (value === 'usage_card') return t('payment.admin.usageCardOrder')
+  if (value === 'subscription') return t('payment.admin.subscriptionOrder')
+  return value
+}
+
+function orderAmountPrefix(orderType: string): string {
+  return orderType === 'subscription' ? '¥' : '$'
+}
+
 const columns = computed((): Column[] => {
   const cols: Column[] = [
     { key: 'id', label: t('payment.orders.orderId') },
@@ -66,6 +80,7 @@ const columns = computed((): Column[] => {
   }
   cols.push(
     { key: 'pay_amount', label: t('payment.orders.payAmount') },
+    { key: 'order_type', label: t('payment.orders.orderType') },
     { key: 'payment_type', label: t('payment.orders.paymentMethod') },
     { key: 'status', label: t('payment.orders.status') },
     { key: 'created_at', label: t('payment.orders.createdAt') },

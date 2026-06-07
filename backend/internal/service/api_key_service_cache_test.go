@@ -249,6 +249,7 @@ func TestAPIKeyService_SnapshotRoundTrip_PreservesMessagesDispatchModelConfig(t 
 			Name:                  "openai",
 			Platform:              PlatformOpenAI,
 			Status:                StatusActive,
+			UsageCardDisabled:     true,
 			SubscriptionType:      SubscriptionTypeStandard,
 			RateMultiplier:        1,
 			AllowMessagesDispatch: true,
@@ -270,6 +271,7 @@ func TestAPIKeyService_SnapshotRoundTrip_PreservesMessagesDispatchModelConfig(t 
 	require.NotNil(t, roundTrip)
 	require.Equal(t, apiKey.Name, roundTrip.Name)
 	require.NotNil(t, roundTrip.Group)
+	require.Equal(t, apiKey.Group.UsageCardDisabled, roundTrip.Group.UsageCardDisabled)
 	require.Equal(t, apiKey.Group.MessagesDispatchModelConfig, roundTrip.Group.MessagesDispatchModelConfig)
 }
 
