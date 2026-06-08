@@ -494,6 +494,17 @@ func (s *EmailService) TestSMTPConnectionWithConfig(config *SMTPConfig) error {
 	}
 	defer func() { _ = client.Close() }()
 
+	// Match the send path for submission servers on port 587: negotiate STARTTLS
+	// before AUTH when the server requires encryption for credential exchange.
+	if ok, _ := client.Extension("STARTTLS"); ok {
+		if err = client.StartTLS(&tls.Config{
+			ServerName: config.Host,
+			MinVersion: tls.VersionTLS12,
+		}); err != nil {
+			return fmt.Errorf("starttls failed: %w", err)
+		}
+	}
+
 	auth := smtp.PlainAuth("", config.Username, config.Password, config.Host)
 	if err = client.Auth(auth); err != nil {
 		return fmt.Errorf("smtp authentication failed: %w", err)
