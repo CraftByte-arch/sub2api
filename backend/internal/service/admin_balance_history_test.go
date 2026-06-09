@@ -4,6 +4,8 @@ import (
 	"testing"
 	"time"
 
+	dbent "github.com/Wei-Shaw/sub2api/ent"
+	"github.com/Wei-Shaw/sub2api/internal/payment"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/stretchr/testify/require"
 )
@@ -122,4 +124,26 @@ func TestExcludeRedeemCodesByCodeDropsPurchaseFulfillmentBalanceEntries(t *testi
 	require.Len(t, got, 2)
 	require.Equal(t, int64(2), got[0].ID)
 	require.Equal(t, int64(3), got[1].ID)
+}
+
+func TestPaymentOrderHistoryFromOrderIncludesSubscriptionGroup(t *testing.T) {
+	t.Parallel()
+
+	groupID := int64(33)
+	order := &dbent.PaymentOrder{
+		ID:                  42,
+		UserID:              10,
+		OutTradeNo:          "sub2_test_order",
+		OrderType:           payment.OrderTypeSubscription,
+		Status:              OrderStatusCompleted,
+		SubscriptionGroupID: &groupID,
+		CreatedAt:           time.Date(2026, 6, 9, 10, 0, 0, 0, time.UTC),
+	}
+
+	got := paymentOrderHistoryFromOrder(order, nil)
+
+	require.Equal(t, RedeemTypeSubscription, got.Type)
+	require.NotNil(t, got.GroupID)
+	require.Equal(t, groupID, *got.GroupID)
+	require.Equal(t, "subscription_purchase", got.Notes)
 }

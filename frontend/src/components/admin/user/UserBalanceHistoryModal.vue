@@ -114,11 +114,11 @@
                 </p>
                 <!-- Notes (admin adjustment reason) -->
                 <p
-                  v-if="item.notes"
+                  v-if="getItemDetail(item)"
                   class="mt-0.5 text-xs text-gray-500 dark:text-dark-400"
-                  :title="item.notes"
+                  :title="getItemDetail(item) || ''"
                 >
-                  {{ item.notes.length > 60 ? item.notes.substring(0, 55) + '...' : item.notes }}
+                  {{ truncateText(getItemDetail(item) || '') }}
                 </p>
                 <p class="mt-0.5 text-xs text-gray-400 dark:text-dark-500">
                   {{ formatDateTime(item.used_at || item.created_at) }}
@@ -329,6 +329,32 @@ const getItemTitle = (item: BalanceHistoryItem) => {
     default:
       return t('common.unknown')
   }
+}
+
+const syntheticHistoryNotes = new Set([
+  'balance_purchase',
+  'subscription_purchase',
+  'usage_card_purchase'
+])
+
+const truncateText = (text: string) => (
+  text.length > 60 ? `${text.substring(0, 55)}...` : text
+)
+
+const getItemDetail = (item: BalanceHistoryItem) => {
+  if (isSubscriptionType(item.type)) {
+    const groupName = item.group?.name?.trim() || ''
+    if (groupName) return groupName
+  }
+
+  if (isUsageCardType(item.type)) {
+    const planName = item.usage_card_plan?.name?.trim() || ''
+    if (planName) return planName
+  }
+
+  const notes = item.notes?.trim() || ''
+  if (!notes || syntheticHistoryNotes.has(notes)) return ''
+  return notes
 }
 
 // Format display value

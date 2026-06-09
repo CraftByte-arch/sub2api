@@ -17,6 +17,7 @@ import (
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/authidentity"
 	"github.com/Wei-Shaw/sub2api/ent/authidentitychannel"
+	"github.com/Wei-Shaw/sub2api/ent/group"
 	"github.com/Wei-Shaw/sub2api/ent/paymentorder"
 	"github.com/Wei-Shaw/sub2api/ent/usagecardplan"
 	"github.com/Wei-Shaw/sub2api/internal/payment"
@@ -1579,9 +1580,19 @@ func (s *adminServiceImpl) listPaymentOrderHistoryForMerge(ctx context.Context, 
 	if err != nil {
 		return nil, 0, err
 	}
+	groups, err := s.groupsByID(ctx, paymentOrderSubscriptionGroupIDs(orders))
+	if err != nil {
+		return nil, 0, err
+	}
 	codes := make([]RedeemCode, 0, len(orders))
 	for i := range orders {
-		codes = append(codes, paymentOrderHistoryFromOrder(orders[i], plans))
+		code := paymentOrderHistoryFromOrder(orders[i], plans)
+		if code.GroupID != nil {
+			if group := groups[*code.GroupID]; group != nil {
+				code.Group = group
+			}
+		}
+		codes = append(codes, code)
 	}
 	return codes, int64(total), nil
 }
@@ -1645,6 +1656,37 @@ func (s *adminServiceImpl) usageCardPlansByID(ctx context.Context, ids []int64) 
 	return out, nil
 }
 
+func (s *adminServiceImpl) groupsByID(ctx context.Context, ids []int64) (map[int64]*Group, error) {
+	out := make(map[int64]*Group, len(ids))
+	if len(ids) == 0 || s == nil || s.entClient == nil {
+		return out, nil
+	}
+	groups, err := s.entClient.Group.Query().Where(group.IDIn(ids...)).All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, g := range groups {
+		description := ""
+		if g.Description != nil {
+			description = *g.Description
+		}
+		out[g.ID] = &Group{
+			ID:                g.ID,
+			Name:              g.Name,
+			Description:       description,
+			Platform:          g.Platform,
+			RateMultiplier:    g.RateMultiplier,
+			IsExclusive:       g.IsExclusive,
+			Status:            g.Status,
+			UsageCardDisabled: g.UsageCardDisabled,
+			SubscriptionType:  g.SubscriptionType,
+			CreatedAt:         g.CreatedAt,
+			UpdatedAt:         g.UpdatedAt,
+		}
+	}
+	return out, nil
+}
+
 func paymentOrderPlanIDs(orders []*dbent.PaymentOrder) []int64 {
 	seen := make(map[int64]struct{}, len(orders))
 	ids := make([]int64, 0, len(orders))
@@ -1657,6 +1699,22 @@ func paymentOrderPlanIDs(orders []*dbent.PaymentOrder) []int64 {
 		}
 		seen[*order.PlanID] = struct{}{}
 		ids = append(ids, *order.PlanID)
+	}
+	return ids
+}
+
+func paymentOrderSubscriptionGroupIDs(orders []*dbent.PaymentOrder) []int64 {
+	seen := make(map[int64]struct{}, len(orders))
+	ids := make([]int64, 0, len(orders))
+	for _, order := range orders {
+		if order == nil || order.SubscriptionGroupID == nil || *order.SubscriptionGroupID <= 0 {
+			continue
+		}
+		if _, ok := seen[*order.SubscriptionGroupID]; ok {
+			continue
+		}
+		seen[*order.SubscriptionGroupID] = struct{}{}
+		ids = append(ids, *order.SubscriptionGroupID)
 	}
 	return ids
 }
@@ -1738,13 +1796,13 @@ func paymentOrderHistoryFromOrder(order *dbent.PaymentOrder, plans map[int64]*Us
 			item.Value = float64(*order.SubscriptionDays)
 			item.ValidityDays = *order.SubscriptionDays
 		}
+		if order.SubscriptionGroupID != nil {
+			id := *order.SubscriptionGroupID
+			item.GroupID = &id
+		}
 		item.Notes = "subscription_purchase"
 	case payment.OrderTypeUsageCard:
 		return usageCardPurchaseHistoryFromOrder(order, plans)
-	}
-
-	if order.PlanID != nil && *order.PlanID > 0 {
-		item.GroupID = order.SubscriptionGroupID
 	}
 	return item
 }
