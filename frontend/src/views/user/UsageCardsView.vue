@@ -27,7 +27,7 @@
                 <p>{{ t('usageCards.redeemedAt', { time: formatMinuteDateTime(card.created_at) }) }}</p>
               </div>
             </div>
-            <span class="badge" :class="statusClass(card.status)">{{ statusLabel(card.status) }}</span>
+            <span class="badge" :class="statusClass(effectiveStatus(card))">{{ statusLabel(effectiveStatus(card)) }}</span>
           </div>
           <div class="mt-4 h-2 overflow-hidden rounded-full bg-gray-100 dark:bg-dark-700">
             <div class="h-full rounded-full bg-primary-500" :style="{ width: `${progress(card)}%` }"></div>
@@ -67,7 +67,7 @@ const statusOptions = computed(() => [
 
 const filteredCards = computed(() => {
   return [...cards.value]
-    .filter((card) => !statusFilter.value || card.status === statusFilter.value)
+    .filter((card) => !statusFilter.value || effectiveStatus(card) === statusFilter.value)
     .sort((a, b) => getRedeemedAt(b) - getRedeemedAt(a))
 })
 
@@ -84,6 +84,15 @@ function statusClass(status: string) {
   if (status === 'active') return 'badge-success'
   if (status === 'suspended') return 'badge-warning'
   return 'badge-secondary'
+}
+
+function effectiveStatus(card: UserUsageCard) {
+  if (card.status === 'active') {
+    const expiresAt = new Date(card.expires_at).getTime()
+    if (Number.isFinite(expiresAt) && expiresAt <= Date.now()) return 'expired'
+    if (card.total_limit_usd > 0 && card.used_usd >= card.total_limit_usd) return 'exhausted'
+  }
+  return card.status
 }
 
 function formatMinuteDateTime(value: string) {

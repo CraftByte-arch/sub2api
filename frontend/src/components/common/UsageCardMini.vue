@@ -46,8 +46,8 @@
                     {{ card.name }}
                   </p>
                 </div>
-                <span class="badge shrink-0" :class="statusClass(card.status)">
-                  {{ statusLabel(card.status) }}
+                <span class="badge shrink-0" :class="statusClass(effectiveStatus(card))">
+                  {{ statusLabel(effectiveStatus(card)) }}
                 </span>
               </div>
 
@@ -139,6 +139,15 @@ function statusClass(status: string) {
   return 'badge-secondary'
 }
 
+function effectiveStatus(card: UserUsageCard) {
+  if (card.status === 'active') {
+    const expiresAt = new Date(card.expires_at).getTime()
+    if (Number.isFinite(expiresAt) && expiresAt <= Date.now()) return 'expired'
+    if (card.total_limit_usd > 0 && card.used_usd >= card.total_limit_usd) return 'exhausted'
+  }
+  return card.status
+}
+
 function remainingPercent(card: UserUsageCard) {
   if (card.total_limit_usd <= 0) return 0
   return Math.max(0, Math.min(100, (card.remaining_usd / card.total_limit_usd) * 100))
@@ -146,7 +155,7 @@ function remainingPercent(card: UserUsageCard) {
 
 function progressClass(card: UserUsageCard) {
   const percent = remainingPercent(card)
-  if (card.status !== 'active') return 'bg-gray-300 dark:bg-dark-600'
+  if (effectiveStatus(card) !== 'active') return 'bg-gray-300 dark:bg-dark-600'
   if (percent <= 10) return 'bg-red-500'
   if (percent <= 30) return 'bg-amber-500'
   return 'bg-primary-500'
