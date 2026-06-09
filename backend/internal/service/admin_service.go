@@ -1227,7 +1227,7 @@ func (s *adminServiceImpl) getAllUserBalanceHistory(ctx context.Context, userID 
 		needed = params.Limit()
 	}
 
-	redeemCodes, redeemTotal, err := s.listRedeemBalanceHistoryForMerge(ctx, userID, needed)
+	redeemCodes, redeemTotal, err := s.listRedeemBalanceHistoryForMerge(ctx, userID, needed, true)
 	if err != nil {
 		return nil, 0, 0, err
 	}
@@ -1256,7 +1256,7 @@ func (s *adminServiceImpl) getAllUserBalanceHistory(ctx context.Context, userID 
 	return codes, redeemTotal + affiliateTotal + balanceOrderTotal + subscriptionOrderTotal + usageCardOrderTotal, totalRecharged, nil
 }
 
-func (s *adminServiceImpl) listRedeemBalanceHistoryForMerge(ctx context.Context, userID int64, needed int, codeType ...string) ([]RedeemCode, int64, error) {
+func (s *adminServiceImpl) listRedeemBalanceHistoryForMerge(ctx context.Context, userID int64, needed int, excludeBalancePurchaseRedeems bool, codeType ...string) ([]RedeemCode, int64, error) {
 	if needed <= 0 {
 		return nil, 0, nil
 	}
@@ -1278,15 +1278,129 @@ func (s *adminServiceImpl) listRedeemBalanceHistoryForMerge(ctx context.Context,
 		if result != nil {
 			total = result.Total
 		}
+		if excludeBalancePurchaseRedeems {
+			codes, err = s.filterBalancePurchaseRedeemHistory(ctx, userID, codes)
+			if err != nil {
+				return nil, 0, err
+			}
+		}
 		out = append(out, codes...)
-		if len(codes) < params.Limit() || int64(len(out)) >= total {
+		if result == nil || int64(page*params.Limit()) >= total {
 			break
+		}
+	}
+	if excludeBalancePurchaseRedeems {
+		overlapCount, err := s.countBalancePurchaseRedeemHistory(ctx, userID)
+		if err != nil {
+			return nil, 0, err
+		}
+		if overlapCount > total {
+			total = 0
+		} else {
+			total -= overlapCount
 		}
 	}
 	if len(out) > needed {
 		out = out[:needed]
 	}
 	return out, total, nil
+}
+
+func (s *adminServiceImpl) filterBalancePurchaseRedeemHistory(ctx context.Context, userID int64, codes []RedeemCode) ([]RedeemCode, error) {
+	if len(codes) == 0 || s == nil || s.entClient == nil || userID <= 0 {
+		return codes, nil
+	}
+
+	rechargeCodes := make([]string, 0, len(codes))
+	for _, code := range codes {
+		if code.Type != RedeemTypeBalance {
+			continue
+		}
+		if trimmed := strings.TrimSpace(code.Code); trimmed != "" {
+			rechargeCodes = append(rechargeCodes, trimmed)
+		}
+	}
+	if len(rechargeCodes) == 0 {
+		return codes, nil
+	}
+
+	purchaseRechargeCodes, err := s.entClient.PaymentOrder.Query().
+		Where(
+			paymentorder.UserIDEQ(userID),
+			paymentorder.OrderTypeEQ(payment.OrderTypeBalance),
+			paymentorder.StatusEQ(OrderStatusCompleted),
+			paymentorder.RechargeCodeIn(rechargeCodes...),
+		).
+		Select(paymentorder.FieldRechargeCode).
+		Strings(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(purchaseRechargeCodes) == 0 {
+		return codes, nil
+	}
+
+	blocked := make(map[string]struct{}, len(purchaseRechargeCodes))
+	for _, code := range purchaseRechargeCodes {
+		if trimmed := strings.TrimSpace(code); trimmed != "" {
+			blocked[trimmed] = struct{}{}
+		}
+	}
+	return excludeRedeemCodesByCode(codes, blocked), nil
+}
+
+func (s *adminServiceImpl) countBalancePurchaseRedeemHistory(ctx context.Context, userID int64) (int64, error) {
+	if s == nil || s.entClient == nil || userID <= 0 {
+		return 0, nil
+	}
+
+	rows, err := s.entClient.QueryContext(ctx, `
+SELECT COUNT(*)
+FROM redeem_codes rc
+JOIN payment_orders po
+  ON po.recharge_code = rc.code
+ AND po.user_id = rc.used_by
+WHERE rc.used_by = $1
+  AND rc.type = $2
+  AND po.user_id = $1
+  AND po.order_type = $3
+  AND po.status = $4
+`, userID, RedeemTypeBalance, payment.OrderTypeBalance, OrderStatusCompleted)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var total sql.NullInt64
+	if rows.Next() {
+		if err := rows.Scan(&total); err != nil {
+			return 0, err
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	if !total.Valid {
+		return 0, nil
+	}
+	return total.Int64, nil
+}
+
+func excludeRedeemCodesByCode(codes []RedeemCode, blocked map[string]struct{}) []RedeemCode {
+	if len(codes) == 0 || len(blocked) == 0 {
+		return codes
+	}
+
+	filtered := make([]RedeemCode, 0, len(codes))
+	for _, code := range codes {
+		if code.Type == RedeemTypeBalance {
+			if _, ok := blocked[strings.TrimSpace(code.Code)]; ok {
+				continue
+			}
+		}
+		filtered = append(filtered, code)
+	}
+	return filtered
 }
 
 func (s *adminServiceImpl) listAffiliateBalanceHistoryForMerge(ctx context.Context, userID int64, needed int) ([]RedeemCode, int64, error) {
@@ -1399,7 +1513,7 @@ func (s *adminServiceImpl) getUsageCardBalanceHistory(ctx context.Context, userI
 	if needed < params.Limit() {
 		needed = params.Limit()
 	}
-	redeemCodes, redeemTotal, err := s.listRedeemBalanceHistoryForMerge(ctx, userID, needed, RedeemTypeUsageCard)
+	redeemCodes, redeemTotal, err := s.listRedeemBalanceHistoryForMerge(ctx, userID, needed, false, RedeemTypeUsageCard)
 	if err != nil {
 		return nil, 0, 0, err
 	}
@@ -1420,7 +1534,7 @@ func (s *adminServiceImpl) getOrderAwareBalanceHistoryByType(ctx context.Context
 	if needed < params.Limit() {
 		needed = params.Limit()
 	}
-	redeemCodes, redeemTotal, err := s.listRedeemBalanceHistoryForMerge(ctx, userID, needed, codeType)
+	redeemCodes, redeemTotal, err := s.listRedeemBalanceHistoryForMerge(ctx, userID, needed, codeType == RedeemTypeBalance, codeType)
 	if err != nil {
 		return nil, 0, 0, err
 	}

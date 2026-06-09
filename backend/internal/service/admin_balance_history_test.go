@@ -84,3 +84,42 @@ func TestMergeBalanceHistoryCodesPaginatesAfterCombiningSources(t *testing.T) {
 	require.Equal(t, RedeemTypeConcurrency, got[0].Type)
 	require.Equal(t, int64(-4), got[1].ID)
 }
+
+func TestExcludeRedeemCodesByCodeDropsPurchaseFulfillmentBalanceEntries(t *testing.T) {
+	t.Parallel()
+
+	usedBy := int64(10)
+	now := time.Date(2026, 6, 9, 10, 0, 0, 0, time.UTC)
+	codes := []RedeemCode{
+		{
+			ID:        1,
+			Code:      "PAY-123",
+			Type:      RedeemTypeBalance,
+			UsedBy:    &usedBy,
+			UsedAt:    &now,
+			CreatedAt: now,
+		},
+		{
+			ID:        2,
+			Code:      "CODE-REAL",
+			Type:      RedeemTypeBalance,
+			UsedBy:    &usedBy,
+			UsedAt:    &now,
+			CreatedAt: now,
+		},
+		{
+			ID:        3,
+			Code:      "PAY-123",
+			Type:      RedeemTypeSubscription,
+			UsedBy:    &usedBy,
+			UsedAt:    &now,
+			CreatedAt: now,
+		},
+	}
+
+	got := excludeRedeemCodesByCode(codes, map[string]struct{}{"PAY-123": {}})
+
+	require.Len(t, got, 2)
+	require.Equal(t, int64(2), got[0].ID)
+	require.Equal(t, int64(3), got[1].ID)
+}
