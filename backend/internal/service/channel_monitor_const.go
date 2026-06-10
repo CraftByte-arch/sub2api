@@ -9,6 +9,11 @@ import (
 // ChannelMonitor 全局常量。
 // 这些是 MVP 阶段的硬编码值，按需可以提到 config 中。
 const (
+	// monitorSelfEndpointSentinel 是数据库里用于表示“监控本站”的保留值。
+	monitorSelfEndpointSentinel = "__self__"
+	// monitorSelfEndpointURL 是服务端固定的本站自检地址。
+	// 当前服务监听 8080，这里显式固定到 loopback，避免开放任意内网目标。
+	monitorSelfEndpointURL = "http://127.0.0.1:8080"
 	// monitorRequestTimeout 单次模型请求总超时（含 Body 读取）。
 	monitorRequestTimeout = 45 * time.Second
 	// monitorPingTimeout HEAD 请求 endpoint origin 的超时。

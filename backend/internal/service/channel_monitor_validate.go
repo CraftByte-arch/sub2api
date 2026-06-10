@@ -56,6 +56,9 @@ func validateEndpoint(ep string) error {
 	if ep == "" {
 		return ErrChannelMonitorInvalidEndpoint
 	}
+	if isSelfMonitorEndpoint(ep) {
+		return nil
+	}
 	u, err := url.Parse(ep)
 	if err != nil {
 		return ErrChannelMonitorInvalidEndpoint
@@ -90,8 +93,15 @@ func validateEndpoint(ep string) error {
 // validateEndpoint 已确保格式合法（仅 origin），这里只做最终归一化。
 func normalizeEndpoint(ep string) string {
 	ep = strings.TrimSpace(ep)
+	if isSelfMonitorEndpoint(ep) {
+		return monitorSelfEndpointSentinel
+	}
 	ep = strings.TrimRight(ep, "/")
 	return ep
+}
+
+func isSelfMonitorEndpoint(ep string) bool {
+	return strings.EqualFold(strings.TrimSpace(ep), monitorSelfEndpointSentinel)
 }
 
 // normalizeModels 去除空白、重复模型名。保留输入顺序（map 的迭代顺序无关）。

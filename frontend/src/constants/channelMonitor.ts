@@ -15,6 +15,7 @@ export const PROVIDER_GEMINI: Provider = 'gemini'
 
 export const API_MODE_CHAT_COMPLETIONS: APIMode = 'chat_completions'
 export const API_MODE_RESPONSES: APIMode = 'responses'
+export const MONITOR_SELF_ENDPOINT = '__self__'
 
 export const PROVIDERS: readonly Provider[] = [
   PROVIDER_OPENAI,

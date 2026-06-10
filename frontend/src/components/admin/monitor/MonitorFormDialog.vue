@@ -49,11 +49,40 @@
 
       <div>
         <label class="input-label">{{ t('admin.channelMonitor.form.endpoint') }} <span class="text-red-500">*</span></label>
-        <div class="flex gap-2">
-          <input v-model="form.endpoint" type="text" required class="input flex-1" :placeholder="t('admin.channelMonitor.form.endpointPlaceholder')" />
-          <button type="button" @click="useCurrentDomain" class="btn btn-secondary whitespace-nowrap">
-            {{ t('admin.channelMonitor.form.useCurrentDomain') }}
-          </button>
+        <div class="space-y-3">
+          <div class="grid gap-3 sm:grid-cols-2">
+            <button
+              type="button"
+              :aria-pressed="!isSelfEndpoint"
+              class="rounded-lg border-2 px-3 py-2 text-left transition-colors"
+              :class="endpointModeButtonClass(!isSelfEndpoint)"
+              @click="setEndpointMode(false)"
+            >
+              <span class="block text-sm font-semibold">{{ t('admin.channelMonitor.form.endpointModeCustom') }}</span>
+              <span class="mt-0.5 block text-xs opacity-80">{{ t('admin.channelMonitor.form.endpointModeCustomHint') }}</span>
+            </button>
+            <button
+              type="button"
+              :aria-pressed="isSelfEndpoint"
+              class="rounded-lg border-2 px-3 py-2 text-left transition-colors"
+              :class="endpointModeButtonClass(isSelfEndpoint)"
+              @click="setEndpointMode(true)"
+            >
+              <span class="block text-sm font-semibold">{{ t('admin.channelMonitor.form.endpointModeSelf') }}</span>
+              <span class="mt-0.5 block text-xs opacity-80">{{ t('admin.channelMonitor.form.endpointModeSelfHint') }}</span>
+            </button>
+          </div>
+
+          <div v-if="!isSelfEndpoint" class="flex gap-2">
+            <input v-model="form.endpoint" type="text" required class="input flex-1" :placeholder="t('admin.channelMonitor.form.endpointPlaceholder')" />
+            <button type="button" @click="useCurrentDomain" class="btn btn-secondary whitespace-nowrap">
+              {{ t('admin.channelMonitor.form.useCurrentDomain') }}
+            </button>
+          </div>
+
+          <div v-else class="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-300">
+            {{ t('admin.channelMonitor.form.endpointModeSelfDesc') }}
+          </div>
         </div>
       </div>
 
@@ -210,6 +239,7 @@ import {
   API_MODE_CHAT_COMPLETIONS,
   API_MODE_RESPONSES,
   DEFAULT_INTERVAL_SECONDS,
+  MONITOR_SELF_ENDPOINT,
 } from '@/constants/channelMonitor'
 
 const props = defineProps<{
@@ -278,6 +308,8 @@ const form = reactive<MonitorForm>({
   body_override_mode: 'off',
   body_override: null,
 })
+
+const isSelfEndpoint = computed(() => form.endpoint === MONITOR_SELF_ENDPOINT)
 
 let suppressFormWatchers = false
 
@@ -355,6 +387,13 @@ function normalizeAPIMode(mode: APIMode | undefined | null): APIMode {
 
 function apiModeButtonClass(mode: APIMode): string {
   const active = form.api_mode === mode
+  if (active) {
+    return 'border-primary-500 bg-white text-primary-700 shadow-sm dark:border-primary-400 dark:bg-primary-500/15 dark:text-primary-300'
+  }
+  return 'border-blue-100 bg-white/70 text-gray-600 hover:border-primary-300 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400'
+}
+
+function endpointModeButtonClass(active: boolean): string {
   if (active) {
     return 'border-primary-500 bg-white text-primary-700 shadow-sm dark:border-primary-400 dark:bg-primary-500/15 dark:text-primary-300'
   }
@@ -446,6 +485,10 @@ function loadFromMonitor(m: ChannelMonitor) {
   suppressFormWatchers = false
 }
 
+function setEndpointMode(useSelf: boolean) {
+  form.endpoint = useSelf ? MONITOR_SELF_ENDPOINT : ''
+}
+
 // Re-sync form whenever the dialog is opened or the target monitor changes.
 // 同时拉取模板列表（cache 过的话一次性返回）。
 watch(
@@ -497,7 +540,7 @@ function buildPayload(): CreateParams {
     name: form.name.trim(),
     provider: form.provider,
     api_mode: form.provider === PROVIDER_OPENAI ? form.api_mode : API_MODE_CHAT_COMPLETIONS,
-    endpoint: form.endpoint.trim(),
+    endpoint: isSelfEndpoint.value ? MONITOR_SELF_ENDPOINT : form.endpoint.trim(),
     api_key: form.api_key.trim(),
     primary_model: form.primary_model.trim(),
     extra_models: form.extra_models,
