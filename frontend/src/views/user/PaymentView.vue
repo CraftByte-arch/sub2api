@@ -248,19 +248,45 @@
                   v-for="plan in checkout.usage_card_plans"
                   :key="plan.id"
                   type="button"
-                  class="card p-5 text-left transition hover:border-primary-300 hover:shadow-md dark:hover:border-primary-600"
+                  class="card flex h-full flex-col p-5 text-left transition hover:border-primary-300 hover:shadow-md dark:hover:border-primary-600"
                   @click="selectUsageCardPlan(plan)"
                 >
                   <div class="flex items-start justify-between gap-3">
-                    <div>
-                      <h3 class="font-semibold text-gray-900 dark:text-white">{{ plan.name }}</h3>
-                      <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ plan.description }}</p>
+                    <div class="min-w-0">
+                      <p class="text-xs font-medium uppercase tracking-wide text-primary-600 dark:text-primary-300">{{ t('usageCards.title') }}</p>
+                      <h3 class="mt-1 text-lg font-semibold text-gray-900 dark:text-white">{{ plan.name }}</h3>
                     </div>
-                    <span class="rounded-md bg-primary-50 px-2 py-1 text-xs font-medium text-primary-700 dark:bg-primary-900/30 dark:text-primary-300">${{ plan.amount_usd.toFixed(2) }}</span>
+                    <span class="shrink-0 rounded-md bg-primary-50 px-2 py-1 text-xs font-medium text-primary-700 dark:bg-primary-900/30 dark:text-primary-300">${{ plan.amount_usd.toFixed(2) }}</span>
                   </div>
-                  <div class="mt-4 flex items-end justify-between">
-                    <span class="text-2xl font-bold text-gray-900 dark:text-white">{{ formatSelectedPaymentAmount(plan.price) }}</span>
-                    <span class="text-xs text-gray-400 dark:text-gray-500">{{ t('usageCards.validForDays', { days: plan.validity_days }) }}</span>
+
+                  <p v-if="plan.description" class="mt-3 min-h-[2.5rem] text-sm leading-5 text-gray-500 dark:text-gray-400">
+                    {{ plan.description }}
+                  </p>
+
+                  <div class="mt-4 grid grid-cols-2 gap-3 rounded-xl bg-gray-50 p-3 text-sm dark:bg-dark-800">
+                    <div>
+                      <p class="text-xs text-gray-400 dark:text-gray-500">{{ t('usageCards.availableQuota') }}</p>
+                      <p class="mt-1 font-semibold text-gray-900 dark:text-white">${{ plan.amount_usd.toFixed(2) }}</p>
+                    </div>
+                    <div>
+                      <p class="text-xs text-gray-400 dark:text-gray-500">{{ t('admin.usageCards.validity') }}</p>
+                      <p class="mt-1 font-semibold text-gray-900 dark:text-white">{{ t('usageCards.validForDays', { days: plan.validity_days }) }}</p>
+                    </div>
+                  </div>
+
+                  <ul v-if="usageCardFeatures(plan).length > 0" class="mt-4 flex-1 space-y-2 text-sm text-gray-600 dark:text-gray-300">
+                    <li v-for="feature in usageCardFeatures(plan)" :key="feature" class="flex items-start gap-2">
+                      <span class="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-primary-500"></span>
+                      <span>{{ feature }}</span>
+                    </li>
+                  </ul>
+
+                  <div class="mt-5 flex items-end justify-between border-t border-gray-100 pt-4 dark:border-dark-700">
+                    <div>
+                      <p class="text-xs text-gray-400 dark:text-gray-500">{{ t('payment.paymentAmount') }}</p>
+                      <span class="text-2xl font-bold text-gray-900 dark:text-white">{{ formatSelectedPaymentAmount(plan.price) }}</span>
+                    </div>
+                    <span class="text-sm font-medium text-primary-600 dark:text-primary-300">{{ t('usageCards.buy') }}</span>
                   </div>
                 </button>
               </div>
@@ -756,6 +782,13 @@ function selectUsageCardPlan(plan: UsageCardPlan) {
   selectedUsageCardPlan.value = plan
   selectedPlan.value = null
   errorMessage.value = ''
+}
+
+function usageCardFeatures(plan: UsageCardPlan): string[] {
+  return String(plan.features || '')
+    .split('\n')
+    .map(item => item.trim())
+    .filter(Boolean)
 }
 
 function selectPlanFromModal(plan: SubscriptionPlan) {

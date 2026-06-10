@@ -11,6 +11,7 @@
           <table class="min-w-full text-sm">
             <thead class="text-left text-gray-500 dark:text-gray-400">
               <tr>
+                <th class="py-2">{{ t('admin.usageCards.sortOrder') }}</th>
                 <th class="py-2">{{ t('admin.usageCards.name') }}</th>
                 <th>{{ t('admin.usageCards.price') }}</th>
                 <th>{{ t('admin.usageCards.amount') }}</th>
@@ -21,6 +22,33 @@
             </thead>
             <tbody>
               <tr v-for="plan in plans" :key="plan.id" class="border-t border-gray-100 dark:border-dark-700">
+                <td class="py-3">
+                  <div class="flex items-center gap-2">
+                    <span class="inline-flex min-w-[3rem] items-center justify-center rounded-md bg-gray-100 px-2 py-1 text-xs font-medium text-gray-700 dark:bg-dark-700 dark:text-gray-300">
+                      {{ plan.sort_order }}
+                    </span>
+                    <div class="flex items-center gap-1">
+                      <button
+                        type="button"
+                        class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-gray-200 text-gray-500 transition hover:border-primary-300 hover:text-primary-600 disabled:cursor-not-allowed disabled:opacity-40 dark:border-dark-600 dark:text-gray-300 dark:hover:border-primary-600 dark:hover:text-primary-300"
+                        :title="t('admin.usageCards.moveUp')"
+                        :disabled="isPlanOrderUpdating(plan.id) || !canMovePlan(plan.id, -1)"
+                        @click="movePlan(plan.id, -1)"
+                      >
+                        <Icon name="arrowUp" size="sm" />
+                      </button>
+                      <button
+                        type="button"
+                        class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-gray-200 text-gray-500 transition hover:border-primary-300 hover:text-primary-600 disabled:cursor-not-allowed disabled:opacity-40 dark:border-dark-600 dark:text-gray-300 dark:hover:border-primary-600 dark:hover:text-primary-300"
+                        :title="t('admin.usageCards.moveDown')"
+                        :disabled="isPlanOrderUpdating(plan.id) || !canMovePlan(plan.id, 1)"
+                        @click="movePlan(plan.id, 1)"
+                      >
+                        <Icon name="arrowDown" size="sm" />
+                      </button>
+                    </div>
+                  </div>
+                </td>
                 <td class="py-3">{{ plan.name }}</td>
                 <td>{{ plan.price }}</td>
                 <td>${{ plan.amount_usd }}</td>
@@ -338,6 +366,7 @@ const savingPlan = ref(false)
 const loadingCards = ref(false)
 const planError = ref('')
 const updatingPlanSaleIds = ref(new Set<number>())
+const updatingPlanOrderIds = ref(new Set<number>())
 const appStore = useAppStore()
 const { t } = useI18n()
 
@@ -586,6 +615,71 @@ function markPlanSaleUpdating(id: number, updating: boolean) {
   if (updating) next.add(id)
   else next.delete(id)
   updatingPlanSaleIds.value = next
+}
+
+function isPlanOrderUpdating(id: number) {
+  return updatingPlanOrderIds.value.has(id)
+}
+
+function markPlanOrderUpdating(ids: number[], updating: boolean) {
+  const next = new Set(updatingPlanOrderIds.value)
+  for (const id of ids) {
+    if (updating) next.add(id)
+    else next.delete(id)
+  }
+  updatingPlanOrderIds.value = next
+}
+
+function canMovePlan(id: number, direction: -1 | 1) {
+  const index = plans.value.findIndex((item) => item.id === id)
+  if (index < 0) return false
+  const targetIndex = index + direction
+  return targetIndex >= 0 && targetIndex < plans.value.length
+}
+
+async function movePlan(id: number, direction: -1 | 1) {
+  const index = plans.value.findIndex((item) => item.id === id)
+  const targetIndex = index + direction
+  if (index < 0 || targetIndex < 0 || targetIndex >= plans.value.length) return
+
+  const reordered = [...plans.value]
+  const [moved] = reordered.splice(index, 1)
+  reordered.splice(targetIndex, 0, moved)
+
+  const updates = reordered
+    .map((plan, orderIndex) => ({
+      plan,
+      sort_order: orderIndex,
+    }))
+    .filter(({ plan, sort_order }) => plan.sort_order !== sort_order)
+
+  if (updates.length === 0) return
+
+  const affectedIds = updates.map(({ plan }) => plan.id)
+  markPlanOrderUpdating(affectedIds, true)
+  try {
+    await Promise.all(
+      updates.map(({ plan, sort_order }) =>
+        adminUsageCardsAPI.updatePlan(plan.id, {
+          name: plan.name,
+          description: plan.description,
+          price: plan.price,
+          amount_usd: plan.amount_usd,
+          validity_days: plan.validity_days,
+          features: plan.features,
+          for_sale: plan.for_sale,
+          sort_order,
+        }),
+      ),
+    )
+    plans.value = reordered.map((plan, orderIndex) => ({ ...plan, sort_order: orderIndex }))
+    appStore.showSuccess(t('admin.usageCards.orderUpdated'))
+  } catch (err: unknown) {
+    appStore.showError(extractApiErrorMessage(err) || t('admin.usageCards.updateFailed'))
+    await loadPlans()
+  } finally {
+    markPlanOrderUpdating(affectedIds, false)
+  }
 }
 
 async function togglePlanForSale(plan: UsageCardPlan) {
