@@ -1,0 +1,696 @@
+main:has(.image-studio-page) {
+  height: calc(100dvh - 64px);
+  overflow: hidden;
+  padding: 0 !important;
+}
+
+.image-studio-page {
+  display: flex;
+  height: calc(100dvh - 64px);
+  min-height: 0;
+  width: 100%;
+  max-width: none;
+  box-sizing: border-box;
+  margin: 0;
+  overflow: hidden;
+  padding: 0;
+  background: #fff;
+}
+
+.image-studio-shell {
+  display: flex;
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  min-height: 0;
+  margin: 0;
+  flex-direction: column;
+  border: 0;
+  border-radius: 0;
+  background: #fff;
+  box-shadow: none;
+}
+
+.studio-topbar {
+  min-height: 46px;
+  padding: 0 14px;
+  justify-content: flex-end;
+}
+
+.studio-tabs {
+  position: sticky;
+  z-index: 2;
+  top: 0;
+  gap: 2px;
+  border: 0;
+  border-bottom: 1px solid #dbe4ef;
+  border-radius: 0;
+  padding: 0 0 8px;
+  background: #f8fafc;
+}
+
+.studio-tab {
+  min-height: 36px;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  flex: 1 1 0;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 6px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.studio-tab.active {
+  border-color: #14b8a6;
+  background: #f0fdfa;
+  box-shadow: none;
+}
+
+.studio-body {
+  --studio-sidebar-width: clamp(252px, 18vw, 360px);
+  --studio-panel-padding: clamp(5px, 0.6vw, 12px);
+  --studio-card-padding: clamp(8px, 0.55vw, 12px);
+  --studio-composer-padding: clamp(6px, 0.6vw, 12px);
+  grid-template-columns: minmax(0, 1fr) var(--studio-sidebar-width);
+  grid-template-rows: minmax(0, 1fr) max-content;
+  flex: 1;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: #fff;
+}
+
+.studio-body.history-mode {
+  grid-template-rows: minmax(0, 1fr) 0;
+}
+
+.studio-main {
+  overflow: hidden;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  border-right: 1px solid #e5e7eb;
+}
+
+.history-mode .studio-main {
+  overflow-y: auto;
+}
+
+.param-panel {
+  position: relative;
+  grid-column: 2;
+  grid-row: 1 / -1;
+  overflow-y: scroll;
+  min-width: 0;
+  min-height: 0;
+  padding: 0 var(--studio-panel-padding) max(6px, var(--studio-panel-padding));
+  border-left: 1px solid #dbe4ef;
+  background:
+    linear-gradient(#f8fafc 30%, rgba(248, 250, 252, 0)) top / 100% 18px no-repeat local,
+    linear-gradient(rgba(248, 250, 252, 0), #f8fafc 70%) bottom / 100% 18px no-repeat local,
+    linear-gradient(rgba(15, 23, 42, 0.12), rgba(15, 23, 42, 0)) top / 100% 8px no-repeat scroll,
+    linear-gradient(rgba(15, 23, 42, 0), rgba(15, 23, 42, 0.14)) bottom / 100% 8px no-repeat scroll,
+    #f8fafc;
+  box-shadow: inset 8px 0 14px -14px rgba(15, 23, 42, 0.45);
+  scrollbar-color: #94a3b8 #e2e8f0;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+}
+
+.param-panel::-webkit-scrollbar {
+  width: 10px;
+}
+
+.param-panel::-webkit-scrollbar-track {
+  background: #cbd5e1;
+  border-radius: 999px;
+}
+
+.param-panel::-webkit-scrollbar-thumb {
+  border: 2px solid #cbd5e1;
+  border-radius: 999px;
+  background: #64748b;
+}
+
+.param-panel::-webkit-scrollbar-thumb:hover {
+  background: #64748b;
+}
+
+.param-panel .control-section,
+.param-panel .advanced-card {
+  margin-bottom: 7px;
+  padding: var(--studio-card-padding) calc(var(--studio-card-padding) + 4px);
+  border-radius: 9px;
+}
+
+.section-title {
+  margin-bottom: 10px;
+  font-size: 15px;
+}
+
+.param-panel .section-title small {
+  font-size: 12px;
+}
+
+.control-block {
+  margin-bottom: 8px;
+}
+
+.control-label {
+  margin-bottom: 5px;
+  font-size: 12px;
+}
+
+.control-hint,
+.label-row.muted,
+.prompt-meta-row {
+  margin-top: 5px;
+  font-size: 11px;
+}
+
+.studio-select {
+  min-height: 36px;
+  border-radius: 9px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.param-panel .ratio-grid {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.param-panel .resolution-grid {
+  grid-template-columns: 1fr;
+  gap: 6px;
+}
+
+.param-panel .ratio-card:not(.resolution-card) {
+  display: grid;
+  min-height: 46px;
+  border-radius: 6px;
+  padding: 5px 4px 6px;
+  align-content: center;
+  justify-items: center;
+  gap: 4px;
+  background: #f3f7fb;
+}
+
+.param-panel .ratio-card:not(.resolution-card) .ratio-shape-frame {
+  display: grid;
+  width: 24px;
+  height: 18px;
+  place-items: center;
+}
+
+.param-panel .ratio-card:not(.resolution-card) .ratio-shape {
+  border-radius: 2px;
+}
+
+.ratio-label {
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.param-panel .resolution-card {
+  min-height: 68px;
+  place-items: stretch;
+}
+
+.param-panel .resolution-description {
+  font-size: 11px;
+}
+
+.param-panel .resolution-card .ratio-label {
+  font-size: 14px;
+}
+
+.param-panel .control-block:has(.resolution-grid) .control-label {
+  font-size: 13px;
+}
+
+.ratio-badge {
+  top: 4px;
+  right: 4px;
+  font-size: 9px;
+}
+
+.param-panel .advanced-content {
+  grid-template-columns: 1fr;
+  gap: 7px;
+  margin-top: 7px;
+}
+
+.advanced-header {
+  font-size: 13px;
+}
+
+.advanced-title {
+  gap: 8px;
+}
+
+.advanced-json-panel textarea {
+  min-height: 58px;
+  padding: 8px;
+}
+
+
+.preview-canvas {
+  height: 100%;
+  min-height: 100%;
+  margin: 0;
+  border-width: 0 0 1px;
+  border-radius: 0;
+}
+
+.preview-header {
+  min-height: 50px;
+  padding: 10px 12px;
+  gap: 12px;
+}
+
+.preview-header h2 {
+  font-size: 16px;
+}
+
+.preview-header > span {
+  padding: 5px 8px;
+  font-size: 11px;
+}
+
+.preview-mode-tab {
+  min-width: 78px;
+  min-height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.empty-preview {
+  min-height: 0;
+  height: 100%;
+}
+
+.empty-icon {
+  width: 64px;
+  height: 64px;
+  margin-bottom: 16px;
+  border-radius: 14px;
+  font-size: inherit;
+}
+
+.empty-preview h2 {
+  margin-bottom: 6px;
+  font-size: 20px;
+}
+
+.empty-preview p {
+  font-size: 14px;
+}
+
+.result-grid {
+  gap: 12px;
+  padding: 10px;
+}
+
+.result-grid.single {
+  padding: 0;
+}
+
+.result-grid.single .result-tile {
+  min-height: 100%;
+  border: 0;
+  border-radius: 0;
+}
+
+.result-edit,
+.result-download,
+.result-delete {
+  gap: 6px;
+}
+
+.result-actions {
+  min-height: 0;
+  padding: 0;
+}
+
+.result-edit,
+.result-download,
+.result-delete {
+  min-height: 32px;
+  border-radius: 999px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.result-tile figcaption {
+  min-height: 38px;
+  padding: 8px 10px;
+  font-size: 12px;
+}
+
+
+@media (min-width: 1440px) {
+  .studio-body {
+    --studio-sidebar-width: clamp(300px, 17vw, 420px);
+    --studio-panel-padding: clamp(8px, 0.7vw, 14px);
+    --studio-card-padding: clamp(10px, 0.65vw, 14px);
+    --studio-composer-padding: clamp(8px, 0.7vw, 14px);
+  }
+
+  .param-panel .ratio-grid {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+
+  .param-panel .resolution-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .composer-row {
+    grid-template-columns: minmax(0, 1fr) clamp(150px, 9vw, 220px);
+    gap: clamp(8px, 0.6vw, 14px);
+  }
+
+  .composer-panel .prompt-input {
+    height: clamp(64px, 8dvh, 112px);
+    max-height: 112px;
+    font-size: 13px;
+  }
+
+  .composer-panel.expanded .prompt-input {
+    height: clamp(150px, 21dvh, 280px);
+    max-height: 280px;
+  }
+
+  .prompt-history-popover {
+    width: min(760px, calc(100vw - var(--studio-sidebar-width) - 128px));
+  }
+}
+
+@media (min-width: 2200px) {
+  .studio-body {
+    --studio-sidebar-width: clamp(380px, 15vw, 560px);
+    --studio-panel-padding: clamp(12px, 0.55vw, 22px);
+    --studio-card-padding: clamp(12px, 0.55vw, 20px);
+    --studio-composer-padding: clamp(12px, 0.55vw, 22px);
+  }
+
+  .preview-header {
+    min-height: 62px;
+    padding: 14px 18px;
+  }
+
+  .preview-header h2 {
+    font-size: 20px;
+  }
+
+  .preview-header-actions {
+    gap: 12px;
+  }
+
+  .preview-mode-tab {
+    min-width: 98px;
+    min-height: 34px;
+    padding: 0 14px;
+    font-size: 13px;
+  }
+
+  .param-panel .control-section,
+  .param-panel .advanced-card {
+    border-radius: 12px;
+  }
+
+  .section-title {
+    font-size: 15px;
+  }
+
+  .control-label,
+  .studio-select,
+  .composer-panel .prompt-input {
+    font-size: 14px;
+  }
+
+  .composer-row {
+    grid-template-columns: minmax(0, 1fr) clamp(190px, 8vw, 280px);
+  }
+
+  .composer-actions .generate-button {
+    min-height: 0;
+    font-size: 14px;
+  }
+
+  .composer-tool-button,
+  .composer-size-button {
+    min-height: 30px;
+    padding: 0 12px;
+    font-size: 12px;
+  }
+}
+
+@media (min-width: 3200px) {
+  .studio-body {
+    --studio-sidebar-width: clamp(480px, 13vw, 680px);
+    --studio-panel-padding: 24px;
+    --studio-card-padding: 20px;
+    --studio-composer-padding: 24px;
+  }
+
+  .preview-header {
+    min-height: 72px;
+    padding: 18px 24px;
+  }
+
+  .preview-mode-tab {
+    min-width: 112px;
+    min-height: 38px;
+    font-size: 14px;
+  }
+
+  .empty-icon {
+    width: 88px;
+    height: 88px;
+  }
+
+  .empty-preview h2 {
+    font-size: 28px;
+  }
+
+  .empty-preview p {
+    font-size: 17px;
+  }
+
+  .composer-panel {
+    max-height: min(42dvh, 560px);
+  }
+
+  .composer-panel .prompt-input {
+    height: clamp(84px, 7dvh, 140px);
+    max-height: 140px;
+  }
+
+  .composer-panel.expanded .prompt-input {
+    height: clamp(190px, 19dvh, 360px);
+    max-height: 360px;
+  }
+}
+
+@media (max-width: 1180px) {
+  body:has(.image-studio-page) {
+    overflow: hidden;
+  }
+
+  main:has(.image-studio-page) {
+    height: calc(100dvh - 64px);
+    overflow: hidden;
+    padding: 0 !important;
+  }
+
+  .image-studio-page {
+    display: flex;
+    width: 100%;
+    margin: 0;
+    height: calc(100dvh - 64px);
+    overflow: hidden;
+  }
+
+  .preview-header-actions {
+    min-width: 0;
+  }
+
+  .preview-meta-pill {
+    width: 190px;
+    grid-template-columns: 36px 1px 78px 1px 44px;
+    gap: 8px;
+  }
+
+  .image-studio-shell {
+    height: 100%;
+    min-height: 0;
+  }
+
+  .studio-body {
+    --studio-sidebar-width: clamp(240px, 28vw, 300px);
+    --studio-panel-padding: 8px;
+    --studio-card-padding: 8px;
+    --studio-composer-padding: 8px;
+    grid-template-columns: minmax(0, 1fr) var(--studio-sidebar-width);
+    grid-template-rows: minmax(0, 1fr) max-content;
+    height: 100%;
+    min-height: 0;
+  }
+
+  .studio-body.history-mode {
+    grid-template-rows: minmax(0, 1fr) 0;
+  }
+
+  .studio-main {
+    border-right: 1px solid #e5e7eb;
+    border-bottom: 0;
+  }
+
+  .param-panel {
+    border-bottom: 0;
+  }
+
+  .composer-panel {
+    position: sticky;
+    bottom: 0;
+  }
+}
+
+@media (max-width: 720px) {
+  .image-studio-page {
+    width: 100%;
+    margin: 0;
+  }
+
+  .studio-tab {
+    flex: 1;
+    justify-content: center;
+    padding: 0 10px;
+  }
+
+  .studio-body {
+    display: flex;
+    overflow-y: auto;
+    grid-template-columns: none;
+    grid-template-rows: none;
+    flex-direction: column;
+  }
+
+  .studio-main {
+    min-height: 56dvh;
+    border-right: 0;
+    border-bottom: 1px solid #e5e7eb;
+  }
+
+  .param-panel {
+    order: 2;
+    overflow: visible;
+    width: 100%;
+    border-left: 0;
+    border-bottom: 1px solid #dbe4ef;
+    scrollbar-gutter: auto;
+  }
+
+  .composer-panel {
+    order: 3;
+    position: sticky;
+    bottom: 0;
+    width: 100%;
+    max-height: none;
+  }
+
+  .param-panel .ratio-grid {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+
+  .param-panel .resolution-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .composer-row,
+  .detail-list {
+    grid-template-columns: 1fr;
+  }
+
+  .prompt-head,
+  .prompt-head-actions,
+  .history-reuse-bar {
+    flex-wrap: wrap;
+  }
+
+  .prompt-history-popover {
+    width: min(94vw, 620px);
+    min-width: 0;
+  }
+
+  .composer-panel .template-inline-shell,
+  .composer-panel .prompt-section {
+    min-width: 0;
+  }
+
+  .composer-panel .template-inline-panel {
+    border-radius: 12px;
+  }
+
+  .composer-panel .template-drawer-body {
+    max-height: min(68dvh, 720px);
+  }
+
+  .preview-canvas,
+  .history-empty {
+    min-height: 420px;
+  }
+
+  .preview-header {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+
+  .preview-header-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+}
+
+@media (max-width: 480px) {
+  .param-panel .ratio-grid {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+
+  .param-panel .resolution-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .studio-tabs {
+    overflow-x: auto;
+  }
+
+  .studio-tab {
+    min-width: 84px;
+  }
+
+  .preview-mode-tabs {
+    flex: 1 1 auto;
+  }
+
+  .preview-mode-tab {
+    min-width: 0;
+    flex: 1 1 0;
+  }
+
+  .prompt-head-actions {
+    width: 100%;
+  }
+
+  .composer-tool-button,
+  .composer-size-button {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+}
+
+/* Image Studio visual system: refined AI editor skin. */

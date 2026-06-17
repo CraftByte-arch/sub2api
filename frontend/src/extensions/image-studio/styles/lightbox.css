@@ -1,0 +1,119 @@
+.image-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100dvh;
+  overflow: hidden;
+  padding: 14px;
+  background: rgba(2, 6, 23, 0.88);
+  backdrop-filter: blur(14px);
+}
+
+.lightbox-toolbar {
+  display: flex;
+  min-width: 0;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  color: #fff;
+}
+
+.lightbox-toolbar p {
+  margin: 0 0 4px;
+  color: #99f6e4;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.lightbox-toolbar h2 {
+  overflow: hidden;
+  max-width: min(760px, 58vw);
+  margin: 0;
+  color: #fff;
+  font-size: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lightbox-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.lightbox-action,
+.lightbox-close {
+  display: inline-flex;
+  min-height: 36px;
+  border: 1px solid rgba(153, 246, 228, 0.55);
+  border-radius: 8px;
+  padding: 0 12px;
+  align-items: center;
+  gap: 6px;
+  background: rgba(15, 118, 110, 0.2);
+  color: #fff;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.lightbox-zoom-label {
+  min-width: 48px;
+  color: #e2e8f0;
+  font-size: 12px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.lightbox-close {
+  border-color: rgba(226, 232, 240, 0.35);
+  background: rgba(15, 23, 42, 0.44);
+}
+
+.lightbox-stage {
+  display: grid;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  padding: 14px 0 0;
+  place-items: center;
+  touch-action: none;
+  user-select: none;
+  cursor: zoom-in;
+}
+
+.lightbox-stage.dragging {
+  cursor: grabbing;
+}
+
+.lightbox-stage img {
+  display: block;
+  max-width: calc(100vw - 28px);
+  max-height: calc(100dvh - 104px);
+  border-radius: 10px;
+  cursor: grab;
+  object-fit: contain;
+  box-shadow: 0 22px 60px rgba(0, 0, 0, 0.35);
+  transform-origin: center;
+  transition: transform 0.16s ease;
+  will-change: transform;
+}
+
+.lightbox-stage.dragging img {
+  cursor: grabbing;
+  transition: none;
+}
+
+
+.image-lightbox {
+  background: rgba(15, 23, 42, 0.82);
+}
+
+.lightbox-action,
+.lightbox-close {
+  border-radius: var(--studio-radius-control);
+}
