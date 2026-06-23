@@ -151,7 +151,11 @@
           </button>
         </div>
       </div>
-      <div class="composer-row">
+      <div
+        class="composer-row"
+        :class="{ 'transfer-origin-active': transferOriginActive }"
+        data-testid="composer-transfer-anchor"
+      >
         <textarea
           id="studio-prompt"
           :value="prompt"
@@ -218,6 +222,7 @@ const props = defineProps<{
   estimatedCost: string
   submitDisabled: boolean
   submitting: boolean
+  transferOriginActive?: boolean
   promptExamples: string[]
   promptPolishModel: string
   promptPolishModelOptions: ImageStudioSelectOption[]

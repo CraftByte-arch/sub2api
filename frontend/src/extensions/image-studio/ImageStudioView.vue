@@ -13,11 +13,47 @@
           :style="studioBodyStyle"
         >
           <main ref="studioMainRef" class="studio-main" aria-live="polite">
+            <Transition name="history-guidance">
+              <div
+                v-if="historyGuidanceVisible && activeTab !== 'history'"
+                class="history-guidance"
+                data-testid="history-guidance"
+                :style="historyGuidanceStyle"
+                role="status"
+                aria-live="polite"
+              >
+                <div class="history-guidance-icon" aria-hidden="true">
+                  <Icon name="clock" size="sm" />
+                </div>
+                <div class="history-guidance-copy">
+                  <strong>任务已进入历史记录</strong>
+                  <span>后台正在生成，可在历史中查看排队与生成进度。</span>
+                </div>
+                <div class="history-guidance-actions">
+                  <button
+                    type="button"
+                    class="history-guidance-primary"
+                    data-testid="history-guidance-open"
+                    @click="openGuidedHistory"
+                  >
+                    查看历史
+                  </button>
+                  <button
+                    type="button"
+                    class="history-guidance-close"
+                    aria-label="关闭历史引导"
+                    @click="dismissHistoryGuidance"
+                  >
+                    ×
+                  </button>
+                </div>
+              </div>
+            </Transition>
             <template v-if="activeTab === 'history'">
               <div class="history-header">
                 <div>
                   <h2>最近生成</h2>
-                  <p>{{ historyRecords.length }} / {{ historyLimit }} 条本地记录 · 仅保存在当前浏览器</p>
+                  <p>{{ historyRecords.length }} 条任务记录 · 缩略图列表，原图按需加载</p>
                 </div>
                 <div class="history-header-actions">
                   <div class="history-primary-tools">
@@ -38,50 +74,22 @@
                     />
                   </div>
                   <div class="history-secondary-tools">
-                    <div class="history-limit-control" :class="{ editing: historyLimitEditing }">
-                      <span>历史上限</span>
-                      <strong v-if="!historyLimitEditing">{{ historyLimit }}</strong>
-                      <template v-else>
-                        <input
-                          v-model.number="historyLimitDraft"
-                          type="number"
-                          min="1"
-                          max="200"
-                          step="1"
-                          aria-label="历史记录保存上限"
-                          @keydown.enter.prevent="submitHistoryLimitEdit"
-                          @keydown.esc.prevent="cancelHistoryLimitEdit"
-                        >
-                        <button type="button" @click="submitHistoryLimitEdit">保存</button>
-                        <button type="button" class="ghost" @click="cancelHistoryLimitEdit">取消</button>
-                      </template>
-                      <button
-                        v-if="!historyLimitEditing"
-                        type="button"
-                        class="history-limit-edit"
-                        aria-label="编辑历史记录保存上限"
-                        @click="startHistoryLimitEdit"
-                      >
-                        修改
-                      </button>
-                    </div>
-                    <div v-if="historyLimitConfirmOpen" class="history-limit-confirm" role="dialog" aria-modal="false">
-                      <strong>确认缩减历史记录？</strong>
-                      <p>
-                        目标数量小于当前历史记录数量，确认后会直接删除最早时间的
-                        {{ historyRecords.length - pendingHistoryLimit }} 条记录。
-                      </p>
-                      <div>
-                        <button type="button" @click="confirmHistoryLimitReduction">确认</button>
-                        <button type="button" class="ghost" @click="cancelHistoryLimitReduction">取消</button>
-                      </div>
-                    </div>
+                    <button
+                      type="button"
+                      class="secondary-action"
+                      data-testid="history-refresh-button"
+                      :disabled="refreshingHistory"
+                      @click="refreshDisplayedHistoryRecords"
+                    >
+                      <Icon name="refresh" size="sm" />
+                      {{ refreshingHistory ? '刷新中' : '刷新' }}
+                    </button>
                     <button
                       type="button"
                       class="secondary-action"
                       data-testid="history-cache-clean-button"
                       :disabled="cleaningHistoryCache"
-                      @click="clearOrphanHistoryCache"
+                      @click="clearHistoryImageCache"
                     >
                       <Icon name="trash" size="sm" />
                       {{ cleaningHistoryCache ? '清理中' : '清理缓存' }}
@@ -94,7 +102,7 @@
               <div v-if="historyRecords.length === 0" class="history-empty" data-testid="history-empty">
                 <Icon name="inbox" size="xl" />
                 <h2>还没有生成记录</h2>
-                <p>完成第一次生图后，这里会显示最近生成的缩略图和参数。</p>
+                <p>完成第一次生图后，这里会显示最近任务的缩略图和参数。</p>
               </div>
 
               <div v-else-if="filteredHistoryRecords.length === 0" class="history-empty compact">
@@ -103,53 +111,105 @@
                 <p>换个关键词，或者切回全部模式看看。</p>
               </div>
 
-              <div v-else class="history-grid" data-testid="history-grid">
-                <article
-                  v-for="record in filteredHistoryRecords"
-                  :key="record.id"
-                  class="history-card"
-                  :class="{ active: selectedHistoryId === record.id }"
-                  data-testid="history-card"
-                  @click="selectHistoryRecord(record)"
+              <div
+                v-else
+                ref="historyGridRef"
+                class="history-grid"
+                data-testid="history-grid"
+                :style="{ '--history-grid-columns': displayedHistoryColumns.length }"
+              >
+                <div
+                  v-for="(columnRecords, columnIndex) in displayedHistoryColumns"
+                  :key="`history-column-${columnIndex}`"
+                  class="history-grid-column"
                 >
-                  <div v-if="record.images[0]" class="history-preview-frame">
-                    <img :src="record.images[0].src" :alt="record.prompt || '生成记录'">
-                    <div class="history-card-actions">
-                      <button
-                        type="button"
-                        class="history-card-icon-button"
-                        data-testid="history-preview-image"
-                        aria-label="全屏查看"
-                        title="全屏查看"
-                        @click.stop="openHistoryLightbox(record)"
+                  <article
+                    v-for="record in columnRecords"
+                    :key="record.id"
+                    class="history-card"
+                    :class="{ active: selectedHistoryId === record.id, 'is-new': highlightedHistoryId === record.id }"
+                    data-testid="history-card"
+                    @click="selectHistoryRecord(record)"
+                  >
+                    <div class="history-preview-frame">
+                      <img
+                        v-if="record.images[0]"
+                        :src="record.images[0].src"
+                        :alt="record.prompt || '生成记录'"
+                        @error="handleHistoryThumbnailError(record)"
                       >
-                        <svg viewBox="0 0 1024 1024" aria-hidden="true">
-                          <path d="M145.066667 85.333333h153.6c25.6 0 42.666667-17.066667 42.666666-42.666666S324.266667 0 298.666667 0H34.133333C25.6 0 17.066667 8.533333 8.533333 17.066667 0 25.6 0 34.133333 0 42.666667v256c0 25.6 17.066667 42.666667 42.666667 42.666666s42.666667-17.066667 42.666666-42.666666V145.066667l230.4 230.4c17.066667 17.066667 42.666667 17.066667 59.733334 0 17.066667-17.066667 17.066667-42.666667 0-59.733334L145.066667 85.333333z m170.666666 563.2L162.133333 802.133333l-76.8 76.8V725.333333C85.333333 699.733333 68.266667 682.666667 42.666667 682.666667s-42.666667 17.066667-42.666667 42.666666v256c0 25.6 17.066667 42.666667 42.666667 42.666667h256c25.6 0 42.666667-17.066667 42.666666-42.666667s-17.066667-42.666667-42.666666-42.666666H145.066667l76.8-76.8 153.6-153.6c17.066667-17.066667 17.066667-42.666667 0-59.733334-17.066667-17.066667-42.666667-17.066667-59.733334 0z m665.6 34.133334c-25.6 0-42.666667 17.066667-42.666666 42.666666v153.6l-76.8-76.8-153.6-153.6c-17.066667-17.066667-42.666667-17.066667-59.733334 0-17.066667 17.066667-17.066667 42.666667 0 59.733334l153.6 153.6 76.8 76.8H725.333333c-25.6 0-42.666667 17.066667-42.666666 42.666666s17.066667 42.666667 42.666666 42.666667h256c25.6 0 42.666667-17.066667 42.666667-42.666667v-256c0-25.6-17.066667-42.666667-42.666667-42.666666z m0-682.666667h-256c-25.6 0-42.666667 17.066667-42.666666 42.666667s17.066667 42.666667 42.666666 42.666666h153.6l-76.8 76.8-153.6 153.6c-17.066667 17.066667-17.066667 42.666667 0 59.733334 17.066667 17.066667 42.666667 17.066667 59.733334 0l153.6-153.6 76.8-76.8v153.6c0 25.6 17.066667 42.666667 42.666666 42.666666s42.666667-17.066667 42.666667-42.666666v-256c0-25.6-17.066667-42.666667-42.666667-42.666667z" />
-                        </svg>
-                      </button>
-                      <button
-                        type="button"
-                        class="history-card-icon-button danger"
-                        data-testid="history-card-delete-button"
-                        aria-label="删除记录"
-                        title="删除记录"
-                        @click.stop="deleteHistoryRecord(record)"
+                      <div
+                        v-else
+                        class="history-preview-placeholder"
+                        data-testid="history-preview-placeholder"
+                        :style="{ '--history-preview-aspect-ratio': historyPreviewAspectRatio(record) }"
                       >
-                        <svg viewBox="0 0 1024 1024" aria-hidden="true">
-                          <path d="M254.398526 804.702412l-0.030699-4.787026C254.367827 801.546535 254.380106 803.13573 254.398526 804.702412zM614.190939 259.036661c-22.116717 0-40.047088 17.910928-40.047088 40.047088l0.37146 502.160911c0 22.097274 17.930371 40.048111 40.047088 40.048111s40.048111-17.950837 40.048111-40.048111l-0.350994-502.160911C654.259516 276.948613 636.328122 259.036661 614.190939 259.036661zM893.234259 140.105968l-318.891887 0.148379-0.178055-41.407062c0-22.13616-17.933441-40.048111-40.067554-40.048111-7.294127 0-14.126742 1.958608-20.017916 5.364171-5.894244-3.405563-12.729929-5.364171-20.031219-5.364171-22.115694 0-40.047088 17.911952-40.047088 40.048111l0.188288 41.463344-230.115981 0.106424c-3.228531-0.839111-6.613628-1.287319-10.104125-1.287319-3.502777 0-6.89913 0.452301-10.136871 1.296529l-73.067132 0.033769c-22.115694 0-40.048111 17.950837-40.048111 40.047088 0 22.13616 17.931395 40.048111 40.048111 40.048111l43.176358-0.020466 0.292666 617.902982 0.059352 0 0 42.551118c0 44.233434 35.862789 80.095199 80.095199 80.095199l40.048111 0 0 0.302899 440.523085-0.25685 0-0.046049 40.048111 0c43.663452 0 79.146595-34.95 80.054267-78.395488l-0.329505-583.369468c0-22.135136-17.930371-40.047088-40.048111-40.047088-22.115694 0-40.047088 17.911952-40.047088 40.047088l0.287549 509.324054c-1.407046 60.314691-18.594497 71.367421-79.993892 71.367421l41.575908 1.022283-454.442096 0.26606 52.398394-1.288343c-62.715367 0-79.305207-11.522428-80.0645-75.308173l0.493234 76.611865-0.543376 0-0.313132-660.818397 236.82273-0.109494c1.173732 0.103354 2.360767 0.166799 3.561106 0.166799 1.215688 0 2.416026-0.063445 3.604084-0.169869l32.639375-0.01535c1.25355 0.118704 2.521426 0.185218 3.805676 0.185218 1.299599 0 2.582825-0.067538 3.851725-0.188288l354.913289-0.163729c22.115694 0 40.050158-17.911952 40.050158-40.047088C933.283394 158.01792 915.349953 140.105968 893.234259 140.105968zM774.928806 815.294654l0.036839 65.715701-0.459464 0L774.928806 815.294654zM413.953452 259.036661c-22.116717 0-40.048111 17.910928-40.048111 40.047088l0.37146 502.160911c0 22.097274 17.931395 40.048111 40.049135 40.048111 22.115694 0 40.047088-17.950837 40.047088-40.048111l-0.37146-502.160911C454.00054 276.948613 436.069145 259.036661 413.953452 259.036661z" />
-                        </svg>
-                      </button>
+                        <span class="history-preview-placeholder-kicker">{{ historyPreviewPlaceholderKicker(record) }}</span>
+                        <strong>{{ historyStatusText(record) }}</strong>
+                        <span>{{ historyPreviewPlaceholderCopy(record) }}</span>
+                        <button
+                          v-if="canRegenerateHistoryRecord(record)"
+                          type="button"
+                          class="history-preview-regenerate-button"
+                          data-testid="history-regenerate-button"
+                          :disabled="regeneratingHistoryJobId === record.id"
+                          @click.stop="regenerateHistoryRecord(record)"
+                        >
+                          {{ regeneratingHistoryJobId === record.id ? '重新生成中' : '重新生成' }}
+                        </button>
+                      </div>
+                      <div class="history-card-actions">
+                        <button
+                          v-if="record.images[0]"
+                          type="button"
+                          class="history-card-icon-button"
+                          data-testid="history-preview-image"
+                          aria-label="全屏查看"
+                          title="全屏查看"
+                          @click.stop="openHistoryLightbox(record)"
+                        >
+                          <svg viewBox="0 0 1024 1024" aria-hidden="true">
+                            <path d="M145.066667 85.333333h153.6c25.6 0 42.666667-17.066667 42.666666-42.666666S324.266667 0 298.666667 0H34.133333C25.6 0 17.066667 8.533333 8.533333 17.066667 0 25.6 0 34.133333 0 42.666667v256c0 25.6 17.066667 42.666667 42.666667 42.666666s42.666667-17.066667 42.666666-42.666666V145.066667l230.4 230.4c17.066667 17.066667 42.666667 17.066667 59.733334 0 17.066667-17.066667 17.066667-42.666667 0-59.733334L145.066667 85.333333z m170.666666 563.2L162.133333 802.133333l-76.8 76.8V725.333333C85.333333 699.733333 68.266667 682.666667 42.666667 682.666667s-42.666667 17.066667-42.666667 42.666666v256c0 25.6 17.066667 42.666667 42.666667 42.666667h256c25.6 0 42.666667-17.066667 42.666666-42.666667s-17.066667-42.666667-42.666666-42.666666H145.066667l76.8-76.8 153.6-153.6c17.066667-17.066667 17.066667-42.666667 0-59.733334-17.066667-17.066667-42.666667-17.066667-59.733334 0z m665.6 34.133334c-25.6 0-42.666667 17.066667-42.666666 42.666666v153.6l-76.8-76.8-153.6-153.6c-17.066667-17.066667-42.666667-17.066667-59.733334 0-17.066667 17.066667-17.066667 42.666667 0 59.733334l153.6 153.6 76.8 76.8H725.333333c-25.6 0-42.666667 17.066667-42.666666 42.666666s17.066667 42.666667 42.666666 42.666667h256c25.6 0 42.666667-17.066667 42.666667-42.666667v-256c0-25.6-17.066667-42.666667-42.666667-42.666666z m0-682.666667h-256c-25.6 0-42.666667 17.066667-42.666666 42.666667s17.066667 42.666667 42.666666 42.666666h153.6l-76.8 76.8-153.6 153.6c-17.066667 17.066667-17.066667 42.666667 0 59.733334 17.066667 17.066667 42.666667 17.066667 59.733334 0l153.6-153.6 76.8-76.8v153.6c0 25.6 17.066667 42.666667 42.666666 42.666666s42.666667-17.066667 42.666667-42.666666v-256c0-25.6-17.066667-42.666667-42.666667-42.666667z" />
+                          </svg>
+                        </button>
+                        <button
+                          type="button"
+                          class="history-card-icon-button danger"
+                          data-testid="history-card-delete-button"
+                          aria-label="删除记录"
+                          title="删除记录"
+                          @click.stop="deleteHistoryRecord(record)"
+                        >
+                          <svg viewBox="0 0 1024 1024" aria-hidden="true">
+                            <path d="M254.398526 804.702412l-0.030699-4.787026C254.367827 801.546535 254.380106 803.13573 254.398526 804.702412zM614.190939 259.036661c-22.116717 0-40.047088 17.910928-40.047088 40.047088l0.37146 502.160911c0 22.097274 17.930371 40.048111 40.047088 40.048111s40.048111-17.950837 40.048111-40.048111l-0.350994-502.160911C654.259516 276.948613 636.328122 259.036661 614.190939 259.036661zM893.234259 140.105968l-318.891887 0.148379-0.178055-41.407062c0-22.13616-17.933441-40.048111-40.067554-40.048111-7.294127 0-14.126742 1.958608-20.017916 5.364171-5.894244-3.405563-12.729929-5.364171-20.031219-5.364171-22.115694 0-40.047088 17.911952-40.047088 40.048111l0.188288 41.463344-230.115981 0.106424c-3.228531-0.839111-6.613628-1.287319-10.104125-1.287319-3.502777 0-6.89913 0.452301-10.136871 1.296529l-73.067132 0.033769c-22.115694 0-40.048111 17.950837-40.048111 40.047088 0 22.13616 17.931395 40.048111 40.048111 40.048111l43.176358-0.020466 0.292666 617.902982 0.059352 0 0 42.551118c0 44.233434 35.862789 80.095199 80.095199 80.095199l40.048111 0 0 0.302899 440.523085-0.25685 0-0.046049 40.048111 0c43.663452 0 79.146595-34.95 80.054267-78.395488l-0.329505-583.369468c0-22.135136-17.930371-40.047088-40.048111-40.047088-22.115694 0-40.047088 17.911952-40.047088 40.047088l0.287549 509.324054c-1.407046 60.314691-18.594497 71.367421-79.993892 71.367421l41.575908 1.022283-454.442096 0.26606 52.398394-1.288343c-62.715367 0-79.305207-11.522428-80.0645-75.308173l0.493234 76.611865-0.543376 0-0.313132-660.818397 236.82273-0.109494c1.173732 0.103354 2.360767 0.166799 3.561106 0.166799 1.215688 0 2.416026-0.063445 3.604084-0.169869l32.639375-0.01535c1.25355 0.118704 2.521426 0.185218 3.805676 0.185218 1.299599 0 2.582825-0.067538 3.851725-0.188288l354.913289-0.163729c22.115694 0 40.050158-17.911952 40.050158-40.047088C933.283394 158.01792 915.349953 140.105968 893.234259 140.105968zM774.928806 815.294654l0.036839 65.715701-0.459464 0L774.928806 815.294654zM413.953452 259.036661c-22.116717 0-40.048111 17.910928-40.048111 40.047088l0.37146 502.160911c0 22.097274 17.931395 40.048111 40.049135 40.048111 22.115694 0 40.047088-17.950837 40.047088-40.048111l-0.37146-502.160911C454.00054 276.948613 436.069145 259.036661 413.953452 259.036661z" />
+                          </svg>
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                  <div class="history-card-body">
-                    <div class="history-card-meta">
-                      <span>{{ record.mode === 'edit' ? '图生图' : '文生图' }}</span>
-                      <span>{{ formatHistoryTime(record.createdAt) }}</span>
+                    <div class="history-card-body">
+                      <div class="history-card-meta">
+                        <span>{{ record.mode === 'edit' ? '图生图' : '文生图' }}</span>
+                        <span>{{ formatHistoryTime(record.createdAt) }}</span>
+                      </div>
+                      <h2>{{ record.prompt || '未填写提示词' }}</h2>
+                      <p>{{ historyStatusText(record) }}</p>
+                      <p>{{ record.size }} · {{ record.outputFormat.toUpperCase() }}</p>
                     </div>
-                    <h2>{{ record.prompt || '未填写提示词' }}</h2>
-                    <p>{{ record.size }} · {{ record.outputFormat.toUpperCase() }}</p>
-                  </div>
-                </article>
+                  </article>
+                </div>
+              </div>
+              <div v-if="historyRecords.length > 0" class="history-pagination">
+                <span>已显示 {{ historyRecords.length }} / 共 {{ historyTotal }} 条</span>
+                <button
+                  v-if="hasMoreHistory"
+                  type="button"
+                  class="secondary-action"
+                  data-testid="history-load-more-button"
+                  :disabled="loadingMoreHistory"
+                  @click="loadMoreHistoryRecords"
+                >
+                  {{ loadingMoreHistory ? '加载中' : '加载更多' }}
+                </button>
               </div>
             </template>
 
@@ -240,10 +300,29 @@
               role="tablist"
               aria-label="Image studio modes"
             >
+              <div
+                v-if="activeTab !== 'history'"
+                class="history-nav-guidance"
+                data-testid="history-nav-guidance"
+              >
+                <div class="history-nav-guidance-copy">
+                  <strong>任务进度请到历史记录查看</strong>
+                  <div class="history-nav-guidance-stats">
+                    <span class="history-nav-guidance-stat">
+                      <b>生成中：</b>
+                      <em>{{ historyStats.pendingCount }}</em>
+                    </span>
+                    <span class="history-nav-guidance-stat">
+                      <b>失败：</b>
+                      <em>{{ historyStats.failedCount }}</em>
+                    </span>
+                  </div>
+                </div>
+              </div>
               <button
                 type="button"
                 class="studio-tab"
-                :class="{ active: activeTab === 'history', 'history-return-tab': activeTab === 'history' }"
+                :class="{ active: activeTab === 'history', 'history-return-tab': activeTab === 'history', 'has-pending-jobs': historyStats.pendingCount > 0 || historyStats.failedCount > 0 }"
                 data-testid="tab-history"
                 @click="toggleHistoryTab"
               >
@@ -321,7 +400,8 @@
               :composer-expanded="composerExpanded"
               :estimated-cost="estimatedCost"
               :submit-disabled="submitDisabled"
-              :submitting="submitting"
+              :submitting="submitting || historyTransferVisible"
+              :transfer-origin-active="historyTransferVisible"
               :prompt-examples="promptExamples"
               :prompt-polish-model="promptPolishModel"
               :prompt-polish-model-options="promptPolishModelOptions"
@@ -376,6 +456,17 @@
             @drag-end="endLightboxDrag"
             @download="downloadLightboxImageAsFormat"
           />
+          <div
+            v-if="historyTransferVisible"
+            class="history-transfer-effect"
+            data-testid="history-transfer-effect"
+            aria-hidden="true"
+            :style="historyTransferStyle"
+          >
+            <span class="history-transfer-aura" data-testid="history-transfer-aura"></span>
+            <span class="history-transfer-orb" data-testid="history-transfer-orb"></span>
+            <span class="history-transfer-arrival"></span>
+          </div>
         </div>
       </section>
     </div>
@@ -394,20 +485,30 @@ import PromptComposer from './components/PromptComposer.vue'
 import ReferenceStrip from './components/ReferenceStrip.vue'
 import StudioSelect from './components/StudioSelect.vue'
 import TemplateDrawer from './components/TemplateDrawer.vue'
-import { sendPromptPolishRequest, sendResponsesImageRequest } from './imageStudioApi'
 import {
-  buildResponsesEditPayload,
-  buildResponsesGenerationPayload,
-  parseAdvancedJson
-} from './payload'
-import { extractImageStudioOutputs } from './output'
+  createImageStudioJob,
+  deleteImageStudioJob,
+  fetchImageStudioThumbnail,
+  fetchImageStudioOriginal,
+  getImageStudioJobStats,
+  listImageStudioJobs,
+  sendPromptPolishRequest
+} from './imageStudioApi'
+import {
+  clearImageStudioAssetCache,
+  deleteImageStudioAssetCache,
+  getCachedImageStudioAsset,
+  putImageStudioAssetCache
+} from './imageStudioCache'
+import { estimateHistoryColumnCount, groupHistoryRecordsByVisualColumn } from './historyLayout'
+import { parseAdvancedJson } from './payload'
 import type {
+  ImageStudioJob,
   ImageStudioHistoryRecord,
   ImageStudioLightboxImage,
   ImageStudioMode,
   ImageStudioOutput,
   ImageStudioPromptHistoryRecord,
-  ImageStudioStreamEvent,
   ImageStudioStreamState,
   ImageStudioSelectOption,
   StudioApiKey
@@ -421,6 +522,16 @@ interface ImageStudioCreationSession {
   errorMessage: string
   outputs: ImageStudioOutput[]
   streamState: ImageStudioStreamState
+}
+
+interface HistoryTransferState {
+  visible: boolean
+  startX: number
+  startY: number
+  originWidth: number
+  originHeight: number
+  endX: number
+  endY: number
 }
 
 function createCreationSession(): ImageStudioCreationSession {
@@ -463,11 +574,26 @@ const cleaningHistoryCache = ref(false)
 const historyCacheMessage = ref('')
 const historySearch = ref('')
 const historyModeFilter = ref<'all' | Exclude<ImageStudioMode, 'history'>>('all')
-const historyLimit = ref(30)
-const historyLimitDraft = ref(30)
-const historyLimitEditing = ref(false)
-const historyLimitConfirmOpen = ref(false)
-const pendingHistoryLimit = ref(30)
+const historyTotal = ref(0)
+const historyPage = ref(1)
+const loadingMoreHistory = ref(false)
+const refreshingHistory = ref(false)
+const historyStats = reactive({
+  pendingCount: 0,
+  failedCount: 0
+})
+const regeneratingHistoryJobId = ref('')
+const historyGuidanceVisible = ref(false)
+const historyTransferState = ref<HistoryTransferState>({
+  visible: false,
+  startX: 0,
+  startY: 0,
+  originWidth: 0,
+  originHeight: 0,
+  endX: 0,
+  endY: 0
+})
+const highlightedHistoryId = ref('')
 const selectedResolutionValue = ref('1024x1024')
 const referenceFiles = ref<File[]>([])
 const referencePreviewUrls = ref<string[]>([])
@@ -489,17 +615,17 @@ const maskFile = ref<File | null>(null)
 const studioMainRef = ref<HTMLElement | null>(null)
 const composerPanelRef = ref<HTMLElement | null>(null)
 const templateDrawerHeight = ref<number | null>(null)
+const historyGridRef = ref<HTMLElement | null>(null)
+const historyColumnCount = ref(1)
 const maxReferenceImages = 4
 const maxReferenceImageSize = 20 * 1024 * 1024
-const historyStorageKey = 'sub2api:image-studio:history:v1'
-const historyLimitStorageKey = 'sub2api:image-studio:history-limit:v1'
 const promptHistoryStorageKey = 'sub2api:image-studio:prompt-history:v1'
-const historyDbName = 'sub2api-image-studio'
-const historyDbStoreName = 'history-images'
-const historyDbVersion = 1
-const defaultHistoryLimit = 30
-const minHistoryLimit = 1
-const maxHistoryLimit = 200
+const historyPageSize = 50
+const originalImageCache = new Map<number, { objectUrl: string, blob: Blob }>()
+const thumbnailImageCache = new Map<number, string>()
+let historyGuidanceTimer: number | undefined
+let highlightedHistoryTimer: number | undefined
+let historyTransferTimer: number | undefined
 
 const historyModeFilterOptions = [
   { value: 'all', label: '全部' },
@@ -644,7 +770,7 @@ const outputs = computed(() => activeCreationSession.value.outputs)
 const errorMessage = computed(() => activeCreationSession.value.errorMessage)
 const generationStreamState = computed(() => activeCreationSession.value.streamState)
 const historyTabLabel = computed(() => {
-  if (activeTab.value !== 'history') return '记录'
+  if (activeTab.value !== 'history') return '历史记录'
   return lastCreationTab.value === 'edit' ? '返回图生图' : '返回文生图'
 })
 const filteredHistoryRecords = computed(() => {
@@ -661,6 +787,42 @@ const filteredHistoryRecords = computed(() => {
     ].join(' ').toLowerCase().includes(query)
   })
 })
+const displayedHistoryColumns = computed(() =>
+  groupHistoryRecordsByVisualColumn(filteredHistoryRecords.value, historyColumnCount.value)
+)
+const hasMoreHistory = computed(() => historyRecords.value.length < historyTotal.value)
+const historyTransferVisible = computed(() => historyTransferState.value.visible)
+const historyGuidanceStyle = computed(() => {
+  const viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 0
+  if (viewportWidth > 0 && viewportWidth <= 720) {
+    return { '--history-guidance-max-width': 'calc(100vw - 24px)' }
+  }
+
+  const mainRect = studioMainRef.value?.getBoundingClientRect()
+  const maxWidth = Math.min(780, Math.max(320, (mainRect?.width || viewportWidth || 780) - 40))
+  const left = mainRect ? Math.round(mainRect.left + mainRect.width / 2) : Math.round((viewportWidth || maxWidth) / 2)
+  const top = mainRect ? Math.round(mainRect.top + 20) : 92
+
+  return {
+    left: `${left}px`,
+    top: `${top}px`,
+    '--history-guidance-max-width': `${maxWidth}px`
+  }
+})
+const historyTransferStyle = computed(() => ({
+  '--transfer-start-x': `${Math.round(historyTransferState.value.startX)}px`,
+  '--transfer-start-y': `${Math.round(historyTransferState.value.startY)}px`,
+  '--transfer-origin-width': `${Math.round(historyTransferState.value.originWidth)}px`,
+  '--transfer-origin-height': `${Math.round(historyTransferState.value.originHeight)}px`,
+  '--transfer-end-x': `${Math.round(historyTransferState.value.endX)}px`,
+  '--transfer-end-y': `${Math.round(historyTransferState.value.endY)}px`,
+  '--transfer-dx': `${Math.round(historyTransferState.value.endX - historyTransferState.value.startX)}px`,
+  '--transfer-dy': `${Math.round(historyTransferState.value.endY - historyTransferState.value.startY)}px`,
+  '--transfer-angle': `${Math.atan2(
+    historyTransferState.value.endY - historyTransferState.value.startY,
+    historyTransferState.value.endX - historyTransferState.value.startX
+  )}rad`
+}))
 const lightboxImageStyle = computed(() => ({
   transform: `translate3d(${lightboxOffset.value.x}px, ${lightboxOffset.value.y}px, 0) scale(${lightboxZoom.value})`
 }))
@@ -687,7 +849,7 @@ const estimatedCost = computed(() => {
   return `$${(unitPrice * multiplier).toFixed(2)}`
 })
 const submitDisabled = computed(() => {
-  if (submitting.value || !selectedKeyValue.value) return true
+  if (submitting.value || historyTransferVisible.value || !selectedKeyValue.value) return true
   if (activeTab.value === 'edit') return referenceFiles.value.length === 0
   if (!prompt.value.trim()) return true
   return false
@@ -736,19 +898,18 @@ let layoutResizeObserver: ResizeObserver | null = null
 onMounted(async () => {
   document.addEventListener('pointerdown', handleDocumentPointerDown)
   document.addEventListener('paste', handleDocumentPaste)
-  window.addEventListener('resize', syncTemplateDrawerLayout)
-  historyLimit.value = loadHistoryLimit()
-  historyLimitDraft.value = historyLimit.value
+  window.addEventListener('resize', syncResponsiveLayout)
   historyRecords.value = await loadHistoryRecords()
+  await refreshHistoryStats()
   promptHistoryRecords.value = loadPromptHistoryRecords()
   selectedHistoryId.value = historyRecords.value[0]?.id ?? ''
   await loadKeys()
   layoutResizeObserver = new ResizeObserver(() => {
-    syncTemplateDrawerLayout()
+    syncResponsiveLayout()
   })
   if (studioMainRef.value) layoutResizeObserver.observe(studioMainRef.value)
   if (composerPanelRef.value) layoutResizeObserver.observe(composerPanelRef.value)
-  syncTemplateDrawerLayout()
+  syncResponsiveLayout()
 })
 
 watch(selectedRatioValue, () => {
@@ -770,20 +931,30 @@ watch(model, () => {
 onBeforeUnmount(() => {
   document.removeEventListener('pointerdown', handleDocumentPointerDown)
   document.removeEventListener('paste', handleDocumentPaste)
-  window.removeEventListener('resize', syncTemplateDrawerLayout)
+  window.removeEventListener('resize', syncResponsiveLayout)
   if (suppressReferenceTransitionTimer) window.clearTimeout(suppressReferenceTransitionTimer)
+  if (historyGuidanceTimer) window.clearTimeout(historyGuidanceTimer)
+  if (highlightedHistoryTimer) window.clearTimeout(highlightedHistoryTimer)
+  if (historyTransferTimer) window.clearTimeout(historyTransferTimer)
   layoutResizeObserver?.disconnect()
   revokeReferencePreviewUrls()
+  revokeOriginalImageCache()
+  revokeThumbnailImageCache()
 })
 
 watch(
   [activeTab, templateDrawerOpen, composerExpanded],
   async () => {
     await nextTick()
-    syncTemplateDrawerLayout()
+    syncResponsiveLayout()
   },
   { immediate: true }
 )
+
+watch(filteredHistoryRecords, async () => {
+  await nextTick()
+  syncHistoryColumnCount()
+})
 
 function setActiveTab(nextTab: ImageStudioMode) {
   const previousTab = activeTab.value
@@ -803,6 +974,9 @@ function setActiveTab(nextTab: ImageStudioMode) {
   if (nextTab === 'edit') templateMode.value = 'image-to-image'
   if (nextTab === 'history') {
     selectedHistoryId.value = selectedHistoryRecord.value?.id ?? ''
+    dismissHistoryGuidance()
+    void refreshHistoryRecords()
+    void refreshHistoryStats()
   }
 }
 
@@ -830,21 +1004,37 @@ function syncTemplateDrawerLayout() {
   templateDrawerHeight.value = available > 0 ? available : null
 }
 
+function syncResponsiveLayout() {
+  syncTemplateDrawerLayout()
+  syncHistoryColumnCount()
+}
+
+function syncHistoryColumnCount() {
+  if (activeTab.value !== 'history') return
+  const gridEl = historyGridRef.value
+  const width = gridEl?.clientWidth || studioMainRef.value?.clientWidth || 0
+  historyColumnCount.value = estimateHistoryColumnCount(width)
+}
+
 async function loadKeys() {
   loadingKeys.value = true
   setSessionError(activeCreationSession.value, '')
   try {
     const response = await keysAPI.list(1, 100)
-    apiKeys.value = (response.items as StudioApiKey[]).filter((key) => key.status === 'active')
-    const preferred = apiKeys.value.find((key) =>
-      key.group?.platform === 'openai' && key.group?.allow_image_generation !== false
-    ) ?? apiKeys.value[0]
+    apiKeys.value = (response.items as StudioApiKey[]).filter(isImageStudioApiKey)
+    const preferred = apiKeys.value[0]
     selectedKeyValue.value = preferred?.key ?? ''
   } catch (error) {
     setSessionError(activeCreationSession.value, error instanceof Error ? error.message : '加载 API Key 失败')
   } finally {
     loadingKeys.value = false
   }
+}
+
+function isImageStudioApiKey(key: StudioApiKey) {
+  return key.status === 'active' &&
+    key.group?.platform === 'openai' &&
+    key.group?.allow_image_generation === true
 }
 
 async function handleSubmit() {
@@ -870,22 +1060,22 @@ async function handleSubmit() {
       count: 1,
       advancedParams
     }
-    const requestedOutputFormat = commonInput.outputFormat || 'jpeg'
     const requestInput = {
       ...commonInput,
-      outputFormat: requestedOutputFormat
+      outputFormat: commonInput.outputFormat || 'jpeg'
     }
 
-    const response = submitMode === 'edit'
-      ? await submitEdit(requestInput, session)
-      : await submitGeneration(requestInput, session)
+    updateGenerationStreamState(session, 'preparing', '任务已创建，正在进入队列...')
+    const job = submitMode === 'edit'
+      ? await submitEdit(requestInput)
+      : await submitGeneration(requestInput)
 
-    updateGenerationStreamState(session, 'image_done', '画面已经生成，正在整理格式...')
-    const extractedOutputs = extractImageStudioOutputs(response)
-    session.outputs = await restoreOutputsToRequestedFormat(extractedOutputs, requestedOutputFormat)
-    updateGenerationStreamState(session, 'completed', '生成完成')
-    persistHistoryRecord(commonInput, session.outputs, submitMode)
+    updateSessionFromJob(job, session)
+    await upsertHistoryRecord(job, true)
+    showHistoryGuidance(job)
     addPromptHistoryRecord(commonInput.prompt, submitMode, 'generated')
+    session.outputs = []
+    session.streamState = createIdleStreamState()
   } catch (error) {
     setSessionError(session, error instanceof Error ? error.message : '生成失败')
     updateGenerationStreamState(session, 'failed', session.errorMessage)
@@ -914,102 +1104,182 @@ function updateGenerationStreamState(
   }
 }
 
-function handleResponsesStreamEvent(event: ImageStudioStreamEvent, session: ImageStudioCreationSession) {
-  switch (event.type) {
-    case 'response.created':
-      updateGenerationStreamState(session, 'created', '正在理解你的提示词...')
-      break
-    case 'response.in_progress':
-      updateGenerationStreamState(session, 'preparing', '正在整理画面方向...')
-      break
-    case 'response.output_item.added':
-      if (event.data.item?.type === 'image_generation_call') {
-        updateGenerationStreamState(session, 'image_task_created', '正在搭建画面构图...')
-      }
-      break
-    case 'response.image_generation_call.in_progress':
-      updateGenerationStreamState(session, 'image_in_progress', '正在安排主体、光线和风格...')
-      break
-    case 'response.image_generation_call.generating':
-      updateGenerationStreamState(session, 'generating', '正在绘制画面...')
-      break
-    case 'keepalive':
-      if (session.streamState.phase === 'generating' || session.streamState.phase === 'image_in_progress') {
-        updateGenerationStreamState(session, session.streamState.phase, '正在处理更多细节...')
-      }
-      break
-    case 'response.image_generation_call.partial_image':
-      handlePartialImageEvent(event, session)
-      break
-    case 'response.output_item.done':
-      if (event.data.item?.type === 'image_generation_call') {
-        handleImageDoneEvent(event, session)
-      }
-      break
-    case 'response.completed':
-      updateGenerationStreamState(session, 'completed', '画面完成，正在呈现结果...')
-      break
+function createIdleStreamState(): ImageStudioStreamState {
+  return {
+    phase: 'idle',
+    message: ''
   }
 }
 
-function handlePartialImageEvent(event: ImageStudioStreamEvent, session: ImageStudioCreationSession) {
-  const b64 = typeof event.data.partial_image_b64 === 'string' ? event.data.partial_image_b64 : ''
-  if (!b64) return
-  session.outputs = [{
-    id: `partial-${event.data.item_id || event.data.sequence_number || Date.now()}`,
-    kind: 'b64_json',
-    src: toImageDataUrl(b64, mimeTypeFromStreamOutputFormat(event.data.output_format)),
-    mimeType: mimeTypeFromStreamOutputFormat(event.data.output_format),
-    raw: event.data
-  }]
-  updateGenerationStreamState(
-    session,
-    'partial_preview',
-    '已经有一个预览版本，正在继续打磨细节...',
-    imageStreamDetail(event.data)
-  )
+function updateSessionFromJob(job: ImageStudioJob, session: ImageStudioCreationSession) {
+  if (job.status === 'queued') {
+    updateGenerationStreamState(
+      session,
+      'preparing',
+      job.attemptCount > 0 ? '任务重试排队中，等待再次处理...' : '任务已进入队列，等待处理...'
+    )
+    return
+  }
+  if (job.status === 'running') {
+    updateGenerationStreamState(
+      session,
+      'generating',
+      job.attemptCount > 0 ? `正在第 ${job.attemptCount + 1} 次尝试生成图片...` : '正在生成图片...'
+    )
+    return
+  }
+  if (job.status === 'succeeded') {
+    updateGenerationStreamState(session, 'image_done', '图片生成成功，正在加载原图...')
+    return
+  }
+  updateGenerationStreamState(session, 'failed', job.errorMessage || '生成失败')
 }
 
-function handleImageDoneEvent(event: ImageStudioStreamEvent, session: ImageStudioCreationSession) {
-  const item = event.data.item
-  const result = typeof item?.result === 'string' ? item.result : ''
-  if (!result) return
-  const mimeType = mimeTypeFromStreamOutputFormat(item.output_format)
-  session.outputs = [{
-    id: typeof item.id === 'string' ? item.id : `image-${Date.now()}`,
-    kind: 'b64_json',
-    src: toImageDataUrl(result, mimeType),
-    mimeType,
-    revisedPrompt: typeof item.revised_prompt === 'string' ? item.revised_prompt : undefined,
-    raw: item
-  }]
-  updateGenerationStreamState(
-    session,
-    'image_done',
-    '画面已经生成，正在做最后整理...',
-    imageStreamDetail(item)
-  )
+async function refreshHistoryRecords(preferredJobId?: number) {
+  const response = await listImageStudioJobs(1, historyPageSize)
+  historyPage.value = 1
+  historyTotal.value = response.total
+  historyRecords.value = await Promise.all(response.items.map(mapJobToHistoryRecord))
+  await refreshHistoryStats()
+  if (preferredJobId) {
+    selectedHistoryId.value = String(preferredJobId)
+    highlightHistoryRecord(preferredJobId)
+    return
+  }
+  if (!historyRecords.value.some((record) => record.id === selectedHistoryId.value)) {
+    selectedHistoryId.value = historyRecords.value[0]?.id ?? ''
+  }
 }
 
-function imageStreamDetail(record: Record<string, any>) {
-  const parts = [
-    typeof record.size === 'string' ? record.size : '',
-    typeof record.quality === 'string' ? `${record.quality} quality` : '',
-    typeof record.output_format === 'string' ? record.output_format.toUpperCase() : ''
-  ].filter(Boolean)
-  return parts.join(' · ')
+async function refreshHistoryStats() {
+  try {
+    const stats = await getImageStudioJobStats()
+    historyStats.pendingCount = stats.pendingCount
+    historyStats.failedCount = stats.failedCount
+  } catch {
+    historyStats.pendingCount = 0
+    historyStats.failedCount = 0
+  }
 }
 
-function toImageDataUrl(value: string, mimeType: string) {
-  if (value.startsWith('data:')) return value
-  return `data:${mimeType};base64,${value}`
+async function upsertHistoryRecord(job: ImageStudioJob, selectRecord = false) {
+  const nextRecord = await mapJobToHistoryRecord(job)
+  const nextRecords = historyRecords.value.filter((record) => record.id !== nextRecord.id)
+  historyRecords.value = [nextRecord, ...nextRecords]
+  historyTotal.value = Math.max(historyTotal.value, historyRecords.value.length)
+  if (selectRecord || !selectedHistoryId.value) {
+    selectedHistoryId.value = nextRecord.id
+  }
+  highlightHistoryRecord(job.id)
+  await refreshHistoryStats()
 }
 
-function mimeTypeFromStreamOutputFormat(format: unknown) {
-  const normalized = typeof format === 'string' ? format.trim().toLowerCase() : ''
-  if (normalized === 'webp') return 'image/webp'
-  if (normalized === 'jpeg' || normalized === 'jpg') return 'image/jpeg'
-  return 'image/png'
+function showHistoryGuidance(job: ImageStudioJob) {
+  highlightHistoryRecord(job.id)
+  triggerHistoryTransfer()
+  historyGuidanceVisible.value = true
+  if (historyGuidanceTimer) window.clearTimeout(historyGuidanceTimer)
+  historyGuidanceTimer = window.setTimeout(() => {
+    historyGuidanceVisible.value = false
+    historyGuidanceTimer = undefined
+  }, 8000)
+}
+
+async function triggerHistoryTransfer() {
+  await nextTick()
+  const originEl = composerPanelRef.value?.querySelector('[data-testid="composer-transfer-anchor"]') as HTMLElement | null
+  const targetEl = document.querySelector('[data-testid="tab-history"]') as HTMLElement | null
+  if (!originEl || !targetEl) return
+
+  const originRect = originEl.getBoundingClientRect()
+  const targetRect = targetEl.getBoundingClientRect()
+  const startX = originRect.left + originRect.width / 2
+  const startY = originRect.top + originRect.height / 2
+  const endX = targetRect.left + targetRect.width / 2
+  const endY = targetRect.top + targetRect.height / 2
+
+  historyTransferState.value = {
+    visible: true,
+    startX,
+    startY,
+    originWidth: originRect.width,
+    originHeight: originRect.height,
+    endX,
+    endY
+  }
+  if (historyTransferTimer) window.clearTimeout(historyTransferTimer)
+  historyTransferTimer = window.setTimeout(() => {
+    historyTransferState.value = {
+      ...historyTransferState.value,
+      visible: false
+    }
+    historyTransferTimer = undefined
+  }, 1500)
+}
+
+function dismissHistoryGuidance() {
+  historyGuidanceVisible.value = false
+  if (historyGuidanceTimer) {
+    window.clearTimeout(historyGuidanceTimer)
+    historyGuidanceTimer = undefined
+  }
+}
+
+function openGuidedHistory() {
+  const targetId = highlightedHistoryId.value || selectedHistoryId.value
+  dismissHistoryGuidance()
+  setActiveTab('history')
+  if (targetId) {
+    selectedHistoryId.value = targetId
+    highlightHistoryRecord(Number(targetId))
+  }
+}
+
+function highlightHistoryRecord(jobId: number) {
+  if (!jobId) return
+  highlightedHistoryId.value = String(jobId)
+  if (highlightedHistoryTimer) window.clearTimeout(highlightedHistoryTimer)
+  highlightedHistoryTimer = window.setTimeout(() => {
+    if (highlightedHistoryId.value === String(jobId)) {
+      highlightedHistoryId.value = ''
+    }
+    highlightedHistoryTimer = undefined
+  }, 4000)
+}
+
+async function mapJobToHistoryRecord(job: ImageStudioJob): Promise<ImageStudioHistoryRecord> {
+  if (job.assetsDeletedAt) {
+    revokeCachedOriginal(job.id)
+  }
+  const thumbnailSrc = await getOrFetchThumbnailUrl(job)
+  return {
+    id: String(job.id),
+    jobId: job.id,
+    createdAt: job.queuedAt,
+    mode: job.mode,
+    status: job.status,
+    attemptCount: job.attemptCount,
+    maxAttempts: job.maxAttempts,
+    nextAttemptAt: job.nextAttemptAt,
+    prompt: job.prompt,
+    model: job.model,
+    size: job.size,
+    count: 1,
+    outputFormat: job.outputFormat || 'png',
+    errorMessage: job.errorMessage,
+    thumbnailUrl: job.thumbnailUrl,
+    originalUrl: job.originalUrl,
+    expiresAt: job.expiresAt,
+    assetsDeletedAt: job.assetsDeletedAt,
+    images: thumbnailSrc
+      ? [{
+        id: `job-${job.id}`,
+        src: thumbnailSrc,
+        mimeType: job.mimeType,
+        revisedPrompt: undefined
+      }]
+      : []
+  }
 }
 
 function normalizedPromptForSubmit(): string {
@@ -1147,11 +1417,20 @@ async function submitGeneration(commonInput: {
   outputFormat: string
   count: number
   advancedParams: Record<string, any>
-}, session: ImageStudioCreationSession) {
-  return sendResponsesImageRequest({
-    apiKey: selectedKeyValue.value,
-    body: buildResponsesGenerationPayload(commonInput),
-    onStreamEvent: (event) => handleResponsesStreamEvent(event, session)
+}) {
+  if (!selectedKey.value) throw new Error('请选择 API 密钥')
+  return createImageStudioJob({
+    apiKeyId: selectedKey.value.id,
+    mode: 'generate',
+    prompt: commonInput.prompt,
+    model: commonInput.model,
+    size: commonInput.size,
+    outputFormat: commonInput.outputFormat,
+    quality: commonInput.quality,
+    background: commonInput.background,
+    style: stringValueOrEmpty(commonInput.advancedParams.style),
+    moderation: stringValueOrEmpty(commonInput.advancedParams.moderation),
+    outputCompression: numberValueOrUndefined(commonInput.advancedParams.output_compression)
   })
 }
 
@@ -1164,15 +1443,28 @@ async function submitEdit(commonInput: {
   outputFormat: string
   count: number
   advancedParams: Record<string, any>
-}, session: ImageStudioCreationSession) {
+}) {
   if (referenceFiles.value.length === 0) throw new Error('请先添加参考图')
-  const compressedReferences = await compressReferenceImagesForUpload(referenceFiles.value)
-  const input = { ...commonInput, image: compressedReferences, mask: maskFile.value }
+  if (!selectedKey.value) throw new Error('请选择 API 密钥')
+  const compressedReferences = await compressReferenceImagesForUpload(referenceFiles.value.slice(0, 1))
+  const imageDataUrls = await Promise.all(compressedReferences.map((file) => readReferenceFileAsDataUrl(file)))
+  const maskDataUrl = maskFile.value ? await readReferenceFileAsDataUrl(maskFile.value) : ''
 
-  return sendResponsesImageRequest({
-    apiKey: selectedKeyValue.value,
-    body: await buildResponsesEditPayload(input),
-    onStreamEvent: (event) => handleResponsesStreamEvent(event, session)
+  return createImageStudioJob({
+    apiKeyId: selectedKey.value.id,
+    mode: 'edit',
+    prompt: commonInput.prompt,
+    model: commonInput.model,
+    size: commonInput.size,
+    outputFormat: commonInput.outputFormat,
+    quality: commonInput.quality,
+    background: commonInput.background,
+    style: stringValueOrEmpty(commonInput.advancedParams.style),
+    moderation: stringValueOrEmpty(commonInput.advancedParams.moderation),
+    inputFidelity: stringValueOrEmpty(commonInput.advancedParams.input_fidelity),
+    outputCompression: numberValueOrUndefined(commonInput.advancedParams.output_compression),
+    imageDataUrls,
+    maskDataUrl: maskDataUrl || undefined
   })
 }
 
@@ -1373,6 +1665,51 @@ function selectHistoryRecord(record: ImageStudioHistoryRecord) {
   selectedHistoryId.value = record.id
 }
 
+function historyPreviewAspectRatio(record: ImageStudioHistoryRecord) {
+  const match = record.size.match(/^(\d+)\s*x\s*(\d+)$/i)
+  if (!match) return '1 / 1'
+  return `${match[1]} / ${match[2]}`
+}
+
+function historyPreviewPlaceholderKicker(record: ImageStudioHistoryRecord) {
+  if (record.assetsDeletedAt) return '图片已过期'
+  if (record.status === 'queued') return '等待生成'
+  if (record.status === 'running') return '正在生成'
+  if (record.status === 'failed') return '生成失败'
+  return '缩略图不可用'
+}
+
+function historyPreviewPlaceholderCopy(record: ImageStudioHistoryRecord) {
+  if (record.assetsDeletedAt) return '图片文件已按全站保留策略清理'
+  if (record.status === 'queued') return '任务已提交，稍后刷新查看结果'
+  if (record.status === 'running') return '后台正在处理，完成后会显示缩略图'
+  if (record.status === 'failed') return '可直接重新生成'
+  return '原图仍可按需加载'
+}
+
+function canRegenerateHistoryRecord(record: ImageStudioHistoryRecord) {
+  return record.mode === 'generate' && (record.status === 'failed' || Boolean(record.assetsDeletedAt))
+}
+
+async function regenerateHistoryRecord(record: ImageStudioHistoryRecord) {
+  if (!canRegenerateHistoryRecord(record) || regeneratingHistoryJobId.value) return
+  if (!selectedKey.value) throw new Error('请选择 API 密钥')
+  regeneratingHistoryJobId.value = record.id
+  try {
+    const job = await createImageStudioJob({
+      apiKeyId: selectedKey.value.id,
+      mode: 'generate',
+      prompt: record.prompt,
+      model: record.model,
+      size: record.size,
+      outputFormat: record.outputFormat
+    })
+    await refreshHistoryRecords(job.id)
+  } finally {
+    regeneratingHistoryJobId.value = ''
+  }
+}
+
 function reuseHistoryRecord(record: ImageStudioHistoryRecord) {
   setPromptValue(record.prompt, 'external')
   updateModel(record.model)
@@ -1467,30 +1804,63 @@ async function handleEditOutput(output: ImageStudioOutput, index: number) {
 }
 
 async function handleEditHistoryImage(record: ImageStudioHistoryRecord) {
-  const image = record.images[0]
-  if (!image) return
-  await handleEditOutput({
-    id: image.id,
-    kind: image.src.startsWith('data:') ? 'b64_json' : 'url',
-    src: image.src,
-    mimeType: image.mimeType,
-    revisedPrompt: image.revisedPrompt,
-    raw: image
-  }, 0)
-  setPromptValue(record.prompt, 'external')
+  setActiveTab('edit')
+  creationSessions.edit.outputs = []
+  setSessionError(creationSessions.edit, '')
+  try {
+    const reference = await historyRecordToReferenceFile(record)
+    if (!reference) return
+    revokeReferencePreviewUrls()
+    referenceFiles.value = [reference.file]
+    referencePreviewUrls.value = [reference.previewUrl]
+    setPromptValue(record.prompt, 'external')
+  } catch (error) {
+    setSessionError(creationSessions.edit, error instanceof Error ? error.message : '无法把图片加入参考图')
+  }
 }
 
-function deleteHistoryRecord(record: ImageStudioHistoryRecord) {
+async function deleteHistoryRecord(record: ImageStudioHistoryRecord) {
+  await deleteImageStudioJob(record.jobId)
   const nextRecords = historyRecords.value.filter((item) => item.id !== record.id)
   historyRecords.value = nextRecords
+  historyTotal.value = Math.max(0, historyTotal.value - 1)
   if (selectedHistoryId.value === record.id) {
     selectedHistoryId.value = nextRecords[0]?.id ?? ''
   }
   if (lightboxImage.value?.kind === 'history' && lightboxImage.value.record.id === record.id) {
     closeLightbox()
   }
-  saveHistoryIndex(nextRecords)
-  void deleteHistoryImages(record)
+  revokeCachedOriginal(record.jobId)
+  revokeCachedThumbnail(record.jobId)
+  await deleteImageStudioAssetCache(record.jobId)
+  await refreshHistoryStats()
+}
+
+async function handleHistoryThumbnailError(record: ImageStudioHistoryRecord) {
+  if (!record.thumbnailUrl || record.assetsDeletedAt) return
+  const current = historyRecords.value.find((item) => item.id === record.id)
+  if (!current?.images[0]) return
+
+  revokeCachedThumbnail(record.jobId)
+
+  try {
+    const nextSrc = await getOrFetchThumbnailUrl({ id: record.jobId, thumbnailUrl: record.thumbnailUrl })
+    if (!nextSrc) return
+    historyRecords.value = historyRecords.value.map((item) => {
+      if (item.id !== record.id || !item.images[0]) return item
+      return {
+        ...item,
+        images: [
+          {
+            ...item.images[0],
+            src: nextSrc
+          }
+        ]
+      }
+    })
+  } catch {
+    // Keep the broken state so the card still reflects that the thumbnail is unavailable.
+  }
 }
 
 function openOutputLightbox(output: ImageStudioOutput, index: number) {
@@ -1506,16 +1876,16 @@ function openOutputLightbox(output: ImageStudioOutput, index: number) {
   }
 }
 
-function openHistoryLightbox(record: ImageStudioHistoryRecord) {
-  const image = record.images[0]
+async function openHistoryLightbox(record: ImageStudioHistoryRecord) {
+  const image = await resolveHistoryImage(record)
   if (!image?.src) return
   resetLightboxTransform()
   lightboxImage.value = {
     kind: 'history',
     title: record.prompt || '生成记录',
     src: image.src,
-    downloadName: historyDownloadFileName(record),
-    canEdit: true,
+    downloadName: record.assetsDeletedAt ? null : historyDownloadFileName(record),
+    canEdit: !record.assetsDeletedAt,
     record
   }
 }
@@ -1617,13 +1987,36 @@ async function outputToReferenceFile(output: ImageStudioOutput, index: number): 
   if (output.src.startsWith('data:')) {
     return dataUrlToFile(output.src, `generated-reference-${index + 1}`)
   }
-  const response = await fetch(output.src)
-  if (!response.ok) throw new Error('无法读取生成图片')
-  const blob = await response.blob()
+  const blob = await imageSourceToBlob(output.src)
   const mimeType = blob.type || output.mimeType || 'image/png'
   return new File([blob], `generated-reference-${index + 1}.${extensionFromMimeType(mimeType)}`, {
     type: mimeType
   })
+}
+
+async function historyRecordToReferenceFile(record: ImageStudioHistoryRecord): Promise<{ file: File; previewUrl: string } | null> {
+  const image = await resolveHistoryImage(record)
+  if (!image) return null
+  const originalBlob = await resolveHistoryOriginalBlob(record)
+  if (originalBlob) {
+    const mimeType = originalBlob.type || image.mimeType || 'image/png'
+    return {
+      file: new File([originalBlob], `history-reference-${record.jobId}.${extensionFromMimeType(mimeType)}`, { type: mimeType }),
+      previewUrl: image.src || getCachedOriginalUrl(record.jobId) || URL.createObjectURL(originalBlob)
+    }
+  }
+  const file = await outputToReferenceFile({
+    id: image.id,
+    kind: image.src.startsWith('data:') ? 'b64_json' : 'url',
+    src: image.src,
+    mimeType: image.mimeType,
+    revisedPrompt: image.revisedPrompt,
+    raw: image
+  }, 0)
+  return {
+    file,
+    previewUrl: image.src || createReferencePreviewUrl(file)
+  }
 }
 
 function dataUrlToFile(dataUrl: string, baseName: string): File {
@@ -1648,17 +2041,6 @@ async function convertFileToWebp(file: File, fallbackBaseName: string): Promise<
   })
 }
 
-async function restoreOutputsToRequestedFormat(
-  generatedOutputs: ImageStudioOutput[],
-  requestedFormat: string
-): Promise<ImageStudioOutput[]> {
-  const targetMimeType = mimeTypeFromOutputFormat(requestedFormat)
-  return generatedOutputs.map((output) => ({
-    ...output,
-    mimeType: output.mimeType || targetMimeType
-  }))
-}
-
 async function downloadOutputAsFormat(output: ImageStudioOutput, index: number, format: string) {
   const targetFormat = normalizeDownloadFormat(format)
   const fileName = `image-studio-${index + 1}.${extensionFromFormat(targetFormat)}`
@@ -1666,10 +2048,16 @@ async function downloadOutputAsFormat(output: ImageStudioOutput, index: number, 
 }
 
 async function downloadHistoryImageAsFormat(record: ImageStudioHistoryRecord, format: string) {
-  const image = record.images[0]
-  if (!image?.src) return
   const targetFormat = normalizeDownloadFormat(format)
   const fileName = `image-studio-history-${record.id}.${extensionFromFormat(targetFormat)}`
+  const originalBlob = await resolveHistoryOriginalBlob(record)
+  if (originalBlob) {
+    await downloadImageBlobAsFormat(originalBlob, originalBlob.type || record.images[0]?.mimeType, targetFormat, fileName)
+    return
+  }
+
+  const image = await resolveHistoryImage(record)
+  if (!image?.src) return
   await downloadImageSourceAsFormat(image.src, image.mimeType, targetFormat, fileName)
 }
 
@@ -1678,6 +2066,18 @@ async function downloadLightboxImageAsFormat(image: ImageStudioLightboxImage, fo
   const targetFormat = normalizeDownloadFormat(format)
   const sourceMimeType = lightboxImageMimeType(image)
   const baseName = image.downloadName.replace(/\.[^.]+$/, '') || 'image-studio'
+  if (image.kind === 'history') {
+    const originalBlob = await resolveHistoryOriginalBlob(image.record)
+    if (originalBlob) {
+      await downloadImageBlobAsFormat(
+        originalBlob,
+        originalBlob.type || sourceMimeType,
+        targetFormat,
+        `${baseName}.${extensionFromFormat(targetFormat)}`
+      )
+      return
+    }
+  }
   await downloadImageSourceAsFormat(
     image.src,
     sourceMimeType,
@@ -1716,6 +2116,25 @@ async function downloadImageSourceAsFormat(
   }
 }
 
+async function downloadImageBlobAsFormat(
+  blob: Blob,
+  sourceMimeType: string | undefined,
+  targetFormat: string,
+  fileName: string
+) {
+  const targetMimeType = mimeTypeFromOutputFormat(targetFormat)
+  const sourceFormat = formatFromMimeType(sourceMimeType)
+  const downloadBlob = sourceFormat === targetFormat || !sourceMimeType
+    ? blob
+    : await renderImageBlobToFormat(blob, targetMimeType, qualityForDownloadFormat(targetFormat))
+  const objectUrl = URL.createObjectURL(downloadBlob)
+  try {
+    triggerBrowserDownload(objectUrl, fileName)
+  } finally {
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000)
+  }
+}
+
 async function imageSourceToBlob(src: string): Promise<Blob> {
   if (src.startsWith('data:')) {
     const { bytes, mimeType } = parseDataUrlBytes(src)
@@ -1724,6 +2143,123 @@ async function imageSourceToBlob(src: string): Promise<Blob> {
   const response = await fetch(src)
   if (!response.ok) throw new Error('无法读取图片')
   return response.blob()
+}
+
+async function resolveHistoryImage(record: ImageStudioHistoryRecord) {
+  const current = record.images[0]
+  if (!current) return null
+  if (record.assetsDeletedAt) {
+    revokeCachedOriginal(record.jobId)
+    return current
+  }
+  if (record.status !== 'succeeded') return current
+  const objectUrl = getCachedOriginalUrl(record.jobId)
+  if (objectUrl) {
+    if (current.src !== objectUrl) current.src = objectUrl
+    return current
+  }
+  if (!record.originalUrl) return current
+  const blob = await getOrFetchOriginalBlob({ id: record.jobId, originalUrl: record.originalUrl, mimeType: current.mimeType } as ImageStudioJob)
+  const nextUrl = getCachedOriginalUrl(record.jobId)
+  current.src = nextUrl || current.src
+  current.mimeType = current.mimeType || blob.type || undefined
+  return current
+}
+
+async function resolveHistoryOriginalBlob(record: ImageStudioHistoryRecord): Promise<Blob | null> {
+  if (record.assetsDeletedAt || record.status !== 'succeeded' || !record.originalUrl) return null
+  return getOrFetchOriginalBlob({
+    id: record.jobId,
+    originalUrl: record.originalUrl,
+    mimeType: record.images[0]?.mimeType
+  })
+}
+
+async function getOrFetchOriginalBlob(job: Pick<ImageStudioJob, 'id' | 'originalUrl' | 'mimeType'>): Promise<Blob> {
+  const cached = originalImageCache.get(job.id)
+  if (cached) return cached.blob
+  const cachedAsset = await getImageStudioAssetCacheSafely(job.id, 'original')
+  const blob = cachedAsset?.blob || await fetchImageStudioOriginal(job.id)
+  if (!cachedAsset) {
+    await putImageStudioAssetCacheSafely({ jobId: job.id, kind: 'original', blob })
+  }
+  const objectUrl = URL.createObjectURL(blob)
+  originalImageCache.set(job.id, { objectUrl, blob })
+  return blob
+}
+
+function getCachedOriginalUrl(jobId: number): string {
+  return originalImageCache.get(jobId)?.objectUrl || ''
+}
+
+async function getOrFetchThumbnailUrl(
+  job: Pick<ImageStudioJob, 'id' | 'thumbnailUrl'> & Partial<Pick<ImageStudioJob, 'originalUrl' | 'mimeType' | 'status'>>
+): Promise<string> {
+  const cached = thumbnailImageCache.get(job.id)
+  if (cached) return cached
+  if (!job.thumbnailUrl) return ''
+  try {
+    const cachedAsset = await getImageStudioAssetCacheSafely(job.id, 'thumbnail')
+    const blob = cachedAsset?.blob || await fetchImageStudioThumbnail(job.id)
+    if (!cachedAsset) {
+      await putImageStudioAssetCacheSafely({ jobId: job.id, kind: 'thumbnail', blob })
+    }
+    const objectUrl = URL.createObjectURL(blob)
+    thumbnailImageCache.set(job.id, objectUrl)
+    return objectUrl
+  } catch {
+    return ''
+  }
+}
+
+async function getImageStudioAssetCacheSafely(
+  jobId: number,
+  kind: 'thumbnail' | 'original'
+) {
+  try {
+    return await getCachedImageStudioAsset(jobId, kind)
+  } catch {
+    return null
+  }
+}
+
+async function putImageStudioAssetCacheSafely(input: {
+  jobId: number
+  kind: 'thumbnail' | 'original'
+  blob: Blob
+}) {
+  try {
+    await putImageStudioAssetCache(input)
+  } catch {
+    // Cache failures must not block rendering images fetched from the backend.
+  }
+}
+
+function revokeCachedOriginal(jobId: number) {
+  const cached = originalImageCache.get(jobId)
+  if (!cached) return
+  URL.revokeObjectURL(cached.objectUrl)
+  originalImageCache.delete(jobId)
+}
+
+function revokeCachedThumbnail(jobId: number) {
+  const cached = thumbnailImageCache.get(jobId)
+  if (!cached) return
+  URL.revokeObjectURL(cached)
+  thumbnailImageCache.delete(jobId)
+}
+
+function revokeOriginalImageCache() {
+  for (const jobId of originalImageCache.keys()) {
+    revokeCachedOriginal(jobId)
+  }
+}
+
+function revokeThumbnailImageCache() {
+  for (const objectUrl of thumbnailImageCache.values()) {
+    URL.revokeObjectURL(objectUrl)
+  }
+  thumbnailImageCache.clear()
 }
 
 function triggerBrowserDownload(href: string, fileName: string) {
@@ -1849,191 +2385,72 @@ function revokeReferencePreviewUrls() {
   referencePreviewUrls.value = []
 }
 
-function persistHistoryRecord(
-  input: {
-    model: string
-    prompt: string
-    size: string
-    count: number
-    outputFormat: string
-  },
-  generatedOutputs: ImageStudioOutput[],
-  mode: Exclude<ImageStudioMode, 'history'>
-) {
-  if (typeof window === 'undefined' || generatedOutputs.length === 0) return
-  const record: ImageStudioHistoryRecord = {
-    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    createdAt: new Date().toISOString(),
-    mode,
-    prompt: input.prompt,
-    model: input.model,
-    size: input.size,
-    count: input.count,
-    outputFormat: input.outputFormat || 'jpeg',
-    images: generatedOutputs.map((output) => ({
-      id: output.id,
-      src: output.src,
-      mimeType: output.mimeType,
-      revisedPrompt: output.revisedPrompt
-    }))
-  }
-  const allRecords = [record, ...historyRecords.value]
-  const nextRecords = allRecords.slice(0, historyLimit.value)
-  const overflowRecords = allRecords.slice(historyLimit.value)
-  historyRecords.value = nextRecords
-  selectedHistoryId.value = record.id
-  saveHistoryIndex(nextRecords)
-  void saveHistoryImages(record)
-  void Promise.all(overflowRecords.map((overflowRecord) => deleteHistoryImages(overflowRecord)))
-}
-
-function saveHistoryIndex(records: ImageStudioHistoryRecord[]) {
-  if (typeof window === 'undefined') return
-  const compactRecords = records.map((record) => ({
-    ...record,
-    images: record.images.map((image) => ({
-      ...image,
-      src: image.src.startsWith('data:') ? '' : image.src
-    }))
-  }))
-  window.localStorage.setItem(historyStorageKey, JSON.stringify(compactRecords))
-}
-
 async function loadHistoryRecords(): Promise<ImageStudioHistoryRecord[]> {
-  if (typeof window === 'undefined') return []
   try {
-    const parsed = JSON.parse(window.localStorage.getItem(historyStorageKey) || '[]')
-    if (!Array.isArray(parsed)) return []
-    const records = parsed
-      .filter(isHistoryRecord)
-      .slice(0, historyLimit.value)
-    await hydrateHistoryImages(records)
-    return records
+    const response = await listImageStudioJobs(1, historyPageSize)
+    historyPage.value = 1
+    historyTotal.value = response.total
+    return Promise.all(response.items.map(mapJobToHistoryRecord))
   } catch {
+    historyTotal.value = 0
     return []
   }
 }
 
-function loadHistoryLimit(): number {
-  if (typeof window === 'undefined') return defaultHistoryLimit
-  const raw = window.localStorage.getItem(historyLimitStorageKey)
-  return normalizeHistoryLimitValue(Number(raw || defaultHistoryLimit))
-}
-
-function saveHistoryLimit(limit: number) {
-  if (typeof window === 'undefined') return
-  window.localStorage.setItem(historyLimitStorageKey, String(limit))
-}
-
-function startHistoryLimitEdit() {
-  historyLimitDraft.value = historyLimit.value
-  historyLimitConfirmOpen.value = false
-  historyLimitEditing.value = true
-}
-
-function cancelHistoryLimitEdit() {
-  historyLimitDraft.value = historyLimit.value
-  historyLimitEditing.value = false
-  historyLimitConfirmOpen.value = false
-}
-
-function submitHistoryLimitEdit() {
-  const nextLimit = normalizeHistoryLimitValue(historyLimitDraft.value)
-  historyLimitDraft.value = nextLimit
-  if (nextLimit < historyRecords.value.length) {
-    pendingHistoryLimit.value = nextLimit
-    historyLimitConfirmOpen.value = true
-    return
-  }
-  applyHistoryLimit(nextLimit)
-}
-
-function confirmHistoryLimitReduction() {
-  applyHistoryLimit(pendingHistoryLimit.value)
-  historyLimitConfirmOpen.value = false
-}
-
-function cancelHistoryLimitReduction() {
-  pendingHistoryLimit.value = historyLimit.value
-  historyLimitConfirmOpen.value = false
-}
-
-function applyHistoryLimit(limit: number) {
-  const normalizedLimit = normalizeHistoryLimitValue(limit)
-  historyLimit.value = normalizedLimit
-  historyLimitDraft.value = normalizedLimit
-  historyLimitEditing.value = false
-  saveHistoryLimit(normalizedLimit)
-  enforceHistoryLimit(normalizedLimit)
-}
-
-function normalizeHistoryLimitValue(value: number): number {
-  if (!Number.isFinite(value)) return defaultHistoryLimit
-  return Math.min(maxHistoryLimit, Math.max(minHistoryLimit, Math.floor(value)))
-}
-
-function enforceHistoryLimit(limit = historyLimit.value) {
-  const nextRecords = historyRecords.value.slice(0, limit)
-  const overflowRecords = historyRecords.value.slice(limit)
-  if (overflowRecords.length === 0) {
-    saveHistoryIndex(nextRecords)
-    return
-  }
-  historyRecords.value = nextRecords
-  if (selectedHistoryId.value && !nextRecords.some((record) => record.id === selectedHistoryId.value)) {
-    selectedHistoryId.value = nextRecords[0]?.id ?? ''
-  }
-  saveHistoryIndex(nextRecords)
-  void Promise.all(overflowRecords.map((record) => deleteHistoryImages(record)))
-}
-
-async function saveHistoryImages(record: ImageStudioHistoryRecord) {
-  const entries = record.images
-    .filter((image) => image.src.startsWith('data:'))
-    .map((image) => ({
-      id: `${record.id}:${image.id}`,
-      src: image.src
-    }))
-  if (entries.length === 0) return
+async function loadMoreHistoryRecords() {
+  if (loadingMoreHistory.value || !hasMoreHistory.value) return
+  loadingMoreHistory.value = true
   try {
-    const db = await openHistoryDb()
-    await new Promise<void>((resolve, reject) => {
-      const transaction = db.transaction(historyDbStoreName, 'readwrite')
-      const store = transaction.objectStore(historyDbStoreName)
-      for (const entry of entries) {
-        store.put(entry)
-      }
-      transaction.oncomplete = () => resolve()
-      transaction.onerror = () => reject(transaction.error)
-    })
-  } catch {
-    // IndexedDB is best-effort local history storage. Visible outputs remain usable even if persistence fails.
+    const nextPage = historyPage.value + 1
+    const response = await listImageStudioJobs(nextPage, historyPageSize)
+    const nextRecords = await Promise.all(response.items.map(mapJobToHistoryRecord))
+    const existingIds = new Set(historyRecords.value.map((record) => record.id))
+    historyRecords.value = [
+      ...historyRecords.value,
+      ...nextRecords.filter((record) => !existingIds.has(record.id))
+    ]
+    historyPage.value = nextPage
+    historyTotal.value = response.total
+  } finally {
+    loadingMoreHistory.value = false
   }
 }
 
-async function deleteHistoryImages(record: ImageStudioHistoryRecord) {
+async function refreshDisplayedHistoryRecords() {
+  if (refreshingHistory.value) return
+  refreshingHistory.value = true
   try {
-    const db = await openHistoryDb()
-    await new Promise<void>((resolve, reject) => {
-      const transaction = db.transaction(historyDbStoreName, 'readwrite')
-      const store = transaction.objectStore(historyDbStoreName)
-      for (const image of record.images) {
-        store.delete(`${record.id}:${image.id}`)
-      }
-      transaction.oncomplete = () => resolve()
-      transaction.onerror = () => reject(transaction.error)
-    })
-  } catch {
-    // Deleting local thumbnails is best-effort; the index removal above is the user-visible source of truth.
+    const pageCount = Math.max(1, historyPage.value)
+    const records: ImageStudioHistoryRecord[] = []
+    let total = historyTotal.value
+    for (let page = 1; page <= pageCount; page += 1) {
+      const response = await listImageStudioJobs(page, historyPageSize)
+      total = response.total
+      records.push(...await Promise.all(response.items.map(mapJobToHistoryRecord)))
+      if (records.length >= response.total || response.items.length === 0) break
+    }
+    historyRecords.value = records
+    historyTotal.value = total
+    historyPage.value = Math.max(1, Math.ceil(records.length / historyPageSize))
+    if (!historyRecords.value.some((record) => record.id === selectedHistoryId.value)) {
+      selectedHistoryId.value = historyRecords.value[0]?.id ?? ''
+    }
+    await refreshHistoryStats()
+  } finally {
+    refreshingHistory.value = false
   }
 }
 
-async function clearOrphanHistoryCache() {
+async function clearHistoryImageCache() {
   if (cleaningHistoryCache.value) return
   cleaningHistoryCache.value = true
   historyCacheMessage.value = ''
   try {
-    const removedCount = await deleteOrphanHistoryImages(historyRecords.value)
+    const memoryCount = originalImageCache.size + thumbnailImageCache.size
+    revokeOriginalImageCache()
+    revokeThumbnailImageCache()
+    const persistedCount = await clearImageStudioAssetCache()
+    const removedCount = Math.max(memoryCount, persistedCount)
     historyCacheMessage.value = removedCount > 0 ? `已清理 ${removedCount} 张缓存图片` : '没有可清理缓存'
   } catch {
     historyCacheMessage.value = '清理失败，请稍后重试'
@@ -2042,96 +2459,13 @@ async function clearOrphanHistoryCache() {
   }
 }
 
-function getVisibleHistoryImageKeys(records: ImageStudioHistoryRecord[]) {
-  return new Set(records.flatMap((record) =>
-    record.images.map((image) => `${record.id}:${image.id}`)
-  ))
+function stringValueOrEmpty(value: unknown): string | undefined {
+  const normalized = typeof value === 'string' ? value.trim() : ''
+  return normalized || undefined
 }
 
-async function deleteOrphanHistoryImages(records: ImageStudioHistoryRecord[]): Promise<number> {
-  const visibleKeys = getVisibleHistoryImageKeys(records)
-  const db = await openHistoryDb()
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction(historyDbStoreName, 'readwrite')
-    const store = transaction.objectStore(historyDbStoreName)
-    let removedCount = 0
-    const request = store.openCursor()
-    request.onsuccess = () => {
-      const cursor = request.result
-      if (!cursor) return
-      const key = typeof cursor.primaryKey === 'string' ? cursor.primaryKey : String(cursor.primaryKey)
-      if (!visibleKeys.has(key)) {
-        cursor.delete()
-        removedCount += 1
-      }
-      cursor.continue()
-    }
-    request.onerror = () => reject(request.error)
-    transaction.oncomplete = () => resolve(removedCount)
-    transaction.onerror = () => reject(transaction.error)
-  })
-}
-
-async function hydrateHistoryImages(records: ImageStudioHistoryRecord[]) {
-  const missing = records.flatMap((record) =>
-    record.images
-      .filter((image) => !image.src)
-      .map((image) => ({ record, image }))
-  )
-  if (missing.length === 0) return
-  try {
-    const db = await openHistoryDb()
-    await Promise.all(missing.map(({ image, record }) =>
-      new Promise<void>((resolve) => {
-        const request = db
-          .transaction(historyDbStoreName, 'readonly')
-          .objectStore(historyDbStoreName)
-          .get(`${record.id}:${image.id}`)
-        request.onsuccess = () => {
-          const value = request.result as { src?: string } | undefined
-          if (value?.src) image.src = value.src
-          resolve()
-        }
-        request.onerror = () => resolve()
-      })
-    ))
-  } catch {
-    // Leave missing local-only images empty when IndexedDB is unavailable.
-  }
-}
-
-function openHistoryDb(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    if (typeof indexedDB === 'undefined') {
-      reject(new Error('IndexedDB unavailable'))
-      return
-    }
-    const request = indexedDB.open(historyDbName, historyDbVersion)
-    request.onupgradeneeded = () => {
-      const db = request.result
-      if (!db.objectStoreNames.contains(historyDbStoreName)) {
-        db.createObjectStore(historyDbStoreName, { keyPath: 'id' })
-      }
-    }
-    request.onsuccess = () => resolve(request.result)
-    request.onerror = () => reject(request.error)
-  })
-}
-
-function isHistoryRecord(value: unknown): value is ImageStudioHistoryRecord {
-  if (!value || typeof value !== 'object') return false
-  const record = value as Partial<ImageStudioHistoryRecord>
-  return (
-    typeof record.id === 'string' &&
-    typeof record.createdAt === 'string' &&
-    (record.mode === 'generate' || record.mode === 'edit') &&
-    typeof record.prompt === 'string' &&
-    typeof record.model === 'string' &&
-    typeof record.size === 'string' &&
-    typeof record.count === 'number' &&
-    typeof record.outputFormat === 'string' &&
-    Array.isArray(record.images)
-  )
+function numberValueOrUndefined(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
 }
 
 function formatHistoryTime(value: string): string {
@@ -2145,12 +2479,33 @@ function formatHistoryTime(value: string): string {
   })
 }
 
+function historyStatusText(record: ImageStudioHistoryRecord): string {
+  if (record.assetsDeletedAt) return '图片已过期清理'
+  if (record.status === 'queued' && record.attemptCount > 0) {
+    const attemptLabel = record.maxAttempts > 0
+      ? `第 ${record.attemptCount + 1}/${record.maxAttempts} 次尝试`
+      : `第 ${record.attemptCount + 1} 次尝试`
+    return record.nextAttemptAt
+      ? `排队重试中 · ${attemptLabel}`
+      : `重试排队中 · ${attemptLabel}`
+  }
+  if (record.status === 'running' && record.attemptCount > 0) {
+    const total = record.maxAttempts > 0 ? ` / ${record.maxAttempts}` : ''
+    return `重试生成中 · 第 ${record.attemptCount + 1}${total} 次尝试`
+  }
+  if (record.status === 'queued') return '排队中'
+  if (record.status === 'running') return '生成中'
+  if (record.status === 'succeeded') return '已完成'
+  if (record.status === 'failed') return '失败'
+  return record.status
+}
+
 function downloadFileName(output: ImageStudioOutput, index: number): string {
   return `image-studio-${index + 1}.${extensionFromMimeType(output.mimeType)}`
 }
 
 function historyDownloadFileName(record: ImageStudioHistoryRecord): string {
-  return `image-studio-history-${record.id}.${extensionFromMimeType(record.images[0]?.mimeType)}`
+  return `image-studio-history-${record.id}.${extensionFromMimeType(record.images[0]?.mimeType || record.outputFormat)}`
 }
 
 function extensionFromFormat(format: string): string {

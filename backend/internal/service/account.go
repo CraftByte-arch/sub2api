@@ -77,6 +77,13 @@ const (
 
 const openAIEndpointCapabilitiesCredentialKey = "openai_capabilities"
 
+const (
+	OpenAIImageProtocolPreferenceExtraKey  = "openai_image_protocol_preference"
+	OpenAIImageProtocolPreferenceAuto      = "auto"
+	OpenAIImageProtocolPreferenceImages    = "images"
+	OpenAIImageProtocolPreferenceResponses = "responses"
+)
+
 type TempUnschedulableRule struct {
 	ErrorCode       int      `json:"error_code"`
 	Keywords        []string `json:"keywords"`
@@ -1217,6 +1224,25 @@ func (a *Account) SupportsOpenAIImageCapability(capability OpenAIImagesCapabilit
 	default:
 		return true
 	}
+}
+
+func NormalizeOpenAIImageProtocolPreference(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case OpenAIImageProtocolPreferenceImages:
+		return OpenAIImageProtocolPreferenceImages
+	case OpenAIImageProtocolPreferenceResponses:
+		return OpenAIImageProtocolPreferenceResponses
+	default:
+		return OpenAIImageProtocolPreferenceAuto
+	}
+}
+
+func (a *Account) OpenAIImageProtocolPreference() string {
+	if a == nil || a.Extra == nil {
+		return OpenAIImageProtocolPreferenceAuto
+	}
+	raw, _ := a.Extra[OpenAIImageProtocolPreferenceExtraKey].(string)
+	return NormalizeOpenAIImageProtocolPreference(raw)
 }
 
 func (a *Account) GetChatGPTUserID() string {

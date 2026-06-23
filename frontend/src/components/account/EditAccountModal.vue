@@ -1470,6 +1470,21 @@
         >
           {{ t('admin.accounts.openai.responsesModeTextDisabledHint') }}
         </div>
+        <div class="flex items-center justify-between gap-4">
+          <div>
+            <label class="input-label mb-0">{{ t('admin.accounts.openai.imageProtocolPreference') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.openai.imageProtocolPreferenceDesc') }}
+            </p>
+          </div>
+          <div class="w-56">
+            <Select
+              v-model="openAIImageProtocolPreference"
+              :options="openAIImageProtocolPreferenceOptions"
+              data-testid="openai-image-protocol-preference-select"
+            />
+          </div>
+        </div>
         <div>
           <label class="input-label mb-2 block">{{ t('admin.accounts.openai.endpointCapabilities') }}</label>
           <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
@@ -2387,6 +2402,7 @@ import type {
   CheckMixedChannelResponse,
   OpenAICompactMode,
   OpenAIResponsesMode,
+  OpenAIImageProtocolPreference,
   OpenAIEndpointCapability
 } from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
@@ -2580,6 +2596,7 @@ const customBaseUrl = ref('')
 const openaiPassthroughEnabled = ref(false)
 const openAICompactMode = ref<OpenAICompactMode>('auto')
 const openAIResponsesMode = ref<OpenAIResponsesMode>('auto')
+const openAIImageProtocolPreference = ref<OpenAIImageProtocolPreference>('auto')
 const openAIEndpointCapabilities = ref<OpenAIEndpointCapability[]>(['chat_completions', 'embeddings'])
 const openaiOAuthResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
 const openaiAPIKeyResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
@@ -2688,6 +2705,11 @@ const openAIResponsesModeOptions = computed(() => [
   { value: 'force_responses', label: t('admin.accounts.openai.responsesModeForceResponses') },
   { value: 'force_chat_completions', label: t('admin.accounts.openai.responsesModeForceChatCompletions') }
 ])
+const openAIImageProtocolPreferenceOptions = computed(() => [
+  { value: 'auto', label: t('admin.accounts.openai.imageProtocolAuto') },
+  { value: 'images', label: t('admin.accounts.openai.imageProtocolImages') },
+  { value: 'responses', label: t('admin.accounts.openai.imageProtocolResponses') }
+])
 const openAITextEndpointCapabilityLabel = computed(() => {
   if (openAIResponsesMode.value === 'force_responses') {
     return t('admin.accounts.openai.capabilityResponses')
@@ -2769,6 +2791,12 @@ const applyOpenAIEndpointCapabilities = (credentials: Record<string, unknown>) =
 }
 const normalizeOpenAIResponsesMode = (mode: unknown): OpenAIResponsesMode => {
   if (mode === 'force_responses' || mode === 'force_chat_completions') {
+    return mode
+  }
+  return 'auto'
+}
+const normalizeOpenAIImageProtocolPreference = (mode: unknown): OpenAIImageProtocolPreference => {
+  if (mode === 'images' || mode === 'responses') {
     return mode
   }
   return 'auto'
@@ -2956,6 +2984,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   openaiPassthroughEnabled.value = false
   openAICompactMode.value = 'auto'
   openAIResponsesMode.value = 'auto'
+  openAIImageProtocolPreference.value = 'auto'
   openAIEndpointCapabilities.value = ['chat_completions', 'embeddings']
   openAICompactModelMappings.value = []
   openaiOAuthResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
@@ -2970,6 +2999,9 @@ const syncFormFromAccount = (newAccount: Account | null) => {
     openAICompactMode.value = (extra?.openai_compact_mode as OpenAICompactMode) || 'auto'
     if (newAccount.type === 'apikey') {
       openAIResponsesMode.value = normalizeOpenAIResponsesMode(extra?.openai_responses_mode)
+      openAIImageProtocolPreference.value = normalizeOpenAIImageProtocolPreference(
+        extra?.openai_image_protocol_preference
+      )
       openAIEndpointCapabilities.value = readOpenAIEndpointCapabilities(
         newAccount.credentials as Record<string, unknown> | undefined
       )
@@ -4096,6 +4128,11 @@ const handleSubmit = async () => {
         delete newExtra.openai_compact_mode
       } else {
         newExtra.openai_compact_mode = openAICompactMode.value
+      }
+      if (openAIImageProtocolPreference.value === 'auto') {
+        delete newExtra.openai_image_protocol_preference
+      } else {
+        newExtra.openai_image_protocol_preference = openAIImageProtocolPreference.value
       }
 		if (props.account.type === 'apikey') {
         if (!openAITextGenerationCapabilityEnabled.value || openAIResponsesMode.value === 'auto') {

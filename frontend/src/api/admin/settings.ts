@@ -446,6 +446,9 @@ export interface SystemSettings {
   usage_card_redeem_enabled: boolean;
   usage_card_billing_enabled: boolean;
   usage_card_default_priority: string;
+  image_studio_async_concurrency: number;
+  image_studio_retention_value: number;
+  image_studio_retention_unit: string;
   openai_long_context_billing_enabled: boolean;
   openai_long_context_billing_threshold: number;
   openai_long_context_billing_multiplier: number;
@@ -724,6 +727,9 @@ export interface UpdateSettingsRequest {
   usage_card_redeem_enabled?: boolean;
   usage_card_billing_enabled?: boolean;
   usage_card_default_priority?: string;
+  image_studio_async_concurrency?: number;
+  image_studio_retention_value?: number;
+  image_studio_retention_unit?: string;
   openai_long_context_billing_enabled?: boolean;
   openai_long_context_billing_threshold?: number;
   openai_long_context_billing_multiplier?: number;

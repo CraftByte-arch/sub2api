@@ -188,6 +188,59 @@ func TestSettingService_GetPublicSettings_DoesNotExposeMobileOnlyWeChatAsWebOAut
 	require.True(t, settings.WeChatOAuthMobileEnabled)
 }
 
+func TestSettingService_GetAllSettings_ParsesImageStudioAsyncSettings(t *testing.T) {
+	repo := &settingHandlerStyleRepoStub{
+		values: map[string]string{
+			SettingKeyImageStudioAsyncConcurrency: "4",
+			SettingKeyImageStudioRetentionValue:   "7",
+			SettingKeyImageStudioRetentionUnit:    ImageStudioRetentionUnitDay,
+		},
+	}
+	svc := NewSettingService(repo, &config.Config{})
+
+	settings, err := svc.GetAllSettings(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 4, settings.ImageStudioAsyncConcurrency)
+	require.Equal(t, 7, settings.ImageStudioRetentionValue)
+	require.Equal(t, ImageStudioRetentionUnitDay, settings.ImageStudioRetentionUnit)
+}
+
+type settingHandlerStyleRepoStub struct {
+	values map[string]string
+}
+
+func (s *settingHandlerStyleRepoStub) Get(ctx context.Context, key string) (*Setting, error) {
+	panic("unexpected Get call")
+}
+
+func (s *settingHandlerStyleRepoStub) GetValue(ctx context.Context, key string) (string, error) {
+	panic("unexpected GetValue call")
+}
+
+func (s *settingHandlerStyleRepoStub) Set(ctx context.Context, key, value string) error {
+	panic("unexpected Set call")
+}
+
+func (s *settingHandlerStyleRepoStub) GetMultiple(ctx context.Context, keys []string) (map[string]string, error) {
+	panic("unexpected GetMultiple call")
+}
+
+func (s *settingHandlerStyleRepoStub) SetMultiple(ctx context.Context, settings map[string]string) error {
+	panic("unexpected SetMultiple call")
+}
+
+func (s *settingHandlerStyleRepoStub) GetAll(ctx context.Context) (map[string]string, error) {
+	out := make(map[string]string, len(s.values))
+	for key, value := range s.values {
+		out[key] = value
+	}
+	return out, nil
+}
+
+func (s *settingHandlerStyleRepoStub) Delete(ctx context.Context, key string) error {
+	panic("unexpected Delete call")
+}
+
 func TestSettingService_GetPublicSettings_FallsBackToConfigForWeChatOAuthCapabilities(t *testing.T) {
 	svc := NewSettingService(&settingPublicRepoStub{values: map[string]string{}}, &config.Config{
 		WeChat: config.WeChatConnectConfig{

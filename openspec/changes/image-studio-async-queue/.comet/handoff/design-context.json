@@ -1,0 +1,14 @@
+{
+  "change": "image-studio-async-queue",
+  "phase": "design",
+  "mode": "compact",
+  "canonical_spec": "openspec",
+  "generated_by": "comet-handoff.sh",
+  "context_hash": "f40920ea2d79c68c97417fa73c9cb77b5e1e6d54200a22ee570d39a1aa3ab00a",
+  "files": [
+    { "path": "openspec/changes/image-studio-async-queue/proposal.md", "sha256": "bae13122caaaf73d99539c02a2ba8dcc757054aa152e75193ccb9798854b8d42" },
+    { "path": "openspec/changes/image-studio-async-queue/design.md", "sha256": "9179cbea25e92da01ebd7e1824f98e3a2fae2c1a7c9469b3bce45f83245a893e" },
+    { "path": "openspec/changes/image-studio-async-queue/tasks.md", "sha256": "3650c010e6a05b90e5031bca48a9c632a4c161ee14e2607158b905a6335d1252" },
+    { "path": "openspec/changes/image-studio-async-queue/specs/image-studio-async-jobs/spec.md", "sha256": "7424785db823c36ad8e2c00b7aaa04bea5979a3b7730ae5bebdcafeea7ac12b3" }
+  ]
+}

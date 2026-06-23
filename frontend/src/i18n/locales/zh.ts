@@ -3750,6 +3750,11 @@ export default {
         responsesModeForceResponses: '强制 Responses',
         responsesModeForceChatCompletions: '强制 Chat Completions',
         responsesModeTextDisabledHint: '未启用 Responses / Chat Completions 端点时，此设置不适用。',
+        imageProtocolPreference: '生图接口偏好',
+        imageProtocolPreferenceDesc: '用于后台生图账号选择。优先匹配当前请求协议，自动时走现有转换逻辑。',
+        imageProtocolAuto: '自动',
+        imageProtocolImages: 'Images',
+        imageProtocolResponses: 'Responses',
         endpointCapabilities: '端点能力',
         endpointCapabilitiesDesc:
           '用于调度筛选。文本端点会跟随上方 Responses API 支持显示为 Responses、Chat Completions 或自动模式；Embeddings 独立控制 /v1/embeddings。',
@@ -5759,10 +5764,21 @@ export default {
         features: '功能开关',
         security: '安全与认证',
         users: '用户默认值',
+        imageStudio: '生图设置',
         gateway: '网关服务',
         email: '邮件设置',
         backup: '数据备份',
         payment: '支付设置',
+      },
+      imageStudio: {
+        title: '生图设置',
+        description: '管理站内 Image Studio 异步生图队列的并发和文件保留时长。',
+        asyncConcurrency: '生图异步并发',
+        asyncConcurrencyHint: '站内 Image Studio 队列的全站并发上限。建议从 1-3 开始。',
+        retention: '生图保存时长',
+        retentionHint: '0 表示永不过期；到期后仅清理原图和缩略图文件，任务记录保留。',
+        hours: '小时',
+        days: '天',
       },
       features: {
         channelMonitor: {

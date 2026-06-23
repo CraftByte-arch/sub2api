@@ -858,6 +858,7 @@ export interface Account {
     model_rate_limits?: Record<string, { rate_limited_at: string; rate_limit_reset_at: string }>
     antigravity_credits_overages?: Record<string, { activated_at: string; active_until: string }>
   } & Record<string, unknown>)
+  image_protocol_preference?: OpenAIImageProtocolPreference
   proxy_id: number | null
   proxy_fallback_origin_id?: number | null
   proxy_fallback_origin_name?: string | null
@@ -1031,6 +1032,7 @@ export interface CodexUsageSnapshot {
 export type OpenAICompactMode = 'auto' | 'force_on' | 'force_off'
 export type OpenAIResponsesMode = 'auto' | 'force_responses' | 'force_chat_completions'
 export type OpenAIEndpointCapability = 'chat_completions' | 'embeddings'
+export type OpenAIImageProtocolPreference = 'auto' | 'images' | 'responses'
 
 export interface OpenAICompactState {
   openai_compact_mode?: OpenAICompactMode

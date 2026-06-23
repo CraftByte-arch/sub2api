@@ -169,6 +169,22 @@ func ProvideUsageCleanupService(repo UsageCleanupRepository, timingWheel *Timing
 	return svc
 }
 
+// ProvideImageStudioJobService creates and starts the async image studio job service.
+func ProvideImageStudioJobService(
+	repo ImageStudioJobRepository,
+	settingService *SettingService,
+	openAIGateway *OpenAIGatewayService,
+	apiKeyService *APIKeyService,
+	billingCacheService *BillingCacheService,
+	userRepo UserRepository,
+	usageCardService *UsageCardService,
+) *ImageStudioJobService {
+	svc := NewImageStudioJobService(repo, settingService)
+	svc.SetRuntimeDependencies(openAIGateway, apiKeyService, billingCacheService, userRepo, usageCardService)
+	svc.Start()
+	return svc
+}
+
 // ProvideAccountExpiryService creates and starts AccountExpiryService.
 func ProvideAccountExpiryService(accountRepo AccountRepository) *AccountExpiryService {
 	svc := NewAccountExpiryService(accountRepo, time.Minute)
@@ -596,6 +612,7 @@ var ProviderSet = wire.NewSet(
 	ProvideTimingWheelService,
 	ProvideDashboardAggregationService,
 	ProvideUsageCleanupService,
+	ProvideImageStudioJobService,
 	ProvideDeferredService,
 	NewAntigravityQuotaFetcher,
 	NewUserAttributeService,

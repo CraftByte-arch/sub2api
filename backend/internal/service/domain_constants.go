@@ -290,6 +290,9 @@ const (
 	SettingKeyDefaultSubscriptions = "default_subscriptions"  // 新用户默认订阅列表（JSON）
 	SettingKeyDefaultUsageCards    = "default_usage_cards"    // 新用户默认余额卡列表（JSON）
 	SettingKeyDefaultUserRPMLimit  = "default_user_rpm_limit" // 新用户默认 RPM 限制（0 = 不限制）
+	SettingKeyImageStudioAsyncConcurrency = "image_studio_async_concurrency"
+	SettingKeyImageStudioRetentionValue   = "image_studio_retention_value"
+	SettingKeyImageStudioRetentionUnit    = "image_studio_retention_unit"
 
 	// 第三方认证来源默认授予配置
 	SettingKeyAuthSourceDefaultEmailBalance             = "auth_source_default_email_balance"

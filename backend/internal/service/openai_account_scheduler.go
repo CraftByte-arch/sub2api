@@ -44,6 +44,7 @@ type OpenAIAccountScheduleRequest struct {
 	PreserveStickyBinding   bool
 	PreviousResponseID      string
 	RequestedModel          string
+	ImageProtocolPreference string
 	RequiredTransport       OpenAIUpstreamTransport
 	RequiredCapability      OpenAIEndpointCapability
 	RequiredImageCapability OpenAIImagesCapability
@@ -516,6 +517,25 @@ func isOpenAIAccountCandidateBetter(left openAIAccountCandidateScore, right open
 	return left.account.ID < right.account.ID
 }
 
+func openAIImageProtocolMatchScore(account *Account, desired string) int {
+	desired = NormalizeOpenAIImageProtocolPreference(desired)
+	if desired == OpenAIImageProtocolPreferenceAuto {
+		return 0
+	}
+	if account == nil {
+		return 0
+	}
+	preference := account.OpenAIImageProtocolPreference()
+	switch {
+	case preference == desired:
+		return 2
+	case preference == OpenAIImageProtocolPreferenceAuto:
+		return 1
+	default:
+		return 0
+	}
+}
+
 func selectTopKOpenAICandidates(candidates []openAIAccountCandidateScore, topK int) []openAIAccountCandidateScore {
 	if len(candidates) == 0 {
 		return nil
@@ -835,6 +855,23 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAISelectionOrder(
 		ranked := selectTopKOpenAICandidates(pool, groupTopK)
 		return buildOpenAIWeightedSelectionOrder(ranked, req)
 	}
+	buildProtocolSelectionOrder := func(pool []openAIAccountCandidateScore) []openAIAccountCandidateScore {
+		desired := NormalizeOpenAIImageProtocolPreference(req.ImageProtocolPreference)
+		if desired == OpenAIImageProtocolPreferenceAuto {
+			return buildSelectionOrder(pool)
+		}
+		selectionOrder := make([]openAIAccountCandidateScore, 0, len(pool))
+		for _, score := range []int{2, 1, 0} {
+			tier := make([]openAIAccountCandidateScore, 0, len(pool))
+			for _, candidate := range pool {
+				if openAIImageProtocolMatchScore(candidate.account, desired) == score {
+					tier = append(tier, candidate)
+				}
+			}
+			selectionOrder = append(selectionOrder, buildSelectionOrder(tier)...)
+		}
+		return selectionOrder
+	}
 
 	if req.RequireCompact {
 		supported := make([]openAIAccountCandidateScore, 0, len(plan.candidates))
@@ -848,15 +885,15 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAISelectionOrder(
 			}
 		}
 		selectionOrder := make([]openAIAccountCandidateScore, 0, len(plan.allCandidates))
-		selectionOrder = append(selectionOrder, buildSelectionOrder(supported)...)
-		selectionOrder = append(selectionOrder, buildSelectionOrder(unknown)...)
+		selectionOrder = append(selectionOrder, buildProtocolSelectionOrder(supported)...)
+		selectionOrder = append(selectionOrder, buildProtocolSelectionOrder(unknown)...)
 		if len(plan.staleSnapshotCompactRetry) > 0 && s.service.schedulerSnapshot != nil {
 			selectionOrder = append(selectionOrder, sortOpenAICompactRetryCandidates(plan.staleSnapshotCompactRetry)...)
 		}
 		return selectionOrder
 	}
 
-	return buildSelectionOrder(plan.candidates)
+	return buildProtocolSelectionOrder(plan.candidates)
 }
 
 func sortOpenAICompactRetryCandidates(pool []openAIAccountCandidateScore) []openAIAccountCandidateScore {
@@ -1217,7 +1254,7 @@ func (s *OpenAIGatewayService) SelectAccountWithScheduler(
 	requiredTransport OpenAIUpstreamTransport,
 	requireCompact bool,
 ) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
-	return s.selectAccountWithScheduler(ctx, groupID, previousResponseID, sessionHash, requestedModel, excludedIDs, requiredTransport, "", "", requireCompact)
+	return s.selectAccountWithScheduler(ctx, groupID, previousResponseID, sessionHash, requestedModel, excludedIDs, requiredTransport, "", "", "", requireCompact)
 }
 
 func (s *OpenAIGatewayService) SelectAccountWithSchedulerForCapability(
@@ -1231,7 +1268,7 @@ func (s *OpenAIGatewayService) SelectAccountWithSchedulerForCapability(
 	requiredCapability OpenAIEndpointCapability,
 	requireCompact bool,
 ) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
-	return s.selectAccountWithScheduler(ctx, groupID, previousResponseID, sessionHash, requestedModel, excludedIDs, requiredTransport, requiredCapability, "", requireCompact)
+	return s.selectAccountWithScheduler(ctx, groupID, previousResponseID, sessionHash, requestedModel, excludedIDs, requiredTransport, requiredCapability, "", "", requireCompact)
 }
 
 func (s *OpenAIGatewayService) SelectAccountWithSchedulerForImages(
@@ -1242,15 +1279,30 @@ func (s *OpenAIGatewayService) SelectAccountWithSchedulerForImages(
 	excludedIDs map[int64]struct{},
 	requiredCapability OpenAIImagesCapability,
 ) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
-	selection, decision, err := s.selectAccountWithScheduler(ctx, groupID, "", sessionHash, requestedModel, excludedIDs, OpenAIUpstreamTransportHTTPSSE, "", requiredCapability, false)
+	selection, decision, err := s.selectAccountWithScheduler(ctx, groupID, "", sessionHash, requestedModel, excludedIDs, OpenAIUpstreamTransportHTTPSSE, "", requiredCapability, OpenAIImageProtocolPreferenceImages, false)
 	if err == nil && selection != nil && selection.Account != nil {
 		return selection, decision, nil
 	}
 	// 如果要求 native 能力（如指定了模型）但没有可用的 APIKey 账号，回退到 basic（OAuth 账号）
 	if requiredCapability == OpenAIImagesCapabilityNative {
-		return s.selectAccountWithScheduler(ctx, groupID, "", sessionHash, requestedModel, excludedIDs, OpenAIUpstreamTransportHTTPSSE, "", OpenAIImagesCapabilityBasic, false)
+		return s.selectAccountWithScheduler(ctx, groupID, "", sessionHash, requestedModel, excludedIDs, OpenAIUpstreamTransportHTTPSSE, "", OpenAIImagesCapabilityBasic, OpenAIImageProtocolPreferenceImages, false)
 	}
 	return selection, decision, err
+}
+
+func (s *OpenAIGatewayService) SelectAccountWithSchedulerForImageProtocol(
+	ctx context.Context,
+	groupID *int64,
+	previousResponseID string,
+	sessionHash string,
+	requestedModel string,
+	excludedIDs map[int64]struct{},
+	requiredTransport OpenAIUpstreamTransport,
+	requiredCapability OpenAIEndpointCapability,
+	imageProtocolPreference string,
+	requireCompact bool,
+) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
+	return s.selectAccountWithScheduler(ctx, groupID, previousResponseID, sessionHash, requestedModel, excludedIDs, requiredTransport, requiredCapability, "", imageProtocolPreference, requireCompact)
 }
 
 func (s *OpenAIGatewayService) selectAccountWithScheduler(
@@ -1263,6 +1315,7 @@ func (s *OpenAIGatewayService) selectAccountWithScheduler(
 	requiredTransport OpenAIUpstreamTransport,
 	requiredCapability OpenAIEndpointCapability,
 	requiredImageCapability OpenAIImagesCapability,
+	imageProtocolPreference string,
 	requireCompact bool,
 ) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
 	ctx = s.withOpenAIQuotaAutoPauseContext(ctx)
@@ -1273,7 +1326,7 @@ func (s *OpenAIGatewayService) selectAccountWithScheduler(
 		if requiredTransport == OpenAIUpstreamTransportAny || requiredTransport == OpenAIUpstreamTransportHTTPSSE {
 			effectiveExcludedIDs := cloneExcludedAccountIDs(excludedIDs)
 			for {
-				selection, err := s.selectAccountWithLoadAwareness(ctx, groupID, sessionHash, requestedModel, effectiveExcludedIDs, requireCompact, requiredCapability)
+				selection, err := s.selectAccountWithLoadAwareness(ctx, groupID, sessionHash, requestedModel, effectiveExcludedIDs, requireCompact, requiredCapability, imageProtocolPreference)
 				if err != nil {
 					return nil, decision, err
 				}
@@ -1298,7 +1351,7 @@ func (s *OpenAIGatewayService) selectAccountWithScheduler(
 
 		effectiveExcludedIDs := cloneExcludedAccountIDs(excludedIDs)
 		for {
-			selection, err := s.selectAccountWithLoadAwareness(ctx, groupID, sessionHash, requestedModel, effectiveExcludedIDs, requireCompact, requiredCapability)
+			selection, err := s.selectAccountWithLoadAwareness(ctx, groupID, sessionHash, requestedModel, effectiveExcludedIDs, requireCompact, requiredCapability, imageProtocolPreference)
 			if err != nil {
 				return nil, decision, err
 			}
@@ -1342,6 +1395,7 @@ func (s *OpenAIGatewayService) selectAccountWithScheduler(
 		StickyAccountID:         stickyAccountID,
 		PreviousResponseID:      previousResponseID,
 		RequestedModel:          requestedModel,
+		ImageProtocolPreference: imageProtocolPreference,
 		RequiredTransport:       requiredTransport,
 		RequiredCapability:      requiredCapability,
 		RequiredImageCapability: requiredImageCapability,

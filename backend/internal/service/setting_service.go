@@ -1032,6 +1032,14 @@ func parsePositiveIntSetting(raw string, fallback int) int {
 	return v
 }
 
+func parseNonNegativeIntSetting(raw string, fallback int) int {
+	v, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || v < 0 {
+		return fallback
+	}
+	return v
+}
+
 func parsePositiveFloatSetting(raw string, fallback float64) float64 {
 	v, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
 	if err != nil || v <= 0 {
@@ -2035,6 +2043,16 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingKeyUsageCardRedeemEnabled] = strconv.FormatBool(settings.UsageCardRedeemEnabled)
 	updates[SettingKeyUsageCardBillingEnabled] = strconv.FormatBool(settings.UsageCardBillingEnabled)
 	updates[SettingKeyUsageCardDefaultPriority] = NormalizeBillingPriority(settings.UsageCardDefaultPriority)
+	if settings.ImageStudioAsyncConcurrency <= 0 {
+		settings.ImageStudioAsyncConcurrency = defaultImageStudioAsyncConcurrency
+	}
+	if settings.ImageStudioRetentionValue < 0 {
+		settings.ImageStudioRetentionValue = defaultImageStudioRetentionValue
+	}
+	settings.ImageStudioRetentionUnit = normalizeImageStudioRetentionUnit(settings.ImageStudioRetentionUnit)
+	updates[SettingKeyImageStudioAsyncConcurrency] = strconv.Itoa(settings.ImageStudioAsyncConcurrency)
+	updates[SettingKeyImageStudioRetentionValue] = strconv.Itoa(settings.ImageStudioRetentionValue)
+	updates[SettingKeyImageStudioRetentionUnit] = settings.ImageStudioRetentionUnit
 	updates[SettingKeyOpenAILongContextBillingEnabled] = strconv.FormatBool(settings.OpenAILongContextBillingEnabled)
 	updates[SettingKeyOpenAILongContextBillingThreshold] = strconv.Itoa(parsePositiveIntSetting(strconv.Itoa(settings.OpenAILongContextBillingThreshold), defaultOpenAILongContextBillingThreshold))
 	updates[SettingKeyOpenAILongContextBillingMultiplier] = strconv.FormatFloat(parsePositiveFloatSetting(strconv.FormatFloat(settings.OpenAILongContextBillingMultiplier, 'f', -1, 64), defaultOpenAILongContextBillingMultiplier), 'f', -1, 64)
@@ -3024,6 +3042,9 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyUsageCardRedeemEnabled:                    "false",
 		SettingKeyUsageCardBillingEnabled:                   "false",
 		SettingKeyUsageCardDefaultPriority:                  BillingPriorityUsageCardFirst,
+		SettingKeyImageStudioAsyncConcurrency:               strconv.Itoa(defaultImageStudioAsyncConcurrency),
+		SettingKeyImageStudioRetentionValue:                 strconv.Itoa(defaultImageStudioRetentionValue),
+		SettingKeyImageStudioRetentionUnit:                  defaultImageStudioRetentionUnit,
 		SettingKeyOpenAILongContextBillingEnabled:           "true",
 		SettingKeyOpenAILongContextBillingThreshold:         strconv.Itoa(defaultOpenAILongContextBillingThreshold),
 		SettingKeyOpenAILongContextBillingMultiplier:        strconv.FormatFloat(defaultOpenAILongContextBillingMultiplier, 'f', -1, 64),
@@ -3236,6 +3257,9 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 		UsageCardRedeemEnabled:             settings[SettingKeyUsageCardRedeemEnabled] == "true",
 		UsageCardBillingEnabled:            settings[SettingKeyUsageCardBillingEnabled] == "true",
 		UsageCardDefaultPriority:           s.getStringOrDefault(settings, SettingKeyUsageCardDefaultPriority, BillingPriorityUsageCardFirst),
+		ImageStudioAsyncConcurrency:        parsePositiveIntSetting(settings[SettingKeyImageStudioAsyncConcurrency], defaultImageStudioAsyncConcurrency),
+		ImageStudioRetentionValue:          parseNonNegativeIntSetting(settings[SettingKeyImageStudioRetentionValue], defaultImageStudioRetentionValue),
+		ImageStudioRetentionUnit:           normalizeImageStudioRetentionUnit(settings[SettingKeyImageStudioRetentionUnit]),
 		OpenAILongContextBillingEnabled:    !isFalseSettingValue(settings[SettingKeyOpenAILongContextBillingEnabled]),
 		OpenAILongContextBillingThreshold:  parsePositiveIntSetting(settings[SettingKeyOpenAILongContextBillingThreshold], defaultOpenAILongContextBillingThreshold),
 		OpenAILongContextBillingMultiplier: parsePositiveFloatSetting(settings[SettingKeyOpenAILongContextBillingMultiplier], defaultOpenAILongContextBillingMultiplier),

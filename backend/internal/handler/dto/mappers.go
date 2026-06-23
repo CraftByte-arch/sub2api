@@ -212,6 +212,7 @@ func AccountFromServiceShallow(a *service.Account) *Account {
 		Credentials:             redactedCreds,
 		CredentialsStatus:       credsStatus,
 		Extra:                   a.Extra,
+		ImageProtocolPreference: a.OpenAIImageProtocolPreference(),
 		ProxyID:                 a.ProxyID,
 		ProxyFallbackOriginID:   a.ProxyFallbackOriginID,
 		ProxyFallbackOriginName: a.ProxyFallbackOriginName,

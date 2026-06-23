@@ -28,6 +28,36 @@ export interface ImageStudioOutput {
   raw: unknown
 }
 
+export type ImageStudioJobStatus = 'queued' | 'running' | 'succeeded' | 'failed'
+
+export interface ImageStudioJob {
+  id: number
+  mode: Exclude<ImageStudioMode, 'history'>
+  status: ImageStudioJobStatus
+  attemptCount: number
+  maxAttempts: number
+  nextAttemptAt?: string
+  prompt: string
+  model: string
+  size: string
+  outputFormat: string
+  estimatedCostUsd: number
+  chargedAmountUsd: number
+  mimeType?: string
+  fileSizeBytes?: number
+  width?: number
+  height?: number
+  errorCode?: string
+  errorMessage?: string
+  queuedAt: string
+  startedAt?: string
+  completedAt?: string
+  expiresAt?: string
+  assetsDeletedAt?: string
+  thumbnailUrl?: string
+  originalUrl?: string
+}
+
 export type ImageStudioGenerationPhase =
   | 'idle'
   | 'created'
@@ -55,13 +85,23 @@ export interface ImageStudioStreamEvent {
 
 export interface ImageStudioHistoryRecord {
   id: string
+  jobId: number
   createdAt: string
   mode: Exclude<ImageStudioMode, 'history'>
+  status: ImageStudioJobStatus
+  attemptCount: number
+  maxAttempts: number
+  nextAttemptAt?: string
   prompt: string
   model: string
   size: string
   count: number
   outputFormat: string
+  errorMessage?: string
+  thumbnailUrl?: string
+  originalUrl?: string
+  expiresAt?: string
+  assetsDeletedAt?: string
   images: Array<{
     id: string
     src: string
@@ -117,7 +157,7 @@ export type ImageStudioLightboxImage =
     title: string
     src: string
     downloadName: string
-    canEdit: true
+    canEdit: boolean
     output: ImageStudioOutput
     index: number
   }
@@ -125,8 +165,8 @@ export type ImageStudioLightboxImage =
     kind: 'history'
     title: string
     src: string
-    downloadName: string
-    canEdit: true
+    downloadName: string | null
+    canEdit: boolean
     record: ImageStudioHistoryRecord
   }
   | {

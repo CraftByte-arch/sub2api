@@ -289,6 +289,25 @@ describe('EditAccountModal', () => {
     expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.openai_responses_supported).toBe(false)
   })
 
+  it('submits OpenAI image protocol preference in extra', async () => {
+    const account = buildAccount()
+    account.extra = {
+      openai_image_protocol_preference: 'responses'
+    }
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+
+    await wrapper.get('[data-testid="openai-image-protocol-preference-select"]').setValue('images')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.openai_image_protocol_preference).toBe('images')
+  })
+
   it('clears OpenAI APIKey Responses override when set back to auto', async () => {
     const account = buildAccount()
     account.extra = {

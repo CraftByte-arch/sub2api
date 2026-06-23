@@ -1,0 +1,59 @@
+.image-studio-page {
+  --studio-bg-preview: #f3faf8;
+  --studio-bg-workbench: var(--studio-bg-preview);
+}
+
+.studio-main,
+.preview-canvas,
+.composer-panel {
+  background: var(--studio-bg-workbench) !important;
+  box-shadow: none !important;
+  border-color: transparent !important;
+}
+
+.composer-panel {
+  border-top: 0 !important;
+}
+
+.composer-panel > .reference-strip-inline {
+  z-index: 2;
+}
+
+.composer-panel .prompt-section {
+  z-index: 6;
+  border: 1px solid rgba(125, 211, 199, 0.52) !important;
+  border-radius: 16px !important;
+  margin-top: 0 !important;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.54) 0%, rgba(243, 250, 248, 0.98) 48%, rgba(232, 248, 245, 0.82) 100%),
+    var(--studio-bg-workbench) !important;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.58),
+    0 -5px 9px -5px rgba(15, 23, 42, 0.42),
+    0 3px 8px rgba(15, 118, 110, 0.07) !important;
+}
+
+.reference-compact-bar {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.58) 0%, rgba(243, 250, 248, 0.96) 50%, rgba(229, 247, 243, 0.84) 100%),
+    var(--studio-bg-workbench) !important;
+  border-color: rgba(125, 211, 199, 0.58) !important;
+  box-shadow:
+    0 -5px 9px -5px rgba(15, 23, 42, 0.42),
+    0 0 10px -5px rgba(15, 23, 42, 0.42),
+    inset 0 0 0 1px rgba(18, 179, 168, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.82) !important;
+}
+
+.composer-panel .prompt-input {
+  border: 1px solid rgba(203, 213, 225, 0.92) !important;
+  border-radius: 12px !important;
+  background: rgba(255, 255, 255, 0.96) !important;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.78) inset,
+    0 3px 8px rgba(15, 118, 110, 0.06) !important;
+}
+
+.composer-panel .prompt-input:focus {
+  border-color: rgba(18, 179, 168, 0.72) !important;
+}

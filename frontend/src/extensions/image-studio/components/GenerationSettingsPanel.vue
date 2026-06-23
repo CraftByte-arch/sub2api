@@ -3,10 +3,11 @@
     <section class="control-section detail-card" aria-label="记录详情">
       <div class="section-title">
         <span>记录详情</span>
-        <small>Local</small>
+        <small>Cloud</small>
       </div>
       <template v-if="selectedHistoryRecord">
         <button
+          v-if="selectedHistoryRecord.images[0]"
           type="button"
           class="detail-thumb-button"
           @click="$emit('open-history-lightbox', selectedHistoryRecord)"
@@ -17,6 +18,9 @@
             :alt="selectedHistoryRecord.prompt || '生成记录'"
           >
         </button>
+        <div v-else class="detail-thumb-empty">
+          {{ selectedHistoryRecord.status === 'succeeded' ? '缩略图暂不可用' : historyStatusLabel(selectedHistoryRecord) }}
+        </div>
         <div class="detail-meta-line" aria-label="记录参数摘要">
           <span>{{ selectedHistoryRecord.mode === 'edit' ? '图生图' : '文生图' }}</span>
           <span>{{ selectedHistoryRecord.model }}</span>
@@ -40,9 +44,15 @@
             <dt>格式</dt>
             <dd>{{ selectedHistoryRecord.outputFormat.toUpperCase() }}</dd>
           </div>
+          <div>
+            <dt>状态</dt>
+            <dd>{{ historyStatusLabel(selectedHistoryRecord) }}</dd>
+          </div>
         </dl>
         <p class="detail-prompt">{{ selectedHistoryRecord.prompt || '未填写提示词' }}</p>
-        <div v-if="selectedHistoryRecord.images[0]" class="detail-actions">
+        <p v-if="selectedHistoryRecord.errorMessage" class="detail-prompt">{{ selectedHistoryRecord.errorMessage }}</p>
+        <p v-if="selectedHistoryRecord.assetsDeletedAt" class="control-hint">图片文件已按全站保留策略清理，仅保留任务记录。</p>
+        <div v-else-if="selectedHistoryRecord.images[0]" class="detail-actions">
           <button
             type="button"
             class="result-edit"
@@ -353,6 +363,32 @@ function ratioShapeStyle(aspect: string) {
   return {
     width: `${Math.max(maxHeight * ratio, 4)}px`,
     height: `${maxHeight}px`
+  }
+}
+
+function historyStatusLabel(record: ImageStudioHistoryRecord) {
+  if (record.assetsDeletedAt) return '图片已过期清理'
+  if (record.status === 'queued' && record.attemptCount > 0) {
+    const attemptLabel = record.maxAttempts > 0
+      ? `第 ${record.attemptCount + 1}/${record.maxAttempts} 次尝试`
+      : `第 ${record.attemptCount + 1} 次尝试`
+    return `排队重试中 · ${attemptLabel}`
+  }
+  if (record.status === 'running' && record.attemptCount > 0) {
+    const total = record.maxAttempts > 0 ? ` / ${record.maxAttempts}` : ''
+    return `重试生成中 · 第 ${record.attemptCount + 1}${total} 次尝试`
+  }
+  switch (record.status) {
+    case 'queued':
+      return '排队中'
+    case 'running':
+      return '生成中'
+    case 'succeeded':
+      return '已完成'
+    case 'failed':
+      return '失败'
+    default:
+      return record.status
   }
 }
 

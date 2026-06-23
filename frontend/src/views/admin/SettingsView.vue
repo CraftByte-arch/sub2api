@@ -3778,6 +3778,65 @@
         </div>
         <!-- /Tab: Users -->
 
+        <!-- Tab: Image Studio -->
+        <div v-show="activeTab === 'imageStudio'" class="space-y-6">
+          <div class="card">
+            <div
+              class="border-b border-gray-100 px-6 py-4 dark:border-dark-700"
+            >
+              <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+                {{ t("admin.settings.imageStudio.title") }}
+              </h2>
+              <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                {{ t("admin.settings.imageStudio.description") }}
+              </p>
+            </div>
+            <div class="space-y-6 p-6">
+              <div class="grid grid-cols-1 gap-6 md:grid-cols-2">
+                <div>
+                  <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ t("admin.settings.imageStudio.asyncConcurrency") }}
+                  </label>
+                  <input
+                    v-model.number="form.image_studio_async_concurrency"
+                    type="number"
+                    min="1"
+                    step="1"
+                    class="input"
+                    placeholder="2"
+                  />
+                  <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                    {{ t("admin.settings.imageStudio.asyncConcurrencyHint") }}
+                  </p>
+                </div>
+                <div>
+                  <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ t("admin.settings.imageStudio.retention") }}
+                  </label>
+                  <div class="flex gap-3">
+                    <input
+                      v-model.number="form.image_studio_retention_value"
+                      type="number"
+                      min="0"
+                      step="1"
+                      class="input flex-1"
+                      placeholder="0"
+                    />
+                    <select v-model="form.image_studio_retention_unit" class="input w-32">
+                      <option value="hour">{{ t("admin.settings.imageStudio.hours") }}</option>
+                      <option value="day">{{ t("admin.settings.imageStudio.days") }}</option>
+                    </select>
+                  </div>
+                  <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                    {{ t("admin.settings.imageStudio.retentionHint") }}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <!-- /Tab: Image Studio -->
+
         <!-- Tab: Gateway — Claude Code, Scheduling -->
         <div v-show="activeTab === 'gateway'" class="space-y-6">
           <!-- Claude Code Settings -->
@@ -7285,6 +7344,7 @@ type SettingsTab =
   | "features"
   | "security"
   | "users"
+  | "imageStudio"
   | "gateway"
   | "payment"
   | "email"
@@ -7296,6 +7356,7 @@ const settingsTabs = [
   { key: "features" as SettingsTab, icon: "bolt" as const },
   { key: "security" as SettingsTab, icon: "shield" as const },
   { key: "users" as SettingsTab, icon: "user" as const },
+  { key: "imageStudio" as SettingsTab, icon: "document" as const },
   { key: "gateway" as SettingsTab, icon: "server" as const },
   { key: "payment" as SettingsTab, icon: "creditCard" as const },
   { key: "email" as SettingsTab, icon: "mail" as const },
@@ -7940,6 +8001,9 @@ const form = reactive<SettingsForm>({
   usage_card_redeem_enabled: false,
   usage_card_billing_enabled: false,
   usage_card_default_priority: "usage_card_first",
+  image_studio_async_concurrency: 2,
+  image_studio_retention_value: 0,
+  image_studio_retention_unit: "day",
   openai_long_context_billing_enabled: true,
   openai_long_context_billing_threshold: 272000,
   openai_long_context_billing_multiplier: 2,
@@ -9185,6 +9249,16 @@ async function saveSettings() {
       default_usage_cards: normalizedDefaultUsageCards,
       force_email_on_third_party_signup: form.force_email_on_third_party_signup,
       default_user_rpm_limit: form.default_user_rpm_limit,
+      image_studio_async_concurrency: Math.max(
+        1,
+        Number(form.image_studio_async_concurrency) || 1,
+      ),
+      image_studio_retention_value: Math.max(
+        0,
+        Math.floor(Number(form.image_studio_retention_value) || 0),
+      ),
+      image_studio_retention_unit:
+        form.image_studio_retention_unit === "hour" ? "hour" : "day",
       site_name: form.site_name,
       site_logo: form.site_logo,
       site_subtitle: form.site_subtitle,

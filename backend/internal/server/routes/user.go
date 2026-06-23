@@ -93,6 +93,17 @@ func RegisterUserRoutes(
 			usage.POST("/dashboard/api-keys-usage", h.Usage.DashboardAPIKeysUsage)
 		}
 
+		imageStudio := authenticated.Group("/image-studio/jobs")
+		{
+			imageStudio.POST("", h.ImageStudioJob.Create)
+			imageStudio.GET("", h.ImageStudioJob.List)
+			imageStudio.GET("/stats", h.ImageStudioJob.Stats)
+			imageStudio.GET("/:id", h.ImageStudioJob.Get)
+			imageStudio.DELETE("/:id", h.ImageStudioJob.Delete)
+			imageStudio.GET("/:id/thumbnail", h.ImageStudioJob.GetThumbnail)
+			imageStudio.GET("/:id/original", h.ImageStudioJob.GetOriginal)
+		}
+
 		// 公告（用户可见）
 		announcements := authenticated.Group("/announcements")
 		{

@@ -1,8 +1,8 @@
 @import './styles/shell.css';
 @import './styles/panels.css';
+@import './styles/composer.css';
 @import './styles/workbench.css';
 @import './styles/history.css';
-@import './styles/composer.css';
 @import './styles/lightbox.css';
 @import './styles/animations.css';
 @import './styles/dark.css';

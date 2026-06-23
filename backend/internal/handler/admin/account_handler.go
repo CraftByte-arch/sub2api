@@ -524,6 +524,7 @@ func (h *AccountHandler) Create(c *gin.Context) {
 	}
 	// base_rpm 输入校验：负值归零，超过 10000 截断
 	sanitizeExtraBaseRPM(req.Extra)
+	sanitizeOpenAIImageProtocolPreference(req.Platform, req.Extra)
 
 	// 确定是否跳过混合渠道检查
 	skipCheck := req.ConfirmMixedChannelRisk != nil && *req.ConfirmMixedChannelRisk
@@ -608,6 +609,7 @@ func (h *AccountHandler) Update(c *gin.Context) {
 	}
 	// base_rpm 输入校验：负值归零，超过 10000 截断
 	sanitizeExtraBaseRPM(req.Extra)
+	sanitizeOpenAIImageProtocolPreference("", req.Extra)
 
 	// 确定是否跳过混合渠道检查
 	skipCheck := req.ConfirmMixedChannelRisk != nil && *req.ConfirmMixedChannelRisk
@@ -1341,6 +1343,7 @@ func (h *AccountHandler) BatchCreate(c *gin.Context) {
 
 			// base_rpm 输入校验：负值归零，超过 10000 截断
 			sanitizeExtraBaseRPM(item.Extra)
+			sanitizeOpenAIImageProtocolPreference(item.Platform, item.Extra)
 
 			skipCheck := item.ConfirmMixedChannelRisk != nil && *item.ConfirmMixedChannelRisk
 
@@ -1534,6 +1537,7 @@ func (h *AccountHandler) BulkUpdate(c *gin.Context) {
 	}
 	// base_rpm 输入校验：负值归零，超过 10000 截断
 	sanitizeExtraBaseRPM(req.Extra)
+	sanitizeOpenAIImageProtocolPreference("", req.Extra)
 
 	// 确定是否跳过混合渠道检查
 	skipCheck := req.ConfirmMixedChannelRisk != nil && *req.ConfirmMixedChannelRisk
@@ -2425,4 +2429,25 @@ func sanitizeExtraBaseRPM(extra map[string]any) {
 		v = 10000
 	}
 	extra["base_rpm"] = v
+}
+
+func sanitizeOpenAIImageProtocolPreference(platform string, extra map[string]any) {
+	if extra == nil {
+		return
+	}
+	raw, ok := extra[service.OpenAIImageProtocolPreferenceExtraKey]
+	if !ok {
+		return
+	}
+	if platform != "" && platform != service.PlatformOpenAI {
+		delete(extra, service.OpenAIImageProtocolPreferenceExtraKey)
+		return
+	}
+	value, _ := raw.(string)
+	normalized := service.NormalizeOpenAIImageProtocolPreference(value)
+	if normalized == service.OpenAIImageProtocolPreferenceAuto {
+		delete(extra, service.OpenAIImageProtocolPreferenceExtraKey)
+		return
+	}
+	extra[service.OpenAIImageProtocolPreferenceExtraKey] = normalized
 }

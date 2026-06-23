@@ -1,4 +1,9 @@
-import type { ImageStudioStreamEvent } from './types'
+import { apiClient } from '@/api'
+import type { PaginatedResponse } from '@/types'
+import type {
+  ImageStudioJob,
+  ImageStudioStreamEvent
+} from './types'
 
 interface JsonRequestInput {
   apiKey: string
@@ -9,6 +14,28 @@ interface JsonRequestInput {
 interface FormRequestInput {
   apiKey: string
   body: FormData
+}
+
+interface ImageStudioJobCreateInput {
+  apiKeyId: number
+  mode: 'generate' | 'edit'
+  prompt: string
+  model: string
+  size: string
+  outputFormat: string
+  quality?: string
+  background?: string
+  style?: string
+  moderation?: string
+  inputFidelity?: string
+  outputCompression?: number
+  imageDataUrls?: string[]
+  maskDataUrl?: string
+}
+
+export interface ImageStudioJobStats {
+  pendingCount: number
+  failedCount: number
 }
 
 export async function sendResponsesImageRequest(input: JsonRequestInput): Promise<unknown> {
@@ -68,6 +95,77 @@ export async function sendPromptPolishRequest(input: JsonRequestInput): Promise<
   return parseResponsesTextStream(response.body)
 }
 
+export async function createImageStudioJob(input: ImageStudioJobCreateInput): Promise<ImageStudioJob> {
+  const { data } = await apiClient.post<ImageStudioJob>('/image-studio/jobs', {
+    api_key_id: input.apiKeyId,
+    mode: input.mode,
+    prompt: input.prompt,
+    model: input.model,
+    size: input.size,
+    output_format: input.outputFormat,
+    quality: input.quality,
+    background: input.background,
+    style: input.style,
+    moderation: input.moderation,
+    input_fidelity: input.inputFidelity,
+    output_compression: input.outputCompression,
+    image_data_urls: input.imageDataUrls,
+    mask_data_url: input.maskDataUrl
+  })
+  return normalizeJob(data)
+}
+
+export async function listImageStudioJobs(page = 1, pageSize = 20): Promise<PaginatedResponse<ImageStudioJob>> {
+  const { data } = await apiClient.get<PaginatedResponse<ImageStudioJob>>('/image-studio/jobs', {
+    params: { page, page_size: pageSize }
+  })
+  return {
+    ...data,
+    items: (data.items || []).map(normalizeJob)
+  }
+}
+
+export async function getImageStudioJob(id: number): Promise<ImageStudioJob> {
+  const { data } = await apiClient.get<ImageStudioJob>(`/image-studio/jobs/${id}`)
+  return normalizeJob(data)
+}
+
+export async function getImageStudioJobStats(): Promise<ImageStudioJobStats> {
+  const { data } = await apiClient.get('/image-studio/jobs/stats')
+  return {
+    pendingCount: Number(data?.pending_count || data?.pendingCount || 0),
+    failedCount: Number(data?.failed_count || data?.failedCount || 0)
+  }
+}
+
+export async function deleteImageStudioJob(id: number): Promise<void> {
+  await apiClient.delete(`/image-studio/jobs/${id}`)
+}
+
+export async function fetchImageStudioOriginal(id: number): Promise<Blob> {
+  const response = await fetch(`/api/v1/image-studio/jobs/${id}/original`, {
+    method: 'GET',
+    headers: buildAuthHeaders(),
+    credentials: 'include'
+  })
+  if (!response.ok) {
+    throw new Error(await extractFetchError(response))
+  }
+  return response.blob()
+}
+
+export async function fetchImageStudioThumbnail(id: number): Promise<Blob> {
+  const response = await fetch(`/api/v1/image-studio/jobs/${id}/thumbnail`, {
+    method: 'GET',
+    headers: buildAuthHeaders(),
+    credentials: 'include'
+  })
+  if (!response.ok) {
+    throw new Error(await extractFetchError(response))
+  }
+  return response.blob()
+}
+
 async function sendJson(url: string, input: JsonRequestInput): Promise<unknown> {
   const response = await fetch(url, {
     method: 'POST',
@@ -108,6 +206,51 @@ function extractErrorMessage(payload: unknown): string {
   if (error && typeof error === 'object' && typeof error.message === 'string') return error.message
   if (typeof record.message === 'string') return record.message
   return ''
+}
+
+function buildAuthHeaders(): HeadersInit {
+  const token = localStorage.getItem('auth_token')
+  const headers: Record<string, string> = {}
+  if (token) {
+    headers.Authorization = `Bearer ${token}`
+  }
+  return headers
+}
+
+async function extractFetchError(response: Response): Promise<string> {
+  const text = await response.text()
+  const payload = parseMaybeJson(text)
+  return extractErrorMessage(payload) || text || `Request failed (${response.status})`
+}
+
+function normalizeJob(job: any): ImageStudioJob {
+  return {
+    id: Number(job?.id || 0),
+    mode: job?.mode === 'edit' ? 'edit' : 'generate',
+    status: job?.status || 'queued',
+    attemptCount: Number(job?.attempt_count || job?.attemptCount || 0),
+    maxAttempts: Number(job?.max_attempts || job?.maxAttempts || 0),
+    nextAttemptAt: job?.next_attempt_at || job?.nextAttemptAt || undefined,
+    prompt: job?.prompt || '',
+    model: job?.model || '',
+    size: job?.size || '',
+    outputFormat: job?.output_format || job?.outputFormat || 'png',
+    estimatedCostUsd: Number(job?.estimated_cost_usd || job?.estimatedCostUsd || 0),
+    chargedAmountUsd: Number(job?.charged_amount_usd || job?.chargedAmountUsd || 0),
+    mimeType: job?.mime_type || job?.mimeType || undefined,
+    fileSizeBytes: Number(job?.file_size_bytes || job?.fileSizeBytes || 0) || undefined,
+    width: Number(job?.width || 0) || undefined,
+    height: Number(job?.height || 0) || undefined,
+    errorCode: job?.error_code || job?.errorCode || undefined,
+    errorMessage: job?.error_message || job?.errorMessage || undefined,
+    queuedAt: job?.queued_at || job?.queuedAt || '',
+    startedAt: job?.started_at || job?.startedAt || undefined,
+    completedAt: job?.completed_at || job?.completedAt || undefined,
+    expiresAt: job?.expires_at || job?.expiresAt || undefined,
+    assetsDeletedAt: job?.assets_deleted_at || job?.assetsDeletedAt || undefined,
+    thumbnailUrl: job?.thumbnail_url || job?.thumbnailUrl || undefined,
+    originalUrl: job?.original_url || job?.originalUrl || undefined
+  }
 }
 
 async function parseResponsesImageStream(

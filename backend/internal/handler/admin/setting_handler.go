@@ -235,6 +235,9 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		UsageCardRedeemEnabled:                 settings.UsageCardRedeemEnabled,
 		UsageCardBillingEnabled:                settings.UsageCardBillingEnabled,
 		UsageCardDefaultPriority:               settings.UsageCardDefaultPriority,
+		ImageStudioAsyncConcurrency:            settings.ImageStudioAsyncConcurrency,
+		ImageStudioRetentionValue:              settings.ImageStudioRetentionValue,
+		ImageStudioRetentionUnit:               settings.ImageStudioRetentionUnit,
 		OpenAILongContextBillingEnabled:        settings.OpenAILongContextBillingEnabled,
 		OpenAILongContextBillingThreshold:      settings.OpenAILongContextBillingThreshold,
 		OpenAILongContextBillingMultiplier:     settings.OpenAILongContextBillingMultiplier,
@@ -533,6 +536,9 @@ type UpdateSettingsRequest struct {
 	UsageCardRedeemEnabled             *bool                 `json:"usage_card_redeem_enabled"`
 	UsageCardBillingEnabled            *bool                 `json:"usage_card_billing_enabled"`
 	UsageCardDefaultPriority           *string               `json:"usage_card_default_priority"`
+	ImageStudioAsyncConcurrency        int                   `json:"image_studio_async_concurrency"`
+	ImageStudioRetentionValue          int                   `json:"image_studio_retention_value"`
+	ImageStudioRetentionUnit           string                `json:"image_studio_retention_unit"`
 	OpenAILongContextBillingEnabled    *bool                 `json:"openai_long_context_billing_enabled"`
 	OpenAILongContextBillingThreshold  *int                  `json:"openai_long_context_billing_threshold"`
 	OpenAILongContextBillingMultiplier *float64              `json:"openai_long_context_billing_multiplier"`
@@ -731,6 +737,13 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 	if req.DefaultConcurrency < 1 {
 		req.DefaultConcurrency = 1
 	}
+	if req.ImageStudioAsyncConcurrency < 1 {
+		req.ImageStudioAsyncConcurrency = 1
+	}
+	if req.ImageStudioRetentionValue < 0 {
+		req.ImageStudioRetentionValue = 0
+	}
+	req.ImageStudioRetentionUnit = service.NormalizeImageStudioRetentionUnitForWrite(req.ImageStudioRetentionUnit)
 	if req.DefaultBalance < 0 {
 		req.DefaultBalance = 0
 	}
@@ -1691,6 +1704,9 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		UsageCardRedeemEnabled:                 usageCardRedeemEnabled,
 		UsageCardBillingEnabled:                usageCardBillingEnabled,
 		UsageCardDefaultPriority:               usageCardDefaultPriority,
+		ImageStudioAsyncConcurrency:            req.ImageStudioAsyncConcurrency,
+		ImageStudioRetentionValue:              req.ImageStudioRetentionValue,
+		ImageStudioRetentionUnit:               req.ImageStudioRetentionUnit,
 		OpenAILongContextBillingEnabled:        openaiLongContextBillingEnabled,
 		OpenAILongContextBillingThreshold:      openaiLongContextBillingThreshold,
 		OpenAILongContextBillingMultiplier:     openaiLongContextBillingMultiplier,
@@ -2590,6 +2606,15 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	}
 	if before.DefaultBalance != after.DefaultBalance {
 		changed = append(changed, "default_balance")
+	}
+	if before.ImageStudioAsyncConcurrency != after.ImageStudioAsyncConcurrency {
+		changed = append(changed, service.SettingKeyImageStudioAsyncConcurrency)
+	}
+	if before.ImageStudioRetentionValue != after.ImageStudioRetentionValue {
+		changed = append(changed, service.SettingKeyImageStudioRetentionValue)
+	}
+	if before.ImageStudioRetentionUnit != after.ImageStudioRetentionUnit {
+		changed = append(changed, service.SettingKeyImageStudioRetentionUnit)
 	}
 	if before.AffiliateRebateRate != after.AffiliateRebateRate {
 		changed = append(changed, "affiliate_rebate_rate")

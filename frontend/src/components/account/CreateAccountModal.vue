@@ -2730,6 +2730,21 @@
         >
           {{ t('admin.accounts.openai.responsesModeTextDisabledHint') }}
         </p>
+        <div class="flex items-center justify-between gap-4">
+          <div>
+            <label class="input-label mb-0">{{ t('admin.accounts.openai.imageProtocolPreference') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.openai.imageProtocolPreferenceDesc') }}
+            </p>
+          </div>
+          <div class="w-56">
+            <Select
+              v-model="openAIImageProtocolPreference"
+              :options="openAIImageProtocolPreferenceOptions"
+              data-testid="openai-image-protocol-preference-select"
+            />
+          </div>
+        </div>
         <div>
           <label class="input-label mb-2 block">{{ t('admin.accounts.openai.endpointCapabilities') }}</label>
           <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
@@ -3227,6 +3242,7 @@ import type {
   CodexSessionImportMessage,
   OpenAICompactMode,
   OpenAIResponsesMode,
+  OpenAIImageProtocolPreference,
   OpenAIEndpointCapability
 } from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
@@ -3416,6 +3432,7 @@ const autoPauseOnExpired = ref(true)
 const openaiPassthroughEnabled = ref(false)
 const openAICompactMode = ref<OpenAICompactMode>('auto')
 const openAIResponsesMode = ref<OpenAIResponsesMode>('auto')
+const openAIImageProtocolPreference = ref<OpenAIImageProtocolPreference>('auto')
 const openAIEndpointCapabilities = ref<OpenAIEndpointCapability[]>(['chat_completions', 'embeddings'])
 const openaiOAuthResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
 const openaiAPIKeyResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
@@ -3479,6 +3496,11 @@ const openAIResponsesModeOptions = computed(() => [
   { value: 'auto', label: t('admin.accounts.openai.responsesModeAuto') },
   { value: 'force_responses', label: t('admin.accounts.openai.responsesModeForceResponses') },
   { value: 'force_chat_completions', label: t('admin.accounts.openai.responsesModeForceChatCompletions') }
+])
+const openAIImageProtocolPreferenceOptions = computed(() => [
+  { value: 'auto', label: t('admin.accounts.openai.imageProtocolAuto') },
+  { value: 'images', label: t('admin.accounts.openai.imageProtocolImages') },
+  { value: 'responses', label: t('admin.accounts.openai.imageProtocolResponses') }
 ])
 const openAITextEndpointCapabilityLabel = computed(() => {
   if (openAIResponsesMode.value === 'force_responses') {
@@ -4339,6 +4361,12 @@ const buildOpenAIExtra = (base?: Record<string, unknown>): Record<string, unknow
     extra.openai_compact_mode = openAICompactMode.value
   } else {
     delete extra.openai_compact_mode
+  }
+
+  if (openAIImageProtocolPreference.value !== 'auto') {
+    extra.openai_image_protocol_preference = openAIImageProtocolPreference.value
+  } else {
+    delete extra.openai_image_protocol_preference
   }
 
   if (

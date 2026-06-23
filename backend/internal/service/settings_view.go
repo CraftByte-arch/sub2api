@@ -166,6 +166,9 @@ type SystemSettings struct {
 	DefaultUserRPMLimit          int
 	DefaultSubscriptions         []DefaultSubscriptionSetting
 	DefaultUsageCards            []DefaultUsageCardSetting
+	ImageStudioAsyncConcurrency  int
+	ImageStudioRetentionValue    int
+	ImageStudioRetentionUnit     string
 
 	// Model fallback configuration
 	EnableModelFallback      bool   `json:"enable_model_fallback"`

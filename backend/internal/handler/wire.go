@@ -106,6 +106,7 @@ func ProvideHandlers(
 	redeemHandler *RedeemHandler,
 	subscriptionHandler *SubscriptionHandler,
 	announcementHandler *AnnouncementHandler,
+	imageStudioJobHandler *ImageStudioJobHandler,
 	channelMonitorUserHandler *ChannelMonitorUserHandler,
 	adminHandlers *AdminHandlers,
 	gatewayHandler *GatewayHandler,
@@ -127,6 +128,7 @@ func ProvideHandlers(
 		Redeem:           redeemHandler,
 		Subscription:     subscriptionHandler,
 		Announcement:     announcementHandler,
+		ImageStudioJob:   imageStudioJobHandler,
 		ChannelMonitor:   channelMonitorUserHandler,
 		Admin:            adminHandlers,
 		Gateway:          gatewayHandler,
@@ -150,6 +152,7 @@ var ProviderSet = wire.NewSet(
 	NewRedeemHandler,
 	NewSubscriptionHandler,
 	NewAnnouncementHandler,
+	NewImageStudioJobHandler,
 	NewChannelMonitorUserHandler,
 	NewGatewayHandler,
 	NewOpenAIGatewayHandler,
@@ -193,7 +196,6 @@ var ProviderSet = wire.NewSet(
 	admin.NewAffiliateHandler,
 	admin.NewUsageCardHandler,
 	admin.NewComplianceHandler,
-	admin.NewUsageCardHandler,
 
 	// AdminHandlers and Handlers constructors
 	ProvideAdminHandlers,

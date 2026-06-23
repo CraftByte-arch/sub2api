@@ -1,6 +1,21 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { apiClient } from '@/api'
+
+vi.mock('@/api', () => ({
+  apiClient: {
+    post: vi.fn(),
+    get: vi.fn(),
+    delete: vi.fn()
+  }
+}))
 
 import {
+  createImageStudioJob,
+  deleteImageStudioJob,
+  getImageStudioJobStats,
+  getImageStudioJob,
+  fetchImageStudioOriginal,
+  fetchImageStudioThumbnail,
   sendImagesEditRequest,
   sendImagesGenerationRequest,
   sendPromptPolishRequest,
@@ -10,6 +25,9 @@ import {
 describe('imageStudioApi', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
+    vi.mocked(apiClient.post).mockReset()
+    vi.mocked(apiClient.get).mockReset()
+    vi.mocked(apiClient.delete).mockReset()
   })
 
   it('sends Responses requests with the selected API key', async () => {
@@ -131,6 +149,148 @@ describe('imageStudioApi', () => {
       apiKey: 'sk-user',
       body: { model: 'gpt-5.4', input: 'draw' }
     })).rejects.toThrow('Image generation is not enabled for this group')
+  })
+
+  it('creates image studio jobs through the site API', async () => {
+    vi.mocked(apiClient.post).mockResolvedValue({
+      data: {
+        id: 12,
+        mode: 'generate',
+        status: 'queued',
+        attempt_count: 1,
+        max_attempts: 3,
+        next_attempt_at: '2026-06-11T00:00:10Z',
+        prompt: 'draw',
+        model: 'gpt-image-2',
+        size: '1024x1024',
+        output_format: 'png',
+        queued_at: '2026-06-11T00:00:00Z'
+      }
+    })
+
+    const job = await createImageStudioJob({
+      apiKeyId: 9,
+      mode: 'generate',
+      prompt: 'draw',
+      model: 'gpt-image-2',
+      size: '1024x1024',
+      outputFormat: 'png'
+    })
+
+    expect(apiClient.post).toHaveBeenCalledWith('/image-studio/jobs', {
+      api_key_id: 9,
+      mode: 'generate',
+      prompt: 'draw',
+      model: 'gpt-image-2',
+      size: '1024x1024',
+      output_format: 'png',
+      quality: undefined,
+      background: undefined,
+      style: undefined,
+      moderation: undefined,
+      input_fidelity: undefined,
+      output_compression: undefined,
+      image_data_urls: undefined,
+      mask_data_url: undefined
+    })
+    expect(job).toMatchObject({
+      id: 12,
+      status: 'queued',
+      outputFormat: 'png',
+      attemptCount: 1,
+      maxAttempts: 3,
+      nextAttemptAt: '2026-06-11T00:00:10Z'
+    })
+  })
+
+  it('deletes image studio jobs through the site API', async () => {
+    vi.mocked(apiClient.delete).mockResolvedValue({ data: null })
+
+    await deleteImageStudioJob(42)
+
+    expect(apiClient.delete).toHaveBeenCalledWith('/image-studio/jobs/42')
+  })
+
+  it('loads image studio job stats through the site API', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({
+      data: {
+        pending_count: 2,
+        failed_count: 3
+      }
+    })
+
+    const stats = await getImageStudioJobStats()
+
+    expect(apiClient.get).toHaveBeenCalledWith('/image-studio/jobs/stats')
+    expect(stats).toEqual({
+      pendingCount: 2,
+      failedCount: 3
+    })
+  })
+
+  it('normalizes retry metadata from job detail responses', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({
+      data: {
+        id: 44,
+        mode: 'generate',
+        status: 'running',
+        attempt_count: 2,
+        max_attempts: 3,
+        prompt: 'draw again',
+        model: 'gpt-image-2',
+        size: '1024x1024',
+        output_format: 'webp',
+        queued_at: '2026-06-11T00:00:00Z'
+      }
+    })
+
+    const job = await getImageStudioJob(44)
+
+    expect(job).toMatchObject({
+      id: 44,
+      status: 'running',
+      attemptCount: 2,
+      maxAttempts: 3,
+      outputFormat: 'webp'
+    })
+  })
+
+  it('fetches original images with current auth token', async () => {
+    localStorage.setItem('auth_token', 'jwt-token')
+    const blob = new Blob(['img'], { type: 'image/png' })
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      blob: vi.fn().mockResolvedValue(blob)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await fetchImageStudioOriginal(42)
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/image-studio/jobs/42/original', {
+      method: 'GET',
+      headers: { Authorization: 'Bearer jwt-token' },
+      credentials: 'include'
+    })
+    expect(result).toBe(blob)
+  })
+
+  it('fetches thumbnails with current auth token and cookies', async () => {
+    localStorage.setItem('auth_token', 'jwt-token')
+    const blob = new Blob(['thumb'], { type: 'image/jpeg' })
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      blob: vi.fn().mockResolvedValue(blob)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await fetchImageStudioThumbnail(42)
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/image-studio/jobs/42/thumbnail', {
+      method: 'GET',
+      headers: { Authorization: 'Bearer jwt-token' },
+      credentials: 'include'
+    })
+    expect(result).toBe(blob)
   })
 })
 

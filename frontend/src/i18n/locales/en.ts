@@ -3594,6 +3594,12 @@ export default {
         responsesModeForceChatCompletions: 'Force Chat Completions',
         responsesModeTextDisabledHint:
           'Not applicable when the Responses / Chat Completions endpoint is not enabled.',
+        imageProtocolPreference: 'Image API preference',
+        imageProtocolPreferenceDesc:
+          'Used for image-generation account routing. Matching request protocol is preferred; auto keeps existing conversion behavior.',
+        imageProtocolAuto: 'Auto',
+        imageProtocolImages: 'Images',
+        imageProtocolResponses: 'Responses',
         endpointCapabilities: 'Endpoint capabilities',
         endpointCapabilitiesDesc:
           'Used by account routing. The text endpoint follows the Responses API support setting above and is shown as Responses, Chat Completions, or auto mode; Embeddings independently controls /v1/embeddings.',
@@ -5600,10 +5606,21 @@ export default {
         features: 'Feature Switches',
         security: 'Security',
         users: 'Users',
+        imageStudio: 'Image Studio',
         gateway: 'Gateway',
         email: 'Email',
         backup: 'Backup',
         payment: 'Payment',
+      },
+      imageStudio: {
+        title: 'Image Studio Settings',
+        description: 'Manage the site-wide async queue concurrency and file retention for Image Studio.',
+        asyncConcurrency: 'Async image concurrency',
+        asyncConcurrencyHint: 'The global concurrency limit for the internal Image Studio queue. Start with 1-3.',
+        retention: 'Image retention',
+        retentionHint: '0 means never expire. When expired, only original and thumbnail files are deleted; job records remain.',
+        hours: 'Hours',
+        days: 'Days',
       },
       features: {
         channelMonitor: {

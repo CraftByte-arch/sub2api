@@ -165,6 +165,7 @@ type Account struct {
 	Credentials             map[string]any  `json:"credentials"`
 	CredentialsStatus       map[string]bool `json:"credentials_status,omitempty"`
 	Extra                   map[string]any  `json:"extra"`
+	ImageProtocolPreference string          `json:"image_protocol_preference,omitempty"`
 	ProxyID                 *int64          `json:"proxy_id"`
 	ProxyFallbackOriginID   *int64          `json:"proxy_fallback_origin_id"`
 	ProxyFallbackOriginName *string         `json:"proxy_fallback_origin_name,omitempty"`
