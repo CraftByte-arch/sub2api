@@ -1,0 +1,14 @@
+{
+  "change": "configurable-payment-order-prefix",
+  "phase": "design",
+  "mode": "compact",
+  "canonical_spec": "openspec",
+  "generated_by": "comet-handoff.sh",
+  "context_hash": "cbde4eff2afc686c65468f8ffc8eb2527eae79677c73ccd5ca5d8f4aa4bede05",
+  "files": [
+    { "path": "openspec/changes/configurable-payment-order-prefix/proposal.md", "sha256": "32d92814d6351d6f81320b918dd36e5caff2d9a829ca6b46605beb1784875aaf" },
+    { "path": "openspec/changes/configurable-payment-order-prefix/design.md", "sha256": "8e4e05ba32b93cfd21dabccc18200960b51721e9b813e10b4298b8f51a9c9744" },
+    { "path": "openspec/changes/configurable-payment-order-prefix/tasks.md", "sha256": "336f812f44ecaa8d24095f57ae28ddbba69c3e2fb2c43660b229d618c877d9c4" },
+    { "path": "openspec/changes/configurable-payment-order-prefix/specs/payment/spec.md", "sha256": "5b0db4d798e2a1440f1db9a512043050a418cc3e049811cd8fd54e0a979c024c" }
+  ]
+}
