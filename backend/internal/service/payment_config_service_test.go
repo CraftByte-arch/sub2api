@@ -199,6 +199,98 @@ func TestParsePaymentConfig(t *testing.T) {
 	})
 }
 
+func TestPaymentConfigMerchantOrderPrefix(t *testing.T) {
+	t.Parallel()
+
+	svc := &PaymentConfigService{}
+
+	t.Run("default is sub2 underscore", func(t *testing.T) {
+		t.Parallel()
+		cfg := svc.parsePaymentConfig(map[string]string{})
+		if cfg.MerchantOrderPrefix != "sub2_" {
+			t.Fatalf("MerchantOrderPrefix = %q, want %q", cfg.MerchantOrderPrefix, "sub2_")
+		}
+	})
+
+	t.Run("stored value is trimmed", func(t *testing.T) {
+		t.Parallel()
+		cfg := svc.parsePaymentConfig(map[string]string{
+			SettingMerchantOrderPrefix: " myshop_ ",
+		})
+		if cfg.MerchantOrderPrefix != "myshop_" {
+			t.Fatalf("MerchantOrderPrefix = %q, want %q", cfg.MerchantOrderPrefix, "myshop_")
+		}
+	})
+}
+
+func TestUpdatePaymentConfigMerchantOrderPrefixValidation(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("persists valid prefix", func(t *testing.T) {
+		repo := &paymentConfigSettingRepoStub{values: map[string]string{}}
+		svc := &PaymentConfigService{settingRepo: repo}
+		prefix := "shop-01_"
+
+		if err := svc.UpdatePaymentConfig(ctx, UpdatePaymentConfigRequest{
+			MerchantOrderPrefix: &prefix,
+		}); err != nil {
+			t.Fatalf("UpdatePaymentConfig returned error: %v", err)
+		}
+		if repo.values[SettingMerchantOrderPrefix] != "shop-01_" {
+			t.Fatalf("stored prefix = %q, want %q", repo.values[SettingMerchantOrderPrefix], "shop-01_")
+		}
+	})
+
+	t.Run("rejects invalid characters", func(t *testing.T) {
+		repo := &paymentConfigSettingRepoStub{values: map[string]string{}}
+		svc := &PaymentConfigService{settingRepo: repo}
+		prefix := "bad.prefix"
+
+		err := svc.UpdatePaymentConfig(ctx, UpdatePaymentConfigRequest{
+			MerchantOrderPrefix: &prefix,
+		})
+		if err == nil {
+			t.Fatal("expected invalid prefix error")
+		}
+		if got := repo.values[SettingMerchantOrderPrefix]; got != "" {
+			t.Fatalf("stored invalid prefix = %q, want empty", got)
+		}
+	})
+
+	t.Run("rejects too long prefix", func(t *testing.T) {
+		repo := &paymentConfigSettingRepoStub{values: map[string]string{}}
+		svc := &PaymentConfigService{settingRepo: repo}
+		prefix := "abcdefghijklmnopq"
+
+		err := svc.UpdatePaymentConfig(ctx, UpdatePaymentConfigRequest{
+			MerchantOrderPrefix: &prefix,
+		})
+		if err == nil {
+			t.Fatal("expected too long prefix error")
+		}
+	})
+
+	t.Run("omitted prefix preserves stored value", func(t *testing.T) {
+		repo := &paymentConfigSettingRepoStub{values: map[string]string{
+			SettingMerchantOrderPrefix: "shop_",
+		}}
+		svc := &PaymentConfigService{settingRepo: repo}
+		enabled := true
+
+		if err := svc.UpdatePaymentConfig(ctx, UpdatePaymentConfigRequest{
+			Enabled: &enabled,
+		}); err != nil {
+			t.Fatalf("UpdatePaymentConfig returned error: %v", err)
+		}
+		if repo.values[SettingMerchantOrderPrefix] != "shop_" {
+			t.Fatalf("stored prefix = %q, want preserved %q", repo.values[SettingMerchantOrderPrefix], "shop_")
+		}
+		if repo.values[SettingPaymentEnabled] != "true" {
+			t.Fatalf("payment enabled = %q, want true", repo.values[SettingPaymentEnabled])
+		}
+	})
+}
+
 func TestGetBasePaymentType(t *testing.T) {
 	t.Parallel()
 
@@ -341,6 +433,28 @@ func TestGetPaymentConfigKeepsStoredEnabledTypes(t *testing.T) {
 		if cfg.EnabledTypes[i] != want[i] {
 			t.Fatalf("EnabledTypes[%d] = %q, want %q (full=%v)", i, cfg.EnabledTypes[i], want[i], cfg.EnabledTypes)
 		}
+	}
+}
+
+func TestGetPaymentConfigReturnsStoredMerchantOrderPrefix(t *testing.T) {
+	ctx := context.Background()
+	client := newPaymentConfigServiceTestClient(t)
+
+	svc := &PaymentConfigService{
+		entClient: client,
+		settingRepo: &paymentConfigSettingRepoStub{
+			values: map[string]string{
+				SettingMerchantOrderPrefix: "shop_",
+			},
+		},
+	}
+
+	cfg, err := svc.GetPaymentConfig(ctx)
+	if err != nil {
+		t.Fatalf("GetPaymentConfig returned error: %v", err)
+	}
+	if cfg.MerchantOrderPrefix != "shop_" {
+		t.Fatalf("MerchantOrderPrefix = %q, want %q", cfg.MerchantOrderPrefix, "shop_")
 	}
 }
 

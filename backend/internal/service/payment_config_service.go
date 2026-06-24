@@ -27,6 +27,7 @@ const (
 	SettingRechargeFeeRate     = "RECHARGE_FEE_RATE"
 	SettingProductNamePrefix   = "PRODUCT_NAME_PREFIX"
 	SettingProductNameSuffix   = "PRODUCT_NAME_SUFFIX"
+	SettingMerchantOrderPrefix = "MERCHANT_ORDER_PREFIX"
 	SettingHelpImageURL        = "PAYMENT_HELP_IMAGE_URL"
 	SettingHelpText            = "PAYMENT_HELP_TEXT"
 	SettingCancelRateLimitOn   = "CANCEL_RATE_LIMIT_ENABLED"
@@ -39,8 +40,9 @@ const (
 
 // Default values for payment configuration settings.
 const (
-	defaultOrderTimeoutMin  = 30
-	defaultMaxPendingOrders = 3
+	defaultOrderTimeoutMin     = 30
+	defaultMaxPendingOrders    = 3
+	defaultMerchantOrderPrefix = "sub2_"
 )
 
 // PaymentConfig holds the payment system configuration.
@@ -58,6 +60,7 @@ type PaymentConfig struct {
 	LoadBalanceStrategy       string   `json:"load_balance_strategy"`
 	ProductNamePrefix         string   `json:"product_name_prefix"`
 	ProductNameSuffix         string   `json:"product_name_suffix"`
+	MerchantOrderPrefix       string   `json:"merchant_order_prefix"`
 	HelpImageURL              string   `json:"help_image_url"`
 	HelpText                  string   `json:"help_text"`
 	StripePublishableKey      string   `json:"stripe_publishable_key,omitempty"`
@@ -88,6 +91,7 @@ type UpdatePaymentConfigRequest struct {
 	LoadBalanceStrategy       *string  `json:"load_balance_strategy"`
 	ProductNamePrefix         *string  `json:"product_name_prefix"`
 	ProductNameSuffix         *string  `json:"product_name_suffix"`
+	MerchantOrderPrefix       *string  `json:"merchant_order_prefix"`
 	HelpImageURL              *string  `json:"help_image_url"`
 	HelpText                  *string  `json:"help_text"`
 
@@ -216,7 +220,7 @@ func (s *PaymentConfigService) GetPaymentConfig(ctx context.Context) (*PaymentCo
 		SettingPaymentEnabled, SettingMinRechargeAmount, SettingMaxRechargeAmount,
 		SettingDailyRechargeLimit, SettingOrderTimeoutMinutes, SettingMaxPendingOrders,
 		SettingEnabledPaymentTypes, SettingBalancePayDisabled, SettingBalanceRechargeMult, SettingRechargeFeeRate, SettingLoadBalanceStrategy,
-		SettingProductNamePrefix, SettingProductNameSuffix,
+		SettingProductNamePrefix, SettingProductNameSuffix, SettingMerchantOrderPrefix,
 		SettingHelpImageURL, SettingHelpText,
 		SettingCancelRateLimitOn, SettingCancelRateLimitMax,
 		SettingCancelWindowSize, SettingCancelWindowUnit, SettingCancelWindowMode,
@@ -248,6 +252,7 @@ func (s *PaymentConfigService) parsePaymentConfig(vals map[string]string) *Payme
 		LoadBalanceStrategy:       vals[SettingLoadBalanceStrategy],
 		ProductNamePrefix:         vals[SettingProductNamePrefix],
 		ProductNameSuffix:         vals[SettingProductNameSuffix],
+		MerchantOrderPrefix:       defaultMerchantOrderPrefix,
 		HelpImageURL:              vals[SettingHelpImageURL],
 		HelpText:                  vals[SettingHelpText],
 
@@ -261,6 +266,9 @@ func (s *PaymentConfigService) parsePaymentConfig(vals map[string]string) *Payme
 	}
 	if cfg.LoadBalanceStrategy == "" {
 		cfg.LoadBalanceStrategy = payment.DefaultLoadBalanceStrategy
+	}
+	if prefix, err := normalizeMerchantOrderPrefix(vals[SettingMerchantOrderPrefix]); err == nil {
+		cfg.MerchantOrderPrefix = prefix
 	}
 	if raw := vals[SettingEnabledPaymentTypes]; raw != "" {
 		types := make([]string, 0, len(strings.Split(raw, ",")))
@@ -315,6 +323,15 @@ func (s *PaymentConfigService) UpdatePaymentConfig(ctx context.Context, req Upda
 			return infraerrors.BadRequest("INVALID_RECHARGE_FEE_RATE", "recharge fee rate allows at most 2 decimal places")
 		}
 	}
+	merchantOrderPrefix := ""
+	hasMerchantOrderPrefix := req.MerchantOrderPrefix != nil
+	if req.MerchantOrderPrefix != nil {
+		var err error
+		merchantOrderPrefix, err = normalizeMerchantOrderPrefix(*req.MerchantOrderPrefix)
+		if err != nil {
+			return err
+		}
+	}
 	m := map[string]string{
 		SettingPaymentEnabled:                    formatBoolOrEmpty(req.Enabled),
 		SettingMinRechargeAmount:                 formatPositiveFloat(req.MinAmount),
@@ -340,6 +357,9 @@ func (s *PaymentConfigService) UpdatePaymentConfig(ctx context.Context, req Upda
 		SettingPaymentVisibleMethodWxpaySource:   derefStr(req.VisibleMethodWxpaySource),
 		SettingPaymentVisibleMethodAlipayEnabled: formatBoolOrEmpty(req.VisibleMethodAlipayEnabled),
 		SettingPaymentVisibleMethodWxpayEnabled:  formatBoolOrEmpty(req.VisibleMethodWxpayEnabled),
+	}
+	if hasMerchantOrderPrefix {
+		m[SettingMerchantOrderPrefix] = merchantOrderPrefix
 	}
 	if req.EnabledTypes != nil {
 		m[SettingEnabledPaymentTypes] = strings.Join(req.EnabledTypes, ",")
@@ -382,6 +402,23 @@ func derefStr(v *string) string {
 		return ""
 	}
 	return *v
+}
+
+func normalizeMerchantOrderPrefix(raw string) (string, error) {
+	prefix := strings.TrimSpace(raw)
+	if prefix == "" {
+		return defaultMerchantOrderPrefix, nil
+	}
+	if len(prefix) > 16 {
+		return "", infraerrors.BadRequest("INVALID_MERCHANT_ORDER_PREFIX", "merchant order prefix must be 1-16 characters")
+	}
+	for _, r := range prefix {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+			continue
+		}
+		return "", infraerrors.BadRequest("INVALID_MERCHANT_ORDER_PREFIX", "merchant order prefix may only contain letters, numbers, underscore, and hyphen")
+	}
+	return prefix, nil
 }
 
 func splitTypes(s string) []string {
