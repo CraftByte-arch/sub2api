@@ -495,7 +495,7 @@ git commit -m "feat: add merchant order prefix setting UI"
 **Files:**
 - Modify: `openspec/changes/configurable-payment-order-prefix/tasks.md`
 
-- [ ] **Step 1: Run backend focused tests**
+- [x] **Step 1: Run backend focused tests**
 
 Run:
 
@@ -505,7 +505,7 @@ cd backend && go test ./internal/service ./internal/handler/admin -run 'Payment|
 
 Expected: PASS.
 
-- [ ] **Step 2: Run frontend focused checks**
+- [x] **Step 2: Run frontend focused checks**
 
 Run:
 
@@ -516,7 +516,7 @@ cd frontend && npm run type-check
 
 Expected: PASS.
 
-- [ ] **Step 3: Validate OpenSpec change**
+- [x] **Step 3: Validate OpenSpec change**
 
 Run:
 
@@ -526,11 +526,11 @@ openspec validate configurable-payment-order-prefix
 
 Expected: `Change 'configurable-payment-order-prefix' is valid`.
 
-- [ ] **Step 4: Mark OpenSpec tasks complete**
+- [x] **Step 4: Mark OpenSpec tasks complete**
 
 Update `openspec/changes/configurable-payment-order-prefix/tasks.md` by changing every completed task from `- [ ]` to `- [x]`.
 
-- [ ] **Step 5: Commit task completion**
+- [x] **Step 5: Commit task completion**
 
 ```bash
 git add openspec/changes/configurable-payment-order-prefix/tasks.md

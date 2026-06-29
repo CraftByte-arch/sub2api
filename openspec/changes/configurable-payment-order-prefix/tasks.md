@@ -18,6 +18,6 @@
 
 ## 4. Verification
 
-- [ ] 4.1 Run targeted backend payment configuration and order tests.
-- [ ] 4.2 Run targeted frontend settings tests or type checks.
-- [ ] 4.3 Validate the OpenSpec change artifacts.
+- [x] 4.1 Run targeted backend payment configuration and order tests.
+- [x] 4.2 Run targeted frontend settings tests or type checks.
+- [x] 4.3 Validate the OpenSpec change artifacts.
