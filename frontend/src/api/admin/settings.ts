@@ -606,6 +606,7 @@ export interface SystemSettings {
   payment_load_balance_strategy: string;
   payment_product_name_prefix: string;
   payment_product_name_suffix: string;
+  payment_merchant_order_prefix: string;
   payment_help_image_url: string;
   payment_help_text: string;
   payment_cancel_rate_limit_enabled: boolean;
@@ -863,6 +864,7 @@ export interface UpdateSettingsRequest {
   payment_load_balance_strategy?: string;
   payment_product_name_prefix?: string;
   payment_product_name_suffix?: string;
+  payment_merchant_order_prefix?: string;
   payment_help_image_url?: string;
   payment_help_text?: string;
   payment_cancel_rate_limit_enabled?: boolean;

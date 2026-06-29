@@ -6226,6 +6226,8 @@ export default {
         limitsNoLimit: 'No limit',
         productNamePrefix: 'Product Name Prefix',
         productNameSuffix: 'Product Name Suffix',
+        merchantOrderPrefix: 'Merchant Order Prefix',
+        merchantOrderPrefixHint: 'Prefix for new payment merchant order numbers. Letters, numbers, underscore, and hyphen only.',
         preview: 'Preview',
         loadBalanceStrategy: 'Load Balance Strategy',
         strategyRoundRobin: 'Round Robin',

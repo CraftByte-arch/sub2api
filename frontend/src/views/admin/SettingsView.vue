@@ -6315,7 +6315,7 @@
               </div>
               <template v-if="form.payment_enabled">
                 <!-- Row 1: Product name -->
-                <div class="grid grid-cols-3 gap-3">
+                <div class="grid grid-cols-1 gap-3 md:grid-cols-4">
                   <div>
                     <label class="input-label">{{
                       t("admin.settings.payment.productNamePrefix")
@@ -6337,6 +6337,21 @@
                       class="input"
                       placeholder="CNY"
                     />
+                  </div>
+                  <div>
+                    <label class="input-label">{{
+                      t("admin.settings.payment.merchantOrderPrefix")
+                    }}</label
+                    ><input
+                      v-model="form.payment_merchant_order_prefix"
+                      type="text"
+                      maxlength="16"
+                      class="input"
+                      placeholder="sub2_"
+                    />
+                    <p class="mt-0.5 text-xs text-gray-400">
+                      {{ t("admin.settings.payment.merchantOrderPrefixHint") }}
+                    </p>
                   </div>
                   <div>
                     <label class="input-label">{{
@@ -8025,6 +8040,7 @@ const form = reactive<SettingsForm>({
   payment_help_text: "",
   payment_product_name_prefix: "",
   payment_product_name_suffix: "",
+  payment_merchant_order_prefix: "sub2_",
   payment_load_balance_strategy: "round-robin",
   payment_cancel_rate_limit_enabled: false,
   payment_cancel_rate_limit_max: 10,
@@ -9425,6 +9441,8 @@ async function saveSettings() {
       payment_load_balance_strategy: form.payment_load_balance_strategy,
       payment_product_name_prefix: form.payment_product_name_prefix,
       payment_product_name_suffix: form.payment_product_name_suffix,
+      payment_merchant_order_prefix:
+        form.payment_merchant_order_prefix?.trim() || "sub2_",
       payment_help_image_url: form.payment_help_image_url,
       payment_help_text: form.payment_help_text,
       payment_cancel_rate_limit_enabled: form.payment_cancel_rate_limit_enabled,

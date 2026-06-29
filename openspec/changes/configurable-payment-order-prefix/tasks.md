@@ -12,9 +12,9 @@
 
 ## 3. Admin UI
 
-- [ ] 3.1 Add the merchant order prefix field to the payment settings page.
-- [ ] 3.2 Update frontend API types, form defaults, payload mapping, and i18n strings.
-- [ ] 3.3 Add or update frontend tests for loading and saving the new setting.
+- [x] 3.1 Add the merchant order prefix field to the payment settings page.
+- [x] 3.2 Update frontend API types, form defaults, payload mapping, and i18n strings.
+- [x] 3.3 Add or update frontend tests for loading and saving the new setting.
 
 ## 4. Verification
 

@@ -27,6 +27,7 @@ export interface AdminPaymentConfig {
   load_balance_strategy: string
   product_name_prefix: string
   product_name_suffix: string
+  merchant_order_prefix: string
   help_image_url: string
   help_text: string
 }
@@ -45,6 +46,7 @@ export interface UpdatePaymentConfigRequest {
   load_balance_strategy?: string
   product_name_prefix?: string
   product_name_suffix?: string
+  merchant_order_prefix?: string
   help_image_url?: string
   help_text?: string
 }

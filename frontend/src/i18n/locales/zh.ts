@@ -6379,6 +6379,8 @@ export default {
         limitsNoLimit: '不限制',
         productNamePrefix: '商品名前缀',
         productNameSuffix: '商品名后缀',
+        merchantOrderPrefix: '商户订单号前缀',
+        merchantOrderPrefixHint: '用于新支付订单的商户订单号前缀，仅支持字母、数字、下划线和短横线。',
         preview: '预览',
         loadBalanceStrategy: '负载均衡策略',
         strategyRoundRobin: '轮询',

@@ -159,6 +159,8 @@ vi.mock("vue-i18n", async () => {
     "admin.settings.paymentVisibleMethods.sourceRequiredError": "{title} 已启用，请先选择支付来源。",
     "admin.settings.payment.configGuide": "查看支付配置说明",
     "admin.settings.payment.findProvider": "查看支持的支付方式",
+    "admin.settings.payment.merchantOrderPrefix": "商户订单号前缀",
+    "admin.settings.payment.merchantOrderPrefixHint": "用于新支付订单的商户订单号前缀，仅支持字母、数字、下划线和短横线。",
     "admin.settings.openaiExperimentalScheduler.title": "OpenAI 实验调度策略",
     "admin.settings.openaiExperimentalScheduler.description": "默认关闭。开启后仅影响本网关在 OpenAI 账号间的实验性调度选择逻辑，不代表上游 OpenAI 官方能力。",
     "admin.settings.site.uploadImage": "上传图片",
@@ -398,6 +400,7 @@ const baseSettingsResponse = {
   payment_load_balance_strategy: "round-robin",
   payment_product_name_prefix: "",
   payment_product_name_suffix: "",
+  payment_merchant_order_prefix: "shop_",
   payment_help_image_url: "",
   payment_help_text: "",
   payment_cancel_rate_limit_enabled: false,
@@ -603,6 +606,32 @@ describe("admin SettingsView payment visible method controls", () => {
     expect(payload).not.toHaveProperty("payment_visible_method_wxpay_source");
     expect(payload).not.toHaveProperty("payment_visible_method_alipay_enabled");
     expect(payload).not.toHaveProperty("payment_visible_method_wxpay_enabled");
+  });
+
+  it("loads and submits merchant order prefix", async () => {
+    const wrapper = mountView();
+
+    await flushPromises();
+    await openPaymentTab(wrapper);
+
+    const prefixLabel = wrapper
+      .findAll("label")
+      .find((node) => node.text() === "商户订单号前缀");
+    expect(prefixLabel).toBeDefined();
+
+    const prefixInput = prefixLabel
+      ?.element.parentElement
+      ?.querySelector("input") as HTMLInputElement | null;
+    expect(prefixInput?.value).toBe("shop_");
+
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payment_merchant_order_prefix: "shop_",
+      }),
+    );
   });
 
   it("submits Anthropic cache TTL injection gateway setting", async () => {

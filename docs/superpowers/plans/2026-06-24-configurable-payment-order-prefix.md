@@ -366,7 +366,7 @@ git commit -m "feat: expose merchant order prefix in admin settings"
 - Modify: `frontend/src/i18n/locales/en.ts`
 - Modify: `frontend/src/views/admin/__tests__/SettingsView.spec.ts`
 
-- [ ] **Step 1: Write failing frontend test updates**
+- [x] **Step 1: Write failing frontend test updates**
 
 In `frontend/src/views/admin/__tests__/SettingsView.spec.ts`, update mock settings data to include:
 
@@ -380,7 +380,7 @@ Add an assertion that the field is present after settings load and that save pay
 payment_merchant_order_prefix: "shop_",
 ```
 
-- [ ] **Step 2: Run frontend test and verify failure**
+- [x] **Step 2: Run frontend test and verify failure**
 
 Run:
 
@@ -390,7 +390,7 @@ cd frontend && npm run test -- SettingsView
 
 Expected: FAIL until the form field and types exist.
 
-- [ ] **Step 3: Add TypeScript fields**
+- [x] **Step 3: Add TypeScript fields**
 
 In `frontend/src/api/admin/settings.ts`, add:
 
@@ -420,7 +420,7 @@ merchant_order_prefix?: string
 
 to `UpdatePaymentConfigRequest`.
 
-- [ ] **Step 4: Add SettingsView form default and save payload**
+- [x] **Step 4: Add SettingsView form default and save payload**
 
 In `frontend/src/views/admin/SettingsView.vue`, add default:
 
@@ -434,7 +434,7 @@ and save payload:
 payment_merchant_order_prefix: form.payment_merchant_order_prefix || "sub2_",
 ```
 
-- [ ] **Step 5: Add payment settings input**
+- [x] **Step 5: Add payment settings input**
 
 Near the existing product name prefix/suffix row, add a compact text input:
 
@@ -456,7 +456,7 @@ Near the existing product name prefix/suffix row, add a compact text input:
 
 Adjust the surrounding grid columns so the row remains responsive and text does not overlap.
 
-- [ ] **Step 6: Add i18n strings**
+- [x] **Step 6: Add i18n strings**
 
 In `frontend/src/i18n/locales/zh.ts`:
 
