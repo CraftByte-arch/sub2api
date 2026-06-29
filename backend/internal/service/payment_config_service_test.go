@@ -289,6 +289,39 @@ func TestUpdatePaymentConfigMerchantOrderPrefixValidation(t *testing.T) {
 			t.Fatalf("payment enabled = %q, want true", repo.values[SettingPaymentEnabled])
 		}
 	})
+
+	t.Run("prefix-only update preserves other payment settings", func(t *testing.T) {
+		repo := &paymentConfigSettingRepoStub{values: map[string]string{
+			SettingPaymentEnabled:      "true",
+			SettingMinRechargeAmount:   "5.00",
+			SettingEnabledPaymentTypes: "alipay,wxpay",
+			SettingHelpText:            "keep me",
+		}}
+		svc := &PaymentConfigService{settingRepo: repo}
+		prefix := "shop_"
+
+		if err := svc.UpdatePaymentConfig(ctx, UpdatePaymentConfigRequest{
+			MerchantOrderPrefix: &prefix,
+		}); err != nil {
+			t.Fatalf("UpdatePaymentConfig returned error: %v", err)
+		}
+
+		if repo.values[SettingPaymentEnabled] != "true" {
+			t.Fatalf("payment enabled = %q, want preserved true", repo.values[SettingPaymentEnabled])
+		}
+		if repo.values[SettingMinRechargeAmount] != "5.00" {
+			t.Fatalf("min amount = %q, want preserved 5.00", repo.values[SettingMinRechargeAmount])
+		}
+		if repo.values[SettingEnabledPaymentTypes] != "alipay,wxpay" {
+			t.Fatalf("enabled types = %q, want preserved alipay,wxpay", repo.values[SettingEnabledPaymentTypes])
+		}
+		if repo.values[SettingHelpText] != "keep me" {
+			t.Fatalf("help text = %q, want preserved", repo.values[SettingHelpText])
+		}
+		if _, ok := repo.updates[SettingPaymentEnabled]; ok {
+			t.Fatalf("prefix-only update should not write %s", SettingPaymentEnabled)
+		}
+	})
 }
 
 func TestGetBasePaymentType(t *testing.T) {

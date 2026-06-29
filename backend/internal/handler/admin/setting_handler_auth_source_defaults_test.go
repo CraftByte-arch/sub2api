@@ -316,6 +316,46 @@ func TestSettingHandler_UpdateSettings_PersistsPaymentMerchantOrderPrefix(t *tes
 	require.Equal(t, "shop-01_", data["payment_merchant_order_prefix"])
 }
 
+func TestSettingHandler_UpdateSettings_PrefixOnlyPreservesExistingPaymentConfig(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &settingHandlerRepoStub{
+		values: map[string]string{
+			service.SettingKeyPromoCodeEnabled:    "true",
+			service.SettingPaymentEnabled:         "true",
+			service.SettingMinRechargeAmount:      "5.00",
+			service.SettingEnabledPaymentTypes:    "alipay,wxpay",
+			service.SettingHelpText:               "keep me",
+			service.SettingMerchantOrderPrefix:    "old_",
+		},
+	}
+	svc := service.NewSettingService(repo, &config.Config{Default: config.DefaultConfig{UserConcurrency: 5}})
+	paymentCfgSvc := service.NewPaymentConfigService(nil, repo, nil)
+	handler := NewSettingHandler(svc, nil, nil, nil, paymentCfgSvc, nil, nil)
+
+	body := map[string]any{
+		"promo_code_enabled":             true,
+		"payment_merchant_order_prefix": "shop_",
+	}
+	rawBody, err := json.Marshal(body)
+	require.NoError(t, err)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPut, "/api/v1/admin/settings", bytes.NewReader(rawBody))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	handler.UpdateSettings(c)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "shop_", repo.values[service.SettingMerchantOrderPrefix])
+	require.Equal(t, "true", repo.values[service.SettingPaymentEnabled])
+	require.Equal(t, "5.00", repo.values[service.SettingMinRechargeAmount])
+	require.Equal(t, "alipay,wxpay", repo.values[service.SettingEnabledPaymentTypes])
+	require.Equal(t, "keep me", repo.values[service.SettingHelpText])
+	require.NotContains(t, repo.lastUpdates, service.SettingPaymentEnabled)
+	require.NotContains(t, repo.lastUpdates, service.SettingEnabledPaymentTypes)
+}
+
 func TestSettingHandler_UpdateSettings_PreservesLegacyBlankPaymentVisibleMethodSource(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	repo := &settingHandlerRepoStub{
