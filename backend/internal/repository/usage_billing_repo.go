@@ -113,7 +113,7 @@ func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, t
 	}
 
 	if cmd.BalanceCost > 0 {
-		newBalance, usageCardID, err := r.applyUsageBillingWallet(ctx, tx, cmd)
+		newBalance, usageCardID, balanceOverdrafted, err := r.applyUsageBillingWallet(ctx, tx, cmd)
 		if err != nil {
 			return err
 		}
@@ -123,6 +123,7 @@ func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, t
 		if usageCardID != nil {
 			result.UsageCardID = usageCardID
 		}
+		result.BalanceOverdrafted = balanceOverdrafted
 	}
 
 	if cmd.APIKeyQuotaCost > 0 {
@@ -150,46 +151,46 @@ func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, t
 	return nil
 }
 
-func (r *usageBillingRepository) applyUsageBillingWallet(ctx context.Context, tx *sql.Tx, cmd *service.UsageBillingCommand) (*float64, *int64, error) {
+func (r *usageBillingRepository) applyUsageBillingWallet(ctx context.Context, tx *sql.Tx, cmd *service.UsageBillingCommand) (*float64, *int64, bool, error) {
 	if cmd == nil || cmd.BalanceCost <= 0 {
-		return nil, nil, nil
+		return nil, nil, false, nil
 	}
 	if !cmd.UsageCardBillingEnabled || cmd.UsageCardCost <= 0 {
-		newBalance, err := deductUsageBillingBalance(ctx, tx, cmd.UserID, cmd.BalanceCost)
-		return &newBalance, nil, err
+		newBalance, sufficient, err := deductUsageBillingBalance(ctx, tx, cmd.UserID, cmd.BalanceCost)
+		return &newBalance, nil, !sufficient, err
 	}
 	priority := service.NormalizeBillingPriority(cmd.BillingPriority)
 	switch priority {
 	case service.BillingPriorityUsageCardOnly:
 		cardID, err := deductFirstAvailableUsageCard(ctx, tx, cmd.UserID, cmd.UsageCardCost)
-		return nil, cardID, err
+		return nil, cardID, false, err
 	case service.BillingPriorityUsageCardFirst:
 		cardID, err := deductFirstAvailableUsageCard(ctx, tx, cmd.UserID, cmd.UsageCardCost)
 		if err == nil {
-			return nil, cardID, nil
+			return nil, cardID, false, nil
 		}
 		if !errors.Is(err, service.ErrUsageCardUnavailable) {
-			return nil, nil, err
+			return nil, nil, false, err
 		}
-		newBalance, err := deductUsageBillingBalance(ctx, tx, cmd.UserID, cmd.BalanceCost)
-		return &newBalance, nil, err
+		newBalance, sufficient, err := deductUsageBillingBalance(ctx, tx, cmd.UserID, cmd.BalanceCost)
+		return &newBalance, nil, !sufficient, err
 	case service.BillingPriorityBalanceOnly:
-		newBalance, err := deductUsageBillingBalance(ctx, tx, cmd.UserID, cmd.BalanceCost)
-		return &newBalance, nil, err
+		newBalance, sufficient, err := deductUsageBillingBalance(ctx, tx, cmd.UserID, cmd.BalanceCost)
+		return &newBalance, nil, !sufficient, err
 	default:
 		if hasPositiveBalance(ctx, tx, cmd.UserID) {
-			newBalance, err := deductUsageBillingBalance(ctx, tx, cmd.UserID, cmd.BalanceCost)
-			return &newBalance, nil, err
+			newBalance, sufficient, err := deductUsageBillingBalance(ctx, tx, cmd.UserID, cmd.BalanceCost)
+			return &newBalance, nil, !sufficient, err
 		}
 		cardID, err := deductFirstAvailableUsageCard(ctx, tx, cmd.UserID, cmd.UsageCardCost)
 		if err == nil {
-			return nil, cardID, nil
+			return nil, cardID, false, nil
 		}
 		if !errors.Is(err, service.ErrUsageCardUnavailable) {
-			return nil, nil, err
+			return nil, nil, false, err
 		}
-		newBalance, err := deductUsageBillingBalance(ctx, tx, cmd.UserID, cmd.BalanceCost)
-		return &newBalance, nil, err
+		newBalance, sufficient, err := deductUsageBillingBalance(ctx, tx, cmd.UserID, cmd.BalanceCost)
+		return &newBalance, nil, !sufficient, err
 	}
 }
 
@@ -269,9 +270,23 @@ func incrementUsageBillingSubscription(ctx context.Context, tx *sql.Tx, subscrip
 	return service.ErrSubscriptionNotFound
 }
 
-func deductUsageBillingBalance(ctx context.Context, tx *sql.Tx, userID int64, amount float64) (float64, error) {
+func deductUsageBillingBalance(ctx context.Context, tx *sql.Tx, userID int64, amount float64) (float64, bool, error) {
 	var newBalance float64
 	err := tx.QueryRowContext(ctx, `
+		UPDATE users
+		SET balance = balance - $1,
+			updated_at = NOW()
+		WHERE id = $2 AND deleted_at IS NULL AND balance >= $1
+		RETURNING balance
+	`, amount, userID).Scan(&newBalance)
+	if err == nil {
+		return newBalance, true, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return 0, false, err
+	}
+
+	err = tx.QueryRowContext(ctx, `
 		UPDATE users
 		SET balance = balance - $1,
 			updated_at = NOW()
@@ -279,12 +294,12 @@ func deductUsageBillingBalance(ctx context.Context, tx *sql.Tx, userID int64, am
 		RETURNING balance
 	`, amount, userID).Scan(&newBalance)
 	if errors.Is(err, sql.ErrNoRows) {
-		return 0, service.ErrUserNotFound
+		return 0, false, service.ErrUserNotFound
 	}
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
-	return newBalance, nil
+	return newBalance, false, nil
 }
 
 func incrementUsageBillingAPIKeyQuota(ctx context.Context, tx *sql.Tx, apiKeyID int64, amount float64) (bool, error) {
