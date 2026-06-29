@@ -224,6 +224,27 @@ func TestGenerateOutTradeNoUsesConfiguredPrefix(t *testing.T) {
 	}
 }
 
+func TestGenerateOutTradeNoPreservesDateAndRandomSuffixFormat(t *testing.T) {
+	got := generateOutTradeNo("shop_")
+	if !strings.HasPrefix(got, "shop_") {
+		t.Fatalf("out_trade_no = %q, want prefix %q", got, "shop_")
+	}
+
+	suffix := strings.TrimPrefix(got, "shop_")
+	if len(suffix) != 16 {
+		t.Fatalf("out_trade_no suffix length = %d, want 16 in %q", len(suffix), got)
+	}
+	if date := time.Now().Format("20060102"); suffix[:8] != date {
+		t.Fatalf("out_trade_no date = %q, want %q in %q", suffix[:8], date, got)
+	}
+	for _, r := range suffix[8:] {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			continue
+		}
+		t.Fatalf("out_trade_no random suffix contains non-alphanumeric character %q in %q", r, got)
+	}
+}
+
 func TestGenerateOutTradeNoFallsBackToDefaultPrefix(t *testing.T) {
 	ctx := context.Background()
 	client := newPaymentConfigServiceTestClient(t)

@@ -285,7 +285,7 @@ git commit -m "feat: generate payment order numbers with configured prefix"
 - Modify: `backend/internal/handler/admin/payment_handler.go` if needed.
 - Modify or add backend handler tests if existing tests cover settings DTO responses.
 
-- [ ] **Step 1: Write or update failing DTO tests**
+- [x] **Step 1: Write or update failing DTO tests**
 
 Update existing admin settings/payment handler tests to assert the field exists in responses and update requests map into `service.UpdatePaymentConfigRequest`. Use JSON key names:
 
@@ -303,7 +303,7 @@ and admin payment config key:
 }
 ```
 
-- [ ] **Step 2: Run targeted handler tests and verify failure**
+- [x] **Step 2: Run targeted handler tests and verify failure**
 
 Run the relevant package tests:
 
@@ -313,7 +313,7 @@ cd backend && go test ./internal/handler/admin -run 'Payment|Setting' -count=1
 
 Expected: FAIL on missing field assertions until DTO wiring is added.
 
-- [ ] **Step 3: Wire integrated settings**
+- [x] **Step 3: Wire integrated settings**
 
 In `backend/internal/handler/admin/setting_handler.go`, add:
 
@@ -335,11 +335,11 @@ PaymentMerchantOrderPrefix string `json:"payment_merchant_order_prefix"`
 
 where payment settings response fields are declared.
 
-- [ ] **Step 4: Wire admin payment config if needed**
+- [x] **Step 4: Wire admin payment config if needed**
 
 Because `PaymentConfig` JSON includes `merchant_order_prefix`, `GET /admin/payment/config` should expose it automatically unless sanitization strips it. If sanitization or DTO wrapping exists, add the field there and to the update request path.
 
-- [ ] **Step 5: Run backend handler tests**
+- [x] **Step 5: Run backend handler tests**
 
 Run:
 
@@ -349,7 +349,7 @@ cd backend && go test ./internal/handler/admin ./internal/service -run 'Payment|
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit DTO wiring**
+- [x] **Step 6: Commit DTO wiring**
 
 ```bash
 git add backend/internal/handler/admin/setting_handler.go backend/internal/handler/dto/settings.go backend/internal/handler/admin/*test.go backend/internal/service/*test.go

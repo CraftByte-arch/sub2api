@@ -2,7 +2,7 @@
 
 - [x] 1.1 Add a merchant order prefix payment setting with default `sub2_`.
 - [x] 1.2 Add parsing, update, and validation coverage in `PaymentConfigService`.
-- [ ] 1.3 Include the field in admin settings and admin payment config request/response DTOs.
+- [x] 1.3 Include the field in admin settings and admin payment config request/response DTOs.
 
 ## 2. Order Number Generation
 
