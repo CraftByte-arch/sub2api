@@ -226,7 +226,7 @@ func (s *PaymentService) createOrderInTx(ctx context.Context, req CreateOrderReq
 		tm = defaultOrderTimeoutMin
 	}
 	exp := time.Now().Add(time.Duration(tm) * time.Minute)
-	outTradeNo, err := s.allocateOutTradeNo(ctx, tx)
+	outTradeNo, err := s.allocateOutTradeNo(ctx, tx, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -288,10 +288,14 @@ func (s *PaymentService) createOrderInTx(ctx context.Context, req CreateOrderReq
 	return order, nil
 }
 
-func (s *PaymentService) allocateOutTradeNo(ctx context.Context, tx *dbent.Tx) (string, error) {
+func (s *PaymentService) allocateOutTradeNo(ctx context.Context, tx *dbent.Tx, cfg *PaymentConfig) (string, error) {
 	const maxAttempts = 5
+	prefix := defaultMerchantOrderPrefix
+	if cfg != nil && strings.TrimSpace(cfg.MerchantOrderPrefix) != "" {
+		prefix = strings.TrimSpace(cfg.MerchantOrderPrefix)
+	}
 	for attempt := 0; attempt < maxAttempts; attempt++ {
-		candidate := generateOutTradeNo()
+		candidate := nextOutTradeNo(prefix)
 		exists, err := tx.PaymentOrder.Query().Where(paymentorder.OutTradeNo(candidate)).Exist(ctx)
 		if err != nil {
 			return "", fmt.Errorf("check out_trade_no uniqueness: %w", err)

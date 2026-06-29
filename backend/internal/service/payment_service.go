@@ -44,8 +44,6 @@ const (
 	maxPageSize        = 100
 	topUsersLimit      = 10
 	amountToleranceCNY = 0.01
-
-	orderIDPrefix = "sub2_"
 )
 
 const paymentResumeSigningKeyEnv = "PAYMENT_RESUME_SIGNING_KEY"
@@ -53,12 +51,20 @@ const paymentResumeSigningKeyEnv = "PAYMENT_RESUME_SIGNING_KEY"
 // --- Types ---
 
 // generateOutTradeNo creates a unique external order ID for payment providers.
-// Format: sub2_20250409aB3kX9mQ (prefix + date + 8-char random)
-func generateOutTradeNo() string {
+// Format: <prefix>20250409aB3kX9mQ (prefix + date + 8-char random)
+func generateOutTradeNo(prefix string) string {
+	normalized, err := normalizeMerchantOrderPrefix(prefix)
+	if err != nil {
+		prefix = defaultMerchantOrderPrefix
+	} else {
+		prefix = normalized
+	}
 	date := time.Now().Format("20060102")
 	rnd := generateRandomString(8)
-	return orderIDPrefix + date + rnd
+	return prefix + date + rnd
 }
+
+var nextOutTradeNo = generateOutTradeNo
 
 func generateRandomString(n int) string {
 	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"

@@ -2,13 +2,20 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"strings"
 	"testing"
 	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
+	"github.com/Wei-Shaw/sub2api/ent/enttest"
 	"github.com/Wei-Shaw/sub2api/internal/payment"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"github.com/stretchr/testify/require"
+
+	"entgo.io/ent/dialect"
+	entsql "entgo.io/ent/dialect/sql"
+	_ "modernc.org/sqlite"
 )
 
 func TestBuildCreateOrderResponseDefaultsToOrderCreated(t *testing.T) {
@@ -171,6 +178,146 @@ func TestBuildPaymentSubjectAppliesAffixToSubscriptionPlanDefaultName(t *testing
 	if got != "PRE Sub2API Subscription Team Monthly SUF" {
 		t.Fatalf("buildPaymentSubject() = %q, want %q", got, "PRE Sub2API Subscription Team Monthly SUF")
 	}
+}
+
+func TestGenerateOutTradeNoUsesConfiguredPrefix(t *testing.T) {
+	ctx := context.Background()
+	client := newPaymentConfigServiceTestClient(t)
+
+	user, err := client.User.Create().
+		SetEmail("prefix@example.com").
+		SetPasswordHash("hash").
+		SetUsername("prefix-user").
+		Save(ctx)
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	svc := &PaymentService{entClient: client}
+	order, err := svc.createOrderInTx(
+		ctx,
+		CreateOrderRequest{
+			UserID:      user.ID,
+			PaymentType: payment.TypeAlipay,
+			OrderType:   payment.OrderTypeBalance,
+			ClientIP:    "127.0.0.1",
+			SrcHost:     "app.example.com",
+		},
+		&User{ID: user.ID, Email: user.Email, Username: user.Username},
+		nil,
+		&PaymentConfig{
+			MaxPendingOrders:    3,
+			OrderTimeoutMin:     30,
+			MerchantOrderPrefix: "myshop_",
+		},
+		10,
+		10,
+		0,
+		10,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("create order: %v", err)
+	}
+	if !strings.HasPrefix(order.OutTradeNo, "myshop_") {
+		t.Fatalf("out_trade_no = %q, want prefix %q", order.OutTradeNo, "myshop_")
+	}
+}
+
+func TestGenerateOutTradeNoFallsBackToDefaultPrefix(t *testing.T) {
+	ctx := context.Background()
+	client := newPaymentConfigServiceTestClient(t)
+
+	user, err := client.User.Create().
+		SetEmail("default-prefix@example.com").
+		SetPasswordHash("hash").
+		SetUsername("default-prefix-user").
+		Save(ctx)
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	svc := &PaymentService{entClient: client}
+	order, err := svc.createOrderInTx(
+		ctx,
+		CreateOrderRequest{
+			UserID:      user.ID,
+			PaymentType: payment.TypeAlipay,
+			OrderType:   payment.OrderTypeBalance,
+			ClientIP:    "127.0.0.1",
+			SrcHost:     "app.example.com",
+		},
+		&User{ID: user.ID, Email: user.Email, Username: user.Username},
+		nil,
+		&PaymentConfig{
+			MaxPendingOrders: 3,
+			OrderTimeoutMin:  30,
+		},
+		10,
+		10,
+		0,
+		10,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("create order: %v", err)
+	}
+	if !strings.HasPrefix(order.OutTradeNo, "sub2_") {
+		t.Fatalf("out_trade_no = %q, want prefix %q", order.OutTradeNo, "sub2_")
+	}
+}
+
+func TestAllocateOutTradeNoRetriesOnCollision(t *testing.T) {
+	ctx := context.Background()
+	client := newPaymentOrderRetryTestClient(t)
+
+	user, err := client.User.Create().
+		SetEmail("retry@example.com").
+		SetPasswordHash("hash").
+		SetUsername("retry-user").
+		Save(ctx)
+	require.NoError(t, err)
+
+	svc := &PaymentService{entClient: client}
+	original := nextOutTradeNo
+	t.Cleanup(func() { nextOutTradeNo = original })
+
+	attempts := 0
+	nextOutTradeNo = func(prefix string) string {
+		attempts++
+		if attempts == 1 {
+			return prefix + "20260624collision"
+		}
+		return prefix + "20260624success"
+	}
+
+	_, err = client.PaymentOrder.Create().
+		SetUserID(user.ID).
+		SetUserEmail(user.Email).
+		SetUserName(user.Username).
+		SetAmount(10).
+		SetPayAmount(10).
+		SetFeeRate(0).
+		SetRechargeCode("RETRY-ORDER").
+		SetOutTradeNo("myshop_20260624collision").
+		SetPaymentType(payment.TypeAlipay).
+		SetPaymentTradeNo("").
+		SetOrderType(payment.OrderTypeBalance).
+		SetStatus(OrderStatusPending).
+		SetExpiresAt(time.Now().Add(time.Hour)).
+		SetClientIP("127.0.0.1").
+		SetSrcHost("app.example.com").
+		Save(ctx)
+	require.NoError(t, err)
+
+	tx, err := client.Tx(ctx)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = tx.Rollback() })
+
+	got, err := svc.allocateOutTradeNo(ctx, tx, &PaymentConfig{MerchantOrderPrefix: "myshop_"})
+	require.NoError(t, err)
+	require.Equal(t, "myshop_20260624success", got)
+	require.Equal(t, 2, attempts)
 }
 
 func TestMaybeBuildWeChatOAuthRequiredResponse(t *testing.T) {
@@ -355,4 +502,20 @@ func newWeChatPaymentOAuthTestService(values map[string]string) *PaymentService 
 			encryptionKey: []byte("0123456789abcdef0123456789abcdef"),
 		},
 	}
+}
+
+func newPaymentOrderRetryTestClient(t *testing.T) *dbent.Client {
+	t.Helper()
+
+	db, err := sql.Open("sqlite", "file:payment_order_retry?mode=memory&cache=shared&_fk=1")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	_, err = db.Exec("PRAGMA foreign_keys = ON")
+	require.NoError(t, err)
+
+	drv := entsql.OpenDB(dialect.SQLite, db)
+	client := enttest.NewClient(t, enttest.WithOptions(dbent.Driver(drv)))
+	t.Cleanup(func() { _ = client.Close() })
+	return client
 }

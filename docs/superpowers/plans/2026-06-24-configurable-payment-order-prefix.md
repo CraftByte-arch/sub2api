@@ -38,7 +38,7 @@ base-ref: d3dedc05ce2404917621670c33ad1412b754073f
 - Modify: `backend/internal/service/payment_config_service.go`
 - Modify: `backend/internal/service/payment_config_service_test.go`
 
-- [ ] **Step 1: Write failing tests for default, valid, and invalid prefixes**
+- [x] **Step 1: Write failing tests for default, valid, and invalid prefixes**
 
 Add test coverage in `backend/internal/service/payment_config_service_test.go`:
 
@@ -116,7 +116,7 @@ func TestUpdatePaymentConfigMerchantOrderPrefixValidation(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run tests and verify they fail**
+- [x] **Step 2: Run tests and verify they fail**
 
 Run:
 
@@ -126,7 +126,7 @@ cd backend && go test ./internal/service -run 'TestPaymentConfigMerchantOrderPre
 
 Expected: FAIL because `MerchantOrderPrefix`, `SettingMerchantOrderPrefix`, and `UpdatePaymentConfigRequest.MerchantOrderPrefix` do not exist.
 
-- [ ] **Step 3: Implement config field and validation**
+- [x] **Step 3: Implement config field and validation**
 
 In `backend/internal/service/payment_config_service.go`:
 
@@ -166,7 +166,7 @@ func normalizeMerchantOrderPrefix(raw string) (string, error) {
 
 Add `SettingMerchantOrderPrefix` to `GetPaymentConfig` keys, parse it in `parsePaymentConfig`, validate it in `UpdatePaymentConfig`, and persist `SettingMerchantOrderPrefix` using the normalized value.
 
-- [ ] **Step 4: Run tests and verify they pass**
+- [x] **Step 4: Run tests and verify they pass**
 
 Run:
 
@@ -176,7 +176,7 @@ cd backend && go test ./internal/service -run 'TestPaymentConfigMerchantOrderPre
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit backend config changes**
+- [x] **Step 5: Commit backend config changes**
 
 ```bash
 git add backend/internal/service/payment_config_service.go backend/internal/service/payment_config_service_test.go
@@ -190,7 +190,7 @@ git commit -m "feat: add payment merchant order prefix config"
 - Modify: `backend/internal/service/payment_order.go`
 - Modify: `backend/internal/service/payment_config_service_test.go` or create focused order generation tests in an existing payment order test file.
 
-- [ ] **Step 1: Write failing tests for generator behavior**
+- [x] **Step 1: Write failing tests for generator behavior**
 
 Add tests near existing payment service/order tests:
 
@@ -213,7 +213,7 @@ func TestGenerateOutTradeNoFallsBackToDefaultPrefix(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run tests and verify they fail**
+- [x] **Step 2: Run tests and verify they fail**
 
 Run:
 
@@ -223,7 +223,7 @@ cd backend && go test ./internal/service -run 'TestGenerateOutTradeNoUsesConfigu
 
 Expected: FAIL because `generateOutTradeNo` currently has no prefix parameter.
 
-- [ ] **Step 3: Implement prefix-aware generation**
+- [x] **Step 3: Implement prefix-aware generation**
 
 In `backend/internal/service/payment_service.go`, replace the fixed `orderIDPrefix` usage with `defaultMerchantOrderPrefix` and a prefix parameter:
 
@@ -260,7 +260,7 @@ func (s *PaymentService) allocateOutTradeNo(ctx context.Context, tx *dbent.Tx, p
 
 Keep the existing uniqueness query and retry count unchanged.
 
-- [ ] **Step 4: Run tests and verify they pass**
+- [x] **Step 4: Run tests and verify they pass**
 
 Run:
 
@@ -270,7 +270,7 @@ cd backend && go test ./internal/service -run 'TestGenerateOutTradeNoUsesConfigu
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit order generation changes**
+- [x] **Step 5: Commit order generation changes**
 
 ```bash
 git add backend/internal/service/payment_service.go backend/internal/service/payment_order.go backend/internal/service/*test.go

@@ -1,14 +1,14 @@
 ## 1. Backend Configuration
 
-- [ ] 1.1 Add a merchant order prefix payment setting with default `sub2_`.
-- [ ] 1.2 Add parsing, update, and validation coverage in `PaymentConfigService`.
+- [x] 1.1 Add a merchant order prefix payment setting with default `sub2_`.
+- [x] 1.2 Add parsing, update, and validation coverage in `PaymentConfigService`.
 - [ ] 1.3 Include the field in admin settings and admin payment config request/response DTOs.
 
 ## 2. Order Number Generation
 
-- [ ] 2.1 Change `out_trade_no` allocation to use the configured prefix.
-- [ ] 2.2 Preserve existing date plus 8-character random suffix behavior.
-- [ ] 2.3 Add tests for default prefix, custom prefix, and uniqueness retry behavior.
+- [x] 2.1 Change `out_trade_no` allocation to use the configured prefix.
+- [x] 2.2 Preserve existing date plus 8-character random suffix behavior.
+- [x] 2.3 Add tests for default prefix, custom prefix, and uniqueness retry behavior.
 
 ## 3. Admin UI
 
