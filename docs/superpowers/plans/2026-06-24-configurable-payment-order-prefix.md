@@ -472,7 +472,7 @@ merchantOrderPrefix: 'Merchant order prefix',
 merchantOrderPrefixHint: 'Prefix for new payment merchant order numbers. Letters, numbers, underscore, and hyphen only.',
 ```
 
-- [ ] **Step 7: Run frontend tests/type checks**
+- [x] **Step 7: Run frontend tests/type checks**
 
 Run:
 
@@ -483,7 +483,7 @@ cd frontend && npm run type-check
 
 Expected: PASS.
 
-- [ ] **Step 8: Commit frontend changes**
+- [x] **Step 8: Commit frontend changes**
 
 ```bash
 git add frontend/src/api/admin/settings.ts frontend/src/api/admin/payment.ts frontend/src/views/admin/SettingsView.vue frontend/src/i18n/locales/zh.ts frontend/src/i18n/locales/en.ts frontend/src/views/admin/__tests__/SettingsView.spec.ts
