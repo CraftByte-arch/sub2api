@@ -156,4 +156,3 @@ The system SHALL allow administrators to configure the prefix used for newly gen
 - **THEN** the system locates the payment order by the full stored merchant order number from the callback
 - **AND** the current merchant order prefix setting is not used to reinterpret that existing order number
 ```
-
