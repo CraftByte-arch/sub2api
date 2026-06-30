@@ -2,11 +2,11 @@
 
 Change: configurable-payment-order-prefix
 Branch: feature/20260624/configurable-payment-order-prefix
-Date: 2026-06-29
+Date: 2026-06-30
 
 ## Result
 
-PASS with one tooling limitation: the installed Comet skill does not include the `scripts/` directory, so `comet-state` / guard automation could not be executed locally. Verification was completed with direct project commands and OpenSpec CLI.
+PASS. Verification was rerun with Comet scripts available and direct project commands.
 
 ## Checks
 
@@ -23,6 +23,17 @@ PASS with one tooling limitation: the installed Comet skill does not include the
 - OpenSpec validation:
   `openspec validate configurable-payment-order-prefix`
   Result: `Change 'configurable-payment-order-prefix' is valid`.
+
+## Fresh Verification Evidence
+
+- `openspec validate configurable-payment-order-prefix`
+  Result: PASS.
+- `cd backend && go test ./internal/service ./internal/handler/admin -run 'Payment|Setting|MerchantOrderPrefix|OutTradeNo|GenerateOutTradeNo' -count=1`
+  Result: PASS (`internal/service`, `internal/handler/admin`).
+- `cd frontend && npx vitest run SettingsView`
+  Result: PASS, 1 test file passed, 21 tests passed. Existing jsdom/router-link warnings were printed; no test failures.
+- `cd frontend && npm run typecheck`
+  Result: PASS (`vue-tsc --noEmit`).
 
 ## Review Follow-Up
 
