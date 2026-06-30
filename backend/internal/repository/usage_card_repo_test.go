@@ -60,3 +60,30 @@ func TestUsageCardRepositoryDeductCardRequiresAvailableActiveCard(t *testing.T) 
 	require.ErrorIs(t, err, service.ErrUsageCardUnavailable)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+func TestUsageCardRepositoryListAvailableCardsUsesBillingAvailabilityCriteria(t *testing.T) {
+	db, mock := newSQLMock(t)
+	repo := NewUsageCardRepository(db)
+	now := time.Date(2026, 6, 30, 12, 0, 0, 0, time.UTC)
+
+	rows := sqlmock.NewRows([]string{
+		"id", "user_id", "plan_id", "name", "starts_at", "expires_at", "total_limit_usd",
+		"used_usd", "status", "source", "source_order_id", "source_redeem_code",
+		"assigned_by", "notes", "created_at", "updated_at", "deleted_at",
+	}).AddRow(
+		int64(1), int64(42), sql.NullInt64{}, "active card", now.Add(-time.Hour), now.Add(time.Hour), 10.0,
+		2.0, service.UsageCardStatusActive, service.UsageCardSourcePayment, sql.NullInt64{}, sql.NullString{},
+		sql.NullInt64{}, sql.NullString{}, now, now, sql.NullTime{},
+	)
+
+	mock.ExpectQuery("status = 'active'[\\s\\S]*starts_at <= \\$2[\\s\\S]*expires_at > \\$2[\\s\\S]*used_usd < total_limit_usd").
+		WithArgs(int64(42), now).
+		WillReturnRows(rows)
+
+	cards, err := repo.ListAvailableCards(context.Background(), 42, now)
+
+	require.NoError(t, err)
+	require.Len(t, cards, 1)
+	require.Equal(t, int64(1), cards[0].ID)
+	require.NoError(t, mock.ExpectationsWereMet())
+}

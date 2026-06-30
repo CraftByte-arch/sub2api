@@ -129,6 +129,7 @@ func RegisterUserRoutes(
 
 		usageCards := authenticated.Group("/usage-cards")
 		{
+			usageCards.GET("/summary", h.UsageCard.GetMySummary)
 			usageCards.GET("", h.UsageCard.ListMyCards)
 		}
 

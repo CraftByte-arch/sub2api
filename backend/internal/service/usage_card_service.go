@@ -175,6 +175,27 @@ func (s *UsageCardService) HasAvailableCard(ctx context.Context, userID int64, n
 	return len(cards) > 0, nil
 }
 
+func (s *UsageCardService) GetMySummary(ctx context.Context, userID int64, now time.Time) (*UsageCardSummary, error) {
+	if !s.IsEnabled(ctx) {
+		return &UsageCardSummary{}, nil
+	}
+	if s == nil || s.repo == nil {
+		return &UsageCardSummary{}, nil
+	}
+	cards, err := s.repo.ListAvailableCards(ctx, userID, now)
+	if err != nil {
+		return nil, err
+	}
+	summary := &UsageCardSummary{AvailableCount: len(cards)}
+	for i := range cards {
+		remaining := cards[i].RemainingUSD()
+		if remaining > 0 {
+			summary.AvailableRemainingUSD += remaining
+		}
+	}
+	return summary, nil
+}
+
 func (s *UsageCardService) ListMyCards(ctx context.Context, userID int64) ([]UserUsageCard, error) {
 	if !s.IsEnabled(ctx) {
 		return []UserUsageCard{}, nil

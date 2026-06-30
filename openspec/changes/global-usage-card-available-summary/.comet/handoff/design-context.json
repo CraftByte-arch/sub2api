@@ -1,0 +1,14 @@
+{
+  "change": "global-usage-card-available-summary",
+  "phase": "design",
+  "mode": "compact",
+  "canonical_spec": "openspec",
+  "generated_by": "comet-handoff.sh",
+  "context_hash": "8609bdef0c1d595ccf20e82bb77f6caa314b15f4ae9c541b64e2316d5e618ce2",
+  "files": [
+    { "path": "openspec/changes/global-usage-card-available-summary/proposal.md", "sha256": "8b68d02820e34b53d3cef85d3159be00711d50c5420a91d45cc9bdd749c45fd2" },
+    { "path": "openspec/changes/global-usage-card-available-summary/design.md", "sha256": "8c20565377b4062420735c6643f7287e19f5f77257a454d2d7a804a9132bc359" },
+    { "path": "openspec/changes/global-usage-card-available-summary/tasks.md", "sha256": "85eacd09f11e0c755da15fe8a99a15e6916b66f14c9f1e8f659f35deb2241b84" },
+    { "path": "openspec/changes/global-usage-card-available-summary/specs/usage-cards/spec.md", "sha256": "1c3f1967384997af1c6d64398052418de37304cd42a652144845213382b20dc5" }
+  ]
+}

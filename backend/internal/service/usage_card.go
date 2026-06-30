@@ -47,6 +47,11 @@ type UserUsageCard struct {
 	DeletedAt        *time.Time
 }
 
+type UsageCardSummary struct {
+	AvailableCount        int
+	AvailableRemainingUSD float64
+}
+
 type UsageCardUser struct {
 	ID       int64
 	Email    string

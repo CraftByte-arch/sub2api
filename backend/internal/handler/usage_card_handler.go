@@ -38,6 +38,11 @@ type usageCardResponse struct {
 	DeletedAt        *time.Time `json:"deleted_at,omitempty"`
 }
 
+type usageCardSummaryResponse struct {
+	AvailableCount        int     `json:"available_count"`
+	AvailableRemainingUSD float64 `json:"available_remaining_usd"`
+}
+
 func (h *UsageCardHandler) ListMyCards(c *gin.Context) {
 	subject, ok := middleware2.GetAuthSubjectFromContext(c)
 	if !ok {
@@ -50,6 +55,23 @@ func (h *UsageCardHandler) ListMyCards(c *gin.Context) {
 		return
 	}
 	response.Success(c, usageCardResponses(cards))
+}
+
+func (h *UsageCardHandler) GetMySummary(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+	summary, err := h.usageCardService.GetMySummary(c.Request.Context(), subject.UserID, time.Now())
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, usageCardSummaryResponse{
+		AvailableCount:        summary.AvailableCount,
+		AvailableRemainingUSD: summary.AvailableRemainingUSD,
+	})
 }
 
 func usageCardResponses(cards []service.UserUsageCard) []usageCardResponse {
