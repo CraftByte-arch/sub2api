@@ -1117,7 +1117,9 @@
 import { ref, reactive, computed, watch, onMounted, onUnmounted, type ComponentPublicInstance } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
+import { useAuthStore } from '@/stores/auth'
 import { useOnboardingStore } from '@/stores/onboarding'
+import { useUsageCardSummaryStore } from '@/stores/usageCardSummary'
 import { useClipboard } from '@/composables/useClipboard'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { keysAPI, authAPI, usageAPI, userGroupsAPI } from '@/api'
@@ -1146,6 +1148,8 @@ import {
 } from '@/utils/ccswitchImport'
 
 const { t } = useI18n()
+const authStore = useAuthStore()
+const usageCardSummaryStore = useUsageCardSummaryStore()
 
 // Helper to format date for datetime-local input
 const formatDateTimeLocal = (isoDate: string): string => {
@@ -1476,11 +1480,25 @@ const isAbortError = (error: unknown) => {
   return name === 'AbortError' || code === 'ERR_CANCELED'
 }
 
+const refreshTopbarFunds = async () => {
+  const [usageCardResult, userResult] = await Promise.allSettled([
+    usageCardSummaryStore.refresh(),
+    authStore.refreshUser(),
+  ])
+  if (usageCardResult.status === 'rejected') {
+    console.error('Failed to refresh usage card summary:', usageCardResult.reason)
+  }
+  if (userResult.status === 'rejected') {
+    console.error('Failed to refresh user balance:', userResult.reason)
+  }
+}
+
 const loadApiKeys = async () => {
   abortController?.abort()
   const controller = new AbortController()
   abortController = controller
   const { signal } = controller
+  void refreshTopbarFunds()
   loading.value = true
   try {
     // Build filters

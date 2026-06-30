@@ -16,6 +16,8 @@ const {
   copyToClipboard,
   isCurrentStep,
   nextStep,
+  refreshUser,
+  refreshUsageCardSummary,
 } = vi.hoisted(() => ({
   listKeys: vi.fn(),
   getPublicSettings: vi.fn(),
@@ -27,6 +29,8 @@ const {
   copyToClipboard: vi.fn(),
   isCurrentStep: vi.fn(),
   nextStep: vi.fn(),
+  refreshUser: vi.fn(),
+  refreshUsageCardSummary: vi.fn(),
 }))
 
 const messages: Record<string, string> = {
@@ -83,6 +87,18 @@ vi.mock('@/stores/onboarding', () => ({
   useOnboardingStore: () => ({
     isCurrentStep,
     nextStep,
+  }),
+}))
+
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: () => ({
+    refreshUser,
+  }),
+}))
+
+vi.mock('@/stores/usageCardSummary', () => ({
+  useUsageCardSummaryStore: () => ({
+    refresh: refreshUsageCardSummary,
   }),
 }))
 
@@ -229,6 +245,8 @@ describe('user KeysView column settings', () => {
     copyToClipboard.mockReset()
     isCurrentStep.mockReset()
     nextStep.mockReset()
+    refreshUser.mockReset()
+    refreshUsageCardSummary.mockReset()
 
     listKeys.mockResolvedValue({
       items: [createApiKey()],
@@ -241,6 +259,8 @@ describe('user KeysView column settings', () => {
     getDashboardApiKeysUsage.mockResolvedValue({ stats: {} })
     getAvailableGroups.mockResolvedValue([])
     getUserGroupRates.mockResolvedValue({})
+    refreshUser.mockResolvedValue({})
+    refreshUsageCardSummary.mockResolvedValue({})
     isCurrentStep.mockReturnValue(false)
   })
 
@@ -302,5 +322,19 @@ describe('user KeysView column settings', () => {
     expect(columnMenuText).toContain('Rate Limit')
     expect(columnMenuText).not.toContain('Name')
     expect(columnMenuText).not.toContain('Actions')
+  })
+
+  it('refreshes topbar usage-card summary and long-term balance when the refresh button is clicked', async () => {
+    const wrapper = await mountView()
+
+    listKeys.mockClear()
+    refreshUsageCardSummary.mockClear()
+    refreshUser.mockClear()
+    await wrapper.get('button[title="Refresh"]').trigger('click')
+    await flushPromises()
+
+    expect(listKeys).toHaveBeenCalledTimes(1)
+    expect(refreshUsageCardSummary).toHaveBeenCalledTimes(1)
+    expect(refreshUser).toHaveBeenCalledTimes(1)
   })
 })

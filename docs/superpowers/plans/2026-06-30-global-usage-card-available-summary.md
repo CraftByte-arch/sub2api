@@ -608,7 +608,7 @@ git commit -m "feat: show available usage card summary in topbar"
 - Modify: `frontend/src/views/user/KeysView.vue`
 - Modify: `frontend/src/views/user/__tests__/KeysView.spec.ts`
 
-- [ ] **Step 1: Write the failing KeysView test**
+- [x] **Step 1: Write the failing KeysView test**
 
 In `frontend/src/views/user/__tests__/KeysView.spec.ts`, add hoisted mocks:
 
@@ -658,7 +658,7 @@ it('refreshes topbar usage-card summary and long-term balance when the refresh b
 })
 ```
 
-- [ ] **Step 2: Run the test and verify it fails**
+- [x] **Step 2: Run the test and verify it fails**
 
 Run:
 
@@ -668,7 +668,7 @@ cd frontend && pnpm test:run src/views/user/__tests__/KeysView.spec.ts
 
 Expected: FAIL because `KeysView` does not call the topbar refresh functions yet.
 
-- [ ] **Step 3: Update KeysView imports and store setup**
+- [x] **Step 3: Update KeysView imports and store setup**
 
 In `frontend/src/views/user/KeysView.vue`, update imports:
 
@@ -684,7 +684,7 @@ const authStore = useAuthStore()
 const usageCardSummaryStore = useUsageCardSummaryStore()
 ```
 
-- [ ] **Step 4: Add non-blocking topbar refresh helper**
+- [x] **Step 4: Add non-blocking topbar refresh helper**
 
 Add:
 
@@ -702,7 +702,7 @@ const refreshTopbarFunds = async () => {
 }
 ```
 
-- [ ] **Step 5: Call topbar refresh from `loadApiKeys`**
+- [x] **Step 5: Call topbar refresh from `loadApiKeys`**
 
 At the start of `loadApiKeys`, after creating `signal`, add:
 
@@ -720,7 +720,7 @@ topbarRefresh.catch((error) => {
 
 Do not let `refreshTopbarFunds` abort or block API key list updates.
 
-- [ ] **Step 6: Run the KeysView test and verify it passes**
+- [x] **Step 6: Run the KeysView test and verify it passes**
 
 Run:
 
@@ -730,7 +730,7 @@ cd frontend && pnpm test:run src/views/user/__tests__/KeysView.spec.ts
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit refresh linkage**
+- [x] **Step 7: Commit refresh linkage**
 
 Run:
 

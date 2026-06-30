@@ -8,8 +8,8 @@
 
 - [x] 2.1 Add a frontend API method and type for loading the usage-card summary.
 - [x] 2.2 Add a shared store/composable refresh entry point for topbar usage-card summary data.
-- [ ] 2.3 Add or reuse a refresh entry point for the existing topbar long-term account balance.
-- [ ] 2.4 Ensure usage-card summary and long-term balance refresh failures do not block callers that also refresh unrelated page data.
+- [x] 2.3 Add or reuse a refresh entry point for the existing topbar long-term account balance.
+- [x] 2.4 Ensure usage-card summary and long-term balance refresh failures do not block callers that also refresh unrelated page data.
 
 ## 3. Global Topbar UI
 
@@ -21,8 +21,8 @@
 
 ## 4. API Key Page Integration
 
-- [ ] 4.1 Update the API key page refresh action to call the shared usage-card summary refresh and long-term balance refresh.
-- [ ] 4.2 Add or update tests proving the API key refresh triggers both topbar usage-card information refresh and long-term balance refresh.
+- [x] 4.1 Update the API key page refresh action to call the shared usage-card summary refresh and long-term balance refresh.
+- [x] 4.2 Add or update tests proving the API key refresh triggers both topbar usage-card information refresh and long-term balance refresh.
 
 ## 5. Verification
 
