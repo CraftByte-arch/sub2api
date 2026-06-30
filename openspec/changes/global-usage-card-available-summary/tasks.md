@@ -13,11 +13,11 @@
 
 ## 3. Global Topbar UI
 
-- [ ] 3.1 Change `UsageCardMini` to show available card count instead of total card count.
-- [ ] 3.2 Show the available remaining USD total directly in the global topbar component.
-- [ ] 3.3 Keep the existing long-term balance display unchanged and visually separate from the usage-card remaining total.
-- [ ] 3.4 Align the hover/summary copy with the available-card summary while preserving useful card details.
-- [ ] 3.5 Add or update frontend tests for zero cards, mixed unavailable cards, separated long-term balance display, and formatted summary display.
+- [x] 3.1 Change `UsageCardMini` to show available card count instead of total card count.
+- [x] 3.2 Show the available remaining USD total directly in the global topbar component.
+- [x] 3.3 Keep the existing long-term balance display unchanged and visually separate from the usage-card remaining total.
+- [x] 3.4 Align the hover/summary copy with the available-card summary while preserving useful card details.
+- [x] 3.5 Add or update frontend tests for zero cards, mixed unavailable cards, separated long-term balance display, and formatted summary display.
 
 ## 4. API Key Page Integration
 

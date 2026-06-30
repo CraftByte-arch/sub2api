@@ -11,7 +11,10 @@
       <span
         class="min-w-4 rounded-full bg-primary-100 px-1.5 text-center text-[10px] font-semibold leading-4 text-primary-700 dark:bg-primary-800/60 dark:text-primary-200"
       >
-        {{ cards.length }}
+        {{ availableCount }}
+      </span>
+      <span class="text-sm font-semibold tabular-nums text-primary-700 dark:text-primary-200">
+        ${{ availableRemainingUSD.toFixed(2) }}
       </span>
     </button>
 
@@ -23,7 +26,7 @@
         <div class="border-b border-gray-100 px-3 py-2 dark:border-dark-700">
           <h3 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('usageCards.title') }}</h3>
           <p class="text-xs text-gray-500 dark:text-dark-400">
-            {{ cards.length > 0 ? t('usageCards.recentRedeemed', { count: displayCards.length }) : t('usageCards.empty') }}
+            {{ availableCount > 0 ? t('usageCards.availableCount', { count: availableCount }) : t('usageCards.empty') }}
           </p>
         </div>
 
@@ -96,14 +99,18 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
 import { usageCardsAPI, type UserUsageCard } from '@/api/usageCards'
+import { useUsageCardSummaryStore } from '@/stores/usageCardSummary'
 import { formatDateTime } from '@/utils/format'
 
 const { t } = useI18n()
+const usageCardSummaryStore = useUsageCardSummaryStore()
 
 const loading = ref(false)
 const cards = ref<UserUsageCard[]>([])
 const tooltipOpen = ref(false)
 let closeTimer: ReturnType<typeof setTimeout> | null = null
+const availableCount = computed(() => usageCardSummaryStore.availableCount)
+const availableRemainingUSD = computed(() => usageCardSummaryStore.availableRemainingUSD)
 
 const displayCards = computed(() => {
   return [...cards.value]
@@ -175,8 +182,12 @@ function formatMinuteDateTime(value: string) {
 onMounted(async () => {
   loading.value = true
   try {
-    const res = await usageCardsAPI.listMine()
-    cards.value = res.data
+    await Promise.allSettled([
+      usageCardSummaryStore.refresh(),
+      usageCardsAPI.listMine().then((res) => {
+        cards.value = res.data
+      }),
+    ])
   } finally {
     loading.value = false
   }

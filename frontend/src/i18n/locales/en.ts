@@ -431,6 +431,8 @@ export default {
     noPurchasable: 'No usage cards available for purchase',
     allStatus: 'All',
     recentRedeemed: 'Recently redeemed {count}',
+    availableCount: '{count} available',
+    availableSummary: 'Available {amount}',
     viewMore: 'View More',
     remainingQuota: 'Remaining Quota',
     remaining: 'Remaining',

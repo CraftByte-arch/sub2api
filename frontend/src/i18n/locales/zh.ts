@@ -431,6 +431,8 @@ export default {
     noPurchasable: '暂无可购买的余额卡',
     allStatus: '全部',
     recentRedeemed: '最近兑换 {count} 张',
+    availableCount: '可用 {count} 张',
+    availableSummary: '可用余额 {amount}',
     viewMore: '查看更多',
     remainingQuota: '剩余额度',
     remaining: '剩余',

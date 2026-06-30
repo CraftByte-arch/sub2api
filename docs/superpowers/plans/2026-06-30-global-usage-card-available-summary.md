@@ -422,7 +422,7 @@ git commit -m "feat: add usage card summary state"
 - Modify: `frontend/src/components/common/UsageCardMini.vue`
 - Create: `frontend/src/components/common/__tests__/UsageCardMini.spec.ts`
 
-- [ ] **Step 1: Write the failing component test**
+- [x] **Step 1: Write the failing component test**
 
 Create `frontend/src/components/common/__tests__/UsageCardMini.spec.ts`:
 
@@ -497,7 +497,7 @@ describe('UsageCardMini', () => {
 })
 ```
 
-- [ ] **Step 2: Run the component test and verify it fails**
+- [x] **Step 2: Run the component test and verify it fails**
 
 Run:
 
@@ -507,7 +507,7 @@ cd frontend && pnpm test:run src/components/common/__tests__/UsageCardMini.spec.
 
 Expected: FAIL because `UsageCardMini` does not call `getSummary` or show `$7.50`.
 
-- [ ] **Step 3: Update `UsageCardMini` imports and store usage**
+- [x] **Step 3: Update `UsageCardMini` imports and store usage**
 
 In `frontend/src/components/common/UsageCardMini.vue`, import the store:
 
@@ -523,7 +523,7 @@ const availableCount = computed(() => usageCardSummaryStore.availableCount)
 const availableRemainingUSD = computed(() => usageCardSummaryStore.availableRemainingUSD)
 ```
 
-- [ ] **Step 4: Update topbar template**
+- [x] **Step 4: Update topbar template**
 
 Change the badge from `cards.length` to:
 
@@ -541,7 +541,7 @@ Add a compact amount next to the badge:
 
 Keep the existing long-term account balance in `AppHeader.vue` unchanged.
 
-- [ ] **Step 5: Refresh summary on mount**
+- [x] **Step 5: Refresh summary on mount**
 
 In `onMounted`, call both summary and list refreshes without coupling their failure paths:
 
@@ -561,7 +561,7 @@ onMounted(async () => {
 })
 ```
 
-- [ ] **Step 6: Update hover summary copy**
+- [x] **Step 6: Update hover summary copy**
 
 Where the tooltip currently uses `cards.length`, use:
 
@@ -583,7 +583,7 @@ availableSummary: 'Available {amount}',
 
 Use existing nearby `usageCards` locale objects.
 
-- [ ] **Step 7: Run the component test and verify it passes**
+- [x] **Step 7: Run the component test and verify it passes**
 
 Run:
 
@@ -593,7 +593,7 @@ cd frontend && pnpm test:run src/components/common/__tests__/UsageCardMini.spec.
 
 Expected: PASS.
 
-- [ ] **Step 8: Commit topbar display**
+- [x] **Step 8: Commit topbar display**
 
 Run:
 
