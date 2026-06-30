@@ -2,6 +2,8 @@
 comet_change: configurable-payment-order-prefix
 role: technical-design
 canonical_spec: openspec
+archived-with: 2026-06-30-configurable-payment-order-prefix
+status: final
 ---
 
 # Configurable Payment Order Prefix Design

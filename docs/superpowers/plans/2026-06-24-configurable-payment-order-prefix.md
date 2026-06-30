@@ -2,6 +2,7 @@
 change: configurable-payment-order-prefix
 design-doc: docs/superpowers/specs/2026-06-24-configurable-payment-order-prefix-design.md
 base-ref: d3dedc05ce2404917621670c33ad1412b754073f
+archived-with: 2026-06-30-configurable-payment-order-prefix
 ---
 
 # Configurable Payment Order Prefix Implementation Plan
@@ -13,8 +14,6 @@ base-ref: d3dedc05ce2404917621670c33ad1412b754073f
 **Architecture:** Extend the existing payment settings pipeline instead of creating a new configuration store. `PaymentConfigService` owns defaulting and validation, `PaymentService` consumes the loaded config during order allocation, and the admin settings UI exposes the field through the existing payment settings form.
 
 **Tech Stack:** Go service layer and handlers, Ent-backed settings repository, Vue 3 admin settings page, TypeScript API types, Vitest frontend tests, Go unit tests.
-
----
 
 ## File Structure
 
@@ -29,8 +28,6 @@ base-ref: d3dedc05ce2404917621670c33ad1412b754073f
 - Modify `frontend/src/views/admin/SettingsView.vue`: add form default, input field, and save payload mapping.
 - Modify `frontend/src/i18n/locales/zh.ts` and `frontend/src/i18n/locales/en.ts`: add label/help strings.
 - Modify backend and frontend tests covering config parsing, validation, order generation, DTO mapping, and settings form behavior.
-
----
 
 ### Task 1: Backend Payment Config Field
 
