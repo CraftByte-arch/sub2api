@@ -6,8 +6,8 @@
 
 ## 2. Frontend Shared State
 
-- [ ] 2.1 Add a frontend API method and type for loading the usage-card summary.
-- [ ] 2.2 Add a shared store/composable refresh entry point for topbar usage-card summary data.
+- [x] 2.1 Add a frontend API method and type for loading the usage-card summary.
+- [x] 2.2 Add a shared store/composable refresh entry point for topbar usage-card summary data.
 - [ ] 2.3 Add or reuse a refresh entry point for the existing topbar long-term account balance.
 - [ ] 2.4 Ensure usage-card summary and long-term balance refresh failures do not block callers that also refresh unrelated page data.
 

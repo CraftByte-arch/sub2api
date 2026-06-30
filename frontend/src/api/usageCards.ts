@@ -23,9 +23,17 @@ export interface UserUsageCard {
   updated_at: string
 }
 
+export interface UsageCardSummary {
+  available_count: number
+  available_remaining_usd: number
+}
+
 export const usageCardsAPI = {
   listMine() {
     return apiClient.get<UserUsageCard[]>('/usage-cards')
+  },
+  getSummary() {
+    return apiClient.get<UsageCardSummary>('/usage-cards/summary')
   },
 }
 

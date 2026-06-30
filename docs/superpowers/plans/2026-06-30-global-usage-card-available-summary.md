@@ -237,9 +237,67 @@ git commit -m "feat: add usage card summary endpoint"
 **Files:**
 - Modify: `frontend/src/api/usageCards.ts`
 - Create: `frontend/src/stores/usageCardSummary.ts`
+- Create: `frontend/src/stores/__tests__/usageCardSummary.spec.ts`
 - Modify: `frontend/src/stores/index.ts`
 
-- [ ] **Step 1: Add the API type and method**
+- [x] **Step 1: Write the failing store test**
+
+Create `frontend/src/stores/__tests__/usageCardSummary.spec.ts`:
+
+```ts
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { createPinia, setActivePinia } from 'pinia'
+import { useUsageCardSummaryStore } from '@/stores/usageCardSummary'
+
+const getSummary = vi.fn()
+
+vi.mock('@/api/usageCards', () => ({
+  usageCardsAPI: {
+    getSummary,
+  },
+}))
+
+describe('useUsageCardSummaryStore', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    getSummary.mockReset()
+  })
+
+  it('refreshes available count and remaining USD from the API', async () => {
+    getSummary.mockResolvedValue({
+      data: {
+        available_count: 2,
+        available_remaining_usd: 7.5,
+      },
+    })
+    const store = useUsageCardSummaryStore()
+
+    const summary = await store.refresh()
+
+    expect(getSummary).toHaveBeenCalledTimes(1)
+    expect(summary).toEqual({
+      available_count: 2,
+      available_remaining_usd: 7.5,
+    })
+    expect(store.availableCount).toBe(2)
+    expect(store.availableRemainingUSD).toBe(7.5)
+    expect(store.loading).toBe(false)
+    expect(store.error).toBeNull()
+  })
+})
+```
+
+- [x] **Step 2: Run the store test and verify it fails**
+
+Run:
+
+```bash
+cd frontend && pnpm test:run src/stores/__tests__/usageCardSummary.spec.ts
+```
+
+Expected: FAIL because `@/stores/usageCardSummary` does not exist yet.
+
+- [x] **Step 3: Add the API type and method**
 
 In `frontend/src/api/usageCards.ts`, add:
 
@@ -263,7 +321,7 @@ export const usageCardsAPI = {
 }
 ```
 
-- [ ] **Step 2: Create the summary store**
+- [x] **Step 4: Create the summary store**
 
 Create `frontend/src/stores/usageCardSummary.ts`:
 
@@ -321,7 +379,7 @@ export const useUsageCardSummaryStore = defineStore('usageCardSummary', () => {
 })
 ```
 
-- [ ] **Step 3: Export the store**
+- [x] **Step 5: Export the store**
 
 In `frontend/src/stores/index.ts`, add:
 
@@ -329,7 +387,17 @@ In `frontend/src/stores/index.ts`, add:
 export { useUsageCardSummaryStore } from './usageCardSummary'
 ```
 
-- [ ] **Step 4: Run typecheck for the new store**
+- [x] **Step 6: Run the store test and verify it passes**
+
+Run:
+
+```bash
+cd frontend && pnpm test:run src/stores/__tests__/usageCardSummary.spec.ts
+```
+
+Expected: PASS.
+
+- [x] **Step 7: Run typecheck for the new store**
 
 Run:
 
@@ -339,12 +407,12 @@ cd frontend && pnpm typecheck
 
 Expected: PASS or only pre-existing unrelated failures. If unrelated failures exist, record the exact output before continuing.
 
-- [ ] **Step 5: Commit frontend summary state**
+- [x] **Step 8: Commit frontend summary state**
 
 Run:
 
 ```bash
-git add frontend/src/api/usageCards.ts frontend/src/stores/usageCardSummary.ts frontend/src/stores/index.ts
+git add frontend/src/api/usageCards.ts frontend/src/stores/usageCardSummary.ts frontend/src/stores/__tests__/usageCardSummary.spec.ts frontend/src/stores/index.ts
 git commit -m "feat: add usage card summary state"
 ```
 
