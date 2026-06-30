@@ -26,6 +26,6 @@
 
 ## 5. Verification
 
-- [ ] 5.1 Run targeted backend usage-card tests.
-- [ ] 5.2 Run targeted frontend tests or type checks for the topbar and API key page.
-- [ ] 5.3 Validate the OpenSpec change artifacts.
+- [x] 5.1 Run targeted backend usage-card tests.
+- [x] 5.2 Run targeted frontend tests or type checks for the topbar and API key page.
+- [x] 5.3 Validate the OpenSpec change artifacts.

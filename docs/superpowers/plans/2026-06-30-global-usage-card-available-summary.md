@@ -744,7 +744,7 @@ git commit -m "feat: refresh topbar funds from api keys page"
 **Files:**
 - Modify: `openspec/changes/global-usage-card-available-summary/tasks.md`
 
-- [ ] **Step 1: Run targeted backend tests**
+- [x] **Step 1: Run targeted backend tests**
 
 Run:
 
@@ -754,7 +754,7 @@ cd backend && go test ./internal/service ./internal/repository -run 'UsageCard' 
 
 Expected: PASS.
 
-- [ ] **Step 2: Run targeted frontend tests**
+- [x] **Step 2: Run targeted frontend tests**
 
 Run:
 
@@ -764,7 +764,7 @@ cd frontend && pnpm test:run src/components/common/__tests__/UsageCardMini.spec.
 
 Expected: PASS.
 
-- [ ] **Step 3: Run frontend typecheck**
+- [x] **Step 3: Run frontend typecheck**
 
 Run:
 
@@ -774,7 +774,7 @@ cd frontend && pnpm typecheck
 
 Expected: PASS or documented pre-existing unrelated failures.
 
-- [ ] **Step 4: Validate OpenSpec**
+- [x] **Step 4: Validate OpenSpec**
 
 Run:
 
@@ -784,7 +784,7 @@ openspec validate global-usage-card-available-summary
 
 Expected: PASS.
 
-- [ ] **Step 5: Sync OpenSpec task checklist**
+- [x] **Step 5: Sync OpenSpec task checklist**
 
 Update `openspec/changes/global-usage-card-available-summary/tasks.md` so completed items are checked:
 
@@ -808,7 +808,7 @@ Update `openspec/changes/global-usage-card-available-summary/tasks.md` so comple
 - [x] 5.3 Validate the OpenSpec change artifacts.
 ```
 
-- [ ] **Step 6: Commit verification and checklist**
+- [x] **Step 6: Commit verification and checklist**
 
 Run:
 
