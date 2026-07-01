@@ -360,7 +360,7 @@ git commit -m "feat: apply affiliate rebate to usage card fulfillment"
 - Modify: `backend/internal/service/payment_fulfillment_test.go`
 - Track: `openspec/changes/usage-card-affiliate-rebate/tasks.md`
 
-- [ ] **Step 1: Extend affiliate repo stub for cap testing**
+- [x] **Step 1: Extend affiliate repo stub for cap testing**
 
 Modify `paymentFulfillmentAffiliateRepoStub` in `backend/internal/service/payment_fulfillment_test.go` so it can simulate an existing per-invitee rebate amount:
 
@@ -381,7 +381,7 @@ func (r *paymentFulfillmentAffiliateRepoStub) GetAccruedRebateFromInvitee(contex
 }
 ```
 
-- [ ] **Step 2: Add skipped-rebate table test**
+- [x] **Step 2: Add skipped-rebate table test**
 
 Add this test in `backend/internal/service/payment_fulfillment_test.go`. It covers disabled affiliate settings, no inviter, zero rebate rate, expired duration, and reached per-invitee cap:
 
@@ -517,7 +517,7 @@ func TestExecuteUsageCardFulfillmentSkipsIneligibleAffiliateRebate(t *testing.T)
 }
 ```
 
-- [ ] **Step 3: Add non-success status regression test**
+- [x] **Step 3: Add non-success status regression test**
 
 Add this test in `backend/internal/service/payment_fulfillment_test.go`. It proves pending and refund-related usage card orders do not issue cards or accrue rebate, while already completed orders no-op:
 
@@ -610,7 +610,7 @@ func TestExecuteUsageCardFulfillmentNonSuccessfulStatusesDoNotAccrueAffiliateReb
 }
 ```
 
-- [ ] **Step 4: Add idempotent retry test**
+- [x] **Step 4: Add idempotent retry test**
 
 Add this test in `backend/internal/service/payment_fulfillment_test.go`:
 
@@ -697,17 +697,17 @@ func TestExecuteUsageCardFulfillmentDoesNotDuplicateCardOrAffiliateRebate(t *tes
 }
 ```
 
-- [ ] **Step 5: Run tests to verify behavior**
+- [x] **Step 5: Run tests to verify behavior**
 
 Run:
 
 ```bash
-cd backend && go test -tags=unit ./internal/service -run 'TestExecuteUsageCardFulfillment.*Affiliate|TestExecuteUsageCardFulfillmentDoesNotDuplicateCardOrAffiliateRebate|TestExecuteUsageCardFulfillmentNonSuccessfulStatusesDoNotAccrueAffiliateRebate' -count=1
+cd backend && go test -tags=unit ./internal/service -run 'TestExecuteUsageCardFulfillment.*Affiliate|TestExecuteUsageCardFulfillmentDoesNotDuplicateCardOrAffiliateRebate|TestExecuteUsageCardFulfillmentNonSuccessfulStatusesDoNotAccrueAffiliateRebate|TestExecuteUsageCardFulfillmentFailedStatusRetriesAndAccruesAffiliateRebate' -count=1
 ```
 
 Expected: PASS after Task 2 implementation. If any test fails, fix the test setup or implementation before continuing.
 
-- [ ] **Step 6: Mark OpenSpec retry, skip, and status tasks**
+- [x] **Step 6: Mark OpenSpec retry, skip, and status tasks**
 
 In `openspec/changes/usage-card-affiliate-rebate/tasks.md`, mark these tasks complete:
 
@@ -718,7 +718,7 @@ In `openspec/changes/usage-card-affiliate-rebate/tasks.md`, mark these tasks com
 - [x] 3.3 Add backend tests proving repeated usage card fulfillment does not duplicate affiliate quota or audit results.
 ```
 
-- [ ] **Step 7: Commit Task 3**
+- [x] **Step 7: Commit Task 3**
 
 Run:
 
@@ -737,7 +737,7 @@ git commit -m "test: cover usage card affiliate skip and retry"
 Run:
 
 ```bash
-cd backend && go test -tags=unit ./internal/service -run 'TestAffiliateRebateBaseAmountByOrderType|TestExecuteUsageCardFulfillment.*Affiliate|TestExecuteUsageCardFulfillmentDoesNotDuplicateCardOrAffiliateRebate|TestExecuteSubscriptionFulfillmentAccruesAffiliateRebate|TestExecuteSubscriptionFulfillmentDoesNotDuplicateWorkAfterLegacySuccessAudit' -count=1
+cd backend && go test -tags=unit ./internal/service -run 'TestAffiliateRebateBaseAmountByOrderType|TestExecuteUsageCardFulfillment.*Affiliate|TestExecuteUsageCardFulfillmentDoesNotDuplicateCardOrAffiliateRebate|TestExecuteUsageCardFulfillmentNonSuccessfulStatusesDoNotAccrueAffiliateRebate|TestExecuteUsageCardFulfillmentFailedStatusRetriesAndAccruesAffiliateRebate|TestExecuteSubscriptionFulfillmentAccruesAffiliateRebate|TestExecuteSubscriptionFulfillmentDoesNotDuplicateWorkAfterLegacySuccessAudit' -count=1
 ```
 
 Expected: PASS.

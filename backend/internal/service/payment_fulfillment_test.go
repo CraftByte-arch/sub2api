@@ -49,9 +49,10 @@ type paymentFulfillmentAffiliateAccrueCall struct {
 }
 
 type paymentFulfillmentAffiliateRepoStub struct {
-	inviteeSummary *AffiliateSummary
-	inviterSummary *AffiliateSummary
-	accrueCalls    []paymentFulfillmentAffiliateAccrueCall
+	inviteeSummary     *AffiliateSummary
+	inviterSummary     *AffiliateSummary
+	accruedFromInvitee float64
+	accrueCalls        []paymentFulfillmentAffiliateAccrueCall
 }
 
 func (r *paymentFulfillmentAffiliateRepoStub) EnsureUserAffiliate(_ context.Context, userID int64) (*AffiliateSummary, error) {
@@ -92,7 +93,7 @@ func (r *paymentFulfillmentAffiliateRepoStub) AccrueQuota(_ context.Context, inv
 }
 
 func (r *paymentFulfillmentAffiliateRepoStub) GetAccruedRebateFromInvitee(context.Context, int64, int64) (float64, error) {
-	return 0, nil
+	return r.accruedFromInvitee, nil
 }
 
 func (r *paymentFulfillmentAffiliateRepoStub) ThawFrozenQuota(context.Context, int64) (float64, error) {
@@ -928,6 +929,368 @@ func TestExecuteUsageCardFulfillmentAccruesAffiliateRebateFromPayAmount(t *testi
 	require.NoError(t, err)
 	require.Contains(t, applied.Detail, `"baseAmount":59.9`)
 	require.Contains(t, applied.Detail, `"rebateAmount":11.98`)
+}
+
+func TestExecuteUsageCardFulfillmentSkipsIneligibleAffiliateRebate(t *testing.T) {
+	cases := []struct {
+		name               string
+		withInviter        bool
+		inviteeCreatedAt   time.Time
+		settingOverrides   map[string]string
+		accruedFromInvitee float64
+	}{
+		{
+			name:             "affiliate disabled",
+			withInviter:      true,
+			inviteeCreatedAt: time.Now().Add(-24 * time.Hour),
+			settingOverrides: map[string]string{SettingKeyAffiliateEnabled: "false"},
+		},
+		{
+			name:             "no inviter",
+			withInviter:      false,
+			inviteeCreatedAt: time.Now().Add(-24 * time.Hour),
+		},
+		{
+			name:             "zero rebate rate",
+			withInviter:      true,
+			inviteeCreatedAt: time.Now().Add(-24 * time.Hour),
+			settingOverrides: map[string]string{SettingKeyAffiliateRebateRate: "0"},
+		},
+		{
+			name:             "expired duration",
+			withInviter:      true,
+			inviteeCreatedAt: time.Now().Add(-48 * time.Hour),
+			settingOverrides: map[string]string{SettingKeyAffiliateRebateDurationDays: "1"},
+		},
+		{
+			name:               "cap reached",
+			withInviter:        true,
+			inviteeCreatedAt:   time.Now().Add(-24 * time.Hour),
+			settingOverrides:   map[string]string{SettingKeyAffiliateRebatePerInviteeCap: "5"},
+			accruedFromInvitee: 5,
+		},
+	}
+
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			client := newPaymentConfigServiceTestClient(t)
+			ensurePaymentAuditOrderActionUniqueIndex(t, ctx, client)
+			suffix := strconv.Itoa(i)
+
+			user, err := client.User.Create().
+				SetEmail("usage-card-affiliate-skip-" + suffix + "@example.com").
+				SetPasswordHash("hash").
+				SetUsername("usage-card-affiliate-skip-" + suffix).
+				Save(ctx)
+			require.NoError(t, err)
+
+			order, err := client.PaymentOrder.Create().
+				SetUserID(user.ID).
+				SetUserEmail(user.Email).
+				SetUserName(user.Username).
+				SetAmount(500).
+				SetPayAmount(59.9).
+				SetFeeRate(0).
+				SetRechargeCode("PAY-USAGE-CARD-AFFILIATE-SKIP-" + suffix).
+				SetOutTradeNo("sub2_usage_card_affiliate_skip_" + suffix).
+				SetPaymentType(payment.TypeAlipay).
+				SetPaymentTradeNo("trade-usage-card-affiliate-skip-" + suffix).
+				SetOrderType(payment.OrderTypeUsageCard).
+				SetPlanID(88).
+				SetStatus(OrderStatusPaid).
+				SetExpiresAt(time.Now().Add(time.Hour)).
+				SetClientIP("127.0.0.1").
+				SetSrcHost("api.example.com").
+				Save(ctx)
+			require.NoError(t, err)
+
+			inviterID := int64(9001 + i)
+			inviteeSummary := &AffiliateSummary{
+				UserID:    user.ID,
+				AffCode:   "INVITEE-" + suffix,
+				CreatedAt: tc.inviteeCreatedAt,
+			}
+			if tc.withInviter {
+				inviteeSummary.InviterID = &inviterID
+			}
+
+			values := map[string]string{
+				SettingKeyAffiliateEnabled:             "true",
+				SettingKeyAffiliateRebateRate:          "20",
+				SettingKeyAffiliateRebateFreezeHours:   "0",
+				SettingKeyAffiliateRebateDurationDays:  "0",
+				SettingKeyAffiliateRebatePerInviteeCap: "0",
+				SettingKeyUsageCardEnabled:             "true",
+				SettingKeyUsageCardPaymentEnabled:      "true",
+			}
+			for key, value := range tc.settingOverrides {
+				values[key] = value
+			}
+			settingRepo := &paymentFulfillmentSettingRepoStub{values: values}
+			settingSvc := NewSettingService(settingRepo, nil)
+			affiliateRepo := &paymentFulfillmentAffiliateRepoStub{
+				inviteeSummary:     inviteeSummary,
+				inviterSummary:     &AffiliateSummary{UserID: inviterID, AffCode: "INVITER-" + suffix, CreatedAt: time.Now().Add(-48 * time.Hour)},
+				accruedFromInvitee: tc.accruedFromInvitee,
+			}
+			usageRepo := &paymentFulfillmentUsageCardRepoStub{
+				plan: &UsageCardPlan{ID: 88, Name: "Usage 500", Price: 59.9, AmountUSD: 500, ValidityDays: 30, ForSale: true},
+			}
+			svc := &PaymentService{
+				entClient:        client,
+				usageCardService: NewUsageCardService(usageRepo, settingRepo),
+				affiliateService: NewAffiliateService(affiliateRepo, settingSvc, nil, nil),
+			}
+
+			err = svc.ExecuteUsageCardFulfillment(ctx, order.ID)
+			require.NoError(t, err)
+
+			reloaded, err := client.PaymentOrder.Get(ctx, order.ID)
+			require.NoError(t, err)
+			require.Equal(t, OrderStatusCompleted, reloaded.Status)
+			require.Equal(t, 1, usageRepo.createCalls)
+			require.Empty(t, affiliateRepo.accrueCalls)
+
+			skipped, err := client.PaymentAuditLog.Query().
+				Where(paymentauditlog.OrderIDEQ(strconv.FormatInt(order.ID, 10)), paymentauditlog.ActionEQ("AFFILIATE_REBATE_SKIPPED")).
+				Only(ctx)
+			require.NoError(t, err)
+			require.Contains(t, skipped.Detail, `"baseAmount":59.9`)
+		})
+	}
+}
+
+func TestExecuteUsageCardFulfillmentNonSuccessfulStatusesDoNotAccrueAffiliateRebate(t *testing.T) {
+	cases := []struct {
+		name      string
+		status    string
+		wantError bool
+	}{
+		{name: "pending", status: OrderStatusPending, wantError: true},
+		{name: "cancelled", status: OrderStatusCancelled, wantError: true},
+		{name: "expired", status: OrderStatusExpired, wantError: true},
+		{name: "refund requested", status: OrderStatusRefundRequested, wantError: true},
+		{name: "refunding", status: OrderStatusRefunding, wantError: true},
+		{name: "completed", status: OrderStatusCompleted, wantError: false},
+	}
+
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			client := newPaymentConfigServiceTestClient(t)
+			ensurePaymentAuditOrderActionUniqueIndex(t, ctx, client)
+			suffix := strconv.Itoa(i)
+
+			user, err := client.User.Create().
+				SetEmail("usage-card-affiliate-status-" + suffix + "@example.com").
+				SetPasswordHash("hash").
+				SetUsername("usage-card-affiliate-status-" + suffix).
+				Save(ctx)
+			require.NoError(t, err)
+
+			order, err := client.PaymentOrder.Create().
+				SetUserID(user.ID).
+				SetUserEmail(user.Email).
+				SetUserName(user.Username).
+				SetAmount(500).
+				SetPayAmount(59.9).
+				SetFeeRate(0).
+				SetRechargeCode("PAY-USAGE-CARD-AFFILIATE-STATUS-" + suffix).
+				SetOutTradeNo("sub2_usage_card_affiliate_status_" + suffix).
+				SetPaymentType(payment.TypeAlipay).
+				SetPaymentTradeNo("trade-usage-card-affiliate-status-" + suffix).
+				SetOrderType(payment.OrderTypeUsageCard).
+				SetPlanID(88).
+				SetStatus(tc.status).
+				SetExpiresAt(time.Now().Add(time.Hour)).
+				SetClientIP("127.0.0.1").
+				SetSrcHost("api.example.com").
+				Save(ctx)
+			require.NoError(t, err)
+
+			inviterID := int64(9101 + i)
+			affiliateRepo := &paymentFulfillmentAffiliateRepoStub{
+				inviteeSummary: &AffiliateSummary{UserID: user.ID, AffCode: "INVITEE-" + suffix, InviterID: &inviterID, CreatedAt: time.Now().Add(-24 * time.Hour)},
+				inviterSummary: &AffiliateSummary{UserID: inviterID, AffCode: "INVITER-" + suffix, CreatedAt: time.Now().Add(-48 * time.Hour)},
+			}
+			settingRepo := &paymentFulfillmentSettingRepoStub{values: map[string]string{
+				SettingKeyAffiliateEnabled:        "true",
+				SettingKeyAffiliateRebateRate:     "20",
+				SettingKeyUsageCardEnabled:        "true",
+				SettingKeyUsageCardPaymentEnabled: "true",
+			}}
+			settingSvc := NewSettingService(settingRepo, nil)
+			usageRepo := &paymentFulfillmentUsageCardRepoStub{
+				plan: &UsageCardPlan{ID: 88, Name: "Usage 500", Price: 59.9, AmountUSD: 500, ValidityDays: 30, ForSale: true},
+			}
+			svc := &PaymentService{
+				entClient:        client,
+				usageCardService: NewUsageCardService(usageRepo, settingRepo),
+				affiliateService: NewAffiliateService(affiliateRepo, settingSvc, nil, nil),
+			}
+
+			err = svc.ExecuteUsageCardFulfillment(ctx, order.ID)
+			if tc.wantError {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+			require.Zero(t, usageRepo.createCalls)
+			require.Empty(t, affiliateRepo.accrueCalls)
+
+			appliedCount, err := client.PaymentAuditLog.Query().
+				Where(paymentauditlog.OrderIDEQ(strconv.FormatInt(order.ID, 10)), paymentauditlog.ActionEQ("AFFILIATE_REBATE_APPLIED")).
+				Count(ctx)
+			require.NoError(t, err)
+			require.Zero(t, appliedCount)
+		})
+	}
+}
+
+func TestExecuteUsageCardFulfillmentFailedStatusRetriesAndAccruesAffiliateRebate(t *testing.T) {
+	ctx := context.Background()
+	client := newPaymentConfigServiceTestClient(t)
+	ensurePaymentAuditOrderActionUniqueIndex(t, ctx, client)
+
+	user, err := client.User.Create().
+		SetEmail("usage-card-affiliate-failed-retry@example.com").
+		SetPasswordHash("hash").
+		SetUsername("usage-card-affiliate-failed-retry-user").
+		Save(ctx)
+	require.NoError(t, err)
+
+	order, err := client.PaymentOrder.Create().
+		SetUserID(user.ID).
+		SetUserEmail(user.Email).
+		SetUserName(user.Username).
+		SetAmount(500).
+		SetPayAmount(59.9).
+		SetFeeRate(0).
+		SetRechargeCode("PAY-USAGE-CARD-AFFILIATE-FAILED-RETRY").
+		SetOutTradeNo("sub2_usage_card_affiliate_failed_retry").
+		SetPaymentType(payment.TypeAlipay).
+		SetPaymentTradeNo("trade-usage-card-affiliate-failed-retry").
+		SetOrderType(payment.OrderTypeUsageCard).
+		SetPlanID(88).
+		SetStatus(OrderStatusFailed).
+		SetExpiresAt(time.Now().Add(time.Hour)).
+		SetClientIP("127.0.0.1").
+		SetSrcHost("api.example.com").
+		Save(ctx)
+	require.NoError(t, err)
+
+	inviterID := int64(9201)
+	affiliateRepo := &paymentFulfillmentAffiliateRepoStub{
+		inviteeSummary: &AffiliateSummary{UserID: user.ID, AffCode: "INVITEE-FAILED", InviterID: &inviterID, CreatedAt: time.Now().Add(-24 * time.Hour)},
+		inviterSummary: &AffiliateSummary{UserID: inviterID, AffCode: "INVITER-FAILED", CreatedAt: time.Now().Add(-48 * time.Hour)},
+	}
+	settingRepo := &paymentFulfillmentSettingRepoStub{values: map[string]string{
+		SettingKeyAffiliateEnabled:        "true",
+		SettingKeyAffiliateRebateRate:     "20",
+		SettingKeyUsageCardEnabled:        "true",
+		SettingKeyUsageCardPaymentEnabled: "true",
+	}}
+	settingSvc := NewSettingService(settingRepo, nil)
+	usageRepo := &paymentFulfillmentUsageCardRepoStub{
+		plan: &UsageCardPlan{ID: 88, Name: "Usage 500", Price: 59.9, AmountUSD: 500, ValidityDays: 30, ForSale: true},
+	}
+	svc := &PaymentService{
+		entClient:        client,
+		usageCardService: NewUsageCardService(usageRepo, settingRepo),
+		affiliateService: NewAffiliateService(affiliateRepo, settingSvc, nil, nil),
+	}
+
+	err = svc.ExecuteUsageCardFulfillment(ctx, order.ID)
+	require.NoError(t, err)
+
+	reloaded, err := client.PaymentOrder.Get(ctx, order.ID)
+	require.NoError(t, err)
+	require.Equal(t, OrderStatusCompleted, reloaded.Status)
+	require.Equal(t, 1, usageRepo.createCalls)
+	require.Len(t, affiliateRepo.accrueCalls, 1)
+	require.InDelta(t, 11.98, affiliateRepo.accrueCalls[0].amount, 0.000001)
+}
+
+func TestExecuteUsageCardFulfillmentDoesNotDuplicateCardOrAffiliateRebate(t *testing.T) {
+	ctx := context.Background()
+	client := newPaymentConfigServiceTestClient(t)
+	ensurePaymentAuditOrderActionUniqueIndex(t, ctx, client)
+
+	user, err := client.User.Create().
+		SetEmail("usage-card-affiliate-idempotent@example.com").
+		SetPasswordHash("hash").
+		SetUsername("usage-card-affiliate-idempotent-user").
+		Save(ctx)
+	require.NoError(t, err)
+
+	order, err := client.PaymentOrder.Create().
+		SetUserID(user.ID).
+		SetUserEmail(user.Email).
+		SetUserName(user.Username).
+		SetAmount(500).
+		SetPayAmount(59.9).
+		SetFeeRate(0).
+		SetRechargeCode("PAY-USAGE-CARD-AFFILIATE-IDEMPOTENT").
+		SetOutTradeNo("sub2_usage_card_affiliate_idempotent").
+		SetPaymentType(payment.TypeAlipay).
+		SetPaymentTradeNo("trade-usage-card-affiliate-idempotent").
+		SetOrderType(payment.OrderTypeUsageCard).
+		SetPlanID(88).
+		SetStatus(OrderStatusPaid).
+		SetExpiresAt(time.Now().Add(time.Hour)).
+		SetClientIP("127.0.0.1").
+		SetSrcHost("api.example.com").
+		Save(ctx)
+	require.NoError(t, err)
+
+	inviterID := int64(9001)
+	affiliateRepo := &paymentFulfillmentAffiliateRepoStub{
+		inviteeSummary: &AffiliateSummary{
+			UserID:    user.ID,
+			AffCode:   "INVITEE",
+			InviterID: &inviterID,
+			CreatedAt: time.Now().Add(-24 * time.Hour),
+		},
+		inviterSummary: &AffiliateSummary{
+			UserID:    inviterID,
+			AffCode:   "INVITER",
+			CreatedAt: time.Now().Add(-48 * time.Hour),
+		},
+	}
+	settingRepo := &paymentFulfillmentSettingRepoStub{values: map[string]string{
+		SettingKeyAffiliateEnabled:        "true",
+		SettingKeyAffiliateRebateRate:     "20",
+		SettingKeyUsageCardEnabled:        "true",
+		SettingKeyUsageCardPaymentEnabled: "true",
+	}}
+	settingSvc := NewSettingService(settingRepo, nil)
+	usageRepo := &paymentFulfillmentUsageCardRepoStub{
+		plan: &UsageCardPlan{ID: 88, Name: "Usage 500", Price: 59.9, AmountUSD: 500, ValidityDays: 30, ForSale: true},
+	}
+	svc := &PaymentService{
+		entClient:        client,
+		usageCardService: NewUsageCardService(usageRepo, settingRepo),
+		affiliateService: NewAffiliateService(affiliateRepo, settingSvc, nil, nil),
+	}
+
+	err = svc.ExecuteUsageCardFulfillment(ctx, order.ID)
+	require.NoError(t, err)
+
+	_, err = client.PaymentOrder.UpdateOneID(order.ID).SetStatus(OrderStatusPaid).Save(ctx)
+	require.NoError(t, err)
+
+	err = svc.ExecuteUsageCardFulfillment(ctx, order.ID)
+	require.NoError(t, err)
+
+	require.Equal(t, 1, usageRepo.createCalls)
+	require.Len(t, affiliateRepo.accrueCalls, 1)
+
+	appliedCount, err := client.PaymentAuditLog.Query().
+		Where(paymentauditlog.OrderIDEQ(strconv.FormatInt(order.ID, 10)), paymentauditlog.ActionEQ("AFFILIATE_REBATE_APPLIED")).
+		Count(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, appliedCount)
 }
 
 var _ AffiliateRepository = (*paymentFulfillmentAffiliateRepoStub)(nil)
