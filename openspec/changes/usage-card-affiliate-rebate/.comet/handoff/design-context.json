@@ -1,0 +1,14 @@
+{
+  "change": "usage-card-affiliate-rebate",
+  "phase": "design",
+  "mode": "compact",
+  "canonical_spec": "openspec",
+  "generated_by": "comet-handoff.sh",
+  "context_hash": "d706edd3d0deab97070942f2c215242855ce93ce903185e2b64306d259937735",
+  "files": [
+    { "path": "openspec/changes/usage-card-affiliate-rebate/proposal.md", "sha256": "867dcabd3f1c3fe08bd89e84bb6380a535b4117a2af5ae457ad091f8023a4ea9" },
+    { "path": "openspec/changes/usage-card-affiliate-rebate/design.md", "sha256": "b424bdba24e43f548c6d815e0aa47f18fb5828b8ad361c79db626633b704a921" },
+    { "path": "openspec/changes/usage-card-affiliate-rebate/tasks.md", "sha256": "2b0404c7316295e3630f2879bc6082ee6b22134e05d4a71b3eaf92bc4bc1b2b4" },
+    { "path": "openspec/changes/usage-card-affiliate-rebate/specs/payment/spec.md", "sha256": "e2bf790897bd79778a42777dfe55a55b1d9f246178ae8ca071d51be3a8863d7f" }
+  ]
+}
