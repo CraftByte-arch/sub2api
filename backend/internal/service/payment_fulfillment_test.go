@@ -219,6 +219,37 @@ func TestResolveRedeemAction_LookupError(t *testing.T) {
 	assert.Equal(t, redeemActionCreate, action, "lookup error should fall back to create")
 }
 
+func TestAffiliateRebateBaseAmountByOrderType(t *testing.T) {
+	t.Parallel()
+
+	balanceOrder := &dbent.PaymentOrder{
+		OrderType: payment.OrderTypeBalance,
+		Amount:    120,
+		PayAmount: 126,
+	}
+	subscriptionOrder := &dbent.PaymentOrder{
+		OrderType: payment.OrderTypeSubscription,
+		Amount:    80,
+		PayAmount: 84,
+	}
+	usageCardOrder := &dbent.PaymentOrder{
+		OrderType: payment.OrderTypeUsageCard,
+		Amount:    500,
+		PayAmount: 59.9,
+	}
+	unsupportedOrder := &dbent.PaymentOrder{
+		OrderType: "unsupported",
+		Amount:    10,
+		PayAmount: 10,
+	}
+
+	require.Equal(t, 120.0, affiliateRebateBaseAmount(balanceOrder))
+	require.Equal(t, 80.0, affiliateRebateBaseAmount(subscriptionOrder))
+	require.Equal(t, 59.9, affiliateRebateBaseAmount(usageCardOrder))
+	require.Zero(t, affiliateRebateBaseAmount(unsupportedOrder))
+	require.Zero(t, affiliateRebateBaseAmount(nil))
+}
+
 func TestResolveRedeemAction_LookupErrorWithNonNilCode(t *testing.T) {
 	t.Parallel()
 	// Edge case: both code and error are non-nil (shouldn't happen in practice,

@@ -29,7 +29,7 @@ base-ref: 8a24d5a7c4b435dea7e38f72aecced711ae7dd1d
 - Modify: `backend/internal/service/payment_fulfillment.go`
 - Track: `openspec/changes/usage-card-affiliate-rebate/tasks.md`
 
-- [ ] **Step 1: Add failing base amount unit test**
+- [x] **Step 1: Add failing base amount unit test**
 
 Add this test near the other pure helper tests in `backend/internal/service/payment_fulfillment_test.go`:
 
@@ -66,7 +66,7 @@ func TestAffiliateRebateBaseAmountByOrderType(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run:
 
@@ -76,7 +76,7 @@ cd backend && go test -tags=unit ./internal/service -run TestAffiliateRebateBase
 
 Expected before implementation: FAIL because `usage_card` currently returns `0`.
 
-- [ ] **Step 3: Implement the base amount resolver change**
+- [x] **Step 3: Implement the base amount resolver change**
 
 Change `affiliateRebateBaseAmount` in `backend/internal/service/payment_fulfillment.go` to:
 
@@ -96,7 +96,7 @@ func affiliateRebateBaseAmount(o *dbent.PaymentOrder) float64 {
 }
 ```
 
-- [ ] **Step 4: Run focused test to verify it passes**
+- [x] **Step 4: Run focused test to verify it passes**
 
 Run:
 
@@ -106,7 +106,7 @@ cd backend && go test -tags=unit ./internal/service -run TestAffiliateRebateBase
 
 Expected after implementation: PASS.
 
-- [ ] **Step 5: Mark OpenSpec rebate base tasks**
+- [x] **Step 5: Mark OpenSpec rebate base tasks**
 
 In `openspec/changes/usage-card-affiliate-rebate/tasks.md`, mark these tasks complete:
 
@@ -116,7 +116,7 @@ In `openspec/changes/usage-card-affiliate-rebate/tasks.md`, mark these tasks com
 - [x] 1.3 Add focused unit coverage for balance, subscription, usage card, and unsupported order types.
 ```
 
-- [ ] **Step 6: Commit Task 1**
+- [x] **Step 6: Commit Task 1**
 
 Run:
 

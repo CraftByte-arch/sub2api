@@ -1,8 +1,8 @@
 ## 1. Rebate Base Amount
 
-- [ ] 1.1 Extend affiliate rebate base amount resolution to support `usage_card` payment orders.
-- [ ] 1.2 Ensure the usage card rebate base uses the order `pay_amount`, not the issued usage card credit amount.
-- [ ] 1.3 Add focused unit coverage for balance, subscription, usage card, and unsupported order types.
+- [x] 1.1 Extend affiliate rebate base amount resolution to support `usage_card` payment orders.
+- [x] 1.2 Ensure the usage card rebate base uses the order `pay_amount`, not the issued usage card credit amount.
+- [x] 1.3 Add focused unit coverage for balance, subscription, usage card, and unsupported order types.
 
 ## 2. Usage Card Fulfillment
 
