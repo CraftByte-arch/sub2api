@@ -132,7 +132,7 @@ git commit -m "feat: use pay amount for usage card affiliate base"
 - Modify: `backend/internal/service/payment_fulfillment.go`
 - Track: `openspec/changes/usage-card-affiliate-rebate/tasks.md`
 
-- [ ] **Step 1: Add usage card repository test stub**
+- [x] **Step 1: Add usage card repository test stub**
 
 Add this stub in `backend/internal/service/payment_fulfillment_test.go` near the other fulfillment stubs:
 
@@ -193,7 +193,7 @@ func (r *paymentFulfillmentUsageCardRepoStub) CreateCard(_ context.Context, inpu
 }
 ```
 
-- [ ] **Step 2: Add failing invited-buyer fulfillment test**
+- [x] **Step 2: Add failing invited-buyer fulfillment test**
 
 Add this test in `backend/internal/service/payment_fulfillment_test.go` after the subscription affiliate fulfillment tests:
 
@@ -284,7 +284,7 @@ func TestExecuteUsageCardFulfillmentAccruesAffiliateRebateFromPayAmount(t *testi
 }
 ```
 
-- [ ] **Step 3: Run test to verify it fails**
+- [x] **Step 3: Run test to verify it fails**
 
 Run:
 
@@ -294,7 +294,7 @@ cd backend && go test -tags=unit ./internal/service -run TestExecuteUsageCardFul
 
 Expected before implementation: FAIL because usage card fulfillment completes without `AFFILIATE_REBATE_APPLIED`.
 
-- [ ] **Step 4: Invoke rebate processing from usage card fulfillment**
+- [x] **Step 4: Invoke rebate processing from usage card fulfillment**
 
 Change `doUsageCard` in `backend/internal/service/payment_fulfillment.go` to call affiliate rebate processing before completion:
 
@@ -326,7 +326,7 @@ func (s *PaymentService) doUsageCard(ctx context.Context, o *dbent.PaymentOrder)
 }
 ```
 
-- [ ] **Step 5: Run focused fulfillment test**
+- [x] **Step 5: Run focused fulfillment test**
 
 Run:
 
@@ -336,7 +336,7 @@ cd backend && go test -tags=unit ./internal/service -run 'TestAffiliateRebateBas
 
 Expected after implementation: PASS.
 
-- [ ] **Step 6: Mark OpenSpec usage card fulfillment task**
+- [x] **Step 6: Mark OpenSpec usage card fulfillment task**
 
 In `openspec/changes/usage-card-affiliate-rebate/tasks.md`, mark these tasks complete:
 
@@ -345,7 +345,7 @@ In `openspec/changes/usage-card-affiliate-rebate/tasks.md`, mark these tasks com
 - [x] 3.1 Add backend tests proving invited usage card buyers accrue inviter rebate from the usage card order `pay_amount`.
 ```
 
-- [ ] **Step 7: Commit Task 2**
+- [x] **Step 7: Commit Task 2**
 
 Run:
 

@@ -6,13 +6,13 @@
 
 ## 2. Usage Card Fulfillment
 
-- [ ] 2.1 Invoke affiliate rebate processing during successful usage card payment fulfillment after idempotent card issuance.
+- [x] 2.1 Invoke affiliate rebate processing during successful usage card payment fulfillment after idempotent card issuance.
 - [ ] 2.2 Preserve retry behavior so previously issued usage cards and previously applied or skipped affiliate rebates are not duplicated.
 - [ ] 2.3 Preserve existing behavior for paid, failed, completed, and refund-related usage card order statuses.
 
 ## 3. Affiliate Rule Coverage
 
-- [ ] 3.1 Add backend tests proving invited usage card buyers accrue inviter rebate from the usage card order `pay_amount`.
+- [x] 3.1 Add backend tests proving invited usage card buyers accrue inviter rebate from the usage card order `pay_amount`.
 - [ ] 3.2 Add backend tests proving disabled affiliate settings, no inviter, zero rebate, expired duration, or reached per-invitee cap skip rebate without blocking usage card fulfillment.
 - [ ] 3.3 Add backend tests proving repeated usage card fulfillment does not duplicate affiliate quota or audit results.
 

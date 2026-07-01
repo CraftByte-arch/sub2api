@@ -203,6 +203,61 @@ func ensurePaymentAuditOrderActionUniqueIndex(t *testing.T, ctx context.Context,
 	require.NoError(t, err)
 }
 
+type paymentFulfillmentUsageCardRepoStub struct {
+	UsageCardRepository
+	plan         *UsageCardPlan
+	cardsByOrder map[int64]*UserUsageCard
+	createCalls  int
+}
+
+func (r *paymentFulfillmentUsageCardRepoStub) GetPlanByID(_ context.Context, id int64) (*UsageCardPlan, error) {
+	if r.plan == nil || r.plan.ID != id {
+		return nil, ErrUsageCardPlanNotFound
+	}
+	plan := *r.plan
+	return &plan, nil
+}
+
+func (r *paymentFulfillmentUsageCardRepoStub) GetCardBySourceOrderID(_ context.Context, orderID int64) (*UserUsageCard, error) {
+	if r.cardsByOrder != nil {
+		if card := r.cardsByOrder[orderID]; card != nil {
+			cp := *card
+			return &cp, nil
+		}
+	}
+	return nil, ErrUsageCardNotFound
+}
+
+func (r *paymentFulfillmentUsageCardRepoStub) CreateCard(_ context.Context, input CreateUsageCardInput) (*UserUsageCard, error) {
+	r.createCalls++
+	if r.cardsByOrder == nil {
+		r.cardsByOrder = map[int64]*UserUsageCard{}
+	}
+	orderID := int64(0)
+	if input.SourceOrderID != nil {
+		orderID = *input.SourceOrderID
+	}
+	card := &UserUsageCard{
+		ID:               int64(1000 + r.createCalls),
+		UserID:           input.UserID,
+		PlanID:           input.PlanID,
+		Name:             input.Name,
+		StartsAt:         input.StartsAt,
+		ExpiresAt:        input.ExpiresAt,
+		TotalLimitUSD:    input.TotalLimitUSD,
+		Status:           UsageCardStatusActive,
+		Source:           input.Source,
+		SourceOrderID:    input.SourceOrderID,
+		SourceRedeemCode: input.SourceRedeemCode,
+		Notes:            input.Notes,
+	}
+	if orderID > 0 {
+		r.cardsByOrder[orderID] = card
+	}
+	cp := *card
+	return &cp, nil
+}
+
 // ---------------------------------------------------------------------------
 // resolveRedeemAction — pure idempotency decision logic
 // ---------------------------------------------------------------------------
@@ -788,6 +843,91 @@ func TestExecuteSubscriptionFulfillmentDoesNotDuplicateWorkAfterLegacySuccessAud
 	require.Equal(t, OrderStatusCompleted, reloaded.Status)
 	require.Empty(t, affiliateRepo.accrueCalls)
 	require.Zero(t, subRepo.createCalls)
+}
+
+func TestExecuteUsageCardFulfillmentAccruesAffiliateRebateFromPayAmount(t *testing.T) {
+	ctx := context.Background()
+	client := newPaymentConfigServiceTestClient(t)
+	ensurePaymentAuditOrderActionUniqueIndex(t, ctx, client)
+
+	user, err := client.User.Create().
+		SetEmail("usage-card-affiliate@example.com").
+		SetPasswordHash("hash").
+		SetUsername("usage-card-affiliate-user").
+		Save(ctx)
+	require.NoError(t, err)
+
+	order, err := client.PaymentOrder.Create().
+		SetUserID(user.ID).
+		SetUserEmail(user.Email).
+		SetUserName(user.Username).
+		SetAmount(500).
+		SetPayAmount(59.9).
+		SetFeeRate(0).
+		SetRechargeCode("PAY-USAGE-CARD-AFFILIATE").
+		SetOutTradeNo("sub2_usage_card_affiliate").
+		SetPaymentType(payment.TypeAlipay).
+		SetPaymentTradeNo("trade-usage-card-affiliate").
+		SetOrderType(payment.OrderTypeUsageCard).
+		SetPlanID(88).
+		SetStatus(OrderStatusPaid).
+		SetExpiresAt(time.Now().Add(time.Hour)).
+		SetClientIP("127.0.0.1").
+		SetSrcHost("api.example.com").
+		Save(ctx)
+	require.NoError(t, err)
+
+	inviterID := int64(9001)
+	affiliateRepo := &paymentFulfillmentAffiliateRepoStub{
+		inviteeSummary: &AffiliateSummary{
+			UserID:    user.ID,
+			AffCode:   "INVITEE",
+			InviterID: &inviterID,
+			CreatedAt: time.Now().Add(-24 * time.Hour),
+		},
+		inviterSummary: &AffiliateSummary{
+			UserID:    inviterID,
+			AffCode:   "INVITER",
+			CreatedAt: time.Now().Add(-48 * time.Hour),
+		},
+	}
+	settingRepo := &paymentFulfillmentSettingRepoStub{values: map[string]string{
+		SettingKeyAffiliateEnabled:           "true",
+		SettingKeyAffiliateRebateRate:        "20",
+		SettingKeyAffiliateRebateFreezeHours: "0",
+		SettingKeyUsageCardEnabled:           "true",
+		SettingKeyUsageCardPaymentEnabled:    "true",
+	}}
+	settingSvc := NewSettingService(settingRepo, nil)
+	usageRepo := &paymentFulfillmentUsageCardRepoStub{
+		plan: &UsageCardPlan{ID: 88, Name: "Usage 500", Price: 59.9, AmountUSD: 500, ValidityDays: 30, ForSale: true},
+	}
+	svc := &PaymentService{
+		entClient:        client,
+		usageCardService: NewUsageCardService(usageRepo, settingRepo),
+		affiliateService: NewAffiliateService(affiliateRepo, settingSvc, nil, nil),
+	}
+
+	err = svc.ExecuteUsageCardFulfillment(ctx, order.ID)
+	require.NoError(t, err)
+
+	reloaded, err := client.PaymentOrder.Get(ctx, order.ID)
+	require.NoError(t, err)
+	require.Equal(t, OrderStatusCompleted, reloaded.Status)
+	require.Equal(t, 1, usageRepo.createCalls)
+	require.Len(t, affiliateRepo.accrueCalls, 1)
+	require.Equal(t, inviterID, affiliateRepo.accrueCalls[0].inviterID)
+	require.Equal(t, user.ID, affiliateRepo.accrueCalls[0].inviteeUserID)
+	require.InDelta(t, 11.98, affiliateRepo.accrueCalls[0].amount, 0.000001)
+	require.NotNil(t, affiliateRepo.accrueCalls[0].sourceOrderID)
+	require.Equal(t, order.ID, *affiliateRepo.accrueCalls[0].sourceOrderID)
+
+	applied, err := client.PaymentAuditLog.Query().
+		Where(paymentauditlog.OrderIDEQ(strconv.FormatInt(order.ID, 10)), paymentauditlog.ActionEQ("AFFILIATE_REBATE_APPLIED")).
+		Only(ctx)
+	require.NoError(t, err)
+	require.Contains(t, applied.Detail, `"baseAmount":59.9`)
+	require.Contains(t, applied.Detail, `"rebateAmount":11.98`)
 }
 
 var _ AffiliateRepository = (*paymentFulfillmentAffiliateRepoStub)(nil)

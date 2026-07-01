@@ -340,6 +340,9 @@ func (s *PaymentService) doUsageCard(ctx context.Context, o *dbent.PaymentOrder)
 		return infraerrors.BadRequest("INVALID_USAGE_CARD_ORDER", "usage card order missing plan")
 	}
 	if s.hasAuditLog(ctx, o.ID, "USAGE_CARD_SUCCESS") {
+		if err := s.applyAffiliateRebateForOrder(ctx, o); err != nil {
+			return err
+		}
 		return s.markCompleted(ctx, o, "USAGE_CARD_SUCCESS")
 	}
 	plan, err := s.usageCardService.GetPlanByID(ctx, *o.PlanID)
@@ -348,6 +351,9 @@ func (s *PaymentService) doUsageCard(ctx context.Context, o *dbent.PaymentOrder)
 	}
 	if _, err := s.usageCardService.IssueFromPayment(ctx, o.UserID, plan, o.ID, o.RechargeCode); err != nil {
 		return fmt.Errorf("issue usage card: %w", err)
+	}
+	if err := s.applyAffiliateRebateForOrder(ctx, o); err != nil {
+		return err
 	}
 	return s.markCompleted(ctx, o, "USAGE_CARD_SUCCESS")
 }
