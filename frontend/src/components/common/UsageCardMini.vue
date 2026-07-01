@@ -13,7 +13,7 @@
       >
         {{ availableCount }}
       </span>
-      <span class="text-sm font-semibold tabular-nums text-primary-700 dark:text-primary-200">
+      <span class="hidden text-sm font-semibold tabular-nums text-primary-700 dark:text-primary-200 sm:inline">
         ${{ availableRemainingUSD.toFixed(2) }}
       </span>
     </button>
@@ -27,6 +27,9 @@
           <h3 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('usageCards.title') }}</h3>
           <p class="text-xs text-gray-500 dark:text-dark-400">
             {{ availableCount > 0 ? t('usageCards.availableCount', { count: availableCount }) : t('usageCards.empty') }}
+          </p>
+          <p class="mt-0.5 text-xs font-medium text-primary-600 dark:text-primary-300">
+            {{ t('usageCards.availableSummary', { amount: availableRemainingUSD.toFixed(2) }) }}
           </p>
         </div>
 

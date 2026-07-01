@@ -432,7 +432,7 @@ export default {
     allStatus: 'All',
     recentRedeemed: 'Recently redeemed {count}',
     availableCount: '{count} available',
-    availableSummary: 'Available {amount}',
+    availableSummary: '${amount} available',
     viewMore: 'View More',
     remainingQuota: 'Remaining Quota',
     remaining: 'Remaining',

@@ -65,4 +65,22 @@ describe('UsageCardMini', () => {
     expect(wrapper.text()).toContain('2')
     expect(wrapper.text()).toContain('$7.50')
   })
+
+  it('keeps the remaining total out of the mobile topbar while preserving it in the summary', async () => {
+    const wrapper = mount(UsageCardMini, {
+      global: {
+        stubs: {
+          RouterLink: true,
+          transition: false,
+        },
+      },
+    })
+    await flushPromises()
+
+    const amount = wrapper.findAll('span').find((span) => span.text() === '$7.50')
+
+    expect(amount?.classes()).toEqual(expect.arrayContaining(['hidden', 'sm:inline']))
+    await wrapper.trigger('mouseenter')
+    expect(wrapper.text()).toContain('$7.50 available')
+  })
 })
