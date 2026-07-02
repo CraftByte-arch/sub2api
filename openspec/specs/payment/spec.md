@@ -31,13 +31,13 @@ The system SHALL apply affiliate rebate accrual to successfully fulfilled usage 
 
 #### Scenario: Usage card purchase accrues inviter rebate
 - **WHEN** an invited user completes a usage card payment order and the purchased usage card is issued successfully
-- **THEN** the system records affiliate rebate accrual for the inviter using the usage card order `pay_amount` as the rebate base
+- **THEN** the system records affiliate rebate accrual for the inviter using the usage card order `pay_amount` multiplied by the current balance recharge multiplier as the rebate base
 - **AND** the rebate source order references the completed usage card payment order
 - **AND** the payment audit log records the affiliate rebate result for that order
 
-#### Scenario: Usage card purchase uses actual payment amount instead of issued card credit
+#### Scenario: Usage card purchase uses actual payment amount adjusted by current balance recharge multiplier
 - **WHEN** a usage card payment order has a `pay_amount` that differs from the issued card credit amount
-- **THEN** affiliate rebate accrual for a successful usage card payment order MUST use `pay_amount` as the rebate base
+- **THEN** affiliate rebate accrual for a successful usage card payment order MUST use `pay_amount * current balance recharge multiplier` as the rebate base
 - **AND** the issued card credit amount MUST NOT be used as the rebate base
 
 #### Scenario: Usage card purchase follows existing affiliate eligibility rules

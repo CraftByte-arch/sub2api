@@ -16,5 +16,5 @@ verification_report: docs/superpowers/reports/2026-07-02-usage-card-affiliate-re
 branch_status: handled
 created_at: 2026-07-02
 verified_at: 2026-07-02
-archived: false
+archived: true
 build_command: make -C backend build
