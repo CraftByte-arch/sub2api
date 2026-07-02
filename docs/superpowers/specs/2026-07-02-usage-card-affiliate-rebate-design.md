@@ -2,6 +2,8 @@
 comet_change: usage-card-affiliate-rebate
 role: technical-design
 canonical_spec: openspec
+archived-with: 2026-07-02-usage-card-affiliate-rebate
+status: final
 ---
 
 # Usage Card Affiliate Rebate Design

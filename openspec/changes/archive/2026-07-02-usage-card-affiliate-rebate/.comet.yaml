@@ -16,7 +16,7 @@ verification_report: docs/superpowers/reports/2026-07-02-usage-card-affiliate-re
 branch_status: handled
 created_at: 2026-07-01
 verified_at: 2026-07-02
-archived: false
+archived: true
 handoff_context: openspec/changes/usage-card-affiliate-rebate/.comet/handoff/design-context.json
 handoff_hash: d706edd3d0deab97070942f2c215242855ce93ce903185e2b64306d259937735
 build_command: make -C backend build

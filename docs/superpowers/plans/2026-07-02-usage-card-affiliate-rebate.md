@@ -2,6 +2,7 @@
 change: usage-card-affiliate-rebate
 design-doc: docs/superpowers/specs/2026-07-02-usage-card-affiliate-rebate-design.md
 base-ref: 8a24d5a7c4b435dea7e38f72aecced711ae7dd1d
+archived-with: 2026-07-02-usage-card-affiliate-rebate
 ---
 
 # Usage Card Affiliate Rebate Implementation Plan
