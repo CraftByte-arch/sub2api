@@ -18,5 +18,5 @@
 
 ## 4. Verification
 
-- [ ] 4.1 Run targeted payment fulfillment and affiliate service tests.
-- [ ] 4.2 Run the relevant OpenSpec validation for `usage-card-affiliate-rebate`.
+- [x] 4.1 Run targeted payment fulfillment and affiliate service tests.
+- [x] 4.2 Run the relevant OpenSpec validation for `usage-card-affiliate-rebate`.

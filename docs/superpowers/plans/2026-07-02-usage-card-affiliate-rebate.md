@@ -732,7 +732,7 @@ git commit -m "test: cover usage card affiliate skip and retry"
 **Files:**
 - Track: `openspec/changes/usage-card-affiliate-rebate/tasks.md`
 
-- [ ] **Step 1: Run targeted payment fulfillment tests**
+- [x] **Step 1: Run targeted payment fulfillment tests**
 
 Run:
 
@@ -742,7 +742,7 @@ cd backend && go test -tags=unit ./internal/service -run 'TestAffiliateRebateBas
 
 Expected: PASS.
 
-- [ ] **Step 2: Run broader service unit tests**
+- [x] **Step 2: Run broader service unit tests**
 
 Run:
 
@@ -752,7 +752,7 @@ cd backend && go test -tags=unit ./internal/service -count=1
 
 Expected: PASS.
 
-- [ ] **Step 3: Validate OpenSpec change**
+- [x] **Step 3: Validate OpenSpec change**
 
 Run:
 
@@ -762,7 +762,7 @@ openspec validate usage-card-affiliate-rebate --strict
 
 Expected: `Change 'usage-card-affiliate-rebate' is valid`.
 
-- [ ] **Step 4: Mark verification tasks**
+- [x] **Step 4: Mark verification tasks**
 
 In `openspec/changes/usage-card-affiliate-rebate/tasks.md`, mark:
 
@@ -771,7 +771,7 @@ In `openspec/changes/usage-card-affiliate-rebate/tasks.md`, mark:
 - [x] 4.2 Run the relevant OpenSpec validation for `usage-card-affiliate-rebate`.
 ```
 
-- [ ] **Step 5: Commit verification task state**
+- [x] **Step 5: Commit verification task state**
 
 Run:
 
