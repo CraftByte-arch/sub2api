@@ -1070,6 +1070,7 @@ func TestExecuteUsageCardFulfillmentNonSuccessfulStatusesDoNotAccrueAffiliateReb
 		{name: "pending", status: OrderStatusPending, wantError: true},
 		{name: "cancelled", status: OrderStatusCancelled, wantError: true},
 		{name: "expired", status: OrderStatusExpired, wantError: true},
+		{name: "failed before paid", status: OrderStatusFailed, wantError: true},
 		{name: "refund requested", status: OrderStatusRefundRequested, wantError: true},
 		{name: "refunding", status: OrderStatusRefunding, wantError: true},
 		{name: "completed", status: OrderStatusCompleted, wantError: false},
@@ -1174,6 +1175,7 @@ func TestExecuteUsageCardFulfillmentFailedStatusRetriesAndAccruesAffiliateRebate
 		SetOrderType(payment.OrderTypeUsageCard).
 		SetPlanID(88).
 		SetStatus(OrderStatusFailed).
+		SetPaidAt(time.Now()).
 		SetExpiresAt(time.Now().Add(time.Hour)).
 		SetClientIP("127.0.0.1").
 		SetSrcHost("api.example.com").

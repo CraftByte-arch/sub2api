@@ -318,6 +318,9 @@ func (s *PaymentService) ExecuteUsageCardFulfillment(ctx context.Context, oid in
 	if o.Status != OrderStatusPaid && o.Status != OrderStatusFailed {
 		return infraerrors.BadRequest("INVALID_STATUS", "order cannot fulfill in status "+o.Status)
 	}
+	if o.Status == OrderStatusFailed && o.PaidAt == nil {
+		return infraerrors.BadRequest("INVALID_STATUS", "failed order is not paid")
+	}
 	c, err := s.entClient.PaymentOrder.Update().Where(paymentorder.IDEQ(oid), paymentorder.StatusIn(OrderStatusPaid, OrderStatusFailed)).SetStatus(OrderStatusRecharging).Save(ctx)
 	if err != nil {
 		return fmt.Errorf("lock: %w", err)

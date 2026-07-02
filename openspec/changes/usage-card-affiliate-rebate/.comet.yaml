@@ -4,8 +4,8 @@ context_compression: off
 build_mode: executing-plans
 build_pause: null
 subagent_dispatch: null
-tdd_mode: null
-isolation: null
+tdd_mode: tdd
+isolation: branch
 verify_mode: null
 auto_transition: true
 base_ref: 8a24d5a7c4b435dea7e38f72aecced711ae7dd1d
