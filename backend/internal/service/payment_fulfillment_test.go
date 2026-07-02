@@ -846,7 +846,7 @@ func TestExecuteSubscriptionFulfillmentDoesNotDuplicateWorkAfterLegacySuccessAud
 	require.Zero(t, subRepo.createCalls)
 }
 
-func TestExecuteUsageCardFulfillmentAccruesAffiliateRebateFromPayAmount(t *testing.T) {
+func TestExecuteUsageCardFulfillmentAccruesAffiliateRebateFromPayAmountWithCurrentBalanceMultiplier(t *testing.T) {
 	ctx := context.Background()
 	client := newPaymentConfigServiceTestClient(t)
 	ensurePaymentAuditOrderActionUniqueIndex(t, ctx, client)
@@ -896,6 +896,7 @@ func TestExecuteUsageCardFulfillmentAccruesAffiliateRebateFromPayAmount(t *testi
 		SettingKeyAffiliateEnabled:           "true",
 		SettingKeyAffiliateRebateRate:        "20",
 		SettingKeyAffiliateRebateFreezeHours: "0",
+		SettingBalanceRechargeMult:           "1.2",
 		SettingKeyUsageCardEnabled:           "true",
 		SettingKeyUsageCardPaymentEnabled:    "true",
 	}}
@@ -906,6 +907,7 @@ func TestExecuteUsageCardFulfillmentAccruesAffiliateRebateFromPayAmount(t *testi
 	svc := &PaymentService{
 		entClient:        client,
 		usageCardService: NewUsageCardService(usageRepo, settingRepo),
+		configService:    NewPaymentConfigService(client, settingRepo, nil),
 		affiliateService: NewAffiliateService(affiliateRepo, settingSvc, nil, nil),
 	}
 
@@ -919,7 +921,7 @@ func TestExecuteUsageCardFulfillmentAccruesAffiliateRebateFromPayAmount(t *testi
 	require.Len(t, affiliateRepo.accrueCalls, 1)
 	require.Equal(t, inviterID, affiliateRepo.accrueCalls[0].inviterID)
 	require.Equal(t, user.ID, affiliateRepo.accrueCalls[0].inviteeUserID)
-	require.InDelta(t, 11.98, affiliateRepo.accrueCalls[0].amount, 0.000001)
+	require.InDelta(t, 14.376, affiliateRepo.accrueCalls[0].amount, 0.000001)
 	require.NotNil(t, affiliateRepo.accrueCalls[0].sourceOrderID)
 	require.Equal(t, order.ID, *affiliateRepo.accrueCalls[0].sourceOrderID)
 
@@ -927,8 +929,10 @@ func TestExecuteUsageCardFulfillmentAccruesAffiliateRebateFromPayAmount(t *testi
 		Where(paymentauditlog.OrderIDEQ(strconv.FormatInt(order.ID, 10)), paymentauditlog.ActionEQ("AFFILIATE_REBATE_APPLIED")).
 		Only(ctx)
 	require.NoError(t, err)
-	require.Contains(t, applied.Detail, `"baseAmount":59.9`)
-	require.Contains(t, applied.Detail, `"rebateAmount":11.98`)
+	require.Contains(t, applied.Detail, `"baseAmount":71.88`)
+	require.Contains(t, applied.Detail, `"payAmount":59.9`)
+	require.Contains(t, applied.Detail, `"balanceRechargeMultiplier":1.2`)
+	require.Contains(t, applied.Detail, `"rebateAmount":14.376`)
 }
 
 func TestExecuteUsageCardFulfillmentSkipsIneligibleAffiliateRebate(t *testing.T) {
