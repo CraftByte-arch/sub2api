@@ -1,5 +1,5 @@
 workflow: full
-phase: build
+phase: verify
 context_compression: off
 build_mode: executing-plans
 build_pause: null
@@ -19,3 +19,4 @@ verified_at: null
 archived: false
 handoff_context: openspec/changes/usage-card-affiliate-rebate/.comet/handoff/design-context.json
 handoff_hash: d706edd3d0deab97070942f2c215242855ce93ce903185e2b64306d259937735
+build_command: make -C backend build
