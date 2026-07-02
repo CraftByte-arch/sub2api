@@ -168,4 +168,3 @@ The system SHALL apply affiliate rebate accrual to successfully fulfilled usage 
 - **WHEN** a usage card payment order is pending, unpaid, failed before fulfillment, cancelled, expired, or in a refund-related state
 - **THEN** the system MUST NOT accrue affiliate rebate quota for that order
 ```
-
