@@ -16,6 +16,7 @@ type UsageCardPlan struct {
 	ID           int64
 	Name         string
 	Description  string
+	ProductName  string
 	Price        float64
 	AmountUSD    float64
 	ValidityDays int

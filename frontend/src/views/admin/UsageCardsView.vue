@@ -261,6 +261,17 @@
           </div>
 
           <div>
+            <label class="input-label">{{ t('admin.usageCards.productName') }}</label>
+            <input
+              v-model.trim="planForm.product_name"
+              class="input"
+              maxlength="100"
+              :placeholder="t('admin.usageCards.productNamePlaceholder')"
+            />
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.usageCards.productNameHint') }}</p>
+          </div>
+
+          <div>
             <label class="input-label">{{ t('admin.usageCards.planDescription') }}</label>
             <textarea
               v-model.trim="planForm.description"
@@ -404,6 +415,7 @@ const planForm = reactive({
   id: undefined as number | undefined,
   name: '',
   description: '',
+  product_name: '',
   price: 10,
   amount_usd: 10,
   validity_days: 30,
@@ -413,13 +425,14 @@ const planForm = reactive({
 })
 
 function emptyPlan(): Partial<UsageCardPlan> {
-  return { name: '', description: '', price: 10, amount_usd: 10, validity_days: 30, features: '', for_sale: true, sort_order: 0 }
+  return { name: '', description: '', product_name: '', price: 10, amount_usd: 10, validity_days: 30, features: '', for_sale: true, sort_order: 0 }
 }
 
 function openPlanDialog(plan: Partial<UsageCardPlan>) {
   planForm.id = plan.id
   planForm.name = plan.name ?? ''
   planForm.description = plan.description ?? ''
+  planForm.product_name = plan.product_name ?? ''
   planForm.price = plan.price ?? 10
   planForm.amount_usd = plan.amount_usd ?? 10
   planForm.validity_days = plan.validity_days ?? 30
@@ -437,6 +450,7 @@ function closePlanDialog() {
 
 function validatePlan() {
   if (!planForm.name.trim()) return t('admin.usageCards.validation.nameRequired')
+  if (planForm.product_name.trim().length > 100) return t('admin.usageCards.validation.productNameMaxLength')
   if (!Number.isFinite(planForm.price) || planForm.price <= 0) return t('admin.usageCards.validation.pricePositive')
   if (!Number.isFinite(planForm.amount_usd) || planForm.amount_usd <= 0) return t('admin.usageCards.validation.amountPositive')
   if (!Number.isInteger(planForm.validity_days) || planForm.validity_days <= 0) return t('admin.usageCards.validation.validityPositiveInteger')
@@ -586,6 +600,7 @@ async function savePlan() {
   const payload = {
     name: planForm.name.trim(),
     description: planForm.description.trim(),
+    product_name: planForm.product_name.trim(),
     price: planForm.price,
     amount_usd: planForm.amount_usd,
     validity_days: planForm.validity_days,

@@ -44,6 +44,20 @@ func (_c *UsageCardPlanCreate) SetNillableDescription(v *string) *UsageCardPlanC
 	return _c
 }
 
+// SetProductName sets the "product_name" field.
+func (_c *UsageCardPlanCreate) SetProductName(v string) *UsageCardPlanCreate {
+	_c.mutation.SetProductName(v)
+	return _c
+}
+
+// SetNillableProductName sets the "product_name" field if the given value is not nil.
+func (_c *UsageCardPlanCreate) SetNillableProductName(v *string) *UsageCardPlanCreate {
+	if v != nil {
+		_c.SetProductName(*v)
+	}
+	return _c
+}
+
 // SetPrice sets the "price" field.
 func (_c *UsageCardPlanCreate) SetPrice(v float64) *UsageCardPlanCreate {
 	_c.mutation.SetPrice(v)
@@ -209,6 +223,10 @@ func (_c *UsageCardPlanCreate) defaults() {
 		v := usagecardplan.DefaultDescription
 		_c.mutation.SetDescription(v)
 	}
+	if _, ok := _c.mutation.ProductName(); !ok {
+		v := usagecardplan.DefaultProductName
+		_c.mutation.SetProductName(v)
+	}
 	if _, ok := _c.mutation.ValidityDays(); !ok {
 		v := usagecardplan.DefaultValidityDays
 		_c.mutation.SetValidityDays(v)
@@ -247,6 +265,14 @@ func (_c *UsageCardPlanCreate) check() error {
 	}
 	if _, ok := _c.mutation.Description(); !ok {
 		return &ValidationError{Name: "description", err: errors.New(`ent: missing required field "UsageCardPlan.description"`)}
+	}
+	if _, ok := _c.mutation.ProductName(); !ok {
+		return &ValidationError{Name: "product_name", err: errors.New(`ent: missing required field "UsageCardPlan.product_name"`)}
+	}
+	if v, ok := _c.mutation.ProductName(); ok {
+		if err := usagecardplan.ProductNameValidator(v); err != nil {
+			return &ValidationError{Name: "product_name", err: fmt.Errorf(`ent: validator failed for field "UsageCardPlan.product_name": %w`, err)}
+		}
 	}
 	if _, ok := _c.mutation.Price(); !ok {
 		return &ValidationError{Name: "price", err: errors.New(`ent: missing required field "UsageCardPlan.price"`)}
@@ -306,6 +332,10 @@ func (_c *UsageCardPlanCreate) createSpec() (*UsageCardPlan, *sqlgraph.CreateSpe
 	if value, ok := _c.mutation.Description(); ok {
 		_spec.SetField(usagecardplan.FieldDescription, field.TypeString, value)
 		_node.Description = value
+	}
+	if value, ok := _c.mutation.ProductName(); ok {
+		_spec.SetField(usagecardplan.FieldProductName, field.TypeString, value)
+		_node.ProductName = value
 	}
 	if value, ok := _c.mutation.Price(); ok {
 		_spec.SetField(usagecardplan.FieldPrice, field.TypeFloat64, value)
@@ -444,6 +474,18 @@ func (u *UsageCardPlanUpsert) SetDescription(v string) *UsageCardPlanUpsert {
 // UpdateDescription sets the "description" field to the value that was provided on create.
 func (u *UsageCardPlanUpsert) UpdateDescription() *UsageCardPlanUpsert {
 	u.SetExcluded(usagecardplan.FieldDescription)
+	return u
+}
+
+// SetProductName sets the "product_name" field.
+func (u *UsageCardPlanUpsert) SetProductName(v string) *UsageCardPlanUpsert {
+	u.Set(usagecardplan.FieldProductName, v)
+	return u
+}
+
+// UpdateProductName sets the "product_name" field to the value that was provided on create.
+func (u *UsageCardPlanUpsert) UpdateProductName() *UsageCardPlanUpsert {
+	u.SetExcluded(usagecardplan.FieldProductName)
 	return u
 }
 
@@ -625,6 +667,20 @@ func (u *UsageCardPlanUpsertOne) SetDescription(v string) *UsageCardPlanUpsertOn
 func (u *UsageCardPlanUpsertOne) UpdateDescription() *UsageCardPlanUpsertOne {
 	return u.Update(func(s *UsageCardPlanUpsert) {
 		s.UpdateDescription()
+	})
+}
+
+// SetProductName sets the "product_name" field.
+func (u *UsageCardPlanUpsertOne) SetProductName(v string) *UsageCardPlanUpsertOne {
+	return u.Update(func(s *UsageCardPlanUpsert) {
+		s.SetProductName(v)
+	})
+}
+
+// UpdateProductName sets the "product_name" field to the value that was provided on create.
+func (u *UsageCardPlanUpsertOne) UpdateProductName() *UsageCardPlanUpsertOne {
+	return u.Update(func(s *UsageCardPlanUpsert) {
+		s.UpdateProductName()
 	})
 }
 
@@ -990,6 +1046,20 @@ func (u *UsageCardPlanUpsertBulk) SetDescription(v string) *UsageCardPlanUpsertB
 func (u *UsageCardPlanUpsertBulk) UpdateDescription() *UsageCardPlanUpsertBulk {
 	return u.Update(func(s *UsageCardPlanUpsert) {
 		s.UpdateDescription()
+	})
+}
+
+// SetProductName sets the "product_name" field.
+func (u *UsageCardPlanUpsertBulk) SetProductName(v string) *UsageCardPlanUpsertBulk {
+	return u.Update(func(s *UsageCardPlanUpsert) {
+		s.SetProductName(v)
+	})
+}
+
+// UpdateProductName sets the "product_name" field to the value that was provided on create.
+func (u *UsageCardPlanUpsertBulk) UpdateProductName() *UsageCardPlanUpsertBulk {
+	return u.Update(func(s *UsageCardPlanUpsert) {
+		s.UpdateProductName()
 	})
 }
 

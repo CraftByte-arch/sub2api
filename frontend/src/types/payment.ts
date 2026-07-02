@@ -135,6 +135,7 @@ export interface UsageCardPlan {
   id: number
   name: string
   description: string
+  product_name?: string
   price: number
   amount_usd: number
   validity_days: number

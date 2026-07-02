@@ -581,6 +581,7 @@ func UsageCardPlanFromService(plan *service.UsageCardPlan) *UsageCardPlan {
 		ID:           plan.ID,
 		Name:         plan.Name,
 		Description:  plan.Description,
+		ProductName:  plan.ProductName,
 		Price:        plan.Price,
 		AmountUSD:    plan.AmountUSD,
 		ValidityDays: plan.ValidityDays,

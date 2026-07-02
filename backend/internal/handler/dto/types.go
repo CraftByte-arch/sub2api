@@ -389,6 +389,7 @@ type UsageCardPlan struct {
 	ID           int64   `json:"id"`
 	Name         string  `json:"name"`
 	Description  string  `json:"description"`
+	ProductName  string  `json:"product_name"`
 	Price        float64 `json:"price"`
 	AmountUSD    float64 `json:"amount_usd"`
 	ValidityDays int     `json:"validity_days"`

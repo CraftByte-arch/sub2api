@@ -1571,6 +1571,9 @@ export default {
       planName: 'Plan Name',
       planNamePlaceholder: 'Example: 1M daily card, $20 usage card',
       planNameHint: 'Shown to users. Include amount or validity when possible.',
+      productName: 'Payment Product Name',
+      productNamePlaceholder: 'Example: Credit Booster',
+      productNameHint: 'Only used as the payment-provider product title. Leave empty to use the default title.',
       planDescription: 'Plan Description',
       planDescriptionPlaceholder: 'Example: For temporary peak usage, valid for 30 days after purchase',
       planDescriptionHint: 'Shown on the purchase card. Describe use cases, limits, or support notes.',
@@ -1604,6 +1607,7 @@ export default {
       noActions: 'No actions',
       validation: {
         nameRequired: 'Please enter a plan name.',
+        productNameMaxLength: 'Payment product name cannot exceed 100 characters.',
         pricePositive: 'Price must be greater than 0.',
         amountPositive: 'Available amount must be greater than 0.',
         validityPositiveInteger: 'Validity days must be an integer greater than 0.',

@@ -65,6 +65,11 @@ func Description(v string) predicate.UsageCardPlan {
 	return predicate.UsageCardPlan(sql.FieldEQ(FieldDescription, v))
 }
 
+// ProductName applies equality check predicate on the "product_name" field. It's identical to ProductNameEQ.
+func ProductName(v string) predicate.UsageCardPlan {
+	return predicate.UsageCardPlan(sql.FieldEQ(FieldProductName, v))
+}
+
 // Price applies equality check predicate on the "price" field. It's identical to PriceEQ.
 func Price(v float64) predicate.UsageCardPlan {
 	return predicate.UsageCardPlan(sql.FieldEQ(FieldPrice, v))
@@ -233,6 +238,71 @@ func DescriptionEqualFold(v string) predicate.UsageCardPlan {
 // DescriptionContainsFold applies the ContainsFold predicate on the "description" field.
 func DescriptionContainsFold(v string) predicate.UsageCardPlan {
 	return predicate.UsageCardPlan(sql.FieldContainsFold(FieldDescription, v))
+}
+
+// ProductNameEQ applies the EQ predicate on the "product_name" field.
+func ProductNameEQ(v string) predicate.UsageCardPlan {
+	return predicate.UsageCardPlan(sql.FieldEQ(FieldProductName, v))
+}
+
+// ProductNameNEQ applies the NEQ predicate on the "product_name" field.
+func ProductNameNEQ(v string) predicate.UsageCardPlan {
+	return predicate.UsageCardPlan(sql.FieldNEQ(FieldProductName, v))
+}
+
+// ProductNameIn applies the In predicate on the "product_name" field.
+func ProductNameIn(vs ...string) predicate.UsageCardPlan {
+	return predicate.UsageCardPlan(sql.FieldIn(FieldProductName, vs...))
+}
+
+// ProductNameNotIn applies the NotIn predicate on the "product_name" field.
+func ProductNameNotIn(vs ...string) predicate.UsageCardPlan {
+	return predicate.UsageCardPlan(sql.FieldNotIn(FieldProductName, vs...))
+}
+
+// ProductNameGT applies the GT predicate on the "product_name" field.
+func ProductNameGT(v string) predicate.UsageCardPlan {
+	return predicate.UsageCardPlan(sql.FieldGT(FieldProductName, v))
+}
+
+// ProductNameGTE applies the GTE predicate on the "product_name" field.
+func ProductNameGTE(v string) predicate.UsageCardPlan {
+	return predicate.UsageCardPlan(sql.FieldGTE(FieldProductName, v))
+}
+
+// ProductNameLT applies the LT predicate on the "product_name" field.
+func ProductNameLT(v string) predicate.UsageCardPlan {
+	return predicate.UsageCardPlan(sql.FieldLT(FieldProductName, v))
+}
+
+// ProductNameLTE applies the LTE predicate on the "product_name" field.
+func ProductNameLTE(v string) predicate.UsageCardPlan {
+	return predicate.UsageCardPlan(sql.FieldLTE(FieldProductName, v))
+}
+
+// ProductNameContains applies the Contains predicate on the "product_name" field.
+func ProductNameContains(v string) predicate.UsageCardPlan {
+	return predicate.UsageCardPlan(sql.FieldContains(FieldProductName, v))
+}
+
+// ProductNameHasPrefix applies the HasPrefix predicate on the "product_name" field.
+func ProductNameHasPrefix(v string) predicate.UsageCardPlan {
+	return predicate.UsageCardPlan(sql.FieldHasPrefix(FieldProductName, v))
+}
+
+// ProductNameHasSuffix applies the HasSuffix predicate on the "product_name" field.
+func ProductNameHasSuffix(v string) predicate.UsageCardPlan {
+	return predicate.UsageCardPlan(sql.FieldHasSuffix(FieldProductName, v))
+}
+
+// ProductNameEqualFold applies the EqualFold predicate on the "product_name" field.
+func ProductNameEqualFold(v string) predicate.UsageCardPlan {
+	return predicate.UsageCardPlan(sql.FieldEqualFold(FieldProductName, v))
+}
+
+// ProductNameContainsFold applies the ContainsFold predicate on the "product_name" field.
+func ProductNameContainsFold(v string) predicate.UsageCardPlan {
+	return predicate.UsageCardPlan(sql.FieldContainsFold(FieldProductName, v))
 }
 
 // PriceEQ applies the EQ predicate on the "price" field.

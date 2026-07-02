@@ -20,6 +20,7 @@ func NewUsageCardHandler(usageCardService *service.UsageCardService) *UsageCardH
 type usageCardPlanRequest struct {
 	Name         string  `json:"name"`
 	Description  string  `json:"description"`
+	ProductName  string  `json:"product_name"`
 	Price        float64 `json:"price"`
 	AmountUSD    float64 `json:"amount_usd"`
 	ValidityDays int     `json:"validity_days"`
@@ -36,6 +37,7 @@ type usageCardPlanResponse struct {
 	ID           int64   `json:"id"`
 	Name         string  `json:"name"`
 	Description  string  `json:"description"`
+	ProductName  string  `json:"product_name"`
 	Price        float64 `json:"price"`
 	AmountUSD    float64 `json:"amount_usd"`
 	ValidityDays int     `json:"validity_days"`
@@ -90,6 +92,7 @@ func (h *UsageCardHandler) CreatePlan(c *gin.Context) {
 	plan, err := h.usageCardService.CreatePlan(c.Request.Context(), service.UsageCardPlan{
 		Name:         req.Name,
 		Description:  req.Description,
+		ProductName:  req.ProductName,
 		Price:        req.Price,
 		AmountUSD:    req.AmountUSD,
 		ValidityDays: req.ValidityDays,
@@ -118,6 +121,7 @@ func (h *UsageCardHandler) UpdatePlan(c *gin.Context) {
 		ID:           id,
 		Name:         req.Name,
 		Description:  req.Description,
+		ProductName:  req.ProductName,
 		Price:        req.Price,
 		AmountUSD:    req.AmountUSD,
 		ValidityDays: req.ValidityDays,
@@ -211,6 +215,7 @@ func usageCardPlanResponseFromService(plan *service.UsageCardPlan) usageCardPlan
 		ID:           plan.ID,
 		Name:         plan.Name,
 		Description:  plan.Description,
+		ProductName:  plan.ProductName,
 		Price:        plan.Price,
 		AmountUSD:    plan.AmountUSD,
 		ValidityDays: plan.ValidityDays,

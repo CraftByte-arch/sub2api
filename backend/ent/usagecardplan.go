@@ -21,6 +21,8 @@ type UsageCardPlan struct {
 	Name string `json:"name,omitempty"`
 	// Description holds the value of the "description" field.
 	Description string `json:"description,omitempty"`
+	// ProductName holds the value of the "product_name" field.
+	ProductName string `json:"product_name,omitempty"`
 	// Price holds the value of the "price" field.
 	Price float64 `json:"price,omitempty"`
 	// AmountUsd holds the value of the "amount_usd" field.
@@ -83,7 +85,7 @@ func (*UsageCardPlan) scanValues(columns []string) ([]any, error) {
 			values[i] = new(sql.NullFloat64)
 		case usagecardplan.FieldID, usagecardplan.FieldValidityDays, usagecardplan.FieldSortOrder:
 			values[i] = new(sql.NullInt64)
-		case usagecardplan.FieldName, usagecardplan.FieldDescription, usagecardplan.FieldFeatures:
+		case usagecardplan.FieldName, usagecardplan.FieldDescription, usagecardplan.FieldProductName, usagecardplan.FieldFeatures:
 			values[i] = new(sql.NullString)
 		case usagecardplan.FieldCreatedAt, usagecardplan.FieldUpdatedAt:
 			values[i] = new(sql.NullTime)
@@ -119,6 +121,12 @@ func (_m *UsageCardPlan) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field description", values[i])
 			} else if value.Valid {
 				_m.Description = value.String
+			}
+		case usagecardplan.FieldProductName:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field product_name", values[i])
+			} else if value.Valid {
+				_m.ProductName = value.String
 			}
 		case usagecardplan.FieldPrice:
 			if value, ok := values[i].(*sql.NullFloat64); !ok {
@@ -219,6 +227,9 @@ func (_m *UsageCardPlan) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("description=")
 	builder.WriteString(_m.Description)
+	builder.WriteString(", ")
+	builder.WriteString("product_name=")
+	builder.WriteString(_m.ProductName)
 	builder.WriteString(", ")
 	builder.WriteString("price=")
 	builder.WriteString(fmt.Sprintf("%v", _m.Price))

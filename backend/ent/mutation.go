@@ -34643,6 +34643,7 @@ type UsageCardPlanMutation struct {
 	id                  *int64
 	name                *string
 	description         *string
+	product_name        *string
 	price               *float64
 	addprice            *float64
 	amount_usd          *float64
@@ -34835,6 +34836,42 @@ func (m *UsageCardPlanMutation) OldDescription(ctx context.Context) (v string, e
 // ResetDescription resets all changes to the "description" field.
 func (m *UsageCardPlanMutation) ResetDescription() {
 	m.description = nil
+}
+
+// SetProductName sets the "product_name" field.
+func (m *UsageCardPlanMutation) SetProductName(s string) {
+	m.product_name = &s
+}
+
+// ProductName returns the value of the "product_name" field in the mutation.
+func (m *UsageCardPlanMutation) ProductName() (r string, exists bool) {
+	v := m.product_name
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldProductName returns the old "product_name" field's value of the UsageCardPlan entity.
+// If the UsageCardPlan object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageCardPlanMutation) OldProductName(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldProductName is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldProductName requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldProductName: %w", err)
+	}
+	return oldValue.ProductName, nil
+}
+
+// ResetProductName resets all changes to the "product_name" field.
+func (m *UsageCardPlanMutation) ResetProductName() {
+	m.product_name = nil
 }
 
 // SetPrice sets the "price" field.
@@ -35347,12 +35384,15 @@ func (m *UsageCardPlanMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *UsageCardPlanMutation) Fields() []string {
-	fields := make([]string, 0, 10)
+	fields := make([]string, 0, 11)
 	if m.name != nil {
 		fields = append(fields, usagecardplan.FieldName)
 	}
 	if m.description != nil {
 		fields = append(fields, usagecardplan.FieldDescription)
+	}
+	if m.product_name != nil {
+		fields = append(fields, usagecardplan.FieldProductName)
 	}
 	if m.price != nil {
 		fields = append(fields, usagecardplan.FieldPrice)
@@ -35390,6 +35430,8 @@ func (m *UsageCardPlanMutation) Field(name string) (ent.Value, bool) {
 		return m.Name()
 	case usagecardplan.FieldDescription:
 		return m.Description()
+	case usagecardplan.FieldProductName:
+		return m.ProductName()
 	case usagecardplan.FieldPrice:
 		return m.Price()
 	case usagecardplan.FieldAmountUsd:
@@ -35419,6 +35461,8 @@ func (m *UsageCardPlanMutation) OldField(ctx context.Context, name string) (ent.
 		return m.OldName(ctx)
 	case usagecardplan.FieldDescription:
 		return m.OldDescription(ctx)
+	case usagecardplan.FieldProductName:
+		return m.OldProductName(ctx)
 	case usagecardplan.FieldPrice:
 		return m.OldPrice(ctx)
 	case usagecardplan.FieldAmountUsd:
@@ -35457,6 +35501,13 @@ func (m *UsageCardPlanMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetDescription(v)
+		return nil
+	case usagecardplan.FieldProductName:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetProductName(v)
 		return nil
 	case usagecardplan.FieldPrice:
 		v, ok := value.(float64)
@@ -35619,6 +35670,9 @@ func (m *UsageCardPlanMutation) ResetField(name string) error {
 		return nil
 	case usagecardplan.FieldDescription:
 		m.ResetDescription()
+		return nil
+	case usagecardplan.FieldProductName:
+		m.ResetProductName()
 		return nil
 	case usagecardplan.FieldPrice:
 		m.ResetPrice()

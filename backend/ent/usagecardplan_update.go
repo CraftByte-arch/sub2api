@@ -58,6 +58,20 @@ func (_u *UsageCardPlanUpdate) SetNillableDescription(v *string) *UsageCardPlanU
 	return _u
 }
 
+// SetProductName sets the "product_name" field.
+func (_u *UsageCardPlanUpdate) SetProductName(v string) *UsageCardPlanUpdate {
+	_u.mutation.SetProductName(v)
+	return _u
+}
+
+// SetNillableProductName sets the "product_name" field if the given value is not nil.
+func (_u *UsageCardPlanUpdate) SetNillableProductName(v *string) *UsageCardPlanUpdate {
+	if v != nil {
+		_u.SetProductName(*v)
+	}
+	return _u
+}
+
 // SetPrice sets the "price" field.
 func (_u *UsageCardPlanUpdate) SetPrice(v float64) *UsageCardPlanUpdate {
 	_u.mutation.ResetPrice()
@@ -296,6 +310,11 @@ func (_u *UsageCardPlanUpdate) check() error {
 			return &ValidationError{Name: "name", err: fmt.Errorf(`ent: validator failed for field "UsageCardPlan.name": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.ProductName(); ok {
+		if err := usagecardplan.ProductNameValidator(v); err != nil {
+			return &ValidationError{Name: "product_name", err: fmt.Errorf(`ent: validator failed for field "UsageCardPlan.product_name": %w`, err)}
+		}
+	}
 	return nil
 }
 
@@ -316,6 +335,9 @@ func (_u *UsageCardPlanUpdate) sqlSave(ctx context.Context) (_node int, err erro
 	}
 	if value, ok := _u.mutation.Description(); ok {
 		_spec.SetField(usagecardplan.FieldDescription, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.ProductName(); ok {
+		_spec.SetField(usagecardplan.FieldProductName, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.Price(); ok {
 		_spec.SetField(usagecardplan.FieldPrice, field.TypeFloat64, value)
@@ -484,6 +506,20 @@ func (_u *UsageCardPlanUpdateOne) SetDescription(v string) *UsageCardPlanUpdateO
 func (_u *UsageCardPlanUpdateOne) SetNillableDescription(v *string) *UsageCardPlanUpdateOne {
 	if v != nil {
 		_u.SetDescription(*v)
+	}
+	return _u
+}
+
+// SetProductName sets the "product_name" field.
+func (_u *UsageCardPlanUpdateOne) SetProductName(v string) *UsageCardPlanUpdateOne {
+	_u.mutation.SetProductName(v)
+	return _u
+}
+
+// SetNillableProductName sets the "product_name" field if the given value is not nil.
+func (_u *UsageCardPlanUpdateOne) SetNillableProductName(v *string) *UsageCardPlanUpdateOne {
+	if v != nil {
+		_u.SetProductName(*v)
 	}
 	return _u
 }
@@ -739,6 +775,11 @@ func (_u *UsageCardPlanUpdateOne) check() error {
 			return &ValidationError{Name: "name", err: fmt.Errorf(`ent: validator failed for field "UsageCardPlan.name": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.ProductName(); ok {
+		if err := usagecardplan.ProductNameValidator(v); err != nil {
+			return &ValidationError{Name: "product_name", err: fmt.Errorf(`ent: validator failed for field "UsageCardPlan.product_name": %w`, err)}
+		}
+	}
 	return nil
 }
 
@@ -776,6 +817,9 @@ func (_u *UsageCardPlanUpdateOne) sqlSave(ctx context.Context) (_node *UsageCard
 	}
 	if value, ok := _u.mutation.Description(); ok {
 		_spec.SetField(usagecardplan.FieldDescription, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.ProductName(); ok {
+		_spec.SetField(usagecardplan.FieldProductName, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.Price(); ok {
 		_spec.SetField(usagecardplan.FieldPrice, field.TypeFloat64, value)

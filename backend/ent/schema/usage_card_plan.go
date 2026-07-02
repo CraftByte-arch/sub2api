@@ -31,6 +31,9 @@ func (UsageCardPlan) Fields() []ent.Field {
 		field.String("description").
 			SchemaType(map[string]string{dialect.Postgres: "text"}).
 			Default(""),
+		field.String("product_name").
+			MaxLen(100).
+			Default(""),
 		field.Float("price").
 			SchemaType(map[string]string{dialect.Postgres: "decimal(20,2)"}),
 		field.Float("amount_usd").

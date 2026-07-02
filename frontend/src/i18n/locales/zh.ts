@@ -1575,6 +1575,9 @@ export default {
       planName: '套餐名称',
       planNamePlaceholder: '例如：100 万日卡、$20 余额卡',
       planNameHint: '展示给用户看的商品名，建议包含额度或有效期。',
+      productName: '支付商品名称',
+      productNamePlaceholder: '例如：Credit Booster',
+      productNameHint: '仅用于支付渠道里的商品标题；留空时使用默认标题。',
       planDescription: '套餐描述',
       planDescriptionPlaceholder: '例如：适合临时高峰使用，购买后 30 天内有效',
       planDescriptionHint: '会展示在购买卡片上，可写适用场景、限制或售后说明。',
@@ -1608,6 +1611,7 @@ export default {
       noActions: '无操作',
       validation: {
         nameRequired: '请填写套餐名称。',
+        productNameMaxLength: '支付商品名称不能超过 100 个字符。',
         pricePositive: '售价必须大于 0。',
         amountPositive: '可用额度必须大于 0。',
         validityPositiveInteger: '有效天数必须是大于 0 的整数。',

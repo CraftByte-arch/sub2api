@@ -246,6 +246,25 @@ func TestBuildPaymentSubjectAppliesAffixToSubscriptionPlanDefaultName(t *testing
 	}
 }
 
+func TestBuildPaymentSubjectAppliesAffixToUsageCardPlanProductName(t *testing.T) {
+	t.Parallel()
+
+	svc := &PaymentService{}
+	cfg := &PaymentConfig{
+		ProductNamePrefix: "PRE",
+		ProductNameSuffix: "SUF",
+	}
+	plan := &UsageCardPlan{
+		Name:        "Balance Card",
+		ProductName: "Credit Booster",
+	}
+
+	got := svc.buildPaymentSubject(&paymentOrderProduct{usageCardPlan: plan}, 0, cfg, nil)
+	if got != "PRE Credit Booster SUF" {
+		t.Fatalf("buildPaymentSubject() = %q, want %q", got, "PRE Credit Booster SUF")
+	}
+}
+
 func TestGenerateOutTradeNoUsesConfiguredPrefix(t *testing.T) {
 	ctx := context.Background()
 	client := newPaymentConfigServiceTestClient(t)

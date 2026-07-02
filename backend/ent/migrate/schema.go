@@ -727,7 +727,7 @@ var (
 			{
 				Name:    "group_usage_card_disabled",
 				Unique:  false,
-				Columns: []*schema.Column{GroupsColumns[36]},
+				Columns: []*schema.Column{GroupsColumns[40]},
 			},
 			{
 				Name:    "group_deleted_at",
@@ -1336,6 +1336,7 @@ var (
 		{Name: "id", Type: field.TypeInt64, Increment: true},
 		{Name: "name", Type: field.TypeString, Size: 100},
 		{Name: "description", Type: field.TypeString, Default: "", SchemaType: map[string]string{"postgres": "text"}},
+		{Name: "product_name", Type: field.TypeString, Size: 100, Default: ""},
 		{Name: "price", Type: field.TypeFloat64, SchemaType: map[string]string{"postgres": "decimal(20,2)"}},
 		{Name: "amount_usd", Type: field.TypeFloat64, SchemaType: map[string]string{"postgres": "decimal(20,8)"}},
 		{Name: "validity_days", Type: field.TypeInt, Default: 30},
@@ -1354,12 +1355,12 @@ var (
 			{
 				Name:    "usagecardplan_for_sale",
 				Unique:  false,
-				Columns: []*schema.Column{UsageCardPlansColumns[7]},
+				Columns: []*schema.Column{UsageCardPlansColumns[8]},
 			},
 			{
 				Name:    "usagecardplan_sort_order",
 				Unique:  false,
-				Columns: []*schema.Column{UsageCardPlansColumns[8]},
+				Columns: []*schema.Column{UsageCardPlansColumns[9]},
 			},
 		},
 	}

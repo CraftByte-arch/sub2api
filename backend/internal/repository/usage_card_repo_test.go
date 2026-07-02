@@ -42,6 +42,28 @@ func TestUsageCardRepositoryListCardsActiveExcludesExpiredAndExhausted(t *testin
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestUsageCardRepositoryGetPlanByIDScansProductName(t *testing.T) {
+	db, mock := newSQLMock(t)
+	repo := NewUsageCardRepository(db)
+
+	now := time.Date(2026, 7, 3, 10, 0, 0, 0, time.UTC)
+	mock.ExpectQuery("SELECT id, name, description, product_name, price, amount_usd, validity_days, features").
+		WithArgs(int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "name", "description", "product_name", "price", "amount_usd", "validity_days", "features",
+			"for_sale", "sort_order", "created_at", "updated_at",
+		}).AddRow(
+			int64(7), "Balance Card", "desc", "Credit Booster", 19.9, 25.0, 30, "fast\nflex",
+			true, 3, now, now,
+		))
+
+	plan, err := repo.GetPlanByID(context.Background(), 7)
+
+	require.NoError(t, err)
+	require.Equal(t, "Credit Booster", plan.ProductName)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestUsageCardRepositoryDeductCardRequiresAvailableActiveCard(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := NewUsageCardRepository(db)

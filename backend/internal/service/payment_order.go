@@ -581,7 +581,10 @@ func (s *PaymentService) buildPaymentSubject(product *paymentOrderProduct, limit
 		return applyPaymentProductNameAffix(productName, cfg)
 	}
 	if product != nil && product.usageCardPlan != nil {
-		productName := "Sub2API Usage Card " + product.usageCardPlan.Name
+		productName := strings.TrimSpace(product.usageCardPlan.ProductName)
+		if productName == "" {
+			productName = "Sub2API Usage Card " + product.usageCardPlan.Name
+		}
 		return applyPaymentProductNameAffix(productName, cfg)
 	}
 	currency := payment.DefaultPaymentCurrency

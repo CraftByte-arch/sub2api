@@ -77,7 +77,11 @@ func (s *UsageCardService) CreatePlan(ctx context.Context, plan UsageCardPlan) (
 	if s == nil || s.repo == nil {
 		return nil, ErrUsageCardPlanNotFound
 	}
+	plan.ProductName = strings.TrimSpace(plan.ProductName)
 	if strings.TrimSpace(plan.Name) == "" || plan.Price <= 0 || plan.AmountUSD <= 0 || plan.ValidityDays <= 0 {
+		return nil, infraerrors.BadRequest("INVALID_USAGE_CARD_PLAN", "invalid usage card plan")
+	}
+	if len([]rune(plan.ProductName)) > 100 {
 		return nil, infraerrors.BadRequest("INVALID_USAGE_CARD_PLAN", "invalid usage card plan")
 	}
 	return s.repo.CreatePlan(ctx, plan)
@@ -87,7 +91,11 @@ func (s *UsageCardService) UpdatePlan(ctx context.Context, plan UsageCardPlan) (
 	if s == nil || s.repo == nil {
 		return nil, ErrUsageCardPlanNotFound
 	}
+	plan.ProductName = strings.TrimSpace(plan.ProductName)
 	if plan.ID <= 0 || strings.TrimSpace(plan.Name) == "" || plan.Price <= 0 || plan.AmountUSD <= 0 || plan.ValidityDays <= 0 {
+		return nil, infraerrors.BadRequest("INVALID_USAGE_CARD_PLAN", "invalid usage card plan")
+	}
+	if len([]rune(plan.ProductName)) > 100 {
 		return nil, infraerrors.BadRequest("INVALID_USAGE_CARD_PLAN", "invalid usage card plan")
 	}
 	return s.repo.UpdatePlan(ctx, plan)

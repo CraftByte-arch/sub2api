@@ -18,6 +18,8 @@ const (
 	FieldName = "name"
 	// FieldDescription holds the string denoting the description field in the database.
 	FieldDescription = "description"
+	// FieldProductName holds the string denoting the product_name field in the database.
+	FieldProductName = "product_name"
 	// FieldPrice holds the string denoting the price field in the database.
 	FieldPrice = "price"
 	// FieldAmountUsd holds the string denoting the amount_usd field in the database.
@@ -61,6 +63,7 @@ var Columns = []string{
 	FieldID,
 	FieldName,
 	FieldDescription,
+	FieldProductName,
 	FieldPrice,
 	FieldAmountUsd,
 	FieldValidityDays,
@@ -86,6 +89,10 @@ var (
 	NameValidator func(string) error
 	// DefaultDescription holds the default value on creation for the "description" field.
 	DefaultDescription string
+	// DefaultProductName holds the default value on creation for the "product_name" field.
+	DefaultProductName string
+	// ProductNameValidator is a validator for the "product_name" field. It is called by the builders before save.
+	ProductNameValidator func(string) error
 	// DefaultValidityDays holds the default value on creation for the "validity_days" field.
 	DefaultValidityDays int
 	// DefaultFeatures holds the default value on creation for the "features" field.
@@ -118,6 +125,11 @@ func ByName(opts ...sql.OrderTermOption) OrderOption {
 // ByDescription orders the results by the description field.
 func ByDescription(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldDescription, opts...).ToFunc()
+}
+
+// ByProductName orders the results by the product_name field.
+func ByProductName(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldProductName, opts...).ToFunc()
 }
 
 // ByPrice orders the results by the price field.

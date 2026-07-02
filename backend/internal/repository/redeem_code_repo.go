@@ -464,6 +464,7 @@ func usageCardPlanEntityToService(m *dbent.UsageCardPlan) *service.UsageCardPlan
 		ID:           m.ID,
 		Name:         m.Name,
 		Description:  m.Description,
+		ProductName:  m.ProductName,
 		Price:        m.Price,
 		AmountUSD:    m.AmountUsd,
 		ValidityDays: m.ValidityDays,

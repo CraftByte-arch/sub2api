@@ -23,7 +23,7 @@ func (r *usageCardRepository) ListPlans(ctx context.Context, includeHidden bool)
 		return nil, errors.New("usage card repository db is nil")
 	}
 	query := `
-		SELECT id, name, description, price, amount_usd, validity_days, features,
+		SELECT id, name, description, product_name, price, amount_usd, validity_days, features,
 			for_sale, sort_order, created_at, updated_at
 		FROM usage_card_plans
 	`
@@ -53,11 +53,11 @@ func (r *usageCardRepository) CreatePlan(ctx context.Context, plan service.Usage
 		return nil, errors.New("usage card repository db is nil")
 	}
 	row := r.db.QueryRowContext(ctx, `
-		INSERT INTO usage_card_plans (name, description, price, amount_usd, validity_days, features, for_sale, sort_order, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
-		RETURNING id, name, description, price, amount_usd, validity_days, features,
+		INSERT INTO usage_card_plans (name, description, product_name, price, amount_usd, validity_days, features, for_sale, sort_order, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
+		RETURNING id, name, description, product_name, price, amount_usd, validity_days, features,
 			for_sale, sort_order, created_at, updated_at
-	`, plan.Name, plan.Description, plan.Price, plan.AmountUSD, plan.ValidityDays, plan.Features, plan.ForSale, plan.SortOrder)
+	`, plan.Name, plan.Description, plan.ProductName, plan.Price, plan.AmountUSD, plan.ValidityDays, plan.Features, plan.ForSale, plan.SortOrder)
 	return scanUsageCardPlan(row)
 }
 
@@ -69,17 +69,18 @@ func (r *usageCardRepository) UpdatePlan(ctx context.Context, plan service.Usage
 		UPDATE usage_card_plans
 		SET name = $1,
 			description = $2,
-			price = $3,
-			amount_usd = $4,
-			validity_days = $5,
-			features = $6,
-			for_sale = $7,
-			sort_order = $8,
+			product_name = $3,
+			price = $4,
+			amount_usd = $5,
+			validity_days = $6,
+			features = $7,
+			for_sale = $8,
+			sort_order = $9,
 			updated_at = NOW()
-		WHERE id = $9
-		RETURNING id, name, description, price, amount_usd, validity_days, features,
+		WHERE id = $10
+		RETURNING id, name, description, product_name, price, amount_usd, validity_days, features,
 			for_sale, sort_order, created_at, updated_at
-	`, plan.Name, plan.Description, plan.Price, plan.AmountUSD, plan.ValidityDays, plan.Features, plan.ForSale, plan.SortOrder, plan.ID)
+	`, plan.Name, plan.Description, plan.ProductName, plan.Price, plan.AmountUSD, plan.ValidityDays, plan.Features, plan.ForSale, plan.SortOrder, plan.ID)
 	out, err := scanUsageCardPlan(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, service.ErrUsageCardPlanNotFound
@@ -168,7 +169,7 @@ func (r *usageCardRepository) GetPlanByID(ctx context.Context, id int64) (*servi
 		return nil, errors.New("usage card repository db is nil")
 	}
 	row := r.db.QueryRowContext(ctx, `
-		SELECT id, name, description, price, amount_usd, validity_days, features,
+		SELECT id, name, description, product_name, price, amount_usd, validity_days, features,
 			for_sale, sort_order, created_at, updated_at
 		FROM usage_card_plans
 		WHERE id = $1
@@ -361,6 +362,7 @@ func scanUsageCardPlan(row scanner) (*service.UsageCardPlan, error) {
 		&plan.ID,
 		&plan.Name,
 		&plan.Description,
+		&plan.ProductName,
 		&plan.Price,
 		&plan.AmountUSD,
 		&plan.ValidityDays,

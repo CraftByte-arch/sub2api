@@ -1640,28 +1640,34 @@ func init() {
 	usagecardplanDescDescription := usagecardplanFields[1].Descriptor()
 	// usagecardplan.DefaultDescription holds the default value on creation for the description field.
 	usagecardplan.DefaultDescription = usagecardplanDescDescription.Default.(string)
+	// usagecardplanDescProductName is the schema descriptor for product_name field.
+	usagecardplanDescProductName := usagecardplanFields[2].Descriptor()
+	// usagecardplan.DefaultProductName holds the default value on creation for the product_name field.
+	usagecardplan.DefaultProductName = usagecardplanDescProductName.Default.(string)
+	// usagecardplan.ProductNameValidator is a validator for the "product_name" field. It is called by the builders before save.
+	usagecardplan.ProductNameValidator = usagecardplanDescProductName.Validators[0].(func(string) error)
 	// usagecardplanDescValidityDays is the schema descriptor for validity_days field.
-	usagecardplanDescValidityDays := usagecardplanFields[4].Descriptor()
+	usagecardplanDescValidityDays := usagecardplanFields[5].Descriptor()
 	// usagecardplan.DefaultValidityDays holds the default value on creation for the validity_days field.
 	usagecardplan.DefaultValidityDays = usagecardplanDescValidityDays.Default.(int)
 	// usagecardplanDescFeatures is the schema descriptor for features field.
-	usagecardplanDescFeatures := usagecardplanFields[5].Descriptor()
+	usagecardplanDescFeatures := usagecardplanFields[6].Descriptor()
 	// usagecardplan.DefaultFeatures holds the default value on creation for the features field.
 	usagecardplan.DefaultFeatures = usagecardplanDescFeatures.Default.(string)
 	// usagecardplanDescForSale is the schema descriptor for for_sale field.
-	usagecardplanDescForSale := usagecardplanFields[6].Descriptor()
+	usagecardplanDescForSale := usagecardplanFields[7].Descriptor()
 	// usagecardplan.DefaultForSale holds the default value on creation for the for_sale field.
 	usagecardplan.DefaultForSale = usagecardplanDescForSale.Default.(bool)
 	// usagecardplanDescSortOrder is the schema descriptor for sort_order field.
-	usagecardplanDescSortOrder := usagecardplanFields[7].Descriptor()
+	usagecardplanDescSortOrder := usagecardplanFields[8].Descriptor()
 	// usagecardplan.DefaultSortOrder holds the default value on creation for the sort_order field.
 	usagecardplan.DefaultSortOrder = usagecardplanDescSortOrder.Default.(int)
 	// usagecardplanDescCreatedAt is the schema descriptor for created_at field.
-	usagecardplanDescCreatedAt := usagecardplanFields[8].Descriptor()
+	usagecardplanDescCreatedAt := usagecardplanFields[9].Descriptor()
 	// usagecardplan.DefaultCreatedAt holds the default value on creation for the created_at field.
 	usagecardplan.DefaultCreatedAt = usagecardplanDescCreatedAt.Default.(func() time.Time)
 	// usagecardplanDescUpdatedAt is the schema descriptor for updated_at field.
-	usagecardplanDescUpdatedAt := usagecardplanFields[9].Descriptor()
+	usagecardplanDescUpdatedAt := usagecardplanFields[10].Descriptor()
 	// usagecardplan.DefaultUpdatedAt holds the default value on creation for the updated_at field.
 	usagecardplan.DefaultUpdatedAt = usagecardplanDescUpdatedAt.Default.(func() time.Time)
 	// usagecardplan.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
