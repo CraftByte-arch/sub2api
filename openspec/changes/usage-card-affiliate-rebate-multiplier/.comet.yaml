@@ -1,5 +1,5 @@
 workflow: hotfix
-phase: verify
+phase: archive
 context_compression: off
 build_mode: direct
 build_pause: null
@@ -11,10 +11,10 @@ auto_transition: true
 base_ref: feed4a28e97ba0883084e5851e001b56bb8ae4c8
 design_doc: null
 plan: null
-verify_result: pending
+verify_result: pass
 verification_report: docs/superpowers/reports/2026-07-02-usage-card-affiliate-rebate-multiplier-verify.md
 branch_status: handled
 created_at: 2026-07-02
-verified_at: null
+verified_at: 2026-07-02
 archived: false
 build_command: make -C backend build
