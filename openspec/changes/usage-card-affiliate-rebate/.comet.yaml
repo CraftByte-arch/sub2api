@@ -12,8 +12,8 @@ base_ref: 8a24d5a7c4b435dea7e38f72aecced711ae7dd1d
 design_doc: docs/superpowers/specs/2026-07-02-usage-card-affiliate-rebate-design.md
 plan: docs/superpowers/plans/2026-07-02-usage-card-affiliate-rebate.md
 verify_result: pending
-verification_report: null
-branch_status: pending
+verification_report: docs/superpowers/reports/2026-07-02-usage-card-affiliate-rebate-verify.md
+branch_status: handled
 created_at: 2026-07-01
 verified_at: null
 archived: false
