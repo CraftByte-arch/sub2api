@@ -215,6 +215,14 @@ func TestSettingHandler_ImageStudioAsyncSettings_PutGetRoundTrip(t *testing.T) {
 	require.Equal(t, "72", repo.values[service.SettingKeyImageStudioRetentionValue])
 	require.Equal(t, service.ImageStudioRetentionUnitHour, repo.values[service.SettingKeyImageStudioRetentionUnit])
 
+	var putResp response.Response
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &putResp))
+	putData, ok := putResp.Data.(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, float64(3), putData["image_studio_async_concurrency"])
+	require.Equal(t, float64(72), putData["image_studio_retention_value"])
+	require.Equal(t, service.ImageStudioRetentionUnitHour, putData["image_studio_retention_unit"])
+
 	rec2 := httptest.NewRecorder()
 	c2, _ := gin.CreateTestContext(rec2)
 	c2.Request = httptest.NewRequest(http.MethodGet, "/api/v1/admin/settings", nil)
