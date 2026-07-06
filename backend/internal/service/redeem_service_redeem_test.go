@@ -100,3 +100,27 @@ func TestRedeemRejectsInvitationCodeBeforeTransaction(t *testing.T) {
 	require.Equal(t, StatusUnused, redeemRepo.code.Status)
 	require.Nil(t, redeemRepo.code.UsedBy)
 }
+
+func TestRedeemValidatesUsageCardCodeBeforeTransaction(t *testing.T) {
+	ctx := context.Background()
+	redeemRepo := &redeemRejectRepo{
+		code: RedeemCode{
+			ID:     1,
+			Code:   "USAGE-CARD-001",
+			Type:   RedeemTypeUsageCard,
+			Status: StatusUnused,
+		},
+	}
+	redeemService := NewRedeemService(redeemRepo, nil, nil, nil, nil, nil, nil, nil)
+
+	got, err := redeemService.Redeem(ctx, 2, redeemRepo.code.Code)
+
+	require.Nil(t, got)
+	require.Error(t, err)
+	require.True(t, infraerrors.IsBadRequest(err))
+	require.Equal(t, "REDEEM_CODE_INVALID", infraerrors.Reason(err))
+	require.Equal(t, "invalid usage card redeem code: missing usage_card_plan_id", infraerrors.Message(err))
+	require.False(t, redeemRepo.useCalled)
+	require.Equal(t, StatusUnused, redeemRepo.code.Status)
+	require.Nil(t, redeemRepo.code.UsedBy)
+}

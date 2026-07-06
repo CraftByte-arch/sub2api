@@ -453,6 +453,7 @@ func (s *RedeemService) Redeem(ctx context.Context, userID int64, code string) (
 		if redeemCode.GroupID == nil {
 			return nil, infraerrors.BadRequest("REDEEM_CODE_INVALID", "invalid subscription redeem code: missing group_id")
 		}
+	case RedeemTypeUsageCard:
 	default:
 		return nil, unsupportedRedeemTypeError(redeemCode.Type)
 	}
