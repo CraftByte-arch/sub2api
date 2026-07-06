@@ -206,6 +206,7 @@ export interface PublicSettings {
   site_name: string
   site_logo: string
   site_subtitle: string
+  homepage_variant?: 'default' | 'aixw' | string
   api_base_url: string
   contact_info: string
   doc_url: string

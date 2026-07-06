@@ -1,0 +1,14 @@
+{
+  "change": "configurable-homepage-variant",
+  "phase": "design",
+  "mode": "compact",
+  "canonical_spec": "openspec",
+  "generated_by": "comet-handoff.sh",
+  "context_hash": "31fbc867454d21580e6c45c182d044666da431c727ebf77d4fb07f06fedff49d",
+  "files": [
+    { "path": "openspec/changes/configurable-homepage-variant/proposal.md", "sha256": "a899d0b4ae1b628c123e4efb2dde527136125fca0d35bd5d5d9dca948940cb74" },
+    { "path": "openspec/changes/configurable-homepage-variant/design.md", "sha256": "156fd7ffd81ca984e7f48a9fbfa02833062513cfadfe776d3270d98dbe2e9662" },
+    { "path": "openspec/changes/configurable-homepage-variant/tasks.md", "sha256": "91f8f279dcea7cbdcc47f6c16708efa0c7d3f234a344d18a278e58577ff07475" },
+    { "path": "openspec/changes/configurable-homepage-variant/specs/homepage-variant/spec.md", "sha256": "6340db16a005c70783eaa2a4ba0fa0e30d46e66cd3637102048eefb6d5432eca" }
+  ]
+}

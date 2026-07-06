@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"math"
 	"net/url"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -948,6 +949,7 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		SiteName:                          s.getStringOrDefault(settings, SettingKeySiteName, "Sub2API"),
 		SiteLogo:                          settings[SettingKeySiteLogo],
 		SiteSubtitle:                      s.getStringOrDefault(settings, SettingKeySiteSubtitle, "Subscription to API Conversion Platform"),
+		HomepageVariant:                   homepageVariantFromEnv(),
 		APIBaseURL:                        settings[SettingKeyAPIBaseURL],
 		ContactInfo:                       settings[SettingKeyContactInfo],
 		DocURL:                            settings[SettingKeyDocURL],
@@ -994,6 +996,25 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 
 		AllowUserViewErrorRequests: settings[SettingKeyAllowUserViewErrorRequests] == "true",
 	}, nil
+}
+
+const (
+	HomepageVariantDefault = "default"
+	HomepageVariantAixw    = "aixw"
+	homepageVariantEnvKey  = "HOMEPAGE_VARIANT"
+)
+
+func normalizeHomepageVariant(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case HomepageVariantAixw:
+		return HomepageVariantAixw
+	default:
+		return HomepageVariantDefault
+	}
+}
+
+func homepageVariantFromEnv() string {
+	return normalizeHomepageVariant(os.Getenv(homepageVariantEnvKey))
 }
 
 // channelMonitorIntervalMin / channelMonitorIntervalMax bound the default interval
@@ -1567,6 +1588,7 @@ type PublicSettingsInjectionPayload struct {
 	SiteName                          string                   `json:"site_name"`
 	SiteLogo                          string                   `json:"site_logo"`
 	SiteSubtitle                      string                   `json:"site_subtitle"`
+	HomepageVariant                   string                   `json:"homepage_variant"`
 	APIBaseURL                        string                   `json:"api_base_url"`
 	ContactInfo                       string                   `json:"contact_info"`
 	DocURL                            string                   `json:"doc_url"`
@@ -1643,6 +1665,7 @@ func (s *SettingService) GetPublicSettingsForInjection(ctx context.Context) (any
 		SiteName:                          settings.SiteName,
 		SiteLogo:                          settings.SiteLogo,
 		SiteSubtitle:                      settings.SiteSubtitle,
+		HomepageVariant:                   settings.HomepageVariant,
 		APIBaseURL:                        settings.APIBaseURL,
 		ContactInfo:                       settings.ContactInfo,
 		DocURL:                            settings.DocURL,

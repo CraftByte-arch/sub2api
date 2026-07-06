@@ -91,6 +91,46 @@ func TestSettingService_GetPublicSettings_ExposesForceEmailOnThirdPartySignup(t 
 	require.True(t, settings.ForceEmailOnThirdPartySignup)
 }
 
+func TestSettingService_GetPublicSettings_HomepageVariantDefaultsToDefault(t *testing.T) {
+	t.Setenv("HOMEPAGE_VARIANT", "")
+	svc := NewSettingService(&settingPublicRepoStub{values: map[string]string{}}, &config.Config{})
+
+	settings, err := svc.GetPublicSettings(context.Background())
+
+	require.NoError(t, err)
+	require.Equal(t, "default", settings.HomepageVariant)
+}
+
+func TestSettingService_GetPublicSettings_HomepageVariantReadsAixw(t *testing.T) {
+	t.Setenv("HOMEPAGE_VARIANT", "aixw")
+	svc := NewSettingService(&settingPublicRepoStub{values: map[string]string{}}, &config.Config{})
+
+	settings, err := svc.GetPublicSettings(context.Background())
+
+	require.NoError(t, err)
+	require.Equal(t, "aixw", settings.HomepageVariant)
+}
+
+func TestSettingService_GetPublicSettings_HomepageVariantInvalidFallsBackToDefault(t *testing.T) {
+	t.Setenv("HOMEPAGE_VARIANT", "surprise")
+	svc := NewSettingService(&settingPublicRepoStub{values: map[string]string{}}, &config.Config{})
+
+	settings, err := svc.GetPublicSettings(context.Background())
+
+	require.NoError(t, err)
+	require.Equal(t, "default", settings.HomepageVariant)
+}
+
+func TestSettingService_GetPublicSettingsForInjection_ExposesHomepageVariant(t *testing.T) {
+	t.Setenv("HOMEPAGE_VARIANT", "aixw")
+	svc := NewSettingService(&settingPublicRepoStub{values: map[string]string{}}, &config.Config{})
+
+	payload, err := svc.GetPublicSettingsForInjection(context.Background())
+
+	require.NoError(t, err)
+	require.Equal(t, "aixw", payload.(*PublicSettingsInjectionPayload).HomepageVariant)
+}
+
 func TestSettingService_GetOpenAILongContextBillingRuntime_DefaultsPreserveLegacyBehavior(t *testing.T) {
 	svc := NewSettingService(&settingPublicRepoStub{values: map[string]string{}}, &config.Config{})
 
