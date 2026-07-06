@@ -16,7 +16,7 @@ verification_report: docs/superpowers/reports/2026-06-30-global-usage-card-avail
 branch_status: handled
 created_at: 2026-06-30
 verified_at: 2026-06-30
-archived: false
+archived: true
 handoff_context: openspec/changes/global-usage-card-available-summary/.comet/handoff/design-context.json
 handoff_hash: 8609bdef0c1d595ccf20e82bb77f6caa314b15f4ae9c541b64e2316d5e618ce2
 build_command: make build

@@ -2,6 +2,7 @@
 change: global-usage-card-available-summary
 design-doc: docs/superpowers/specs/2026-06-30-global-usage-card-available-summary-design.md
 base-ref: e7906fd6339d35afe286b553ede52ea8a147cb37
+archived-with: 2026-07-06-global-usage-card-available-summary
 ---
 
 # Global Usage Card Available Summary Implementation Plan
@@ -14,6 +15,7 @@ base-ref: e7906fd6339d35afe286b553ede52ea8a147cb37
 
 **Tech Stack:** Go + Gin backend, Vue 3 + Pinia + TypeScript frontend, Vitest, Go testing with sqlmock/testify.
 
+archived-with: 2026-07-06-global-usage-card-available-summary
 ---
 
 ## File Structure

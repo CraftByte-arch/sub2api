@@ -2,6 +2,8 @@
 comet_change: global-usage-card-available-summary
 role: technical-design
 canonical_spec: openspec
+archived-with: 2026-07-06-global-usage-card-available-summary
+status: final
 ---
 
 # Global Usage Card Available Summary Design
