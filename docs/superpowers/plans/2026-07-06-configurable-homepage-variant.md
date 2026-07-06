@@ -262,7 +262,7 @@ Expected: all commands pass.
 
 After implementation and verification pass, mark completed items in `openspec/changes/configurable-homepage-variant/tasks.md`.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 Commit the implementation with:
 
