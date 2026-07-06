@@ -2,6 +2,7 @@
 change: configurable-homepage-variant
 design-doc: docs/superpowers/specs/2026-07-06-configurable-homepage-variant-design.md
 base-ref: 36e03e9fb7241dc861865b43088e2bc90804713c
+archived-with: 2026-07-06-configurable-homepage-variant
 ---
 
 # Configurable Homepage Variant Implementation Plan

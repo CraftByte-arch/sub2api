@@ -16,7 +16,7 @@ verification_report: docs/superpowers/reports/2026-07-06-configurable-homepage-v
 branch_status: handled
 created_at: 2026-07-06
 verified_at: 2026-07-06
-archived: false
+archived: true
 handoff_context: openspec/changes/configurable-homepage-variant/.comet/handoff/design-context.json
 handoff_hash: 31fbc867454d21580e6c45c182d044666da431c727ebf77d4fb07f06fedff49d
 build_command: make build

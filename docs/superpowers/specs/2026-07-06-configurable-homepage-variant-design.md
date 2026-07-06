@@ -2,6 +2,8 @@
 comet_change: configurable-homepage-variant
 role: technical-design
 canonical_spec: openspec
+archived-with: 2026-07-06-configurable-homepage-variant
+status: final
 ---
 
 # Configurable Homepage Variant Design
