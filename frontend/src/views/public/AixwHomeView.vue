@@ -1,7 +1,7 @@
 <!-- src/views/public/AixwHomeView.vue -->
 <script setup lang="ts">
 import heroBackgroundUrl from '@/assets/hero-background.webp'
-import logoUrl from '@/assets/aixw-logo-alpha.png'
+import logoUrl from '@/assets/aixw-logo-transparent.webp'
 
 const pageStyle = {
   backgroundImage: `url(${heroBackgroundUrl})`

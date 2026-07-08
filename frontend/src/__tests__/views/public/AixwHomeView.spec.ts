@@ -19,7 +19,7 @@ describe('AixwHomeView', () => {
     // Check for logo image
     const logo = wrapper.find('img[alt="AIXW Logo"]')
     expect(logo.exists()).toBe(true)
-    expect(logo.attributes('src')).toContain('aixw-logo-alpha')
+    expect(logo.attributes('src')).toContain('aixw-logo-transparent')
 
     const page = wrapper.get('[data-testid="aixw-home-page"]')
     expect(page.attributes('style')).toContain('hero-background')

@@ -34,6 +34,7 @@ function mountWithHomepageVariant(homepageVariant?: string) {
 describe('HomeVariantView', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    delete window.__APP_CONFIG__
   })
 
   it('renders the default homepage when settings are missing', () => {
@@ -52,6 +53,18 @@ describe('HomeVariantView', () => {
 
   it('renders the AIXW homepage for the aixw variant', () => {
     const wrapper = mountWithHomepageVariant('aixw')
+
+    expect(wrapper.find('[data-testid="aixw-home-stub"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="default-home-stub"]').exists()).toBe(false)
+  })
+
+  it('uses the injected config before the store is initialized', () => {
+    setActivePinia(createPinia())
+    window.__APP_CONFIG__ = {
+      homepage_variant: 'aixw',
+    } as PublicSettings
+
+    const wrapper = mount(HomeVariantView)
 
     expect(wrapper.find('[data-testid="aixw-home-stub"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="default-home-stub"]').exists()).toBe(false)

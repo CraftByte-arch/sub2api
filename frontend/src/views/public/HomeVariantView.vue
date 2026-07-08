@@ -5,9 +5,12 @@ import HomeView from '@/views/HomeView.vue'
 import AixwHomeView from '@/views/public/AixwHomeView.vue'
 
 const appStore = useAppStore()
-const variant = computed(() =>
-  appStore.cachedPublicSettings?.homepage_variant === 'aixw' ? 'aixw' : 'default'
-)
+const variant = computed(() => {
+  const configuredVariant =
+    appStore.cachedPublicSettings?.homepage_variant ?? window.__APP_CONFIG__?.homepage_variant
+
+  return configuredVariant === 'aixw' ? 'aixw' : 'default'
+})
 </script>
 
 <template>
