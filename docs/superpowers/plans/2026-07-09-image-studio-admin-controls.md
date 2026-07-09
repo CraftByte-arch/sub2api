@@ -566,7 +566,7 @@ git commit -m "feat: add image studio admin controls UI"
 - Modify: `frontend/src/extensions/image-studio/components/GenerationSettingsPanel.vue` if empty copy is passed there.
 - Test: `frontend/src/extensions/image-studio/__tests__/ImageStudioView.spec.ts`
 
-- [ ] **Step 1: Write failing key filtering test**
+- [x] **Step 1: Write failing key filtering test**
 
 In `ImageStudioView.spec.ts`, mock settings so:
 
@@ -590,7 +590,7 @@ cd frontend && pnpm vitest run src/extensions/image-studio/__tests__/ImageStudio
 
 Expected now: FAIL because group allowlist is not used.
 
-- [ ] **Step 2: Fetch settings for image studio page**
+- [x] **Step 2: Fetch settings for image studio page**
 
 In `ImageStudioView.vue`, import the admin/public settings API that is available to authenticated users. If admin settings are not accessible to normal users, add a safe backend/public field in Task 1 before implementing this step. The component needs only:
 
@@ -609,7 +609,7 @@ imageStudioAvailableGroupIds.value = Array.isArray(settings.image_studio_availab
 
 If normal users cannot call admin settings, use a public/user-safe endpoint and update tests accordingly.
 
-- [ ] **Step 3: Update key predicate**
+- [x] **Step 3: Update key predicate**
 
 Replace `isImageStudioApiKey` with:
 
@@ -626,7 +626,7 @@ function isImageStudioApiKey(key: StudioApiKey) {
 
 Ensure the initial selected key is cleared if no key remains.
 
-- [ ] **Step 4: Update empty state copy**
+- [x] **Step 4: Update empty state copy**
 
 Change empty text from generic “create an API key” to mention administrator-enabled groups:
 

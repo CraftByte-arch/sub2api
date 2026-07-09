@@ -476,6 +476,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { keysAPI } from '@/api'
+import { getPublicSettings } from '@/api/auth'
 import Icon from '@/components/icons/Icon.vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import GenerationSettingsPanel from './components/GenerationSettingsPanel.vue'
@@ -564,6 +565,7 @@ const loadingKeys = ref(false)
 const polishingPrompt = ref(false)
 const promptPolishModel = ref('gpt-5.4-mini')
 const apiKeys = ref<StudioApiKey[]>([])
+const imageStudioAvailableGroupIDs = ref<number[]>([])
 const creationSessions = reactive<Record<CreationMode, ImageStudioCreationSession>>({
   generate: createCreationSession(),
   edit: createCreationSession()
@@ -1020,7 +1022,11 @@ async function loadKeys() {
   loadingKeys.value = true
   setSessionError(activeCreationSession.value, '')
   try {
-    const response = await keysAPI.list(1, 100)
+    const [settings, response] = await Promise.all([
+      getPublicSettings(),
+      keysAPI.list(1, 100)
+    ])
+    imageStudioAvailableGroupIDs.value = settings.image_studio_available_group_ids ?? []
     apiKeys.value = (response.items as StudioApiKey[]).filter(isImageStudioApiKey)
     const preferred = apiKeys.value[0]
     selectedKeyValue.value = preferred?.key ?? ''
@@ -1032,9 +1038,12 @@ async function loadKeys() {
 }
 
 function isImageStudioApiKey(key: StudioApiKey) {
+  const groupID = key.group?.id
   return key.status === 'active' &&
     key.group?.platform === 'openai' &&
-    key.group?.allow_image_generation === true
+    key.group?.allow_image_generation === true &&
+    typeof groupID === 'number' &&
+    imageStudioAvailableGroupIDs.value.includes(groupID)
 }
 
 async function handleSubmit() {

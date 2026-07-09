@@ -23,9 +23,9 @@
 
 ## 4. Image Studio Experience
 
-- [ ] 4.1 Fetch or reuse the image studio available group IDs setting for the image studio page.
-- [ ] 4.2 Filter image studio API key choices by active status, OpenAI image eligibility, and the configured group allowlist.
-- [ ] 4.3 Update the empty state so users understand no key is available when no allowed group is configured.
+- [x] 4.1 Fetch or reuse the image studio available group IDs setting for the image studio page.
+- [x] 4.2 Filter image studio API key choices by active status, OpenAI image eligibility, and the configured group allowlist.
+- [x] 4.3 Update the empty state so users understand no key is available when no allowed group is configured.
 
 ## 5. Tests and Verification
 

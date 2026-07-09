@@ -361,6 +361,7 @@ type PublicSettings struct {
 	TablePageSizeOptions              []int                    `json:"table_page_size_options"`
 	CustomMenuItems                   []CustomMenuItem         `json:"custom_menu_items"`
 	CustomEndpoints                   []CustomEndpoint         `json:"custom_endpoints"`
+	ImageStudioAvailableGroupIDs      []int64                  `json:"image_studio_available_group_ids"`
 	DingTalkOAuthEnabled              bool                     `json:"dingtalk_oauth_enabled"`
 	LinuxDoOAuthEnabled               bool                     `json:"linuxdo_oauth_enabled"`
 	WeChatOAuthEnabled                bool                     `json:"wechat_oauth_enabled"`

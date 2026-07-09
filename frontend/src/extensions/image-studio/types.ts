@@ -142,6 +142,7 @@ export interface StudioApiKey {
   name: string
   status: string
   group?: {
+    id?: number
     platform?: string
     allow_image_generation?: boolean
     image_rate_multiplier?: number

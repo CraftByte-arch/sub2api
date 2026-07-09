@@ -35,6 +35,10 @@ vi.mock('@/api', () => ({
   }
 }))
 
+vi.mock('@/api/auth', () => ({
+  getPublicSettings: vi.fn()
+}))
+
 vi.mock('../imageStudioApi', () => ({
   createImageStudioJob: vi.fn(),
   deleteImageStudioJob: vi.fn(),
@@ -54,6 +58,7 @@ vi.mock('../imageStudioCache', () => ({
 }))
 
 const keysAPI = await import('@/api').then((mod) => mod.keysAPI)
+const getPublicSettings = await import('@/api/auth').then((mod) => mod.getPublicSettings)
 const imageStudioCache = await import('../imageStudioCache')
 
 let mountedWrappers: VueWrapper[] = []
@@ -72,6 +77,7 @@ describe('ImageStudioView', () => {
     vi.mocked(fetchImageStudioOriginal).mockReset()
     vi.mocked(fetchImageStudioThumbnail).mockReset()
     vi.mocked(sendPromptPolishRequest).mockReset()
+    vi.mocked(getPublicSettings).mockReset()
     vi.mocked(imageStudioCache.clearImageStudioAssetCache).mockReset()
     vi.mocked(imageStudioCache.deleteImageStudioAssetCache).mockReset()
     vi.mocked(imageStudioCache.getCachedImageStudioAsset).mockReset()
@@ -80,6 +86,9 @@ describe('ImageStudioView', () => {
     vi.mocked(imageStudioCache.deleteImageStudioAssetCache).mockResolvedValue(undefined)
     vi.mocked(imageStudioCache.getCachedImageStudioAsset).mockResolvedValue(null)
     vi.mocked(imageStudioCache.putImageStudioAssetCache).mockResolvedValue(undefined)
+    vi.mocked(getPublicSettings).mockResolvedValue({
+      image_studio_available_group_ids: [10]
+    } as any)
 
     Object.defineProperty(URL, 'createObjectURL', {
       value: vi.fn((value: Blob | File) => {
@@ -214,6 +223,9 @@ describe('ImageStudioView', () => {
   })
 
   it('only lists API keys from groups that allow image generation', async () => {
+    vi.mocked(getPublicSettings).mockResolvedValueOnce({
+      image_studio_available_group_ids: [23]
+    } as any)
     vi.mocked(keysAPI.list).mockResolvedValueOnce({
       items: [
         {
@@ -267,6 +279,69 @@ describe('ImageStudioView', () => {
     const selectableOptions = options.filter((option) => option.attributes('value'))
     expect(selectableOptions.map((option) => option.text())).toEqual(['生图专用'])
     expect((wrapper.get('[data-testid="api-key-select"]').element as HTMLSelectElement).value).toBe('sk-image')
+  })
+
+  it('only lists API keys from image studio available groups', async () => {
+    vi.mocked(getPublicSettings).mockResolvedValueOnce({
+      image_studio_available_group_ids: [23]
+    } as any)
+    vi.mocked(keysAPI.list).mockResolvedValueOnce({
+      items: [
+        {
+          id: 13,
+          key: 'sk-allowed',
+          name: '允许体验',
+          status: 'active',
+          group: {
+            id: 23,
+            name: '体验分组',
+            platform: 'openai',
+            allow_image_generation: true,
+            image_price_1k: 1
+          }
+        },
+        {
+          id: 14,
+          key: 'sk-denied',
+          name: '未开放体验',
+          status: 'active',
+          group: {
+            id: 24,
+            name: '后台生图但不开放体验',
+            platform: 'openai',
+            allow_image_generation: true,
+            image_price_1k: 1
+          }
+        }
+      ],
+      total: 2,
+      page: 1,
+      page_size: 20,
+      pages: 1
+    } as any)
+
+    const wrapper = mountView()
+    await flushPromises()
+
+    const options = wrapper.get('[data-testid="api-key-select"]').findAll('option')
+    const selectableOptions = options.filter((option) => option.attributes('value'))
+    expect(selectableOptions.map((option) => option.text())).toEqual(['允许体验'])
+    expect((wrapper.get('[data-testid="api-key-select"]').element as HTMLSelectElement).value).toBe('sk-allowed')
+  })
+
+  it('shows no selectable API key when no image studio group is available', async () => {
+    vi.mocked(getPublicSettings).mockResolvedValueOnce({
+      image_studio_available_group_ids: []
+    } as any)
+
+    const wrapper = mountView()
+    await flushPromises()
+
+    const options = wrapper.get('[data-testid="api-key-select"]').findAll('option')
+    const selectableOptions = options.filter((option) => option.attributes('value'))
+    expect(selectableOptions).toHaveLength(0)
+    expect(wrapper.text()).toContain('没有可用于生图的 API 密钥')
+    expect((wrapper.get('[data-testid="api-key-select"]').element as HTMLSelectElement).value).toBe('')
   })
 
   it('submits a generate job through the site API and adds the queued task to history', async () => {

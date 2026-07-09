@@ -122,6 +122,9 @@
           aria-label="API 密钥"
           @update:model-value="$emit('update:selected-key-value', $event)"
         />
+        <p v-if="!loadingKeys && activeKeys.length === 0" class="api-key-empty-hint">
+          没有可用于生图的 API 密钥；管理员未开放生图体验分组，或当前账号没有对应分组的密钥。
+        </p>
       </div>
       <label class="api-key-strip-label">模型</label>
       <div class="api-key-strip-control">
