@@ -327,7 +327,7 @@ git commit -m "fix: separate image tool declaration from image generation intent
 - Modify: `backend/internal/service/image_studio_job_worker.go`
 - Test: existing image studio handler/service tests under `backend/internal/handler/*image_studio*_test.go` and `backend/internal/service/*image_studio*_test.go`
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 Add handler test cases:
 
@@ -349,7 +349,7 @@ cd backend && go test ./internal/handler ./internal/service -run 'ImageStudio.*G
 
 Expected now: FAIL because allowlist is not enforced.
 
-- [ ] **Step 2: Add allowlist helper**
+- [x] **Step 2: Add allowlist helper**
 
 Add a helper in the service layer or image studio handler file:
 
@@ -369,7 +369,7 @@ func ImageStudioGroupAllowed(groupID *int64, allowedIDs []int64) bool {
 
 Use the actual group ID type already used by `APIKey.GroupID`.
 
-- [ ] **Step 3: Enforce in job creation handler**
+- [x] **Step 3: Enforce in job creation handler**
 
 In `backend/internal/handler/image_studio_job_handler.go`, after existing active key and group image-generation checks, load settings and check:
 
@@ -387,7 +387,7 @@ if !service.ImageStudioGroupAllowed(apiKey.GroupID, settings.ImageStudioAvailabl
 
 If the handler does not currently have `settingService`, add it through the constructor/wire path following existing dependency injection patterns.
 
-- [ ] **Step 4: Re-check in worker if practical**
+- [x] **Step 4: Re-check in worker if practical**
 
 In `backend/internal/service/image_studio_job_worker.go`, after `GroupAllowsImageGeneration`, add a safe setting check. If settings cannot be read in the worker, fail the job with an internal error; if group not allowed, fail with code:
 

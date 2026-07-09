@@ -6,8 +6,8 @@
 
 ## 2. Backend Enforcement
 
-- [ ] 2.1 Enforce the image studio group allowlist when creating image studio jobs.
-- [ ] 2.2 Return a clear validation error when a selected API key's group is not available for image studio.
+- [x] 2.1 Enforce the image studio group allowlist when creating image studio jobs.
+- [x] 2.2 Return a clear validation error when a selected API key's group is not available for image studio.
 - [x] 2.3 Add a client image-generation tool declaration policy setting with `strip`, `allow`, and `reject` values.
 - [x] 2.4 Apply the declaration policy to HTTP `/v1/responses` before image-generation permission checks.
 - [x] 2.5 Apply the declaration policy consistently to Responses WebSocket requests.

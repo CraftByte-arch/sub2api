@@ -112,6 +112,10 @@ func (s *ImageStudioJobService) processJob(ctx context.Context, job ImageStudioJ
 		s.failJob(ctx, job.ID, "image_generation_disabled", fmt.Errorf("%s", ImageGenerationPermissionMessage()))
 		return
 	}
+	if err := s.ValidateAPIKeyAvailableForImageStudio(ctx, apiKey); err != nil {
+		s.failJob(ctx, job.ID, "image_studio_group_not_available", err)
+		return
+	}
 	if s.billingCacheService != nil {
 		if err := s.billingCacheService.CheckBillingEligibility(ctx, apiKey.User, apiKey, apiKey.Group, nil, QuotaPlatform(ctx, apiKey)); err != nil {
 			s.failJob(ctx, job.ID, "billing_ineligible", err)

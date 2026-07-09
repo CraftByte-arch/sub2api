@@ -122,6 +122,10 @@ func (h *ImageStudioJobHandler) Create(c *gin.Context) {
 		response.Forbidden(c, service.ImageGenerationPermissionMessage())
 		return
 	}
+	if err := h.jobService.ValidateAPIKeyAvailableForImageStudio(c.Request.Context(), apiKey); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
 
 	payload, err := buildImageStudioJobPayload(req, mode)
 	if err != nil {

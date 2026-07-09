@@ -24,8 +24,9 @@ const (
 )
 
 var (
-	ErrImageStudioJobNotFound = infraerrors.NotFound("IMAGE_STUDIO_JOB_NOT_FOUND", "image studio job not found")
-	ErrImageStudioJobInvalid  = infraerrors.BadRequest("IMAGE_STUDIO_JOB_INVALID", "image studio job payload is invalid")
+	ErrImageStudioJobNotFound       = infraerrors.NotFound("IMAGE_STUDIO_JOB_NOT_FOUND", "image studio job not found")
+	ErrImageStudioJobInvalid        = infraerrors.BadRequest("IMAGE_STUDIO_JOB_INVALID", "image studio job payload is invalid")
+	ErrImageStudioGroupNotAvailable = infraerrors.Forbidden("IMAGE_STUDIO_GROUP_NOT_AVAILABLE", "API key group is not available for image studio")
 )
 
 type ImageStudioJob struct {
