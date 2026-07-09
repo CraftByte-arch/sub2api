@@ -2766,23 +2766,24 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	var imageIntent bool
 	var imageGateIntent bool
 	if HasPassiveImageGenerationToolDeclaration(openAIResponsesEndpoint, reqModel, body) {
-		switch imageGenerationToolDeclarationPolicy {
-		case ImageGenerationToolDeclarationPolicyReject:
+		updatedBody, changed, rejected, policyErr := applyOpenAIImageGenerationToolDeclarationPolicyToRawPayload(openAIResponsesEndpoint, reqModel, body, imageGenerationToolDeclarationPolicy)
+		if policyErr != nil {
+			return nil, policyErr
+		}
+		if rejected {
 			MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalFeatureGate)
 			c.JSON(http.StatusForbidden, gin.H{"error": gin.H{"type": "permission_error", "message": "image_generation tool declaration is disabled"}})
 			return nil, errors.New("image_generation tool declaration disabled")
-		case ImageGenerationToolDeclarationPolicyStrip:
-			decoded, decodeErr := ensureReqBody()
-			if decodeErr != nil {
-				return nil, decodeErr
-			}
-			if stripOpenAIImageGenerationTools(decoded) {
-				markDecodedModified()
-				logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Stripped passive /responses image_generation tool by global policy")
-			}
-			imageIntent = IsImageGenerationIntentMap(openAIResponsesEndpoint, reqModel, decoded)
-			imageGateIntent = IsActualImageGenerationIntentMap(openAIResponsesEndpoint, reqModel, decoded)
 		}
+		if changed {
+			body = updatedBody
+			requestView = newOpenAIRequestView(body)
+			reqBody = nil
+			bodyModified = false
+			logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Stripped passive /responses image_generation tool by global policy")
+		}
+		imageIntent = IsImageGenerationIntent(openAIResponsesEndpoint, reqModel, body)
+		imageGateIntent = IsActualImageGenerationIntent(openAIResponsesEndpoint, reqModel, body)
 	}
 	if isCodexCLI && codexImageGenerationExplicitToolPolicy == codexImageGenerationExplicitToolPolicyStrip {
 		decoded, decodeErr := ensureReqBody()

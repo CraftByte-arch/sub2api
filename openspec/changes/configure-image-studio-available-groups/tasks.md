@@ -29,6 +29,6 @@
 
 ## 5. Tests and Verification
 
-- [ ] 5.1 Add or update backend tests for settings normalization, serialization, job creation enforcement, and declaration policy behavior.
-- [ ] 5.2 Add or update frontend tests for admin settings form persistence and image studio API key filtering.
-- [ ] 5.3 Run targeted backend and frontend verification commands.
+- [x] 5.1 Add or update backend tests for settings normalization, serialization, job creation enforcement, and declaration policy behavior.
+- [x] 5.2 Add or update frontend tests for admin settings form persistence and image studio API key filtering.
+- [x] 5.3 Run targeted backend and frontend verification commands.

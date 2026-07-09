@@ -660,7 +660,7 @@ git commit -m "feat: filter image studio keys by admin group allowlist"
 - Modify: `openspec/changes/configure-image-studio-available-groups/tasks.md`
 - Modify: this plan file as tasks are completed.
 
-- [ ] **Step 1: Run backend focused tests**
+- [x] **Step 1: Run backend focused tests**
 
 ```bash
 cd backend && go test ./internal/service ./internal/handler ./internal/handler/admin -run 'ImageStudio|ImageGeneration|DeclarationPolicy|Settings' -count=1
@@ -668,7 +668,7 @@ cd backend && go test ./internal/service ./internal/handler ./internal/handler/a
 
 Expected: PASS.
 
-- [ ] **Step 2: Run frontend focused tests**
+- [x] **Step 2: Run frontend focused tests**
 
 ```bash
 cd frontend && pnpm vitest run src/extensions/image-studio/__tests__/ImageStudioView.spec.ts src/views/admin/__tests__/SettingsView.imageStudio.spec.ts
@@ -676,7 +676,7 @@ cd frontend && pnpm vitest run src/extensions/image-studio/__tests__/ImageStudio
 
 Expected: PASS.
 
-- [ ] **Step 3: Run type/build checks**
+- [x] **Step 3: Run type/build checks**
 
 ```bash
 cd frontend && pnpm type-check
@@ -685,7 +685,7 @@ cd backend && go test ./...
 
 Expected: PASS. If `go test ./...` is too slow for local iteration, run the focused packages first and record the full command result before verify.
 
-- [ ] **Step 4: Sync OpenSpec tasks**
+- [x] **Step 4: Sync OpenSpec tasks**
 
 Mark completed tasks in `openspec/changes/configure-image-studio-available-groups/tasks.md`:
 
@@ -695,7 +695,7 @@ Mark completed tasks in `openspec/changes/configure-image-studio-available-group
 
 Continue for all completed task lines.
 
-- [ ] **Step 5: Commit task sync**
+- [x] **Step 5: Commit task sync**
 
 ```bash
 git add openspec/changes/configure-image-studio-available-groups/tasks.md docs/superpowers/plans/2026-07-09-image-studio-admin-controls.md

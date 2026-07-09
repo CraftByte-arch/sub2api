@@ -130,7 +130,11 @@ func TestOpenAIGatewayService_Forward_DecodedMutationKeepsLaterFieldDeletes(t *t
 	}
 	cfg := &config.Config{}
 	cfg.Security.URLAllowlist.Enabled = false
-	svc := &OpenAIGatewayService{cfg: cfg, httpUpstream: upstream}
+	svc := &OpenAIGatewayService{
+		cfg:            cfg,
+		httpUpstream:   upstream,
+		settingService: NewSettingService(&imageGenerationToolPolicyRepo{policy: ImageGenerationToolDeclarationPolicyAllow}, cfg),
+	}
 	account := &Account{
 		ID:          2,
 		Name:        "openai-apikey",
@@ -383,7 +387,13 @@ func TestOpenAIGatewayService_Forward_ImageToolBillingDoesNotForceFullDecode(t *
 	}
 	cfg := &config.Config{}
 	cfg.Security.URLAllowlist.Enabled = false
-	svc := &OpenAIGatewayService{cfg: cfg, httpUpstream: upstream}
+	svc := &OpenAIGatewayService{
+		cfg:          cfg,
+		httpUpstream: upstream,
+		settingService: NewSettingService(&imageGenerationToolPolicyRepo{
+			policy: ImageGenerationToolDeclarationPolicyAllow,
+		}, cfg),
+	}
 	account := &Account{
 		ID:          9,
 		Name:        "openai-apikey",
