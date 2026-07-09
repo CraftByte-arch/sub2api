@@ -64,6 +64,56 @@ func TestIsImageGenerationIntent(t *testing.T) {
 	}
 }
 
+func TestImageGenerationIntentSplitsPassiveDeclarationFromActualIntent(t *testing.T) {
+	passiveBody := []byte(`{"model":"gpt-5.4","input":"hello","tools":[{"type":"image_generation","output_format":"png"}],"tool_choice":"auto"}`)
+	require.True(t, HasPassiveImageGenerationToolDeclaration(openAIResponsesEndpoint, "gpt-5.4", passiveBody))
+	require.False(t, IsActualImageGenerationIntent(openAIResponsesEndpoint, "gpt-5.4", passiveBody))
+
+	actualCases := []struct {
+		name     string
+		endpoint string
+		model    string
+		body     []byte
+	}{
+		{
+			name:     "dedicated images endpoint",
+			endpoint: "/v1/images/generations",
+			body:     []byte(`{"model":"gpt-5.4","input":"hello"}`),
+		},
+		{
+			name:     "requested image model",
+			endpoint: openAIResponsesEndpoint,
+			model:    "gpt-image-2",
+			body:     []byte(`{"model":"gpt-5.4","input":"hello"}`),
+		},
+		{
+			name:     "body image model",
+			endpoint: openAIResponsesEndpoint,
+			model:    "gpt-5.4",
+			body:     []byte(`{"model":"gpt-image-2","input":"hello"}`),
+		},
+		{
+			name:     "object tool choice",
+			endpoint: openAIResponsesEndpoint,
+			model:    "gpt-5.4",
+			body:     []byte(`{"model":"gpt-5.4","tool_choice":{"type":"image_generation"}}`),
+		},
+		{
+			name:     "string tool choice",
+			endpoint: openAIResponsesEndpoint,
+			model:    "gpt-5.4",
+			body:     []byte(`{"model":"gpt-5.4","tool_choice":"image_generation"}`),
+		},
+	}
+
+	for _, tt := range actualCases {
+		t.Run(tt.name, func(t *testing.T) {
+			require.False(t, HasPassiveImageGenerationToolDeclaration(tt.endpoint, tt.model, tt.body))
+			require.True(t, IsActualImageGenerationIntent(tt.endpoint, tt.model, tt.body))
+		})
+	}
+}
+
 func TestResolveOpenAIResponsesImageBillingConfigUsesCurrentBodyModel(t *testing.T) {
 	imageModel, imageSize, err := resolveOpenAIResponsesImageBillingConfigFromBody(
 		[]byte(`{"model":"mapped-image-model","tools":[{"type":"image_generation","size":"1024x1024"}]}`),

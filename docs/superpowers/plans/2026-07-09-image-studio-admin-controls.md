@@ -196,7 +196,7 @@ git commit -m "feat: add image studio admin settings"
 - Test: `backend/internal/service/openai_gateway_service_hotpath_test.go`
 - Test: `backend/internal/service/openai_ws_forwarder*_test.go`
 
-- [ ] **Step 1: Write failing tests for passive declaration**
+- [x] **Step 1: Write failing tests for passive declaration**
 
 Add tests for a disabled image-generation group and body:
 
@@ -231,7 +231,7 @@ cd backend && go test ./internal/service -run 'ImageGeneration|DeclarationPolicy
 
 Expected now: FAIL because passive declaration is still treated as actual image intent.
 
-- [ ] **Step 2: Split passive declaration and actual image intent helpers**
+- [x] **Step 2: Split passive declaration and actual image intent helpers**
 
 In `backend/internal/service/image_generation_intent.go`, add helpers like:
 
@@ -268,7 +268,7 @@ func IsActualImageGenerationIntent(endpoint string, requestedModel string, body 
 
 Keep the old `IsImageGenerationIntent` for dedicated billing/config paths if needed, but update permission gates to use actual intent plus declaration policy.
 
-- [ ] **Step 3: Apply HTTP declaration policy before permission gate**
+- [x] **Step 3: Apply HTTP declaration policy before permission gate**
 
 In `backend/internal/service/openai_gateway_service.go`, before the current disabled-group image-generation check, load settings and apply:
 
@@ -297,11 +297,11 @@ if HasPassiveImageGenerationToolDeclaration(openAIResponsesEndpoint, reqModel, b
 
 Then use actual intent for disabled group checks.
 
-- [ ] **Step 4: Apply the same policy in Responses WebSocket ingress**
+- [x] **Step 4: Apply the same policy in Responses WebSocket ingress**
 
 In `backend/internal/service/openai_ws_forwarder.go`, apply the same policy to normalized incoming payload before the disabled-group gate. Reuse raw-payload strip helpers if available; otherwise decode, strip, and re-marshal consistently.
 
-- [ ] **Step 5: Run tests and commit**
+- [x] **Step 5: Run tests and commit**
 
 Run:
 
@@ -395,7 +395,7 @@ In `backend/internal/service/image_studio_job_worker.go`, after `GroupAllowsImag
 "image_studio_group_unavailable"
 ```
 
-- [ ] **Step 5: Run tests and commit**
+- [x] **Step 5: Run tests and commit**
 
 Run:
 
@@ -634,7 +634,7 @@ Change empty text from generic “create an API key” to mention administrator-
 没有可用于生图体验的 API 密钥。请确认管理员已在生图设置中选择可用分组，且该分组已开启生图。
 ```
 
-- [ ] **Step 5: Run tests and commit**
+- [x] **Step 5: Run tests and commit**
 
 Run:
 

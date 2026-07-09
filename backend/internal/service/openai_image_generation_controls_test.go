@@ -27,12 +27,12 @@ func TestOpenAIGatewayServiceForward_RejectsDisabledImageGenerationIntents(t *te
 			body: []byte(`{"model":"gpt-image-2","input":"draw"}`),
 		},
 		{
-			name: "image tool",
-			body: []byte(`{"model":"gpt-5.4","input":"draw","tools":[{"type":"image_generation"}]}`),
-		},
-		{
 			name: "image tool choice",
 			body: []byte(`{"model":"gpt-5.4","input":"draw","tool_choice":{"type":"image_generation"}}`),
+		},
+		{
+			name: "image tool with explicit choice",
+			body: []byte(`{"model":"gpt-5.4","input":"draw","tools":[{"type":"image_generation"}],"tool_choice":{"type":"image_generation"}}`),
 		},
 	}
 
@@ -50,6 +50,73 @@ func TestOpenAIGatewayServiceForward_RejectsDisabledImageGenerationIntents(t *te
 			require.Equal(t, http.StatusForbidden, recorder.Code)
 			require.Equal(t, "permission_error", gjson.GetBytes(recorder.Body.Bytes(), "error.type").String())
 			require.Nil(t, upstream.lastReq, "disabled image request must not reach upstream")
+		})
+	}
+}
+
+func TestOpenAIGatewayServiceForward_AppliesImageToolDeclarationPolicyForDisabledGroup(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name         string
+		policy       string
+		wantStatus   int
+		wantUpstream bool
+		wantTool     bool
+	}{
+		{
+			name:         "strip removes passive declaration and forwards",
+			policy:       ImageGenerationToolDeclarationPolicyStrip,
+			wantStatus:   http.StatusOK,
+			wantUpstream: true,
+			wantTool:     false,
+		},
+		{
+			name:         "allow keeps passive declaration and forwards",
+			policy:       ImageGenerationToolDeclarationPolicyAllow,
+			wantStatus:   http.StatusOK,
+			wantUpstream: true,
+			wantTool:     true,
+		},
+		{
+			name:         "reject blocks passive declaration",
+			policy:       ImageGenerationToolDeclarationPolicyReject,
+			wantStatus:   http.StatusForbidden,
+			wantUpstream: false,
+			wantTool:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			upstream := &httpUpstreamRecorder{
+				resp: &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body:       io.NopCloser(strings.NewReader(`{"id":"resp_text","model":"gpt-5.4","usage":{"input_tokens":3,"output_tokens":2}}`)),
+				},
+			}
+			svc := newOpenAIImageGenerationControlTestService(upstream)
+			svc.settingService = NewSettingService(&imageGenerationToolPolicyRepo{policy: tt.policy}, &config.Config{})
+			c, recorder := newOpenAIImageGenerationControlTestContext(false, "unit-test-agent/1.0")
+			account := newOpenAIImageGenerationControlTestAccount()
+			body := []byte(`{"model":"gpt-5.4","input":"hello","stream":false,"tools":[{"type":"function","name":"shell"},{"type":"image_generation","output_format":"png"}],"tool_choice":"auto"}`)
+
+			result, err := svc.Forward(context.Background(), c, account, body)
+
+			if tt.wantUpstream {
+				require.NoError(t, err)
+				require.NotNil(t, result)
+				require.Equal(t, tt.wantStatus, recorder.Code)
+				require.NotNil(t, upstream.lastReq)
+				require.Equal(t, tt.wantTool, gjson.GetBytes(upstream.lastBody, `tools.#(type=="image_generation")`).Exists())
+				require.True(t, gjson.GetBytes(upstream.lastBody, `tools.#(type=="function")`).Exists())
+				return
+			}
+			require.Error(t, err)
+			require.Nil(t, result)
+			require.Equal(t, tt.wantStatus, recorder.Code)
+			require.Nil(t, upstream.lastReq)
 		})
 	}
 }
@@ -138,7 +205,7 @@ func TestOpenAIGatewayServiceForward_ExplicitImageToolWorksWithBridgeDisabled(t 
 	svc := newOpenAIImageGenerationControlTestService(upstream)
 	c, _ := newOpenAIImageGenerationControlTestContext(true, "codex_cli_rs/0.98.0")
 	account := newOpenAIImageGenerationControlTestAccount()
-	body := []byte(`{"model":"gpt-5.4","input":"draw","stream":false,"tools":[{"type":"image_generation","format":"jpeg"}]}`)
+	body := []byte(`{"model":"gpt-5.4","input":"draw","stream":false,"tools":[{"type":"image_generation","format":"jpeg"}],"tool_choice":{"type":"image_generation"}}`)
 
 	result, err := svc.Forward(context.Background(), c, account, body)
 
@@ -454,6 +521,41 @@ func newOpenAIImageGenerationControlTestService(upstream *httpUpstreamRecorder) 
 		openaiWSResolver: NewOpenAIWSProtocolResolver(cfg),
 		toolCorrector:    NewCodexToolCorrector(),
 	}
+}
+
+type imageGenerationToolPolicyRepo struct {
+	policy string
+}
+
+func (r *imageGenerationToolPolicyRepo) Get(ctx context.Context, key string) (*Setting, error) {
+	return nil, ErrSettingNotFound
+}
+
+func (r *imageGenerationToolPolicyRepo) GetValue(ctx context.Context, key string) (string, error) {
+	if key == SettingKeyImageGenerationToolDeclarationPolicy && strings.TrimSpace(r.policy) != "" {
+		return r.policy, nil
+	}
+	return "", ErrSettingNotFound
+}
+
+func (r *imageGenerationToolPolicyRepo) Set(ctx context.Context, key, value string) error {
+	return nil
+}
+
+func (r *imageGenerationToolPolicyRepo) GetMultiple(ctx context.Context, keys []string) (map[string]string, error) {
+	return map[string]string{}, nil
+}
+
+func (r *imageGenerationToolPolicyRepo) SetMultiple(ctx context.Context, settings map[string]string) error {
+	return nil
+}
+
+func (r *imageGenerationToolPolicyRepo) GetAll(ctx context.Context) (map[string]string, error) {
+	return map[string]string{}, nil
+}
+
+func (r *imageGenerationToolPolicyRepo) Delete(ctx context.Context, key string) error {
+	return nil
 }
 
 func newOpenAIImageGenerationControlChannelService(groupID int64, ch *Channel) *ChannelService {

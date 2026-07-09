@@ -8,10 +8,10 @@
 
 - [ ] 2.1 Enforce the image studio group allowlist when creating image studio jobs.
 - [ ] 2.2 Return a clear validation error when a selected API key's group is not available for image studio.
-- [ ] 2.3 Add a client image-generation tool declaration policy setting with `strip`, `allow`, and `reject` values.
-- [ ] 2.4 Apply the declaration policy to HTTP `/v1/responses` before image-generation permission checks.
-- [ ] 2.5 Apply the declaration policy consistently to Responses WebSocket requests.
-- [ ] 2.6 Keep explicit image generation, dedicated image endpoints, image-only models, and image studio jobs gated by the existing group image-generation switch.
+- [x] 2.3 Add a client image-generation tool declaration policy setting with `strip`, `allow`, and `reject` values.
+- [x] 2.4 Apply the declaration policy to HTTP `/v1/responses` before image-generation permission checks.
+- [x] 2.5 Apply the declaration policy consistently to Responses WebSocket requests.
+- [x] 2.6 Keep explicit image generation, dedicated image endpoints, image-only models, and image studio jobs gated by the existing group image-generation switch.
 
 ## 3. Admin Settings UI
 
