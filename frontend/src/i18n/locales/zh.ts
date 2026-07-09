@@ -6033,6 +6033,14 @@ export default {
         retentionHint: '0 表示永不过期；到期后仅清理原图和缩略图文件，任务记录保留。',
         hours: '小时',
         days: '天',
+        availableGroups: '生图体验可用分组',
+        availableGroupsHint: '只有选中分组下的 API Key 才能在生图体验中创建任务。未选择时，所有分组都不可用。',
+        availableGroupsEmpty: '暂无可选分组',
+        toolDeclarationPolicy: 'image_generation 工具声明策略',
+        toolDeclarationPolicyHint: '控制客户端仅声明 image_generation 工具但未实际选择时的处理方式；实际生图仍受分组生图开关限制。',
+        toolDeclarationPolicyStrip: '移除被动声明并继续',
+        toolDeclarationPolicyAllow: '允许声明',
+        toolDeclarationPolicyReject: '拒绝声明',
       },
       features: {
         channelMonitor: {

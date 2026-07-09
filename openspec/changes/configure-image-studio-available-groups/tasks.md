@@ -15,11 +15,11 @@
 
 ## 3. Admin Settings UI
 
-- [ ] 3.1 Extend frontend admin settings API types and form state with image studio available group IDs.
-- [ ] 3.2 Extend frontend admin settings API types and form state with the image tool declaration policy.
-- [ ] 3.3 Add a multi-select control in the image studio settings tab that loads administrator group options.
-- [ ] 3.4 Add a policy selector in the image studio settings tab for `strip`, `allow`, and `reject`.
-- [ ] 3.5 Save and restore the selected group IDs and declaration policy through the existing settings save flow.
+- [x] 3.1 Extend frontend admin settings API types and form state with image studio available group IDs.
+- [x] 3.2 Extend frontend admin settings API types and form state with the image tool declaration policy.
+- [x] 3.3 Add a multi-select control in the image studio settings tab that loads administrator group options.
+- [x] 3.4 Add a policy selector in the image studio settings tab for `strip`, `allow`, and `reject`.
+- [x] 3.5 Save and restore the selected group IDs and declaration policy through the existing settings save flow.
 
 ## 4. Image Studio Experience
 

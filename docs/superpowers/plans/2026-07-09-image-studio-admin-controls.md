@@ -424,7 +424,7 @@ git commit -m "feat: enforce image studio group allowlist"
 - Modify: `frontend/src/i18n/locales/en.ts`
 - Test: relevant settings view tests if present; otherwise add a focused Vitest under `frontend/src/views/admin/__tests__/SettingsView.imageStudio.spec.ts`
 
-- [ ] **Step 1: Write failing frontend settings test**
+- [x] **Step 1: Write failing frontend settings test**
 
 Create or update a test that mounts the settings view with settings response:
 
@@ -449,7 +449,7 @@ cd frontend && pnpm vitest run src/views/admin/__tests__/SettingsView.imageStudi
 
 Expected now: FAIL because controls do not exist.
 
-- [ ] **Step 2: Add TypeScript settings fields**
+- [x] **Step 2: Add TypeScript settings fields**
 
 In `frontend/src/api/admin/settings.ts`, add to `SystemSettings` and update request type:
 
@@ -464,7 +464,7 @@ Optional exported type:
 export type ImageGenerationToolDeclarationPolicy = 'strip' | 'allow' | 'reject'
 ```
 
-- [ ] **Step 3: Add form defaults and save payload fields**
+- [x] **Step 3: Add form defaults and save payload fields**
 
 In `frontend/src/views/admin/SettingsView.vue` form defaults, add:
 
@@ -484,7 +484,7 @@ image_generation_tool_declaration_policy: ['strip', 'allow', 'reject'].includes(
   : 'strip',
 ```
 
-- [ ] **Step 4: Add controls to Image Studio tab**
+- [x] **Step 4: Add controls to Image Studio tab**
 
 In the existing Image Studio tab card, add:
 
@@ -521,7 +521,7 @@ In the existing Image Studio tab card, add:
 
 If `SettingsView.vue` already uses a custom multi-select component, use that instead of native `<select multiple>`.
 
-- [ ] **Step 5: Add i18n labels**
+- [x] **Step 5: Add i18n labels**
 
 In `frontend/src/i18n/locales/zh.ts`:
 
@@ -539,7 +539,7 @@ toolDeclarationPolicyReject: '拒绝带声明的请求',
 
 Add equivalent English text in `frontend/src/i18n/locales/en.ts`.
 
-- [ ] **Step 6: Run tests and commit**
+- [x] **Step 6: Run tests and commit**
 
 Run:
 

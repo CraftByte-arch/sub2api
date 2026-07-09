@@ -194,6 +194,14 @@ vi.mock("vue-i18n", async () => {
     "admin.settings.defaults.platformQuotaNotice": "月限额为 30 天滚动窗口，非自然月",
     "admin.settings.authSourceDefaults.platformQuotasOverride": "平台限额覆盖",
     "admin.settings.authSourceDefaults.platformQuotasOverrideHint": "留空的字段继承「系统默认平台限额」；填 0 表示禁止该窗口使用。",
+    "admin.settings.imageStudio.availableGroups": "生图体验可用分组",
+    "admin.settings.imageStudio.availableGroupsHint": "只有选中分组下的 API Key 才能在生图体验中创建任务。",
+    "admin.settings.imageStudio.availableGroupsEmpty": "暂无可选分组",
+    "admin.settings.imageStudio.toolDeclarationPolicy": "image_generation 工具声明策略",
+    "admin.settings.imageStudio.toolDeclarationPolicyHint": "控制客户端仅声明 image_generation 工具但未实际选择时的处理方式。",
+    "admin.settings.imageStudio.toolDeclarationPolicyStrip": "移除被动声明并继续",
+    "admin.settings.imageStudio.toolDeclarationPolicyAllow": "允许声明",
+    "admin.settings.imageStudio.toolDeclarationPolicyReject": "拒绝声明",
   };
   return {
     ...actual,
@@ -519,6 +527,16 @@ async function openUsersTab(wrapper: ReturnType<typeof mountView>) {
 
   expect(usersTabButton).toBeDefined();
   await usersTabButton?.trigger("click");
+  await flushPromises();
+}
+
+async function openImageStudioTab(wrapper: ReturnType<typeof mountView>) {
+  const imageStudioTabButton = wrapper
+    .findAll("button")
+    .find((node) => node.text().includes("admin.settings.tabs.imageStudio"));
+
+  expect(imageStudioTabButton).toBeDefined();
+  await imageStudioTabButton?.trigger("click");
   await flushPromises();
 }
 
@@ -864,6 +882,29 @@ describe("admin SettingsView payment visible method controls", () => {
     expect(paymentHelpImageUpload).toBeDefined();
     expect(paymentHelpImageUpload?.attributes("data-upload-label")).toBe("上传图片");
     expect(paymentHelpImageUpload?.attributes("data-remove-label")).toBe("移除");
+  });
+
+  it("renders image studio group allowlist and tool declaration policy controls", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      image_studio_available_group_ids: [10, 12],
+      image_generation_tool_declaration_policy: "strip",
+    });
+    getGroups.mockResolvedValueOnce([
+      { id: 10, name: "Alpha group", description: "", platform: "openai", status: "active" },
+      { id: 12, name: "Beta group", description: "", platform: "openai", status: "active" },
+    ]);
+
+    const wrapper = mountView();
+
+    await flushPromises();
+    await openImageStudioTab(wrapper);
+
+    expect(wrapper.text()).toContain("生图体验可用分组");
+    expect(wrapper.text()).toContain("Alpha group");
+    expect(wrapper.text()).toContain("Beta group");
+    expect(wrapper.text()).toContain("image_generation 工具声明策略");
+    expect(wrapper.text()).toContain("移除被动声明并继续");
   });
 
   it("normalizes null supported_types from API so provider card stays visible", async () => {

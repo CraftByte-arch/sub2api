@@ -5876,6 +5876,14 @@ export default {
         retentionHint: '0 means never expire. When expired, only original and thumbnail files are deleted; job records remain.',
         hours: 'Hours',
         days: 'Days',
+        availableGroups: 'Image Studio available groups',
+        availableGroupsHint: 'Only API keys in selected groups can create Image Studio jobs. If none are selected, no groups are available.',
+        availableGroupsEmpty: 'No groups available',
+        toolDeclarationPolicy: 'image_generation tool declaration policy',
+        toolDeclarationPolicyHint: 'Controls requests that only declare image_generation without explicitly selecting it; actual image generation remains gated by the group switch.',
+        toolDeclarationPolicyStrip: 'Strip passive declaration and continue',
+        toolDeclarationPolicyAllow: 'Allow declaration',
+        toolDeclarationPolicyReject: 'Reject declaration',
       },
       features: {
         channelMonitor: {

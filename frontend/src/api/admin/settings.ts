@@ -449,6 +449,8 @@ export interface SystemSettings {
   image_studio_async_concurrency: number;
   image_studio_retention_value: number;
   image_studio_retention_unit: string;
+  image_studio_available_group_ids: number[];
+  image_generation_tool_declaration_policy: "strip" | "allow" | "reject" | string;
   openai_long_context_billing_enabled: boolean;
   openai_long_context_billing_threshold: number;
   openai_long_context_billing_multiplier: number;
@@ -761,6 +763,8 @@ export interface UpdateSettingsRequest {
   image_studio_async_concurrency?: number;
   image_studio_retention_value?: number;
   image_studio_retention_unit?: string;
+  image_studio_available_group_ids?: number[];
+  image_generation_tool_declaration_policy?: "strip" | "allow" | "reject" | string;
   openai_long_context_billing_enabled?: boolean;
   openai_long_context_billing_threshold?: number;
   openai_long_context_billing_multiplier?: number;

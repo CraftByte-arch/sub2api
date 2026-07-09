@@ -3831,6 +3831,52 @@
                     {{ t("admin.settings.imageStudio.retentionHint") }}
                   </p>
                 </div>
+                <div>
+                  <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ t("admin.settings.imageStudio.availableGroups") }}
+                  </label>
+                  <select
+                    v-model="form.image_studio_available_group_ids"
+                    multiple
+                    class="input min-h-32"
+                    :disabled="imageStudioGroupOptions.length === 0"
+                  >
+                    <option
+                      v-for="group in imageStudioGroupOptions"
+                      :key="group.value"
+                      :value="group.value"
+                    >
+                      {{ group.label }}
+                    </option>
+                  </select>
+                  <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                    {{
+                      imageStudioGroupOptions.length === 0
+                        ? t("admin.settings.imageStudio.availableGroupsEmpty")
+                        : t("admin.settings.imageStudio.availableGroupsHint")
+                    }}
+                  </p>
+                </div>
+                <div>
+                  <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ t("admin.settings.imageStudio.toolDeclarationPolicy") }}
+                  </label>
+                  <select
+                    v-model="form.image_generation_tool_declaration_policy"
+                    class="input"
+                  >
+                    <option
+                      v-for="option in imageGenerationToolDeclarationPolicyOptions"
+                      :key="option.value"
+                      :value="option.value"
+                    >
+                      {{ option.label }}
+                    </option>
+                  </select>
+                  <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                    {{ t("admin.settings.imageStudio.toolDeclarationPolicyHint") }}
+                  </p>
+                </div>
               </div>
             </div>
           </div>
@@ -7819,6 +7865,7 @@ const adminApiKeyMasked = ref("");
 const adminApiKeyOperating = ref(false);
 const newAdminApiKey = ref("");
 const subscriptionGroups = ref<AdminGroup[]>([]);
+const imageStudioGroups = ref<AdminGroup[]>([]);
 const usageCardPlans = ref<UsageCardPlan[]>([]);
 
 // Overload Cooldown (529) 状态
@@ -8402,6 +8449,8 @@ const form = reactive<SettingsForm>({
   image_studio_async_concurrency: 2,
   image_studio_retention_value: 0,
   image_studio_retention_unit: "day",
+  image_studio_available_group_ids: [] as number[],
+  image_generation_tool_declaration_policy: "strip",
   openai_long_context_billing_enabled: true,
   openai_long_context_billing_threshold: 272000,
   openai_long_context_billing_multiplier: 2,
@@ -8950,6 +8999,29 @@ const defaultSubscriptionGroupOptions = computed<
   })),
 );
 
+const imageStudioGroupOptions = computed(() =>
+  imageStudioGroups.value.map((group) => ({
+    value: group.id,
+    label: group.name,
+    description: group.description,
+  })),
+);
+
+const imageGenerationToolDeclarationPolicyOptions = computed(() => [
+  {
+    value: "strip",
+    label: t("admin.settings.imageStudio.toolDeclarationPolicyStrip"),
+  },
+  {
+    value: "allow",
+    label: t("admin.settings.imageStudio.toolDeclarationPolicyAllow"),
+  },
+  {
+    value: "reject",
+    label: t("admin.settings.imageStudio.toolDeclarationPolicyReject"),
+  },
+]);
+
 const defaultUsageCardPlanOptions = computed<DefaultUsageCardPlanOption[]>(() =>
   usageCardPlans.value.map((plan) => ({
     value: plan.id,
@@ -9422,6 +9494,18 @@ async function loadSettings() {
     form.default_usage_cards = normalizeDefaultUsageCardSettings(
       settings.default_usage_cards,
     );
+    form.image_studio_available_group_ids = Array.isArray(
+      settings.image_studio_available_group_ids,
+    )
+      ? settings.image_studio_available_group_ids
+          .map((id) => Number(id))
+          .filter((id) => Number.isFinite(id) && id > 0)
+      : [];
+    form.image_generation_tool_declaration_policy = ["strip", "allow", "reject"].includes(
+      settings.image_generation_tool_declaration_policy,
+    )
+      ? settings.image_generation_tool_declaration_policy
+      : "strip";
     registrationEmailSuffixWhitelistTags.value =
       normalizeRegistrationEmailSuffixDomains(
         settings.registration_email_suffix_whitelist,
@@ -9528,11 +9612,13 @@ async function loadSettings() {
 async function loadSubscriptionGroups() {
   try {
     const groups = await adminAPI.groups.getAll();
+    imageStudioGroups.value = groups.filter((group) => group.status === "active");
     subscriptionGroups.value = groups.filter(
       (group) =>
         group.subscription_type === "subscription" && group.status === "active",
     );
   } catch (_error: unknown) {
+    imageStudioGroups.value = [];
     subscriptionGroups.value = [];
   }
 }
@@ -9846,6 +9932,18 @@ async function saveSettings() {
       ),
       image_studio_retention_unit:
         form.image_studio_retention_unit === "hour" ? "hour" : "day",
+      image_studio_available_group_ids: Array.from(
+        new Set(
+          (form.image_studio_available_group_ids || [])
+            .map((id) => Number(id))
+            .filter((id) => Number.isFinite(id) && id > 0),
+        ),
+      ),
+      image_generation_tool_declaration_policy: ["strip", "allow", "reject"].includes(
+        form.image_generation_tool_declaration_policy,
+      )
+        ? form.image_generation_tool_declaration_policy
+        : "strip",
       site_name: form.site_name,
       site_logo: form.site_logo,
       site_subtitle: form.site_subtitle,
