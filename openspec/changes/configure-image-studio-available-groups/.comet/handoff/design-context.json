@@ -1,0 +1,14 @@
+{
+  "change": "configure-image-studio-available-groups",
+  "phase": "design",
+  "mode": "compact",
+  "canonical_spec": "openspec",
+  "generated_by": "comet-handoff.sh",
+  "context_hash": "574c26c14a36b71682aea6b5126602dbfbf9621fdcc1caa7364d43589d3307a0",
+  "files": [
+    { "path": "openspec/changes/configure-image-studio-available-groups/proposal.md", "sha256": "8abb1ea752e4500f2fa0de78f0abe10b0499d18cfd6f2e7b19614da77973a803" },
+    { "path": "openspec/changes/configure-image-studio-available-groups/design.md", "sha256": "8bf7f121bcd39fa4f31274e86c7263ddcb7d736e92d9ccb183442ddd4473f4bd" },
+    { "path": "openspec/changes/configure-image-studio-available-groups/tasks.md", "sha256": "43406da65736cdc63f6645234bbfc4523e3833ac786fa61471cb0421a032bf77" },
+    { "path": "openspec/changes/configure-image-studio-available-groups/specs/image-studio-available-groups/spec.md", "sha256": "81e8e746038f031c26b0159b1e08b9eb29f6fe3623e7c9d184830c0f5104b312" }
+  ]
+}

@@ -281,6 +281,31 @@ func TestSettingService_UpdateSettings_ImageStudioAsyncSettings(t *testing.T) {
 	require.Equal(t, ImageStudioRetentionUnitHour, repo.updates[SettingKeyImageStudioRetentionUnit])
 }
 
+func TestSettingService_UpdateSettings_ImageStudioAdminControls(t *testing.T) {
+	repo := &settingUpdateRepoStub{}
+	svc := NewSettingService(repo, &config.Config{})
+
+	err := svc.UpdateSettings(context.Background(), &SystemSettings{
+		ImageStudioAvailableGroupIDs:         []int64{3, 2, 3, 0, -1},
+		ImageGenerationToolDeclarationPolicy: ImageGenerationToolDeclarationPolicyAllow,
+	})
+	require.NoError(t, err)
+	require.JSONEq(t, `[3,2]`, repo.updates[SettingKeyImageStudioAvailableGroupIDs])
+	require.Equal(t, ImageGenerationToolDeclarationPolicyAllow, repo.updates[SettingKeyImageGenerationToolDeclarationPolicy])
+}
+
+func TestSettingService_UpdateSettings_ImageStudioAdminControlsDefaultsPolicy(t *testing.T) {
+	repo := &settingUpdateRepoStub{}
+	svc := NewSettingService(repo, &config.Config{})
+
+	err := svc.UpdateSettings(context.Background(), &SystemSettings{
+		ImageGenerationToolDeclarationPolicy: "unknown",
+	})
+	require.NoError(t, err)
+	require.JSONEq(t, `[]`, repo.updates[SettingKeyImageStudioAvailableGroupIDs])
+	require.Equal(t, ImageGenerationToolDeclarationPolicyStrip, repo.updates[SettingKeyImageGenerationToolDeclarationPolicy])
+}
+
 func TestParseDefaultSubscriptions_NormalizesValues(t *testing.T) {
 	got := parseDefaultSubscriptions(`[{"group_id":11,"validity_days":30},{"group_id":11,"validity_days":60},{"group_id":0,"validity_days":10},{"group_id":12,"validity_days":99999}]`)
 	require.Equal(t, []DefaultSubscriptionSetting{

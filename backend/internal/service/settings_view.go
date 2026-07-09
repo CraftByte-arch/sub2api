@@ -153,22 +153,24 @@ type SystemSettings struct {
 	CustomMenuItems                    string // JSON array of custom menu items
 	CustomEndpoints                    string // JSON array of custom endpoints
 
-	DefaultConcurrency           int
-	DefaultBalance               float64
-	RiskControlEnabled           bool
-	CyberSessionBlockEnabled     bool
-	CyberSessionBlockTTLSeconds  int
-	AffiliateEnabled             bool
-	AffiliateRebateRate          float64
-	AffiliateRebateFreezeHours   int
-	AffiliateRebateDurationDays  int
-	AffiliateRebatePerInviteeCap float64
-	DefaultUserRPMLimit          int
-	DefaultSubscriptions         []DefaultSubscriptionSetting
-	DefaultUsageCards            []DefaultUsageCardSetting
-	ImageStudioAsyncConcurrency  int
-	ImageStudioRetentionValue    int
-	ImageStudioRetentionUnit     string
+	DefaultConcurrency                   int
+	DefaultBalance                       float64
+	RiskControlEnabled                   bool
+	CyberSessionBlockEnabled             bool
+	CyberSessionBlockTTLSeconds          int
+	AffiliateEnabled                     bool
+	AffiliateRebateRate                  float64
+	AffiliateRebateFreezeHours           int
+	AffiliateRebateDurationDays          int
+	AffiliateRebatePerInviteeCap         float64
+	DefaultUserRPMLimit                  int
+	DefaultSubscriptions                 []DefaultSubscriptionSetting
+	DefaultUsageCards                    []DefaultUsageCardSetting
+	ImageStudioAsyncConcurrency          int
+	ImageStudioRetentionValue            int
+	ImageStudioRetentionUnit             string
+	ImageStudioAvailableGroupIDs         []int64
+	ImageGenerationToolDeclarationPolicy string
 
 	// Model fallback configuration
 	EnableModelFallback      bool   `json:"enable_model_fallback"`

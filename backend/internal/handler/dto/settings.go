@@ -153,18 +153,20 @@ type SystemSettings struct {
 	CustomMenuItems                    []CustomMenuItem `json:"custom_menu_items"`
 	CustomEndpoints                    []CustomEndpoint `json:"custom_endpoints"`
 
-	DefaultConcurrency           int                          `json:"default_concurrency"`
-	DefaultBalance               float64                      `json:"default_balance"`
-	AffiliateRebateRate          float64                      `json:"affiliate_rebate_rate"`
-	AffiliateRebateFreezeHours   int                          `json:"affiliate_rebate_freeze_hours"`
-	AffiliateRebateDurationDays  int                          `json:"affiliate_rebate_duration_days"`
-	AffiliateRebatePerInviteeCap float64                      `json:"affiliate_rebate_per_invitee_cap"`
-	DefaultUserRPMLimit          int                          `json:"default_user_rpm_limit"`
-	DefaultSubscriptions         []DefaultSubscriptionSetting `json:"default_subscriptions"`
-	DefaultUsageCards            []DefaultUsageCardSetting    `json:"default_usage_cards"`
-	ImageStudioAsyncConcurrency  int                          `json:"image_studio_async_concurrency"`
-	ImageStudioRetentionValue    int                          `json:"image_studio_retention_value"`
-	ImageStudioRetentionUnit     string                       `json:"image_studio_retention_unit"`
+	DefaultConcurrency                   int                          `json:"default_concurrency"`
+	DefaultBalance                       float64                      `json:"default_balance"`
+	AffiliateRebateRate                  float64                      `json:"affiliate_rebate_rate"`
+	AffiliateRebateFreezeHours           int                          `json:"affiliate_rebate_freeze_hours"`
+	AffiliateRebateDurationDays          int                          `json:"affiliate_rebate_duration_days"`
+	AffiliateRebatePerInviteeCap         float64                      `json:"affiliate_rebate_per_invitee_cap"`
+	DefaultUserRPMLimit                  int                          `json:"default_user_rpm_limit"`
+	DefaultSubscriptions                 []DefaultSubscriptionSetting `json:"default_subscriptions"`
+	DefaultUsageCards                    []DefaultUsageCardSetting    `json:"default_usage_cards"`
+	ImageStudioAsyncConcurrency          int                          `json:"image_studio_async_concurrency"`
+	ImageStudioRetentionValue            int                          `json:"image_studio_retention_value"`
+	ImageStudioRetentionUnit             string                       `json:"image_studio_retention_unit"`
+	ImageStudioAvailableGroupIDs         []int64                      `json:"image_studio_available_group_ids"`
+	ImageGenerationToolDeclarationPolicy string                       `json:"image_generation_tool_declaration_policy"`
 
 	// Model fallback configuration
 	EnableModelFallback      bool   `json:"enable_model_fallback"`

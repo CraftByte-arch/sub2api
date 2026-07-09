@@ -245,6 +245,31 @@ func TestSettingService_GetAllSettings_ParsesImageStudioAsyncSettings(t *testing
 	require.Equal(t, ImageStudioRetentionUnitDay, settings.ImageStudioRetentionUnit)
 }
 
+func TestSettingService_GetAllSettings_ParsesImageStudioAdminControls(t *testing.T) {
+	repo := &settingHandlerStyleRepoStub{
+		values: map[string]string{
+			SettingKeyImageStudioAvailableGroupIDs:         `[3,2,3,0,-1]`,
+			SettingKeyImageGenerationToolDeclarationPolicy: ImageGenerationToolDeclarationPolicyAllow,
+		},
+	}
+	svc := NewSettingService(repo, &config.Config{})
+
+	settings, err := svc.GetAllSettings(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, []int64{3, 2}, settings.ImageStudioAvailableGroupIDs)
+	require.Equal(t, ImageGenerationToolDeclarationPolicyAllow, settings.ImageGenerationToolDeclarationPolicy)
+}
+
+func TestSettingService_GetAllSettings_DefaultsImageStudioAdminControls(t *testing.T) {
+	repo := &settingHandlerStyleRepoStub{values: map[string]string{}}
+	svc := NewSettingService(repo, &config.Config{})
+
+	settings, err := svc.GetAllSettings(context.Background())
+	require.NoError(t, err)
+	require.Empty(t, settings.ImageStudioAvailableGroupIDs)
+	require.Equal(t, ImageGenerationToolDeclarationPolicyStrip, settings.ImageGenerationToolDeclarationPolicy)
+}
+
 type settingHandlerStyleRepoStub struct {
 	values map[string]string
 }

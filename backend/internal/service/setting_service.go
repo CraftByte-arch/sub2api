@@ -1065,6 +1065,50 @@ func parseNonNegativeIntSetting(raw string, fallback int) int {
 	return v
 }
 
+func NormalizeImageGenerationToolDeclarationPolicy(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case ImageGenerationToolDeclarationPolicyAllow:
+		return ImageGenerationToolDeclarationPolicyAllow
+	case ImageGenerationToolDeclarationPolicyReject:
+		return ImageGenerationToolDeclarationPolicyReject
+	default:
+		return ImageGenerationToolDeclarationPolicyStrip
+	}
+}
+
+func normalizeImageStudioAvailableGroupIDs(ids []int64) []int64 {
+	seen := make(map[int64]struct{}, len(ids))
+	out := make([]int64, 0, len(ids))
+	for _, id := range ids {
+		if id <= 0 {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
+}
+
+func parseInt64ListSetting(raw string) []int64 {
+	var ids []int64
+	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &ids); err != nil {
+		return []int64{}
+	}
+	return normalizeImageStudioAvailableGroupIDs(ids)
+}
+
+func marshalInt64ListSetting(ids []int64) string {
+	normalized := normalizeImageStudioAvailableGroupIDs(ids)
+	raw, err := json.Marshal(normalized)
+	if err != nil {
+		return "[]"
+	}
+	return string(raw)
+}
+
 func parsePositiveFloatSetting(raw string, fallback float64) float64 {
 	v, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
 	if err != nil || v <= 0 {
@@ -2298,6 +2342,8 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingKeyImageStudioAsyncConcurrency] = strconv.Itoa(settings.ImageStudioAsyncConcurrency)
 	updates[SettingKeyImageStudioRetentionValue] = strconv.Itoa(settings.ImageStudioRetentionValue)
 	updates[SettingKeyImageStudioRetentionUnit] = settings.ImageStudioRetentionUnit
+	updates[SettingKeyImageStudioAvailableGroupIDs] = marshalInt64ListSetting(settings.ImageStudioAvailableGroupIDs)
+	updates[SettingKeyImageGenerationToolDeclarationPolicy] = NormalizeImageGenerationToolDeclarationPolicy(settings.ImageGenerationToolDeclarationPolicy)
 	updates[SettingKeyOpenAILongContextBillingEnabled] = strconv.FormatBool(settings.OpenAILongContextBillingEnabled)
 	updates[SettingKeyOpenAILongContextBillingThreshold] = strconv.Itoa(parsePositiveIntSetting(strconv.Itoa(settings.OpenAILongContextBillingThreshold), defaultOpenAILongContextBillingThreshold))
 	updates[SettingKeyOpenAILongContextBillingMultiplier] = strconv.FormatFloat(parsePositiveFloatSetting(strconv.FormatFloat(settings.OpenAILongContextBillingMultiplier, 'f', -1, 64), defaultOpenAILongContextBillingMultiplier), 'f', -1, 64)
@@ -3339,6 +3385,8 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyImageStudioAsyncConcurrency:               strconv.Itoa(defaultImageStudioAsyncConcurrency),
 		SettingKeyImageStudioRetentionValue:                 strconv.Itoa(defaultImageStudioRetentionValue),
 		SettingKeyImageStudioRetentionUnit:                  defaultImageStudioRetentionUnit,
+		SettingKeyImageStudioAvailableGroupIDs:              "[]",
+		SettingKeyImageGenerationToolDeclarationPolicy:      ImageGenerationToolDeclarationPolicyStrip,
 		SettingKeyOpenAILongContextBillingEnabled:           "true",
 		SettingKeyOpenAILongContextBillingThreshold:         strconv.Itoa(defaultOpenAILongContextBillingThreshold),
 		SettingKeyOpenAILongContextBillingMultiplier:        strconv.FormatFloat(defaultOpenAILongContextBillingMultiplier, 'f', -1, 64),
@@ -3533,55 +3581,57 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 		apiKeyACLTrustForwardedIP = s.cfg.Security.TrustForwardedIPForAPIKeyACL
 	}
 	result := &SystemSettings{
-		RegistrationEnabled:                settings[SettingKeyRegistrationEnabled] == "true",
-		EmailVerifyEnabled:                 emailVerifyEnabled,
-		RegistrationEmailSuffixWhitelist:   ParseRegistrationEmailSuffixWhitelist(settings[SettingKeyRegistrationEmailSuffixWhitelist]),
-		PromoCodeEnabled:                   settings[SettingKeyPromoCodeEnabled] != "false", // 默认启用
-		PasswordResetEnabled:               emailVerifyEnabled && settings[SettingKeyPasswordResetEnabled] == "true",
-		FrontendURL:                        settings[SettingKeyFrontendURL],
-		InvitationCodeEnabled:              settings[SettingKeyInvitationCodeEnabled] == "true",
-		TotpEnabled:                        settings[SettingKeyTotpEnabled] == "true",
-		LoginAgreementEnabled:              settings[SettingKeyLoginAgreementEnabled] == "true",
-		LoginAgreementMode:                 normalizeLoginAgreementMode(settings[SettingKeyLoginAgreementMode]),
-		LoginAgreementUpdatedAt:            loginAgreementUpdatedAt,
-		LoginAgreementDocuments:            loginAgreementDocuments,
-		SMTPHost:                           settings[SettingKeySMTPHost],
-		SMTPUsername:                       settings[SettingKeySMTPUsername],
-		SMTPFrom:                           settings[SettingKeySMTPFrom],
-		SMTPFromName:                       settings[SettingKeySMTPFromName],
-		SMTPUseTLS:                         settings[SettingKeySMTPUseTLS] == "true",
-		SMTPPasswordConfigured:             settings[SettingKeySMTPPassword] != "",
-		TurnstileEnabled:                   settings[SettingKeyTurnstileEnabled] == "true",
-		TurnstileSiteKey:                   settings[SettingKeyTurnstileSiteKey],
-		TurnstileSecretKeyConfigured:       settings[SettingKeyTurnstileSecretKey] != "",
-		APIKeyACLTrustForwardedIP:          apiKeyACLTrustForwardedIP,
-		SiteName:                           s.getStringOrDefault(settings, SettingKeySiteName, "Sub2API"),
-		SiteLogo:                           settings[SettingKeySiteLogo],
-		SiteSubtitle:                       s.getStringOrDefault(settings, SettingKeySiteSubtitle, "Subscription to API Conversion Platform"),
-		APIBaseURL:                         settings[SettingKeyAPIBaseURL],
-		ContactInfo:                        settings[SettingKeyContactInfo],
-		DocURL:                             settings[SettingKeyDocURL],
-		HomeContent:                        settings[SettingKeyHomeContent],
-		HideCcsImportButton:                settings[SettingKeyHideCcsImportButton] == "true",
-		PurchaseSubscriptionEnabled:        settings[SettingKeyPurchaseSubscriptionEnabled] == "true",
-		PurchaseSubscriptionURL:            strings.TrimSpace(settings[SettingKeyPurchaseSubscriptionURL]),
-		LegacySubscriptionPurchaseEnabled:  settings[SettingKeyLegacySubscriptionPurchaseEnabled] != "false",
-		LegacySubscriptionVisible:          settings[SettingKeyLegacySubscriptionVisible] != "false",
-		UsageCardEnabled:                   settings[SettingKeyUsageCardEnabled] == "true",
-		UsageCardPaymentEnabled:            settings[SettingKeyUsageCardPaymentEnabled] == "true",
-		UsageCardRedeemEnabled:             settings[SettingKeyUsageCardRedeemEnabled] == "true",
-		UsageCardBillingEnabled:            settings[SettingKeyUsageCardBillingEnabled] == "true",
-		UsageCardDefaultPriority:           s.getStringOrDefault(settings, SettingKeyUsageCardDefaultPriority, BillingPriorityUsageCardFirst),
-		ImageStudioAsyncConcurrency:        parsePositiveIntSetting(settings[SettingKeyImageStudioAsyncConcurrency], defaultImageStudioAsyncConcurrency),
-		ImageStudioRetentionValue:          parseNonNegativeIntSetting(settings[SettingKeyImageStudioRetentionValue], defaultImageStudioRetentionValue),
-		ImageStudioRetentionUnit:           normalizeImageStudioRetentionUnit(settings[SettingKeyImageStudioRetentionUnit]),
-		OpenAILongContextBillingEnabled:    !isFalseSettingValue(settings[SettingKeyOpenAILongContextBillingEnabled]),
-		OpenAILongContextBillingThreshold:  parsePositiveIntSetting(settings[SettingKeyOpenAILongContextBillingThreshold], defaultOpenAILongContextBillingThreshold),
-		OpenAILongContextBillingMultiplier: parsePositiveFloatSetting(settings[SettingKeyOpenAILongContextBillingMultiplier], defaultOpenAILongContextBillingMultiplier),
-		OpenAILongContextOutputMultiplier:  parsePositiveFloatSetting(settings[SettingKeyOpenAILongContextOutputMultiplier], defaultOpenAILongContextOutputMultiplier),
-		CustomMenuItems:                    settings[SettingKeyCustomMenuItems],
-		CustomEndpoints:                    settings[SettingKeyCustomEndpoints],
-		BackendModeEnabled:                 settings[SettingKeyBackendModeEnabled] == "true",
+		RegistrationEnabled:                  settings[SettingKeyRegistrationEnabled] == "true",
+		EmailVerifyEnabled:                   emailVerifyEnabled,
+		RegistrationEmailSuffixWhitelist:     ParseRegistrationEmailSuffixWhitelist(settings[SettingKeyRegistrationEmailSuffixWhitelist]),
+		PromoCodeEnabled:                     settings[SettingKeyPromoCodeEnabled] != "false", // 默认启用
+		PasswordResetEnabled:                 emailVerifyEnabled && settings[SettingKeyPasswordResetEnabled] == "true",
+		FrontendURL:                          settings[SettingKeyFrontendURL],
+		InvitationCodeEnabled:                settings[SettingKeyInvitationCodeEnabled] == "true",
+		TotpEnabled:                          settings[SettingKeyTotpEnabled] == "true",
+		LoginAgreementEnabled:                settings[SettingKeyLoginAgreementEnabled] == "true",
+		LoginAgreementMode:                   normalizeLoginAgreementMode(settings[SettingKeyLoginAgreementMode]),
+		LoginAgreementUpdatedAt:              loginAgreementUpdatedAt,
+		LoginAgreementDocuments:              loginAgreementDocuments,
+		SMTPHost:                             settings[SettingKeySMTPHost],
+		SMTPUsername:                         settings[SettingKeySMTPUsername],
+		SMTPFrom:                             settings[SettingKeySMTPFrom],
+		SMTPFromName:                         settings[SettingKeySMTPFromName],
+		SMTPUseTLS:                           settings[SettingKeySMTPUseTLS] == "true",
+		SMTPPasswordConfigured:               settings[SettingKeySMTPPassword] != "",
+		TurnstileEnabled:                     settings[SettingKeyTurnstileEnabled] == "true",
+		TurnstileSiteKey:                     settings[SettingKeyTurnstileSiteKey],
+		TurnstileSecretKeyConfigured:         settings[SettingKeyTurnstileSecretKey] != "",
+		APIKeyACLTrustForwardedIP:            apiKeyACLTrustForwardedIP,
+		SiteName:                             s.getStringOrDefault(settings, SettingKeySiteName, "Sub2API"),
+		SiteLogo:                             settings[SettingKeySiteLogo],
+		SiteSubtitle:                         s.getStringOrDefault(settings, SettingKeySiteSubtitle, "Subscription to API Conversion Platform"),
+		APIBaseURL:                           settings[SettingKeyAPIBaseURL],
+		ContactInfo:                          settings[SettingKeyContactInfo],
+		DocURL:                               settings[SettingKeyDocURL],
+		HomeContent:                          settings[SettingKeyHomeContent],
+		HideCcsImportButton:                  settings[SettingKeyHideCcsImportButton] == "true",
+		PurchaseSubscriptionEnabled:          settings[SettingKeyPurchaseSubscriptionEnabled] == "true",
+		PurchaseSubscriptionURL:              strings.TrimSpace(settings[SettingKeyPurchaseSubscriptionURL]),
+		LegacySubscriptionPurchaseEnabled:    settings[SettingKeyLegacySubscriptionPurchaseEnabled] != "false",
+		LegacySubscriptionVisible:            settings[SettingKeyLegacySubscriptionVisible] != "false",
+		UsageCardEnabled:                     settings[SettingKeyUsageCardEnabled] == "true",
+		UsageCardPaymentEnabled:              settings[SettingKeyUsageCardPaymentEnabled] == "true",
+		UsageCardRedeemEnabled:               settings[SettingKeyUsageCardRedeemEnabled] == "true",
+		UsageCardBillingEnabled:              settings[SettingKeyUsageCardBillingEnabled] == "true",
+		UsageCardDefaultPriority:             s.getStringOrDefault(settings, SettingKeyUsageCardDefaultPriority, BillingPriorityUsageCardFirst),
+		ImageStudioAsyncConcurrency:          parsePositiveIntSetting(settings[SettingKeyImageStudioAsyncConcurrency], defaultImageStudioAsyncConcurrency),
+		ImageStudioRetentionValue:            parseNonNegativeIntSetting(settings[SettingKeyImageStudioRetentionValue], defaultImageStudioRetentionValue),
+		ImageStudioRetentionUnit:             normalizeImageStudioRetentionUnit(settings[SettingKeyImageStudioRetentionUnit]),
+		ImageStudioAvailableGroupIDs:         parseInt64ListSetting(settings[SettingKeyImageStudioAvailableGroupIDs]),
+		ImageGenerationToolDeclarationPolicy: NormalizeImageGenerationToolDeclarationPolicy(settings[SettingKeyImageGenerationToolDeclarationPolicy]),
+		OpenAILongContextBillingEnabled:      !isFalseSettingValue(settings[SettingKeyOpenAILongContextBillingEnabled]),
+		OpenAILongContextBillingThreshold:    parsePositiveIntSetting(settings[SettingKeyOpenAILongContextBillingThreshold], defaultOpenAILongContextBillingThreshold),
+		OpenAILongContextBillingMultiplier:   parsePositiveFloatSetting(settings[SettingKeyOpenAILongContextBillingMultiplier], defaultOpenAILongContextBillingMultiplier),
+		OpenAILongContextOutputMultiplier:    parsePositiveFloatSetting(settings[SettingKeyOpenAILongContextOutputMultiplier], defaultOpenAILongContextOutputMultiplier),
+		CustomMenuItems:                      settings[SettingKeyCustomMenuItems],
+		CustomEndpoints:                      settings[SettingKeyCustomEndpoints],
+		BackendModeEnabled:                   settings[SettingKeyBackendModeEnabled] == "true",
 	}
 	result.TableDefaultPageSize, result.TablePageSizeOptions = parseTablePreferences(
 		settings[SettingKeyTableDefaultPageSize],

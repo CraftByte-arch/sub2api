@@ -237,3 +237,50 @@ func TestSettingHandler_ImageStudioAsyncSettings_PutGetRoundTrip(t *testing.T) {
 	require.Equal(t, float64(72), data["image_studio_retention_value"])
 	require.Equal(t, service.ImageStudioRetentionUnitHour, data["image_studio_retention_unit"])
 }
+
+func TestSettingHandler_ImageStudioAdminControls_PutGetRoundTrip(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &settingHandlerRepoStub{
+		values: map[string]string{
+			service.SettingKeyPromoCodeEnabled: "true",
+		},
+	}
+	svc := service.NewSettingService(repo, &config.Config{Default: config.DefaultConfig{UserConcurrency: 5}})
+	handler := NewSettingHandler(svc, nil, nil, nil, nil, nil, nil)
+
+	putBody := map[string]any{
+		"image_studio_available_group_ids":         []int64{3, 2, 3, 0, -1},
+		"image_generation_tool_declaration_policy": service.ImageGenerationToolDeclarationPolicyAllow,
+	}
+	rawBody, err := json.Marshal(putBody)
+	require.NoError(t, err)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPut, "/api/v1/admin/settings", bytes.NewReader(rawBody))
+	c.Request.Header.Set("Content-Type", "application/json")
+	handler.UpdateSettings(c)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.JSONEq(t, `[3,2]`, repo.values[service.SettingKeyImageStudioAvailableGroupIDs])
+	require.Equal(t, service.ImageGenerationToolDeclarationPolicyAllow, repo.values[service.SettingKeyImageGenerationToolDeclarationPolicy])
+
+	var putResp response.Response
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &putResp))
+	putData, ok := putResp.Data.(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, []any{float64(3), float64(2)}, putData["image_studio_available_group_ids"])
+	require.Equal(t, service.ImageGenerationToolDeclarationPolicyAllow, putData["image_generation_tool_declaration_policy"])
+
+	rec2 := httptest.NewRecorder()
+	c2, _ := gin.CreateTestContext(rec2)
+	c2.Request = httptest.NewRequest(http.MethodGet, "/api/v1/admin/settings", nil)
+	handler.GetSettings(c2)
+	require.Equal(t, http.StatusOK, rec2.Code)
+
+	var resp response.Response
+	require.NoError(t, json.Unmarshal(rec2.Body.Bytes(), &resp))
+	data, ok := resp.Data.(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, []any{float64(3), float64(2)}, data["image_studio_available_group_ids"])
+	require.Equal(t, service.ImageGenerationToolDeclarationPolicyAllow, data["image_generation_tool_declaration_policy"])
+}

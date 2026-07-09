@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"reflect"
 	"regexp"
 	"strings"
 
@@ -238,6 +239,8 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		ImageStudioAsyncConcurrency:                            settings.ImageStudioAsyncConcurrency,
 		ImageStudioRetentionValue:                              settings.ImageStudioRetentionValue,
 		ImageStudioRetentionUnit:                               settings.ImageStudioRetentionUnit,
+		ImageStudioAvailableGroupIDs:                           settings.ImageStudioAvailableGroupIDs,
+		ImageGenerationToolDeclarationPolicy:                   settings.ImageGenerationToolDeclarationPolicy,
 		OpenAILongContextBillingEnabled:                        settings.OpenAILongContextBillingEnabled,
 		OpenAILongContextBillingThreshold:                      settings.OpenAILongContextBillingThreshold,
 		OpenAILongContextBillingMultiplier:                     settings.OpenAILongContextBillingMultiplier,
@@ -549,34 +552,36 @@ type UpdateSettingsRequest struct {
 	GoogleOAuthFrontendRedirectURL string `json:"google_oauth_frontend_redirect_url"`
 
 	// OEM设置
-	SiteName                           string                `json:"site_name"`
-	SiteLogo                           string                `json:"site_logo"`
-	SiteSubtitle                       string                `json:"site_subtitle"`
-	APIBaseURL                         string                `json:"api_base_url"`
-	ContactInfo                        string                `json:"contact_info"`
-	DocURL                             string                `json:"doc_url"`
-	HomeContent                        string                `json:"home_content"`
-	HideCcsImportButton                bool                  `json:"hide_ccs_import_button"`
-	PurchaseSubscriptionEnabled        *bool                 `json:"purchase_subscription_enabled"`
-	PurchaseSubscriptionURL            *string               `json:"purchase_subscription_url"`
-	LegacySubscriptionPurchaseEnabled  *bool                 `json:"legacy_subscription_purchase_enabled"`
-	LegacySubscriptionVisible          *bool                 `json:"legacy_subscription_visible"`
-	UsageCardEnabled                   *bool                 `json:"usage_card_enabled"`
-	UsageCardPaymentEnabled            *bool                 `json:"usage_card_payment_enabled"`
-	UsageCardRedeemEnabled             *bool                 `json:"usage_card_redeem_enabled"`
-	UsageCardBillingEnabled            *bool                 `json:"usage_card_billing_enabled"`
-	UsageCardDefaultPriority           *string               `json:"usage_card_default_priority"`
-	ImageStudioAsyncConcurrency        int                   `json:"image_studio_async_concurrency"`
-	ImageStudioRetentionValue          int                   `json:"image_studio_retention_value"`
-	ImageStudioRetentionUnit           string                `json:"image_studio_retention_unit"`
-	OpenAILongContextBillingEnabled    *bool                 `json:"openai_long_context_billing_enabled"`
-	OpenAILongContextBillingThreshold  *int                  `json:"openai_long_context_billing_threshold"`
-	OpenAILongContextBillingMultiplier *float64              `json:"openai_long_context_billing_multiplier"`
-	OpenAILongContextOutputMultiplier  *float64              `json:"openai_long_context_output_multiplier"`
-	TableDefaultPageSize               int                   `json:"table_default_page_size"`
-	TablePageSizeOptions               []int                 `json:"table_page_size_options"`
-	CustomMenuItems                    *[]dto.CustomMenuItem `json:"custom_menu_items"`
-	CustomEndpoints                    *[]dto.CustomEndpoint `json:"custom_endpoints"`
+	SiteName                             string                `json:"site_name"`
+	SiteLogo                             string                `json:"site_logo"`
+	SiteSubtitle                         string                `json:"site_subtitle"`
+	APIBaseURL                           string                `json:"api_base_url"`
+	ContactInfo                          string                `json:"contact_info"`
+	DocURL                               string                `json:"doc_url"`
+	HomeContent                          string                `json:"home_content"`
+	HideCcsImportButton                  bool                  `json:"hide_ccs_import_button"`
+	PurchaseSubscriptionEnabled          *bool                 `json:"purchase_subscription_enabled"`
+	PurchaseSubscriptionURL              *string               `json:"purchase_subscription_url"`
+	LegacySubscriptionPurchaseEnabled    *bool                 `json:"legacy_subscription_purchase_enabled"`
+	LegacySubscriptionVisible            *bool                 `json:"legacy_subscription_visible"`
+	UsageCardEnabled                     *bool                 `json:"usage_card_enabled"`
+	UsageCardPaymentEnabled              *bool                 `json:"usage_card_payment_enabled"`
+	UsageCardRedeemEnabled               *bool                 `json:"usage_card_redeem_enabled"`
+	UsageCardBillingEnabled              *bool                 `json:"usage_card_billing_enabled"`
+	UsageCardDefaultPriority             *string               `json:"usage_card_default_priority"`
+	ImageStudioAsyncConcurrency          int                   `json:"image_studio_async_concurrency"`
+	ImageStudioRetentionValue            int                   `json:"image_studio_retention_value"`
+	ImageStudioRetentionUnit             string                `json:"image_studio_retention_unit"`
+	ImageStudioAvailableGroupIDs         []int64               `json:"image_studio_available_group_ids"`
+	ImageGenerationToolDeclarationPolicy string                `json:"image_generation_tool_declaration_policy"`
+	OpenAILongContextBillingEnabled      *bool                 `json:"openai_long_context_billing_enabled"`
+	OpenAILongContextBillingThreshold    *int                  `json:"openai_long_context_billing_threshold"`
+	OpenAILongContextBillingMultiplier   *float64              `json:"openai_long_context_billing_multiplier"`
+	OpenAILongContextOutputMultiplier    *float64              `json:"openai_long_context_output_multiplier"`
+	TableDefaultPageSize                 int                   `json:"table_default_page_size"`
+	TablePageSizeOptions                 []int                 `json:"table_page_size_options"`
+	CustomMenuItems                      *[]dto.CustomMenuItem `json:"custom_menu_items"`
+	CustomEndpoints                      *[]dto.CustomEndpoint `json:"custom_endpoints"`
 
 	// 默认配置
 	DefaultConcurrency                        int                               `json:"default_concurrency"`
@@ -796,6 +801,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		req.ImageStudioRetentionValue = 0
 	}
 	req.ImageStudioRetentionUnit = service.NormalizeImageStudioRetentionUnitForWrite(req.ImageStudioRetentionUnit)
+	req.ImageGenerationToolDeclarationPolicy = service.NormalizeImageGenerationToolDeclarationPolicy(req.ImageGenerationToolDeclarationPolicy)
 	if req.DefaultBalance < 0 {
 		req.DefaultBalance = 0
 	}
@@ -1787,6 +1793,8 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		ImageStudioAsyncConcurrency:            req.ImageStudioAsyncConcurrency,
 		ImageStudioRetentionValue:              req.ImageStudioRetentionValue,
 		ImageStudioRetentionUnit:               req.ImageStudioRetentionUnit,
+		ImageStudioAvailableGroupIDs:           req.ImageStudioAvailableGroupIDs,
+		ImageGenerationToolDeclarationPolicy:   req.ImageGenerationToolDeclarationPolicy,
 		OpenAILongContextBillingEnabled:        openaiLongContextBillingEnabled,
 		OpenAILongContextBillingThreshold:      openaiLongContextBillingThreshold,
 		OpenAILongContextBillingMultiplier:     openaiLongContextBillingMultiplier,
@@ -2310,6 +2318,8 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		ImageStudioAsyncConcurrency:                            updatedSettings.ImageStudioAsyncConcurrency,
 		ImageStudioRetentionValue:                              updatedSettings.ImageStudioRetentionValue,
 		ImageStudioRetentionUnit:                               updatedSettings.ImageStudioRetentionUnit,
+		ImageStudioAvailableGroupIDs:                           updatedSettings.ImageStudioAvailableGroupIDs,
+		ImageGenerationToolDeclarationPolicy:                   updatedSettings.ImageGenerationToolDeclarationPolicy,
 		OpenAILongContextBillingEnabled:                        updatedSettings.OpenAILongContextBillingEnabled,
 		OpenAILongContextBillingThreshold:                      updatedSettings.OpenAILongContextBillingThreshold,
 		OpenAILongContextBillingMultiplier:                     updatedSettings.OpenAILongContextBillingMultiplier,
@@ -2765,6 +2775,12 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	}
 	if before.ImageStudioRetentionUnit != after.ImageStudioRetentionUnit {
 		changed = append(changed, service.SettingKeyImageStudioRetentionUnit)
+	}
+	if !reflect.DeepEqual(before.ImageStudioAvailableGroupIDs, after.ImageStudioAvailableGroupIDs) {
+		changed = append(changed, service.SettingKeyImageStudioAvailableGroupIDs)
+	}
+	if before.ImageGenerationToolDeclarationPolicy != after.ImageGenerationToolDeclarationPolicy {
+		changed = append(changed, service.SettingKeyImageGenerationToolDeclarationPolicy)
 	}
 	if before.AffiliateRebateRate != after.AffiliateRebateRate {
 		changed = append(changed, "affiliate_rebate_rate")
