@@ -281,6 +281,35 @@ func TestImageStudioJobServiceExistingReceiptCompletesWithoutMutableDependencies
 	require.InDelta(t, receipt.ActualCost, repo.chargedAmountUSD, 1e-12)
 }
 
+func TestImageStudioJobServiceStaleRunningIsFailedWithoutUpstreamReplay(t *testing.T) {
+	repo := &imageStudioWorkerRepoStub{markStaleRunningChanged: true}
+	svc := &ImageStudioJobService{repo: repo}
+
+	svc.processJob(context.Background(), ImageStudioJob{
+		ID:     39,
+		Status: ImageStudioJobStatusRunning,
+	})
+
+	require.Equal(t, 1, repo.markStaleRunningCalls)
+	require.Zero(t, repo.markRunningCalls)
+}
+
+func TestImageStudioJobServiceRunningHeartbeatRefreshesUntilStopped(t *testing.T) {
+	repo := &imageStudioWorkerRepoStub{heartbeatCh: make(chan struct{}, 2)}
+	svc := &ImageStudioJobService{repo: repo}
+
+	stop := svc.startImageStudioJobHeartbeat(context.Background(), 39, time.Millisecond)
+	select {
+	case <-repo.heartbeatCh:
+	case <-time.After(time.Second):
+		t.Fatal("heartbeat was not refreshed")
+	}
+	stop()
+	callsAfterStop := repo.heartbeatCalls
+	time.Sleep(5 * time.Millisecond)
+	require.Equal(t, callsAfterStop, repo.heartbeatCalls)
+}
+
 type imageStudioWorkerRepoStub struct {
 	ImageStudioJobRepository
 	claimSettling                bool
@@ -291,6 +320,26 @@ type imageStudioWorkerRepoStub struct {
 	markSettlementRetryableCalls int
 	chargedAmountUSD             float64
 	retryErrorCode               string
+	markStaleRunningChanged      bool
+	markStaleRunningCalls        int
+	heartbeatCalls               int
+	heartbeatCh                  chan struct{}
+}
+
+func (r *imageStudioWorkerRepoStub) UpdateHeartbeat(context.Context, int64, time.Time) error {
+	r.heartbeatCalls++
+	if r.heartbeatCh != nil {
+		select {
+		case r.heartbeatCh <- struct{}{}:
+		default:
+		}
+	}
+	return nil
+}
+
+func (r *imageStudioWorkerRepoStub) MarkStaleRunningFailed(context.Context, int64, time.Time, time.Time) (bool, error) {
+	r.markStaleRunningCalls++
+	return r.markStaleRunningChanged, nil
 }
 
 func (r *imageStudioWorkerRepoStub) MarkRunning(context.Context, int64, time.Time) (bool, error) {

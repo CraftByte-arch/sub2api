@@ -127,6 +127,70 @@ func TestImageStudioJobRepositoryCountStatusByUser(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestImageStudioJobRepositoryListRunnableIncludesStaleRunning(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	mock.ExpectQuery("WITH first_per_user[\\s\\S]*status = \\$3[\\s\\S]*heartbeat_at IS NULL OR heartbeat_at <= NOW\\(\\) - INTERVAL '5 minutes'[\\s\\S]*LIMIT \\$4").
+		WithArgs(
+			service.ImageStudioJobStatusQueued,
+			service.ImageStudioJobStatusSettling,
+			service.ImageStudioJobStatusRunning,
+			2,
+		).
+		WillReturnRows(sqlmock.NewRows(imageStudioJobColumnNames()))
+
+	repo := NewImageStudioJobRepository(nil, db)
+	jobs, err := repo.ListRunnableJobs(context.Background(), 2)
+
+	require.NoError(t, err)
+	require.Empty(t, jobs)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestImageStudioJobRepositoryUpdateHeartbeatOnlyTouchesRunning(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	heartbeatAt := time.Now()
+	mock.ExpectExec("UPDATE image_studio_jobs SET heartbeat_at = \\$2, updated_at = NOW\\(\\) WHERE id = \\$1 AND status = \\$3").
+		WithArgs(int64(39), heartbeatAt, service.ImageStudioJobStatusRunning).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	repo := NewImageStudioJobRepository(nil, db)
+	err = repo.UpdateHeartbeat(context.Background(), 39, heartbeatAt)
+
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestImageStudioJobRepositoryMarkStaleRunningFailedUsesHeartbeatGuard(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	completedAt := time.Now()
+	staleBefore := completedAt.Add(-5 * time.Minute)
+	mock.ExpectExec("UPDATE image_studio_jobs[\\s\\S]*status = \\$2[\\s\\S]*error_code = 'worker_interrupted'[\\s\\S]*WHERE id = \\$1[\\s\\S]*status = \\$4[\\s\\S]*heartbeat_at IS NULL OR heartbeat_at <= \\$5").
+		WithArgs(
+			int64(39),
+			service.ImageStudioJobStatusFailed,
+			completedAt,
+			service.ImageStudioJobStatusRunning,
+			staleBefore,
+		).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	repo := NewImageStudioJobRepository(nil, db)
+	changed, err := repo.MarkStaleRunningFailed(context.Background(), 39, completedAt, staleBefore)
+
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestImageStudioJobRepositoryMarkSettlingStoresAssetsBeforeBilling(t *testing.T) {
 	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
 	require.NoError(t, err)

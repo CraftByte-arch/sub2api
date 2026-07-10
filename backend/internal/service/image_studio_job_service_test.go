@@ -128,6 +128,10 @@ func (r *imageStudioJobDeleteRepoStub) MarkRunning(context.Context, int64, time.
 	panic("unexpected MarkRunning call")
 }
 
+func (r *imageStudioJobDeleteRepoStub) MarkStaleRunningFailed(context.Context, int64, time.Time, time.Time) (bool, error) {
+	panic("unexpected MarkStaleRunningFailed call")
+}
+
 func (r *imageStudioJobDeleteRepoStub) MarkSettling(context.Context, int64, json.RawMessage, string, string, string, int64, int, int, time.Time) error {
 	panic("unexpected MarkSettling call")
 }

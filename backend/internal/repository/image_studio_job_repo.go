@@ -157,19 +157,22 @@ func (r *imageStudioJobRepository) ListRunnableJobs(ctx context.Context, limit i
 			WHERE (
 				status = $1
 				AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
-			) OR (
-				status = $2
-				AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
-				AND (heartbeat_at IS NULL OR heartbeat_at <= NOW() - INTERVAL '5 minutes')
-			)
+				) OR (
+					status = $2
+					AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
+					AND (heartbeat_at IS NULL OR heartbeat_at <= NOW() - INTERVAL '5 minutes')
+				) OR (
+					status = $3
+					AND (heartbeat_at IS NULL OR heartbeat_at <= NOW() - INTERVAL '5 minutes')
+				)
 			ORDER BY user_id, COALESCE(next_attempt_at, queued_at) ASC, id ASC
 		)
 		SELECT `+qualifiedImageStudioJobColumns("j")+`
 		FROM image_studio_jobs j
 		INNER JOIN first_per_user f ON f.id = j.id
 		ORDER BY j.queued_at ASC, j.id ASC
-		LIMIT $3
-	`, service.ImageStudioJobStatusQueued, service.ImageStudioJobStatusSettling, limit)
+			LIMIT $4
+		`, service.ImageStudioJobStatusQueued, service.ImageStudioJobStatusSettling, service.ImageStudioJobStatusRunning, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -192,6 +195,26 @@ func (r *imageStudioJobRepository) MarkRunning(ctx context.Context, id int64, st
 		SET status = $2, started_at = $3, heartbeat_at = $3, updated_at = NOW()
 		WHERE id = $1 AND status = $4
 	`, id, service.ImageStudioJobStatusRunning, startedAt, service.ImageStudioJobStatusQueued)
+	if err != nil {
+		return false, err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return rowsAffected > 0, nil
+}
+
+func (r *imageStudioJobRepository) MarkStaleRunningFailed(ctx context.Context, id int64, completedAt, staleBefore time.Time) (bool, error) {
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE image_studio_jobs
+		SET status = $2, completed_at = $3, error_code = 'worker_interrupted',
+			error_message = 'image generation worker was interrupted', next_attempt_at = NULL,
+			heartbeat_at = NULL, updated_at = NOW()
+		WHERE id = $1
+			AND status = $4
+			AND (heartbeat_at IS NULL OR heartbeat_at <= $5)
+	`, id, service.ImageStudioJobStatusFailed, completedAt, service.ImageStudioJobStatusRunning, staleBefore)
 	if err != nil {
 		return false, err
 	}
@@ -263,7 +286,7 @@ func (r *imageStudioJobRepository) MarkSettlementRetryable(ctx context.Context, 
 }
 
 func (r *imageStudioJobRepository) UpdateHeartbeat(ctx context.Context, id int64, heartbeatAt time.Time) error {
-	_, err := r.db.ExecContext(ctx, `UPDATE image_studio_jobs SET heartbeat_at = $2, updated_at = NOW() WHERE id = $1`, id, heartbeatAt)
+	_, err := r.db.ExecContext(ctx, `UPDATE image_studio_jobs SET heartbeat_at = $2, updated_at = NOW() WHERE id = $1 AND status = $3`, id, heartbeatAt, service.ImageStudioJobStatusRunning)
 	return err
 }
 

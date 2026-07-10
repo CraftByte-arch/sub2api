@@ -245,6 +245,9 @@ func (r *imageStudioHandlerJobRepoStub) ListRunnableJobs(ctx context.Context, li
 func (r *imageStudioHandlerJobRepoStub) MarkRunning(ctx context.Context, id int64, startedAt time.Time) (bool, error) {
 	panic("unexpected MarkRunning call")
 }
+func (r *imageStudioHandlerJobRepoStub) MarkStaleRunningFailed(context.Context, int64, time.Time, time.Time) (bool, error) {
+	panic("unexpected MarkStaleRunningFailed call")
+}
 func (r *imageStudioHandlerJobRepoStub) MarkSettling(context.Context, int64, json.RawMessage, string, string, string, int64, int, int, time.Time) error {
 	panic("unexpected MarkSettling call")
 }

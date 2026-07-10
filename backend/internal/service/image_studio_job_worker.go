@@ -28,9 +28,11 @@ import (
 )
 
 const (
-	imageStudioThumbnailMaxEdge = 320
-	imageStudioThumbnailQuality = 82
-	imageStudioMaxAttempts      = 3
+	imageStudioThumbnailMaxEdge    = 320
+	imageStudioThumbnailQuality    = 82
+	imageStudioMaxAttempts         = 3
+	imageStudioHeartbeatInterval   = time.Minute
+	imageStudioHeartbeatStaleAfter = 5 * time.Minute
 )
 
 const imageStudioSettlementPayloadVersion = 1
@@ -204,6 +206,10 @@ func (s *ImageStudioJobService) drainQueueOnce(ctx context.Context) {
 }
 
 func (s *ImageStudioJobService) processJob(ctx context.Context, job ImageStudioJob) {
+	if job.Status == ImageStudioJobStatusRunning {
+		s.recoverStaleRunningJob(ctx, job)
+		return
+	}
 	if job.Status == ImageStudioJobStatusSettling {
 		s.processSettlingJob(ctx, job)
 		return
@@ -220,6 +226,8 @@ func (s *ImageStudioJobService) processJob(ctx context.Context, job ImageStudioJ
 	if err := s.repo.UpdateHeartbeat(ctx, job.ID, startedAt); err != nil {
 		return
 	}
+	stopHeartbeat := s.startImageStudioJobHeartbeat(ctx, job.ID, imageStudioHeartbeatInterval)
+	defer stopHeartbeat()
 
 	apiKey, err := s.apiKeyService.GetByID(ctx, job.APIKeyID)
 	if err != nil {
@@ -301,6 +309,36 @@ func (s *ImageStudioJobService) processJob(ctx context.Context, job ImageStudioJ
 	job.Height = height
 	if err := s.settleJob(ctx, job, apiKey); err != nil {
 		s.requeueSettlement(ctx, job, err)
+	}
+}
+
+func (s *ImageStudioJobService) recoverStaleRunningJob(ctx context.Context, job ImageStudioJob) {
+	now := time.Now()
+	_, _ = s.repo.MarkStaleRunningFailed(ctx, job.ID, now, now.Add(-imageStudioHeartbeatStaleAfter))
+}
+
+func (s *ImageStudioJobService) startImageStudioJobHeartbeat(ctx context.Context, jobID int64, interval time.Duration) func() {
+	if interval <= 0 {
+		interval = imageStudioHeartbeatInterval
+	}
+	heartbeatCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-heartbeatCtx.Done():
+				return
+			case heartbeatAt := <-ticker.C:
+				_ = s.repo.UpdateHeartbeat(context.Background(), jobID, heartbeatAt)
+			}
+		}
+	}()
+	return func() {
+		cancel()
+		<-done
 	}
 }
 

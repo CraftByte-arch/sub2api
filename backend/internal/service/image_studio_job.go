@@ -101,6 +101,7 @@ type ImageStudioJobRepository interface {
 	DeleteByIDForUser(ctx context.Context, id, userID int64) error
 	ListRunnableJobs(ctx context.Context, limit int) ([]ImageStudioJob, error)
 	MarkRunning(ctx context.Context, id int64, startedAt time.Time) (bool, error)
+	MarkStaleRunningFailed(ctx context.Context, id int64, completedAt, staleBefore time.Time) (bool, error)
 	MarkSettling(ctx context.Context, id int64, settlementPayload json.RawMessage, originalPath, thumbnailPath, mimeType string, fileSizeBytes int64, width, height int, leaseAt time.Time) error
 	ClaimSettling(ctx context.Context, id int64, leaseAt, staleBefore time.Time) (bool, error)
 	UpdateHeartbeat(ctx context.Context, id int64, heartbeatAt time.Time) error
