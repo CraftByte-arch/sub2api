@@ -85,8 +85,34 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		}
 		return nil, errors.New("openai ws v1 is temporarily unsupported; use ws v2")
 	}
+	apiKey := getAPIKeyFromContext(c)
+	imageGenerationAllowed := GroupAllowsImageGeneration(apiKeyGroup(apiKey))
+	declarationPolicy := ImageGenerationToolDeclarationPolicyStrip
+	if HasPassiveImageGenerationToolDeclaration(openAIResponsesEndpoint, reqModel, body) {
+		declarationPolicy = s.imageGenerationToolDeclarationPolicy(ctx)
+	}
+	imagePreflight, imagePreflightErr := evaluateOpenAIImageGenerationPreflight(openAIResponsesEndpoint, reqModel, body, declarationPolicy)
+	if imagePreflightErr != nil {
+		return nil, imagePreflightErr
+	}
+	if imagePreflight.DeclarationRejected {
+		MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalFeatureGate)
+		c.JSON(http.StatusForbidden, gin.H{"error": gin.H{"type": "permission_error", "message": "image_generation tool declaration is disabled"}})
+		return nil, errors.New("image_generation tool declaration disabled")
+	}
+	body = imagePreflight.Body
+	originalBody = body
+	if imagePreflight.DeclarationStripped {
+		requestView = newOpenAIRequestView(body)
+		logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Stripped passive /responses image_generation tool by global policy")
+	}
 	passthroughEnabled := account.IsOpenAIPassthroughEnabled()
 	if passthroughEnabled {
+		if imagePreflight.ActualImageIntent && !imageGenerationAllowed {
+			MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalFeatureGate)
+			c.JSON(http.StatusForbidden, gin.H{"error": gin.H{"type": "permission_error", "message": ImageGenerationPermissionMessage()}})
+			return nil, errors.New("image generation disabled for group")
+		}
 		// 透传分支只需要轻量提取字段，避免热路径全量 Unmarshal。
 		reasoningEffort := extractOpenAIReasoningEffortFromBody(body, reqModel)
 		// 国产模型默认 effort 补充：也要用 mappedModel 判定是否是 passback-required 上游。
@@ -145,38 +171,13 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		disablePatch()
 	}
 
-	apiKey := getAPIKeyFromContext(c)
-	imageGenerationAllowed := GroupAllowsImageGeneration(nil)
-	if apiKey != nil {
-		imageGenerationAllowed = GroupAllowsImageGeneration(apiKey.Group)
-	}
 	codexImageGenerationExplicitToolPolicy := codexImageGenerationExplicitToolPolicyAllow
 	if isCodexCLI {
 		codexImageGenerationExplicitToolPolicy = account.CodexImageGenerationExplicitToolPolicy()
 	}
 	codexImageGenerationBridgeEnabled := isCodexCLI && imageGenerationAllowed && codexImageGenerationExplicitToolPolicy != codexImageGenerationExplicitToolPolicyStrip && s.isCodexImageGenerationBridgeEnabled(ctx, account, apiKey)
-	var imageIntent bool
-	var imageGateIntent bool
-	if HasPassiveImageGenerationToolDeclaration(openAIResponsesEndpoint, reqModel, body) {
-		updatedBody, changed, rejected, policyErr := applyOpenAIImageGenerationToolDeclarationPolicyToRawPayload(openAIResponsesEndpoint, reqModel, body, s.imageGenerationToolDeclarationPolicy(ctx))
-		if policyErr != nil {
-			return nil, policyErr
-		}
-		if rejected {
-			MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalFeatureGate)
-			c.JSON(http.StatusForbidden, gin.H{"error": gin.H{"type": "permission_error", "message": "image_generation tool declaration is disabled"}})
-			return nil, errors.New("image_generation tool declaration disabled")
-		}
-		if changed {
-			body = updatedBody
-			requestView = newOpenAIRequestView(body)
-			reqBody = nil
-			bodyModified = false
-			logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Stripped passive /responses image_generation tool by global policy")
-		}
-		imageIntent = IsImageGenerationIntent(openAIResponsesEndpoint, reqModel, body)
-		imageGateIntent = IsActualImageGenerationIntent(openAIResponsesEndpoint, reqModel, body)
-	}
+	imageIntent := imagePreflight.ImageIntent
+	imageGateIntent := imagePreflight.ActualImageIntent
 	if isCodexCLI && codexImageGenerationExplicitToolPolicy == codexImageGenerationExplicitToolPolicyStrip {
 		decoded, decodeErr := ensureReqBody()
 		if decodeErr != nil {
@@ -188,13 +189,6 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		}
 		imageIntent = IsImageGenerationIntentMap(openAIResponsesEndpoint, reqModel, decoded)
 		imageGateIntent = IsActualImageGenerationIntentMap(openAIResponsesEndpoint, reqModel, decoded)
-	} else {
-		if !imageIntent {
-			imageIntent = IsImageGenerationIntent(openAIResponsesEndpoint, reqModel, body)
-		}
-		if !imageGateIntent {
-			imageGateIntent = IsActualImageGenerationIntent(openAIResponsesEndpoint, reqModel, body)
-		}
 	}
 	if imageGateIntent && !imageGenerationAllowed {
 		MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalFeatureGate)

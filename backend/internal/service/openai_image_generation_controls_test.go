@@ -34,11 +34,23 @@ func TestOpenAIGatewayServiceForward_RejectsDisabledImageGenerationIntents(t *te
 			name: "image tool with explicit choice",
 			body: []byte(`{"model":"gpt-5.4","input":"draw","tools":[{"type":"image_generation"}],"tool_choice":{"type":"image_generation"}}`),
 		},
+		{
+			name: "codex namespace image_gen",
+			body: []byte(`{"model":"gpt-5.5","input":"draw","tools":[{"type":"namespace","name":"image_gen"}]}`),
+		},
+		{
+			name: "responses lite additional_tools image_gen",
+			body: []byte(`{"model":"gpt-5.5","input":[{"type":"additional_tools","tools":[{"type":"namespace","name":"image_gen"}]}]}`),
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			upstream := &httpUpstreamRecorder{}
+			upstream := &httpUpstreamRecorder{resp: &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`{"id":"resp_unexpected_text","model":"gpt-5.5","usage":{"input_tokens":1,"output_tokens":1}}`)),
+			}}
 			svc := newOpenAIImageGenerationControlTestService(upstream)
 			c, recorder := newOpenAIImageGenerationControlTestContext(false, "unit-test-agent/1.0")
 			account := newOpenAIImageGenerationControlTestAccount()
@@ -50,6 +62,79 @@ func TestOpenAIGatewayServiceForward_RejectsDisabledImageGenerationIntents(t *te
 			require.Equal(t, http.StatusForbidden, recorder.Code)
 			require.Equal(t, "permission_error", gjson.GetBytes(recorder.Body.Bytes(), "error.type").String())
 			require.Nil(t, upstream.lastReq, "disabled image request must not reach upstream")
+		})
+	}
+}
+
+func TestOpenAIGatewayServiceForward_PassthroughAppliesImageToolDeclarationPolicyForDisabledGroup(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name         string
+		policy       string
+		wantStatus   int
+		wantUpstream bool
+		wantTool     bool
+		wantMessage  string
+	}{
+		{
+			name:         "strip removes passive declaration and forwards",
+			policy:       ImageGenerationToolDeclarationPolicyStrip,
+			wantStatus:   http.StatusOK,
+			wantUpstream: true,
+			wantTool:     false,
+		},
+		{
+			name:         "allow keeps passive declaration and forwards",
+			policy:       ImageGenerationToolDeclarationPolicyAllow,
+			wantStatus:   http.StatusOK,
+			wantUpstream: true,
+			wantTool:     true,
+		},
+		{
+			name:         "reject blocks passive declaration",
+			policy:       ImageGenerationToolDeclarationPolicyReject,
+			wantStatus:   http.StatusForbidden,
+			wantUpstream: false,
+			wantMessage:  "image_generation tool declaration is disabled",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			upstream := &httpUpstreamRecorder{
+				resp: &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body:       io.NopCloser(strings.NewReader(`{"id":"resp_passthrough_text","model":"gpt-5.4","usage":{"input_tokens":3,"output_tokens":2}}`)),
+				},
+			}
+			svc := newOpenAIImageGenerationControlTestService(upstream)
+			svc.settingService = NewSettingService(&imageGenerationToolPolicyRepo{policy: tt.policy}, &config.Config{})
+			c, recorder := newOpenAIImageGenerationControlTestContext(false, "unit-test-agent/1.0")
+			account := newOpenAIImageGenerationControlTestAccount()
+			account.Extra = map[string]any{
+				"openai_passthrough": true,
+				"use_responses_api":  true,
+			}
+			body := []byte(`{"model":"gpt-5.4","input":"hello","stream":false,"tools":[{"type":"function","name":"shell"},{"type":"image_generation","output_format":"png"}],"tool_choice":"auto"}`)
+
+			result, err := svc.Forward(context.Background(), c, account, body)
+
+			if tt.wantUpstream {
+				require.NoError(t, err)
+				require.NotNil(t, result)
+				require.Equal(t, tt.wantStatus, recorder.Code)
+				require.NotNil(t, upstream.lastReq)
+				require.Equal(t, tt.wantTool, gjson.GetBytes(upstream.lastBody, `tools.#(type=="image_generation")`).Exists())
+				require.True(t, gjson.GetBytes(upstream.lastBody, `tools.#(type=="function")`).Exists())
+				return
+			}
+			require.Error(t, err)
+			require.Nil(t, result)
+			require.Equal(t, tt.wantStatus, recorder.Code)
+			require.Equal(t, tt.wantMessage, gjson.GetBytes(recorder.Body.Bytes(), "error.message").String())
+			require.Nil(t, upstream.lastReq)
 		})
 	}
 }

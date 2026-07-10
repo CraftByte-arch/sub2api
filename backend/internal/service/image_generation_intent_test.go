@@ -126,12 +126,75 @@ func TestImageGenerationIntentSplitsPassiveDeclarationFromActualIntent(t *testin
 			model:    "gpt-5.4",
 			body:     []byte(`{"model":"gpt-5.4","tool_choice":"image_generation"}`),
 		},
+		{
+			name:     "codex namespace image_gen",
+			endpoint: openAIResponsesEndpoint,
+			model:    "gpt-5.5",
+			body:     []byte(`{"model":"gpt-5.5","tools":[{"type":"namespace","name":"image_gen"}]}`),
+		},
+		{
+			name:     "responses lite additional_tools image_gen",
+			endpoint: openAIResponsesEndpoint,
+			model:    "gpt-5.5",
+			body:     []byte(`{"model":"gpt-5.5","input":[{"type":"additional_tools","tools":[{"type":"namespace","name":"image_gen"}]}]}`),
+		},
+		{
+			name:     "namespace intent wins over native flat declaration",
+			endpoint: openAIResponsesEndpoint,
+			model:    "gpt-5.5",
+			body:     []byte(`{"model":"gpt-5.5","tools":[{"type":"image_generation"},{"type":"namespace","name":"image_gen"}],"tool_choice":"auto"}`),
+		},
 	}
 
 	for _, tt := range actualCases {
 		t.Run(tt.name, func(t *testing.T) {
 			require.False(t, HasPassiveImageGenerationToolDeclaration(tt.endpoint, tt.model, tt.body))
 			require.True(t, IsActualImageGenerationIntent(tt.endpoint, tt.model, tt.body))
+		})
+	}
+}
+
+func TestIsActualImageGenerationIntentMap_TreatsNamespaceRequestsAsActual(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		reqBody map[string]any
+		want    bool
+	}{
+		{
+			name: "top-level namespace",
+			reqBody: map[string]any{
+				"model": "gpt-5.5",
+				"tools": []any{map[string]any{"type": "namespace", "name": "image_gen"}},
+			},
+			want: true,
+		},
+		{
+			name: "additional tools namespace",
+			reqBody: map[string]any{
+				"model": "gpt-5.5",
+				"input": []any{map[string]any{
+					"type":  "additional_tools",
+					"tools": []any{map[string]any{"type": "namespace", "name": "image_gen"}},
+				}},
+			},
+			want: true,
+		},
+		{
+			name: "native flat declaration remains passive",
+			reqBody: map[string]any{
+				"model": "gpt-5.5",
+				"tools": []any{map[string]any{"type": "image_generation"}},
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tt.want, IsActualImageGenerationIntentMap(openAIResponsesEndpoint, "gpt-5.5", tt.reqBody))
 		})
 	}
 }

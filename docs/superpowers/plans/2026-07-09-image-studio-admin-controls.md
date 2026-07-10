@@ -746,11 +746,11 @@ git commit -m "chore: sync image studio admin controls tasks"
 - Modify: `backend/internal/service/openai_ws_forwarder_ingress.go`
 - Modify: declaration and gateway tests
 
-- [ ] **Step 1: Add failing namespace group-gate tests for raw/map and HTTP/WS paths**
-- [ ] **Step 2: Add a failing passthrough `strip`/`allow`/`reject` matrix**
-- [ ] **Step 3: Limit passive classification to native flat declarations and retain namespace/additional-tools as actual image intent**
-- [ ] **Step 4: Apply shared declaration/access preflight before passthrough and run focused tests**
-- [ ] **Step 5: Commit the gateway reconciliation**
+- [x] **Step 1: Add failing namespace group-gate tests for raw/map and HTTP/WS paths**
+- [x] **Step 2: Add a failing passthrough `strip`/`allow`/`reject` matrix**
+- [x] **Step 3: Limit passive classification to native flat declarations and retain namespace/additional-tools as actual image intent**
+- [x] **Step 4: Apply shared declaration/access preflight before passthrough and run focused tests**
+- [x] **Step 5: Commit the gateway reconciliation**
 
 ---
 

@@ -57,7 +57,10 @@ func HasPassiveImageGenerationToolDeclaration(endpoint string, requestedModel st
 	if model := strings.TrimSpace(gjson.GetBytes(body, "model").String()); isOpenAIImageGenerationModel(model) {
 		return false
 	}
-	if !openAIJSONToolsContainImageGeneration(gjson.GetBytes(body, "tools")) {
+	if openAIJSONToolsContainImageGenNamespace(gjson.GetBytes(body, "tools")) || openAIJSONInputContainsImageGenTool(gjson.GetBytes(body, "input")) {
+		return false
+	}
+	if !openAIJSONToolsContainNativeImageGeneration(gjson.GetBytes(body, "tools")) {
 		return false
 	}
 	return !openAIJSONToolChoiceSelectsImageGeneration(gjson.GetBytes(body, "tool_choice"))
@@ -73,6 +76,12 @@ func IsActualImageGenerationIntent(endpoint string, requestedModel string, body 
 		return false
 	}
 	if model := strings.TrimSpace(gjson.GetBytes(body, "model").String()); isOpenAIImageGenerationModel(model) {
+		return true
+	}
+	if openAIJSONToolsContainImageGenNamespace(gjson.GetBytes(body, "tools")) {
+		return true
+	}
+	if openAIJSONInputContainsImageGenTool(gjson.GetBytes(body, "input")) {
 		return true
 	}
 	return openAIJSONToolChoiceSelectsImageGeneration(gjson.GetBytes(body, "tool_choice"))
@@ -109,6 +118,9 @@ func IsActualImageGenerationIntentMap(endpoint string, requestedModel string, re
 	if isOpenAIImageGenerationModel(firstNonEmptyString(reqBody["model"])) {
 		return true
 	}
+	if openAIMapContainsImageGenNamespace(reqBody) {
+		return true
+	}
 	return openAIAnyToolChoiceSelectsImageGeneration(reqBody["tool_choice"])
 }
 
@@ -135,6 +147,10 @@ func normalizeImageGenerationEndpoint(endpoint string) string {
 }
 
 func openAIJSONToolsContainImageGeneration(tools gjson.Result) bool {
+	return openAIJSONToolsContainNativeImageGeneration(tools) || openAIJSONToolsContainImageGenNamespace(tools)
+}
+
+func openAIJSONToolsContainNativeImageGeneration(tools gjson.Result) bool {
 	if !tools.IsArray() {
 		return false
 	}
@@ -144,6 +160,17 @@ func openAIJSONToolsContainImageGeneration(tools gjson.Result) bool {
 			found = true
 			return false
 		}
+		return true
+	})
+	return found
+}
+
+func openAIJSONToolsContainImageGenNamespace(tools gjson.Result) bool {
+	if !tools.IsArray() {
+		return false
+	}
+	found := false
+	tools.ForEach(func(_, item gjson.Result) bool {
 		if isImageGenNamespaceTool(item) {
 			found = true
 			return false
@@ -188,6 +215,21 @@ func openAIJSONInputContainsImageGenTool(input gjson.Result) bool {
 		return !found
 	})
 	return found
+}
+
+func openAIMapContainsImageGenNamespace(reqBody map[string]any) bool {
+	if reqBody == nil {
+		return false
+	}
+	if rawTools, ok := reqBody["tools"].([]any); ok {
+		for _, rawTool := range rawTools {
+			tool, ok := rawTool.(map[string]any)
+			if ok && isImageGenNamespaceToolMap(tool) {
+				return true
+			}
+		}
+	}
+	return inputContainsImageGenNamespace(reqBody["input"])
 }
 
 func openAIRequestBodyHasImageGenerationTool(body []byte) bool {

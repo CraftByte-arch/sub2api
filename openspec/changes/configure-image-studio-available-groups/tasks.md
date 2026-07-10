@@ -37,6 +37,6 @@
 
 - [x] 6.1 Restore usage-card billing command fields, billing priority resolution, and production call-site propagation after the `main` service split.
 - [x] 6.2 Restore lossless admin settings round trips for legacy subscriptions, usage cards, default usage cards, and OpenAI long-context billing.
-- [ ] 6.3 Reconcile passive native `image_generation` declarations with Codex `image_gen` namespace intent, including passthrough HTTP and WebSocket behavior.
+- [x] 6.3 Reconcile passive native `image_generation` declarations with Codex `image_gen` namespace intent, including passthrough HTTP and WebSocket behavior.
 - [ ] 6.4 Restore image-protocol preference propagation through the load-aware fallback scheduler.
 - [ ] 6.5 Run focused red/green tests, full backend and frontend verification, and a post-merge code review.

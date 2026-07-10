@@ -298,6 +298,84 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_FollowupCreateCa
 	require.Equal(t, "resp_omit_model_1", gjson.Get(requestToJSONString(captureConn.writes[1]), "previous_response_id").String())
 }
 
+func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_RejectsDisabledNamespaceImageRequests(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name    string
+		payload []byte
+	}{
+		{
+			name:    "top-level namespace",
+			payload: []byte(`{"type":"response.create","model":"gpt-5.5","tools":[{"type":"namespace","name":"image_gen"}],"input":"draw"}`),
+		},
+		{
+			name:    "additional tools namespace",
+			payload: []byte(`{"type":"response.create","model":"gpt-5.5","input":[{"type":"additional_tools","tools":[{"type":"namespace","name":"image_gen"}]}]}`),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{}
+			cfg.Gateway.OpenAIWS.Enabled = true
+			cfg.Gateway.OpenAIWS.OAuthEnabled = true
+			cfg.Gateway.OpenAIWS.APIKeyEnabled = true
+			cfg.Gateway.OpenAIWS.ResponsesWebsocketsV2 = true
+			svc := &OpenAIGatewayService{
+				cfg:              cfg,
+				openaiWSResolver: NewOpenAIWSProtocolResolver(cfg),
+			}
+			groupID := int64(44)
+			apiKey := &APIKey{
+				GroupID: &groupID,
+				Group:   &Group{ID: groupID, AllowImageGeneration: false},
+			}
+			account := &Account{
+				ID:          45,
+				Platform:    PlatformOpenAI,
+				Type:        AccountTypeOAuth,
+				Status:      StatusActive,
+				Schedulable: true,
+				Credentials: map[string]any{"access_token": "test-token"},
+				Extra: map[string]any{
+					"openai_oauth_responses_websockets_v2_enabled": true,
+				},
+			}
+
+			serverErrCh := make(chan error, 1)
+			wsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				conn, err := coderws.Accept(w, r, nil)
+				if err != nil {
+					serverErrCh <- err
+					return
+				}
+				defer func() { _ = conn.CloseNow() }()
+				rec := httptest.NewRecorder()
+				ginCtx, _ := gin.CreateTestContext(rec)
+				ginCtx.Request = r
+				ginCtx.Set("api_key", apiKey)
+				serverErrCh <- svc.ProxyResponsesWebSocketFromClient(r.Context(), ginCtx, conn, account, "test-token", tt.payload, nil)
+			}))
+			defer wsServer.Close()
+
+			dialCtx, cancelDial := context.WithTimeout(context.Background(), 3*time.Second)
+			clientConn, _, err := coderws.Dial(dialCtx, "ws"+strings.TrimPrefix(wsServer.URL, "http"), nil)
+			cancelDial()
+			require.NoError(t, err)
+			defer func() { _ = clientConn.CloseNow() }()
+
+			select {
+			case proxyErr := <-serverErrCh:
+				require.Error(t, proxyErr)
+				require.ErrorContains(t, proxyErr, ImageGenerationPermissionMessage())
+			case <-time.After(5 * time.Second):
+				t.Fatal("等待 namespace 图片权限校验超时")
+			}
+		})
+	}
+}
+
 func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_InjectsCodexImageBridge(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

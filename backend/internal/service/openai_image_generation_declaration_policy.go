@@ -5,6 +5,32 @@ import (
 	"errors"
 )
 
+type openAIImageGenerationPreflightResult struct {
+	Body                []byte
+	DeclarationStripped bool
+	DeclarationRejected bool
+	ImageIntent         bool
+	ActualImageIntent   bool
+}
+
+func evaluateOpenAIImageGenerationPreflight(endpoint string, requestedModel string, body []byte, policy string) (openAIImageGenerationPreflightResult, error) {
+	updated, changed, rejected, err := applyOpenAIImageGenerationToolDeclarationPolicyToRawPayload(endpoint, requestedModel, body, policy)
+	if err != nil {
+		return openAIImageGenerationPreflightResult{}, err
+	}
+	result := openAIImageGenerationPreflightResult{
+		Body:                updated,
+		DeclarationStripped: changed,
+		DeclarationRejected: rejected,
+	}
+	if rejected {
+		return result, nil
+	}
+	result.ImageIntent = IsImageGenerationIntent(endpoint, requestedModel, updated)
+	result.ActualImageIntent = IsActualImageGenerationIntent(endpoint, requestedModel, updated)
+	return result, nil
+}
+
 func applyOpenAIImageGenerationToolDeclarationPolicyToRawPayload(endpoint string, requestedModel string, body []byte, policy string) ([]byte, bool, bool, error) {
 	if !HasPassiveImageGenerationToolDeclaration(endpoint, requestedModel, body) {
 		return body, false, false, nil
