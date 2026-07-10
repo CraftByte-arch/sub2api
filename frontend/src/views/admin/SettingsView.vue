@@ -3840,20 +3840,31 @@
                   <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
                     {{ t("admin.settings.imageStudio.availableGroups") }}
                   </label>
-                  <select
-                    v-model="form.image_studio_available_group_ids"
-                    multiple
-                    class="input min-h-32"
-                    :disabled="imageStudioGroupOptions.length === 0"
+                  <div
+                    class="image-studio-group-options grid max-h-40 grid-cols-1 gap-1 overflow-y-auto rounded-lg border border-gray-200 bg-gray-50 p-2 dark:border-dark-600 dark:bg-dark-800 sm:grid-cols-2"
+                    role="group"
+                    :aria-label="t('admin.settings.imageStudio.availableGroups')"
                   >
-                    <option
+                    <label
                       v-for="group in imageStudioGroupOptions"
                       :key="group.value"
-                      :value="group.value"
+                      class="flex cursor-pointer items-center gap-2 rounded-md px-2 py-2 text-sm text-gray-700 transition-colors hover:bg-white dark:text-gray-300 dark:hover:bg-dark-700"
                     >
-                      {{ group.label }}
-                    </option>
-                  </select>
+                      <input
+                        v-model="form.image_studio_available_group_ids"
+                        type="checkbox"
+                        :value="group.value"
+                        class="h-4 w-4 shrink-0 rounded border-gray-300 text-primary-500 focus:ring-primary-500 dark:border-dark-500"
+                      />
+                      <span class="min-w-0 truncate">{{ group.label }}</span>
+                    </label>
+                    <div
+                      v-if="imageStudioGroupOptions.length === 0"
+                      class="col-span-full py-3 text-center text-sm text-gray-500 dark:text-gray-400"
+                    >
+                      {{ t("admin.settings.imageStudio.availableGroupsEmpty") }}
+                    </div>
+                  </div>
                   <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
                     {{
                       imageStudioGroupOptions.length === 0
@@ -3866,18 +3877,11 @@
                   <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
                     {{ t("admin.settings.imageStudio.toolDeclarationPolicy") }}
                   </label>
-                  <select
+                  <Select
                     v-model="form.image_generation_tool_declaration_policy"
-                    class="input"
-                  >
-                    <option
-                      v-for="option in imageGenerationToolDeclarationPolicyOptions"
-                      :key="option.value"
-                      :value="option.value"
-                    >
-                      {{ option.label }}
-                    </option>
-                  </select>
+                    :options="imageGenerationToolDeclarationPolicyOptions"
+                    :searchable="false"
+                  />
                   <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
                     {{ t("admin.settings.imageStudio.toolDeclarationPolicyHint") }}
                   </p>

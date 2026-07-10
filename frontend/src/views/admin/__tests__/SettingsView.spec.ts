@@ -905,6 +905,28 @@ describe("admin SettingsView payment visible method controls", () => {
     expect(wrapper.text()).toContain("Beta group");
     expect(wrapper.text()).toContain("image_generation 工具声明策略");
     expect(wrapper.text()).toContain("移除被动声明并继续");
+
+    const groupCheckboxes = wrapper.findAll(
+      ".image-studio-group-options input[type='checkbox']",
+    );
+    expect(groupCheckboxes).toHaveLength(2);
+    expect(
+      groupCheckboxes.map((checkbox) => ({
+        value: checkbox.attributes("value"),
+        checked: (checkbox.element as HTMLInputElement).checked,
+      })),
+    ).toEqual([
+      { value: "10", checked: true },
+      { value: "12", checked: true },
+    ]);
+    expect(
+      wrapper.find(".image-studio-group-options select[multiple]").exists(),
+    ).toBe(false);
+
+    const policySelect = wrapper
+      .findAll("select.select-stub")
+      .find((select) => select.text().includes("移除被动声明并继续"));
+    expect(policySelect).toBeDefined();
   });
 
   it("normalizes null supported_types from API so provider card stays visible", async () => {
