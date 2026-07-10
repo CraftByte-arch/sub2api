@@ -284,3 +284,36 @@ func TestSettingHandler_ImageStudioAdminControls_PutGetRoundTrip(t *testing.T) {
 	require.Equal(t, []any{float64(3), float64(2)}, data["image_studio_available_group_ids"])
 	require.Equal(t, service.ImageGenerationToolDeclarationPolicyAllow, data["image_generation_tool_declaration_policy"])
 }
+
+func TestSettingHandler_ImageStudioPartialUpdatePreservesOmittedSettings(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &settingHandlerRepoStub{
+		values: map[string]string{
+			service.SettingKeyPromoCodeEnabled:                     "true",
+			service.SettingKeyImageStudioAsyncConcurrency:          "3",
+			service.SettingKeyImageStudioRetentionValue:            "72",
+			service.SettingKeyImageStudioRetentionUnit:             service.ImageStudioRetentionUnitHour,
+			service.SettingKeyImageStudioAvailableGroupIDs:         `[3,2]`,
+			service.SettingKeyImageGenerationToolDeclarationPolicy: service.ImageGenerationToolDeclarationPolicyAllow,
+		},
+	}
+	svc := service.NewSettingService(repo, &config.Config{Default: config.DefaultConfig{UserConcurrency: 5}})
+	handler := NewSettingHandler(svc, nil, nil, nil, nil, nil, nil)
+	rawBody, err := json.Marshal(map[string]any{
+		"image_studio_async_concurrency": 5,
+	})
+	require.NoError(t, err)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPut, "/api/v1/admin/settings", bytes.NewReader(rawBody))
+	c.Request.Header.Set("Content-Type", "application/json")
+	handler.UpdateSettings(c)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "5", repo.values[service.SettingKeyImageStudioAsyncConcurrency])
+	require.Equal(t, "72", repo.values[service.SettingKeyImageStudioRetentionValue])
+	require.Equal(t, service.ImageStudioRetentionUnitHour, repo.values[service.SettingKeyImageStudioRetentionUnit])
+	require.JSONEq(t, `[3,2]`, repo.values[service.SettingKeyImageStudioAvailableGroupIDs])
+	require.Equal(t, service.ImageGenerationToolDeclarationPolicyAllow, repo.values[service.SettingKeyImageGenerationToolDeclarationPolicy])
+}

@@ -227,11 +227,11 @@ type UpdateSettingsRequest struct {
 	BackendModeEnabled bool `json:"backend_mode_enabled"`
 
 	// Image Studio
-	ImageStudioAsyncConcurrency          int     `json:"image_studio_async_concurrency"`
-	ImageStudioRetentionValue            int     `json:"image_studio_retention_value"`
-	ImageStudioRetentionUnit             string  `json:"image_studio_retention_unit"`
-	ImageStudioAvailableGroupIDs         []int64 `json:"image_studio_available_group_ids"`
-	ImageGenerationToolDeclarationPolicy string  `json:"image_generation_tool_declaration_policy"`
+	ImageStudioAsyncConcurrency          *int     `json:"image_studio_async_concurrency"`
+	ImageStudioRetentionValue            *int     `json:"image_studio_retention_value"`
+	ImageStudioRetentionUnit             *string  `json:"image_studio_retention_unit"`
+	ImageStudioAvailableGroupIDs         *[]int64 `json:"image_studio_available_group_ids"`
+	ImageGenerationToolDeclarationPolicy *string  `json:"image_generation_tool_declaration_policy"`
 
 	// Gateway forwarding behavior
 	EnableFingerprintUnification           *bool   `json:"enable_fingerprint_unification"`
@@ -410,6 +410,26 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 	}
 	if affiliateRebatePerInviteeCap < 0 {
 		affiliateRebatePerInviteeCap = service.AffiliateRebatePerInviteeCapDefault
+	}
+	imageStudioAsyncConcurrency := previousSettings.ImageStudioAsyncConcurrency
+	if req.ImageStudioAsyncConcurrency != nil {
+		imageStudioAsyncConcurrency = *req.ImageStudioAsyncConcurrency
+	}
+	imageStudioRetentionValue := previousSettings.ImageStudioRetentionValue
+	if req.ImageStudioRetentionValue != nil {
+		imageStudioRetentionValue = *req.ImageStudioRetentionValue
+	}
+	imageStudioRetentionUnit := previousSettings.ImageStudioRetentionUnit
+	if req.ImageStudioRetentionUnit != nil {
+		imageStudioRetentionUnit = *req.ImageStudioRetentionUnit
+	}
+	imageStudioAvailableGroupIDs := previousSettings.ImageStudioAvailableGroupIDs
+	if req.ImageStudioAvailableGroupIDs != nil {
+		imageStudioAvailableGroupIDs = *req.ImageStudioAvailableGroupIDs
+	}
+	imageGenerationToolDeclarationPolicy := previousSettings.ImageGenerationToolDeclarationPolicy
+	if req.ImageGenerationToolDeclarationPolicy != nil {
+		imageGenerationToolDeclarationPolicy = *req.ImageGenerationToolDeclarationPolicy
 	}
 	// 通用表格配置：兼容旧客户端未传字段时保留当前值。
 	if req.TableDefaultPageSize <= 0 {
@@ -1390,11 +1410,11 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		MaxClaudeCodeVersion:                   req.MaxClaudeCodeVersion,
 		AllowUngroupedKeyScheduling:            req.AllowUngroupedKeyScheduling,
 		BackendModeEnabled:                     req.BackendModeEnabled,
-		ImageStudioAsyncConcurrency:            req.ImageStudioAsyncConcurrency,
-		ImageStudioRetentionValue:              req.ImageStudioRetentionValue,
-		ImageStudioRetentionUnit:               req.ImageStudioRetentionUnit,
-		ImageStudioAvailableGroupIDs:           req.ImageStudioAvailableGroupIDs,
-		ImageGenerationToolDeclarationPolicy:   service.NormalizeImageGenerationToolDeclarationPolicy(req.ImageGenerationToolDeclarationPolicy),
+		ImageStudioAsyncConcurrency:            imageStudioAsyncConcurrency,
+		ImageStudioRetentionValue:              imageStudioRetentionValue,
+		ImageStudioRetentionUnit:               imageStudioRetentionUnit,
+		ImageStudioAvailableGroupIDs:           imageStudioAvailableGroupIDs,
+		ImageGenerationToolDeclarationPolicy:   service.NormalizeImageGenerationToolDeclarationPolicy(imageGenerationToolDeclarationPolicy),
 		AllowUserViewErrorRequests: func() bool {
 			if req.AllowUserViewErrorRequests != nil {
 				return *req.AllowUserViewErrorRequests
