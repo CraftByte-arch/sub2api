@@ -243,6 +243,57 @@ func newOpenAIRecordUsageServiceWithBillingRepoForTest(usageRepo UsageLogReposit
 	return svc
 }
 
+func newUsageCardBillingCacheForRecordUsageTest() *BillingCacheService {
+	settingRepo := usageCardSummarySettingRepoStub{values: map[string]string{
+		SettingKeyUsageCardEnabled:        "true",
+		SettingKeyUsageCardBillingEnabled: "true",
+	}}
+	return &BillingCacheService{
+		usageCardService: NewUsageCardService(nil, settingRepo),
+	}
+}
+
+func TestOpenAIGatewayServiceRecordUsage_PropagatesUsageCardBillingPolicy(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true}}
+	svc := newOpenAIRecordUsageServiceWithBillingRepoForTest(
+		usageRepo,
+		billingRepo,
+		&openAIRecordUsageUserRepoStub{},
+		&openAIRecordUsageSubRepoStub{},
+		nil,
+	)
+	svc.billingCacheService = newUsageCardBillingCacheForRecordUsageTest()
+
+	groupID := int64(802)
+	err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+		Result: &OpenAIForwardResult{
+			RequestID: "openai-usage-card-policy",
+			Model:     "gpt-5.1",
+			Usage: OpenAIUsage{
+				InputTokens:  100,
+				OutputTokens: 20,
+			},
+			Duration: time.Second,
+		},
+		APIKey: &APIKey{
+			ID:              801,
+			GroupID:         &groupID,
+			Group:           &Group{ID: groupID, RateMultiplier: 1},
+			BillingPriority: BillingPriorityAuto,
+		},
+		User:    &User{ID: 803},
+		Account: &Account{ID: 804},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, billingRepo.lastCmd)
+	require.True(t, billingRepo.lastCmd.UsageCardBillingEnabled)
+	require.Equal(t, BillingPriorityUsageCardFirst, billingRepo.lastCmd.BillingPriority)
+	require.Positive(t, billingRepo.lastCmd.UsageCardCost)
+	require.Equal(t, billingRepo.lastCmd.BalanceCost, billingRepo.lastCmd.UsageCardCost)
+}
+
 func expectedOpenAICost(t *testing.T, svc *OpenAIGatewayService, model string, usage OpenAIUsage, multiplier float64) *CostBreakdown {
 	t.Helper()
 

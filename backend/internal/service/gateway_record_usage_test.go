@@ -167,6 +167,46 @@ func TestGatewayServiceRecordUsage_BillingFingerprintFallsBackToContextRequestID
 	require.Equal(t, "local:req-local-123", billingRepo.lastCmd.RequestPayloadHash)
 }
 
+func TestGatewayServiceRecordUsage_PropagatesUsageCardBillingPolicy(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true}}
+	svc := newGatewayRecordUsageServiceWithBillingRepoForTest(
+		usageRepo,
+		billingRepo,
+		&openAIRecordUsageUserRepoStub{},
+		&openAIRecordUsageSubRepoStub{},
+	)
+	svc.billingCacheService = newUsageCardBillingCacheForRecordUsageTest()
+
+	groupID := int64(812)
+	err := svc.RecordUsage(context.Background(), &RecordUsageInput{
+		Result: &ForwardResult{
+			RequestID: "gateway-usage-card-policy",
+			Model:     "claude-sonnet-4",
+			Usage: ClaudeUsage{
+				InputTokens:  100,
+				OutputTokens: 20,
+			},
+			Duration: time.Second,
+		},
+		APIKey: &APIKey{
+			ID:              811,
+			GroupID:         &groupID,
+			Group:           &Group{ID: groupID, RateMultiplier: 1},
+			BillingPriority: BillingPriorityBalanceOnly,
+		},
+		User:    &User{ID: 813},
+		Account: &Account{ID: 814},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, billingRepo.lastCmd)
+	require.True(t, billingRepo.lastCmd.UsageCardBillingEnabled)
+	require.Equal(t, BillingPriorityBalanceOnly, billingRepo.lastCmd.BillingPriority)
+	require.Positive(t, billingRepo.lastCmd.UsageCardCost)
+	require.Equal(t, billingRepo.lastCmd.BalanceCost, billingRepo.lastCmd.UsageCardCost)
+}
+
 func TestGatewayServiceRecordUsage_PreservesRequestedAndUpstreamModels(t *testing.T) {
 	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
 	svc := newGatewayRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{})

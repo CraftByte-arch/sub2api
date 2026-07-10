@@ -148,3 +148,28 @@ func TestBuildUsageBillingCommand_UsageCardCostTracksActualCost(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildUsageBillingCommand_PreservesUsageCardRoutingMetadata(t *testing.T) {
+	t.Parallel()
+
+	usageCardID := int64(91)
+	cmd := buildUsageBillingCommand("req-usage-card-metadata", &UsageLog{
+		UsageCardID: &usageCardID,
+	}, &postUsageBillingParams{
+		Cost:            &CostBreakdown{TotalCost: 1.0, ActualCost: 1.0},
+		User:            &User{ID: 1},
+		APIKey:          &APIKey{ID: 2},
+		Account:         &Account{ID: 3},
+		BillingPriority: BillingPriorityBalanceOnly,
+	})
+
+	if cmd == nil {
+		t.Fatal("buildUsageBillingCommand returned nil")
+	}
+	if cmd.BillingPriority != BillingPriorityBalanceOnly {
+		t.Errorf("BillingPriority = %q, want %q", cmd.BillingPriority, BillingPriorityBalanceOnly)
+	}
+	if cmd.UsageCardID == nil || *cmd.UsageCardID != usageCardID {
+		t.Errorf("UsageCardID = %v, want %d", cmd.UsageCardID, usageCardID)
+	}
+}

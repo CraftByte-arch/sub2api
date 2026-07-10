@@ -712,10 +712,10 @@ git commit -m "chore: sync image studio admin controls tasks"
 - Test: `backend/internal/service/gateway_service_subscription_billing_test.go`
 - Test: `backend/internal/service/openai_gateway_record_usage_test.go`
 
-- [ ] **Step 1: Run the existing usage-card command test and confirm RED**
-- [ ] **Step 2: Add focused tests for billing priority and both production recorder call sites**
-- [ ] **Step 3: Restore `BillingPriority`, usage-card enablement, group override, cost, and ID propagation from pre-merge commit `58583dbd`**
-- [ ] **Step 4: Run focused billing tests and commit**
+- [x] **Step 1: Run the existing usage-card command test and confirm RED**
+- [x] **Step 2: Add focused tests for billing priority and both production recorder call sites**
+- [x] **Step 3: Restore `BillingPriority`, usage-card enablement, group override, cost, and ID propagation from pre-merge commit `58583dbd`**
+- [x] **Step 4: Run focused billing tests and commit**
 
 ---
 
