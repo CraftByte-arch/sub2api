@@ -126,3 +126,23 @@ func TestSyncBalanceCacheAfterDeduction_QueuesDeductWhenBalanceStillEligible(t *
 		return cache.deductCalls.Load() == 1
 	}, 2*time.Second, 10*time.Millisecond)
 }
+
+func TestSyncBalanceCacheAfterDeduction_SkipsUsageCardCharge(t *testing.T) {
+	cache := &balanceEligibilityCacheStub{balance: 1}
+	cfg := &config.Config{}
+	cfg.Billing.MinimumBalanceReserve = 0.01
+	svc := NewBillingCacheService(cache, nil, nil, nil, nil, nil, cfg, nil)
+	t.Cleanup(svc.Stop)
+
+	usageCardID := int64(42)
+	syncBalanceCacheAfterDeduction(context.Background(), &postUsageBillingParams{
+		Cost: &CostBreakdown{ActualCost: 0.25},
+		User: &User{ID: 1},
+	}, &billingDeps{billingCacheService: svc}, &UsageBillingApplyResult{
+		UsageCardID: &usageCardID,
+	})
+
+	require.Never(t, func() bool {
+		return cache.deductCalls.Load() > 0 || cache.invalidateCalls.Load() > 0
+	}, 100*time.Millisecond, 10*time.Millisecond)
+}

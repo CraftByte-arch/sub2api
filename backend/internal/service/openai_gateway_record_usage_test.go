@@ -335,6 +335,7 @@ func TestOpenAIGatewayServiceRecordUsage_PersistsUsageCardIDFromBillingResult(t 
 	require.NotNil(t, usageRepo.lastLog)
 	require.NotNil(t, usageRepo.lastLog.UsageCardID)
 	require.Equal(t, usageCardID, *usageRepo.lastLog.UsageCardID)
+	require.Equal(t, BillingTypeUsageCard, usageRepo.lastLog.BillingType)
 }
 
 func expectedOpenAICost(t *testing.T, svc *OpenAIGatewayService, model string, usage OpenAIUsage, multiplier float64) *CostBreakdown {
