@@ -950,6 +950,117 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_Enabled_ResponsesImageG
 	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
 }
 
+func TestOpenAIGatewayService_SelectAccountWithScheduler_FallbackPreservesResponsesProtocolPreference(t *testing.T) {
+	resetOpenAIAdvancedSchedulerSettingCacheForTest()
+
+	const (
+		imagesAccountID    = int64(37033)
+		responsesAccountID = int64(37034)
+	)
+	tests := []struct {
+		name         string
+		loadBatch    bool
+		loadMap      map[int64]*AccountLoadInfo
+		wantWaitPlan bool
+		wantAcquired bool
+	}{
+		{
+			name:         "scheduler unavailable without load batch",
+			loadBatch:    false,
+			wantAcquired: true,
+		},
+		{
+			name:      "load-aware immediate acquisition",
+			loadBatch: true,
+			loadMap: map[int64]*AccountLoadInfo{
+				imagesAccountID:    {AccountID: imagesAccountID, LoadRate: 0},
+				responsesAccountID: {AccountID: responsesAccountID, LoadRate: 90},
+			},
+			wantAcquired: true,
+		},
+		{
+			name:      "fallback wait ordering",
+			loadBatch: true,
+			loadMap: map[int64]*AccountLoadInfo{
+				imagesAccountID:    {AccountID: imagesAccountID, LoadRate: 100},
+				responsesAccountID: {AccountID: responsesAccountID, LoadRate: 100},
+			},
+			wantWaitPlan: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			groupID := int64(10116)
+			accounts := []Account{
+				{
+					ID:          imagesAccountID,
+					Platform:    PlatformOpenAI,
+					Type:        AccountTypeAPIKey,
+					Status:      StatusActive,
+					Schedulable: true,
+					Concurrency: 1,
+					Priority:    0,
+					Extra: map[string]any{
+						OpenAIImageProtocolPreferenceExtraKey: OpenAIImageProtocolPreferenceImages,
+					},
+				},
+				{
+					ID:          responsesAccountID,
+					Platform:    PlatformOpenAI,
+					Type:        AccountTypeAPIKey,
+					Status:      StatusActive,
+					Schedulable: true,
+					Concurrency: 1,
+					Priority:    10,
+					Extra: map[string]any{
+						OpenAIImageProtocolPreferenceExtraKey: OpenAIImageProtocolPreferenceResponses,
+					},
+				},
+			}
+			cfg := &config.Config{}
+			cfg.Gateway.Scheduling.LoadBatchEnabled = tt.loadBatch
+			svc := &OpenAIGatewayService{
+				accountRepo: schedulerTestOpenAIAccountRepo{accounts: accounts},
+				cache:       &schedulerTestGatewayCache{},
+				cfg:         cfg,
+				concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{
+					loadMap: tt.loadMap,
+				}),
+			}
+
+			selection, decision, err := svc.SelectAccountWithSchedulerForImageProtocol(
+				context.Background(),
+				&groupID,
+				"",
+				"",
+				"gpt-5.5",
+				nil,
+				OpenAIUpstreamTransportAny,
+				OpenAIEndpointCapabilityChatCompletions,
+				OpenAIImageProtocolPreferenceResponses,
+				false,
+			)
+
+			require.NoError(t, err)
+			require.NotNil(t, selection)
+			require.NotNil(t, selection.Account)
+			require.Equal(t, responsesAccountID, selection.Account.ID)
+			require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
+			require.Equal(t, tt.wantAcquired, selection.Acquired)
+			if tt.wantWaitPlan {
+				require.NotNil(t, selection.WaitPlan)
+				require.Equal(t, responsesAccountID, selection.WaitPlan.AccountID)
+			} else {
+				require.Nil(t, selection.WaitPlan)
+			}
+			if selection.ReleaseFunc != nil {
+				selection.ReleaseFunc()
+			}
+		})
+	}
+}
+
 func TestOpenAIGatewayService_SelectAccountWithScheduler_Enabled_ResponsesProtocolFallsBackToAuto(t *testing.T) {
 	resetOpenAIAdvancedSchedulerSettingCacheForTest()
 

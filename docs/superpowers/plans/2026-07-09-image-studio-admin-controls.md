@@ -760,9 +760,9 @@ git commit -m "chore: sync image studio admin controls tasks"
 - Modify: `backend/internal/service/openai_gateway_scheduling.go`
 - Test: OpenAI scheduler tests
 
-- [ ] **Step 1: Add a failing test for `responses` preference with the scheduler unavailable**
-- [ ] **Step 2: Propagate protocol preference through model selection, load-aware sorting, and fallback wait ordering**
-- [ ] **Step 3: Run scheduler tests and commit**
+- [x] **Step 1: Add a failing test for `responses` preference with the scheduler unavailable**
+- [x] **Step 2: Propagate protocol preference through model selection, load-aware sorting, and fallback wait ordering**
+- [x] **Step 3: Run scheduler tests and commit**
 
 ---
 

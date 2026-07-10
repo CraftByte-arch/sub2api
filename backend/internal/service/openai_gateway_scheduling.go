@@ -146,7 +146,7 @@ func (s *OpenAIGatewayService) SelectAccountForModel(ctx context.Context, groupI
 // SelectAccountForModelWithExclusions selects an account supporting the requested model while excluding specified accounts.
 // SelectAccountForModelWithExclusions 选择支持指定模型的账号，同时排除指定的账号。
 func (s *OpenAIGatewayService) SelectAccountForModelWithExclusions(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}) (*Account, error) {
-	return s.selectAccountForModelWithExclusions(s.withOpenAIQuotaAutoPauseContext(ctx), groupID, PlatformOpenAI, sessionHash, requestedModel, excludedIDs, false, 0, "")
+	return s.selectAccountForModelWithExclusions(s.withOpenAIQuotaAutoPauseContext(ctx), groupID, PlatformOpenAI, sessionHash, requestedModel, excludedIDs, false, 0, "", "")
 }
 
 // noAvailableOpenAISelectionError builds the standard "no account available" error
@@ -557,7 +557,7 @@ func resolveOpenAIAccountUpstreamModelForRequest(account *Account, requestedMode
 	return upstreamModel
 }
 
-func (s *OpenAIGatewayService) selectAccountForModelWithExclusions(ctx context.Context, groupID *int64, platform string, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, requireCompact bool, stickyAccountID int64, requiredCapability OpenAIEndpointCapability) (*Account, error) {
+func (s *OpenAIGatewayService) selectAccountForModelWithExclusions(ctx context.Context, groupID *int64, platform string, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, requireCompact bool, stickyAccountID int64, requiredCapability OpenAIEndpointCapability, imageProtocolPreference string) (*Account, error) {
 	platform = normalizeOpenAICompatiblePlatform(platform)
 	if s.checkChannelPricingRestriction(ctx, groupID, requestedModel) {
 		slog.Warn("channel pricing restriction blocked request",
@@ -581,7 +581,7 @@ func (s *OpenAIGatewayService) selectAccountForModelWithExclusions(ctx context.C
 
 	// 3. 按优先级 + LRU 选择最佳账号
 	// Select by priority + LRU
-	selected, compactBlocked := s.selectBestAccount(ctx, groupID, platform, accounts, requestedModel, excludedIDs, requireCompact, requiredCapability)
+	selected, compactBlocked := s.selectBestAccount(ctx, groupID, platform, accounts, requestedModel, excludedIDs, requireCompact, requiredCapability, imageProtocolPreference)
 
 	if selected == nil {
 		return nil, noAvailableOpenAISelectionError(requestedModel, compactBlocked)
@@ -674,7 +674,7 @@ func (s *OpenAIGatewayService) tryStickySessionHit(ctx context.Context, groupID 
 // Returns nil if no available account. The second return reports whether at
 // least one candidate was filtered out solely because it lacks compact support
 // (only meaningful when requireCompact=true).
-func (s *OpenAIGatewayService) selectBestAccount(ctx context.Context, groupID *int64, platform string, accounts []Account, requestedModel string, excludedIDs map[int64]struct{}, requireCompact bool, requiredCapability OpenAIEndpointCapability) (*Account, bool) {
+func (s *OpenAIGatewayService) selectBestAccount(ctx context.Context, groupID *int64, platform string, accounts []Account, requestedModel string, excludedIDs map[int64]struct{}, requireCompact bool, requiredCapability OpenAIEndpointCapability, imageProtocolPreference string) (*Account, bool) {
 	platform = normalizeOpenAICompatiblePlatform(platform)
 	var selected *Account
 	selectedCompactTier := -1
@@ -727,7 +727,7 @@ func (s *OpenAIGatewayService) selectBestAccount(ctx context.Context, groupID *i
 			continue
 		}
 
-		if s.isBetterAccount(fresh, selected) {
+		if s.isBetterAccountForImageProtocol(fresh, selected, imageProtocolPreference) {
 			selected = fresh
 			selectedCompactTier = compactTier
 		}
@@ -742,6 +742,16 @@ func (s *OpenAIGatewayService) selectBestAccount(ctx context.Context, groupID *i
 // isBetterAccount checks if candidate is better than current.
 // Rules: higher priority (lower value) wins; same priority: never used > least recently used.
 func (s *OpenAIGatewayService) isBetterAccount(candidate, current *Account) bool {
+	return s.isBetterAccountForImageProtocol(candidate, current, "")
+}
+
+func (s *OpenAIGatewayService) isBetterAccountForImageProtocol(candidate, current *Account, imageProtocolPreference string) bool {
+	candidateProtocolScore := openAIImageProtocolMatchScore(candidate, imageProtocolPreference)
+	currentProtocolScore := openAIImageProtocolMatchScore(current, imageProtocolPreference)
+	if candidateProtocolScore != currentProtocolScore {
+		return candidateProtocolScore > currentProtocolScore
+	}
+
 	// 优先级更高（数值更小）
 	// Higher priority (lower value)
 	if candidate.Priority < current.Priority {
@@ -775,7 +785,7 @@ func (s *OpenAIGatewayService) SelectAccountWithLoadAwareness(ctx context.Contex
 }
 
 func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Context, groupID *int64, platform string, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, requireCompact bool, requiredCapability OpenAIEndpointCapability, imageProtocolPreference string) (*AccountSelectionResult, error) {
-	_ = imageProtocolPreference
+	imageProtocolPreference = NormalizeOpenAIImageProtocolPreference(imageProtocolPreference)
 	platform = normalizeOpenAICompatiblePlatform(platform)
 	if s.checkChannelPricingRestriction(ctx, groupID, requestedModel) {
 		slog.Warn("channel pricing restriction blocked request",
@@ -793,7 +803,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 		}
 	}
 	if s.concurrencyService == nil || !cfg.LoadBatchEnabled {
-		account, err := s.selectAccountForModelWithExclusions(ctx, groupID, platform, sessionHash, requestedModel, excludedIDs, requireCompact, stickyAccountID, requiredCapability)
+		account, err := s.selectAccountForModelWithExclusions(ctx, groupID, platform, sessionHash, requestedModel, excludedIDs, requireCompact, stickyAccountID, requiredCapability, imageProtocolPreference)
 		if err != nil {
 			return nil, err
 		}
@@ -958,6 +968,11 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 
 		sort.SliceStable(available, func(i, j int) bool {
 			a, b := available[i], available[j]
+			aProtocolScore := openAIImageProtocolMatchScore(a.account, imageProtocolPreference)
+			bProtocolScore := openAIImageProtocolMatchScore(b.account, imageProtocolPreference)
+			if aProtocolScore != bProtocolScore {
+				return aProtocolScore > bProtocolScore
+			}
 			if a.account.Priority != b.account.Priority {
 				return a.account.Priority < b.account.Priority
 			}
@@ -975,7 +990,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 				return a.account.LastUsedAt.Before(*b.account.LastUsedAt)
 			}
 		})
-		shuffleWithinSortGroups(available)
+		shuffleWithinImageProtocolSortGroups(available, imageProtocolPreference)
 
 		selectionOrder := make([]accountWithLoad, 0, len(available))
 		if requireCompact {
@@ -1027,6 +1042,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 	if err != nil {
 		ordered := append([]*Account(nil), candidates...)
 		sortAccountsByPriorityAndLastUsed(ordered, false)
+		ordered = prioritizeOpenAIImageProtocolAccounts(ordered, imageProtocolPreference)
 		if requireCompact {
 			ordered = prioritizeOpenAICompactAccounts(ordered)
 		}
@@ -1072,6 +1088,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 
 	// ============ Layer 3: Fallback wait ============
 	sortAccountsByPriorityAndLastUsed(candidates, false)
+	candidates = prioritizeOpenAIImageProtocolAccounts(candidates, imageProtocolPreference)
 	if requireCompact {
 		candidates = prioritizeOpenAICompactAccounts(candidates)
 	}
@@ -1099,6 +1116,35 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 		return nil, ErrNoAvailableCompactAccounts
 	}
 	return nil, ErrNoAvailableAccounts
+}
+
+func prioritizeOpenAIImageProtocolAccounts(accounts []*Account, imageProtocolPreference string) []*Account {
+	imageProtocolPreference = NormalizeOpenAIImageProtocolPreference(imageProtocolPreference)
+	if len(accounts) < 2 || imageProtocolPreference == OpenAIImageProtocolPreferenceAuto {
+		return accounts
+	}
+	sort.SliceStable(accounts, func(i, j int) bool {
+		return openAIImageProtocolMatchScore(accounts[i], imageProtocolPreference) >
+			openAIImageProtocolMatchScore(accounts[j], imageProtocolPreference)
+	})
+	return accounts
+}
+
+func shuffleWithinImageProtocolSortGroups(accounts []accountWithLoad, imageProtocolPreference string) {
+	imageProtocolPreference = NormalizeOpenAIImageProtocolPreference(imageProtocolPreference)
+	if imageProtocolPreference == OpenAIImageProtocolPreferenceAuto {
+		shuffleWithinSortGroups(accounts)
+		return
+	}
+	for start := 0; start < len(accounts); {
+		score := openAIImageProtocolMatchScore(accounts[start].account, imageProtocolPreference)
+		end := start + 1
+		for end < len(accounts) && openAIImageProtocolMatchScore(accounts[end].account, imageProtocolPreference) == score {
+			end++
+		}
+		shuffleWithinSortGroups(accounts[start:end])
+		start = end
+	}
 }
 
 func (s *OpenAIGatewayService) listSchedulableAccounts(ctx context.Context, groupID *int64, platform string) ([]Account, error) {
