@@ -41,7 +41,7 @@ func applyOpenAIImageGenerationToolDeclarationPolicyToRawPayload(endpoint string
 	case ImageGenerationToolDeclarationPolicyReject:
 		return body, false, true, nil
 	default:
-		updated, changed, err := stripOpenAIImageGenerationToolFromRawPayload(body)
+		updated, changed, err := stripOpenAIImageGenerationToolsFromRawPayload(body)
 		return updated, changed, false, err
 	}
 }

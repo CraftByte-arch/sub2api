@@ -306,6 +306,26 @@ func TestCalculateCost_OpenAIGPT54LongContextCanDisableHardRule(t *testing.T) {
 	require.InDelta(t, expectedOutput, cost.OutputCost, 1e-10)
 }
 
+func TestCalculateCost_OpenAIGPT56LongContextDisableKeepsCacheWriteFallback(t *testing.T) {
+	pricingSvc := &PricingService{pricingData: map[string]*LiteLLMModelPricing{
+		"gpt-5.6-sol": {
+			InputCostPerToken:  5e-6,
+			OutputCostPerToken: 30e-6,
+		},
+	}}
+	svc := NewBillingService(&config.Config{}, pricingSvc)
+	svc.SetSettingService(NewSettingService(&settingPublicRepoStub{values: map[string]string{
+		SettingKeyOpenAILongContextBillingEnabled: "false",
+	}}, &config.Config{}))
+
+	tokens := UsageTokens{InputTokens: 300000, OutputTokens: 100, CacheCreationTokens: 200}
+	cost, err := svc.CalculateCost("gpt-5.6-sol", tokens, 1)
+	require.NoError(t, err)
+	require.InDelta(t, float64(tokens.InputTokens)*5e-6, cost.InputCost, 1e-12)
+	require.InDelta(t, float64(tokens.OutputTokens)*30e-6, cost.OutputCost, 1e-12)
+	require.InDelta(t, float64(tokens.CacheCreationTokens)*5e-6*1.25, cost.CacheCreationCost, 1e-12)
+}
+
 func TestCalculateCost_OpenAIGPT55ProUsesGPT55PricingPolicy(t *testing.T) {
 	svc := newTestBillingService()
 

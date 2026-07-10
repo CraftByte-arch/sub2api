@@ -127,6 +127,8 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 		if abortIfAPIKeyGroupNotAllowed(c, apiKey) {
 			return
 		}
+		ctx := context.WithValue(c.Request.Context(), ctxkey.UserID, apiKey.User.ID)
+		c.Request = c.Request.WithContext(ctx)
 
 		// ── 4. SimpleMode → early return ─────────────────────────────
 
@@ -194,6 +196,15 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 			// 订阅模式：验证订阅限额
 			if subscription != nil {
 				needsMaintenance, validateErr := subscriptionService.ValidateAndCheckLimits(subscription, apiKey.Group)
+				if needsMaintenance {
+					refreshed, maintenanceErr := subscriptionService.EnsureWindowMaintenance(c.Request.Context(), subscription)
+					if maintenanceErr != nil {
+						AbortWithError(c, 500, "SUBSCRIPTION_MAINTENANCE_FAILED", "Failed to maintain subscription usage windows")
+						return
+					}
+					subscription = refreshed
+					_, validateErr = subscriptionService.ValidateAndCheckLimits(subscription, apiKey.Group)
+				}
 				if validateErr != nil {
 					code := "SUBSCRIPTION_INVALID"
 					status := 403
@@ -205,12 +216,6 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 					}
 					AbortWithError(c, status, code, validateErr.Error())
 					return
-				}
-
-				// 窗口维护异步化（不阻塞请求）
-				if needsMaintenance {
-					maintenanceCopy := *subscription
-					subscriptionService.DoWindowMaintenance(&maintenanceCopy)
 				}
 			} else {
 				// 非订阅模式或订阅服务未注入时复用统一资格检查，避免余额卡用户
