@@ -21,7 +21,7 @@
 - Test: `backend/internal/service/openai_gateway_record_usage_test.go`
 - Test: `backend/internal/service/image_studio_job_worker_test.go`
 
-- [ ] **Step 1: Write failing repository and recorder tests**
+- [x] **Step 1: Write failing repository and recorder tests**
 
 Add tests proving that `GetByRequestIDAndAPIKey` scans the existing usage row and that a duplicate billing result returns that persisted row instead of a newly calculated balance row.
 
@@ -39,7 +39,7 @@ func TestOpenAIGatewayRecordUsageDetailedDuplicateReturnsExistingReceipt(t *test
 }
 ```
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Run:
 
@@ -51,7 +51,7 @@ go test -tags=unit ./internal/repository ./internal/service \
 
 Expected: compilation fails because the repository method does not exist and duplicate billing still writes a fresh log.
 
-- [ ] **Step 3: Add the lookup and duplicate-receipt path**
+- [x] **Step 3: Add the lookup and duplicate-receipt path**
 
 Extend the interface and SQL repository:
 
@@ -77,11 +77,11 @@ if !applied {
 
 Do not call `writeUsageLogBestEffort` for the duplicate branch.
 
-- [ ] **Step 4: Add Image Studio preflight receipt lookup**
+- [x] **Step 4: Add Image Studio preflight receipt lookup**
 
 Before loading mutable API key, account, subscription, or pricing state, look up `image-studio-job:<jobID>` using `job.APIKeyID`. If found, call `MarkSucceeded` with the receipt's `ActualCost`. Continue normal settlement only when `ErrUsageLogNotFound` is returned.
 
-- [ ] **Step 5: Run focused tests and commit**
+- [x] **Step 5: Run focused tests and commit**
 
 ```bash
 cd backend
@@ -101,7 +101,7 @@ git commit -m "fix: reuse persisted image studio billing receipts"
 - Modify: `backend/internal/service/image_studio_job_worker.go`
 - Test: `backend/internal/service/image_studio_job_worker_test.go`
 
-- [ ] **Step 1: Write failing payload and retry tests**
+- [x] **Step 1: Write failing payload and retry tests**
 
 ```go
 func TestImageStudioSettlementPayloadPreservesSubscriptionID(t *testing.T) {
@@ -114,7 +114,7 @@ func TestImageStudioSettlementUsesPersistedSubscriptionAfterExpiry(t *testing.T)
 }
 ```
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 ```bash
 cd backend
@@ -123,7 +123,7 @@ go test -tags=unit ./internal/service -run 'ImageStudio.*Subscription' -count=1
 
 Expected: payload has no subscription ID and settlement only calls `GetActiveSubscription`.
 
-- [ ] **Step 3: Extend the JSON payload and resolver**
+- [x] **Step 3: Extend the JSON payload and resolver**
 
 Add the optional field without changing the payload version:
 
@@ -142,7 +142,7 @@ type imageStudioSubscriptionResolver interface {
 
 Pass the preflight subscription into payload marshaling. During settlement, use `GetByID` when `subscription_id` exists and validate its user/group ownership. Use active lookup only for old payloads without the field.
 
-- [ ] **Step 4: Run tests and commit**
+- [x] **Step 4: Run tests and commit**
 
 ```bash
 cd backend
@@ -162,7 +162,7 @@ git commit -m "fix: persist image studio subscription selection"
 - Test: `backend/internal/service/image_studio_job_worker_test.go`
 - Test: repository stubs in `backend/internal/service/image_studio_job_service_test.go` and `backend/internal/handler/image_studio_job_handler_test.go`
 
-- [ ] **Step 1: Write failing repository tests**
+- [x] **Step 1: Write failing repository tests**
 
 Cover runnable selection of stale `running`, heartbeat updates guarded by `status=running`, and a compare-and-set transition to failed:
 
@@ -172,7 +172,7 @@ MarkStaleRunningFailed(ctx context.Context, id int64, completedAt, staleBefore t
 
 The SQL must require both `status = running` and `heartbeat_at <= staleBefore`.
 
-- [ ] **Step 2: Write failing worker tests**
+- [x] **Step 2: Write failing worker tests**
 
 ```go
 func TestImageStudioStaleRunningJobIsFailedWithoutUpstreamReplay(t *testing.T) {
@@ -187,14 +187,14 @@ func TestImageStudioRunningJobRefreshesHeartbeat(t *testing.T) {
 }
 ```
 
-- [ ] **Step 3: Run tests and verify RED**
+- [x] **Step 3: Run tests and verify RED**
 
 ```bash
 cd backend
 go test -tags=unit ./internal/repository ./internal/service -run 'ImageStudio.*(StaleRunning|Heartbeat)' -count=1
 ```
 
-- [ ] **Step 4: Implement guarded recovery and active heartbeat**
+- [x] **Step 4: Implement guarded recovery and active heartbeat**
 
 Include stale `running` rows in `ListRunnableJobs`. Branch before `MarkRunning`:
 
@@ -207,7 +207,7 @@ if job.Status == ImageStudioJobStatusRunning {
 
 Start a ticker after `MarkRunning` and stop it when processing exits. Update heartbeat only while the database row remains `running`; a concurrent `running -> settling` transition must not receive later heartbeat writes.
 
-- [ ] **Step 5: Run tests and commit**
+- [x] **Step 5: Run tests and commit**
 
 ```bash
 cd backend
@@ -225,15 +225,15 @@ git commit -m "fix: recover interrupted image studio workers"
 - Modify: `backend/internal/service/image_studio_job_worker.go`
 - Test: `backend/internal/service/image_studio_job_worker_test.go`
 
-- [ ] **Step 1: Write failing terminal-error tests**
+- [x] **Step 1: Write failing terminal-error tests**
 
 Add table tests for malformed payload, missing API key, missing account, missing persisted subscription, and ownership mismatch. Assert `MarkFailed` is called and `MarkSettlementRetryable` is not called. Add a temporary database error case asserting the inverse.
 
-- [ ] **Step 2: Write failing filesystem cleanup test**
+- [x] **Step 2: Write failing filesystem cleanup test**
 
 Use `t.TempDir()` as the Image Studio asset root, persist a valid test image, force `MarkSettling` to fail, and assert the job asset directory no longer exists.
 
-- [ ] **Step 3: Run tests and verify RED**
+- [x] **Step 3: Run tests and verify RED**
 
 ```bash
 cd backend
@@ -241,7 +241,7 @@ go test -tags=unit ./internal/service \
   -run 'ImageStudio.*(TerminalSettlement|RetryableSettlement|CleansAssets)' -count=1
 ```
 
-- [ ] **Step 4: Implement error classification and cleanup ownership**
+- [x] **Step 4: Implement error classification and cleanup ownership**
 
 Introduce package-private sentinel errors for invalid payload and invalid settlement dependencies. Route them through:
 
@@ -255,7 +255,7 @@ s.requeueSettlement(ctx, job, err)
 
 After asset persistence, remove the per-job directory on payload or `MarkSettling` failure. Set `assetsCommitted = true` only after `MarkSettling` succeeds.
 
-- [ ] **Step 5: Run tests and commit**
+- [x] **Step 5: Run tests and commit**
 
 ```bash
 cd backend
@@ -269,7 +269,7 @@ git commit -m "fix: converge invalid image studio settlements"
 **Files:**
 - Verify all files modified in Tasks 1-4.
 
-- [ ] **Step 1: Format and inspect the diff**
+- [x] **Step 1: Format and inspect the diff**
 
 ```bash
 cd backend
@@ -283,7 +283,7 @@ gofmt -w internal/service/account_usage_service.go internal/repository/usage_log
 git diff --check
 ```
 
-- [ ] **Step 2: Run static and full unit verification**
+- [x] **Step 2: Run static and full unit verification**
 
 ```bash
 cd backend
@@ -291,14 +291,14 @@ go vet ./internal/service ./internal/repository ./internal/handler
 go test -tags=unit ./...
 ```
 
-- [ ] **Step 3: Run migration and server checks**
+- [x] **Step 3: Run migration and server checks**
 
 ```bash
 cd backend
 go test ./migrations ./internal/server ./cmd/server -count=1
 ```
 
-- [ ] **Step 4: Verify conflict scope and secrets**
+- [x] **Step 4: Verify conflict scope and secrets**
 
 ```bash
 git status --short

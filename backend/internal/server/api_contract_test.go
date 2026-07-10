@@ -2445,6 +2445,10 @@ func (r *stubUsageLogRepo) GetByID(ctx context.Context, id int64) (*service.Usag
 	return nil, errors.New("not implemented")
 }
 
+func (r *stubUsageLogRepo) GetByRequestIDAndAPIKey(ctx context.Context, requestID string, apiKeyID int64) (*service.UsageLog, error) {
+	return nil, errors.New("not implemented")
+}
+
 func (r *stubUsageLogRepo) Delete(ctx context.Context, id int64) error {
 	return errors.New("not implemented")
 }
