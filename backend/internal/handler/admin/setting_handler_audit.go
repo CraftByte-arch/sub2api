@@ -380,6 +380,24 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	if before.PurchaseSubscriptionURL != after.PurchaseSubscriptionURL {
 		changed = append(changed, "purchase_subscription_url")
 	}
+	if before.LegacySubscriptionPurchaseEnabled != after.LegacySubscriptionPurchaseEnabled {
+		changed = append(changed, "legacy_subscription_purchase_enabled")
+	}
+	if before.LegacySubscriptionVisible != after.LegacySubscriptionVisible {
+		changed = append(changed, "legacy_subscription_visible")
+	}
+	if before.OpenAILongContextBillingEnabled != after.OpenAILongContextBillingEnabled {
+		changed = append(changed, "openai_long_context_billing_enabled")
+	}
+	if before.OpenAILongContextBillingThreshold != after.OpenAILongContextBillingThreshold {
+		changed = append(changed, "openai_long_context_billing_threshold")
+	}
+	if before.OpenAILongContextBillingMultiplier != after.OpenAILongContextBillingMultiplier {
+		changed = append(changed, "openai_long_context_billing_multiplier")
+	}
+	if before.OpenAILongContextOutputMultiplier != after.OpenAILongContextOutputMultiplier {
+		changed = append(changed, "openai_long_context_output_multiplier")
+	}
 	if before.TableDefaultPageSize != after.TableDefaultPageSize {
 		changed = append(changed, "table_default_page_size")
 	}

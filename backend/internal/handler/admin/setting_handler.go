@@ -103,6 +103,13 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 			ValidityDays: sub.ValidityDays,
 		})
 	}
+	defaultUsageCards := make([]dto.DefaultUsageCardSetting, 0, len(settings.DefaultUsageCards))
+	for _, item := range settings.DefaultUsageCards {
+		defaultUsageCards = append(defaultUsageCards, dto.DefaultUsageCardSetting{
+			PlanID:   item.PlanID,
+			Quantity: item.Quantity,
+		})
+	}
 
 	// Load payment config
 	var paymentCfg *service.PaymentConfig
@@ -216,6 +223,17 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		HideCcsImportButton:                                    settings.HideCcsImportButton,
 		PurchaseSubscriptionEnabled:                            settings.PurchaseSubscriptionEnabled,
 		PurchaseSubscriptionURL:                                settings.PurchaseSubscriptionURL,
+		LegacySubscriptionPurchaseEnabled:                      settings.LegacySubscriptionPurchaseEnabled,
+		LegacySubscriptionVisible:                              settings.LegacySubscriptionVisible,
+		UsageCardEnabled:                                       settings.UsageCardEnabled,
+		UsageCardPaymentEnabled:                                settings.UsageCardPaymentEnabled,
+		UsageCardRedeemEnabled:                                 settings.UsageCardRedeemEnabled,
+		UsageCardBillingEnabled:                                settings.UsageCardBillingEnabled,
+		UsageCardDefaultPriority:                               settings.UsageCardDefaultPriority,
+		OpenAILongContextBillingEnabled:                        settings.OpenAILongContextBillingEnabled,
+		OpenAILongContextBillingThreshold:                      settings.OpenAILongContextBillingThreshold,
+		OpenAILongContextBillingMultiplier:                     settings.OpenAILongContextBillingMultiplier,
+		OpenAILongContextOutputMultiplier:                      settings.OpenAILongContextOutputMultiplier,
 		TableDefaultPageSize:                                   settings.TableDefaultPageSize,
 		TablePageSizeOptions:                                   settings.TablePageSizeOptions,
 		CustomMenuItems:                                        dto.ParseCustomMenuItems(settings.CustomMenuItems),
@@ -231,6 +249,7 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		AffiliateRebatePerInviteeCap:                           settings.AffiliateRebatePerInviteeCap,
 		DefaultUserRPMLimit:                                    settings.DefaultUserRPMLimit,
 		DefaultSubscriptions:                                   defaultSubscriptions,
+		DefaultUsageCards:                                      defaultUsageCards,
 		EnableModelFallback:                                    settings.EnableModelFallback,
 		FallbackModelAnthropic:                                 settings.FallbackModelAnthropic,
 		FallbackModelOpenAI:                                    settings.FallbackModelOpenAI,

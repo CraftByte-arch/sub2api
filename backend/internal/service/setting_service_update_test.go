@@ -165,6 +165,23 @@ func TestSettingService_UpdateSettings_DefaultSubscriptions_ValidGroup(t *testin
 	}, got)
 }
 
+func TestParseDefaultUsageCards_DefaultsNonPositiveQuantityToOne(t *testing.T) {
+	t.Parallel()
+
+	got := parseDefaultUsageCards(`[
+		{"plan_id":81},
+		{"plan_id":82,"quantity":0},
+		{"plan_id":83,"quantity":-2},
+		{"plan_id":0,"quantity":5}
+	]`)
+
+	require.Equal(t, []DefaultUsageCardSetting{
+		{PlanID: 81, Quantity: 1},
+		{PlanID: 82, Quantity: 1},
+		{PlanID: 83, Quantity: 1},
+	}, got)
+}
+
 func TestSettingService_UpdateSettings_DefaultSubscriptions_RejectsNonSubscriptionGroup(t *testing.T) {
 	repo := &settingUpdateRepoStub{}
 	groupReader := &defaultSubGroupReaderStub{

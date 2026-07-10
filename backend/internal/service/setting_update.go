@@ -280,6 +280,8 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingKeyHideCcsImportButton] = strconv.FormatBool(settings.HideCcsImportButton)
 	updates[SettingKeyPurchaseSubscriptionEnabled] = strconv.FormatBool(settings.PurchaseSubscriptionEnabled)
 	updates[SettingKeyPurchaseSubscriptionURL] = strings.TrimSpace(settings.PurchaseSubscriptionURL)
+	updates[SettingKeyLegacySubscriptionPurchaseEnabled] = strconv.FormatBool(settings.LegacySubscriptionPurchaseEnabled)
+	updates[SettingKeyLegacySubscriptionVisible] = strconv.FormatBool(settings.LegacySubscriptionVisible)
 	updates[SettingKeyUsageCardEnabled] = strconv.FormatBool(settings.UsageCardEnabled)
 	updates[SettingKeyUsageCardPaymentEnabled] = strconv.FormatBool(settings.UsageCardPaymentEnabled)
 	updates[SettingKeyUsageCardRedeemEnabled] = strconv.FormatBool(settings.UsageCardRedeemEnabled)

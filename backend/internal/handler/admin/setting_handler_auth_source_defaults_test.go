@@ -206,6 +206,151 @@ func TestSettingHandler_UpdateSettings_PreservesOmittedAuthSourceDefaults(t *tes
 	require.Equal(t, true, data["force_email_on_third_party_signup"])
 }
 
+func TestSettingHandler_GetSettings_ReturnsUsageCardAndLongContextSettings(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &settingHandlerRepoStub{values: map[string]string{
+		service.SettingKeyLegacySubscriptionPurchaseEnabled:  "true",
+		service.SettingKeyLegacySubscriptionVisible:          "true",
+		service.SettingKeyUsageCardEnabled:                   "true",
+		service.SettingKeyUsageCardPaymentEnabled:            "true",
+		service.SettingKeyUsageCardRedeemEnabled:             "true",
+		service.SettingKeyUsageCardBillingEnabled:            "true",
+		service.SettingKeyUsageCardDefaultPriority:           service.BillingPriorityBalanceOnly,
+		service.SettingKeyDefaultUsageCards:                  `[{"plan_id":71,"quantity":2}]`,
+		service.SettingKeyOpenAILongContextBillingEnabled:    "true",
+		service.SettingKeyOpenAILongContextBillingThreshold:  "310000",
+		service.SettingKeyOpenAILongContextBillingMultiplier: "1.75",
+		service.SettingKeyOpenAILongContextOutputMultiplier:  "1.25",
+	}}
+	handler := NewSettingHandler(service.NewSettingService(repo, &config.Config{}), nil, nil, nil, nil, nil, nil)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/admin/settings", nil)
+
+	handler.GetSettings(c)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var resp response.Response
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	data, ok := resp.Data.(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, true, data["legacy_subscription_purchase_enabled"])
+	require.Equal(t, true, data["legacy_subscription_visible"])
+	require.Equal(t, true, data["usage_card_enabled"])
+	require.Equal(t, true, data["usage_card_payment_enabled"])
+	require.Equal(t, true, data["usage_card_redeem_enabled"])
+	require.Equal(t, true, data["usage_card_billing_enabled"])
+	require.Equal(t, service.BillingPriorityBalanceOnly, data["usage_card_default_priority"])
+	require.Equal(t, true, data["openai_long_context_billing_enabled"])
+	require.Equal(t, float64(310000), data["openai_long_context_billing_threshold"])
+	require.Equal(t, 1.75, data["openai_long_context_billing_multiplier"])
+	require.Equal(t, 1.25, data["openai_long_context_output_multiplier"])
+
+	defaultCards, ok := data["default_usage_cards"].([]any)
+	require.True(t, ok)
+	require.Len(t, defaultCards, 1)
+	require.Equal(t, map[string]any{"plan_id": float64(71), "quantity": float64(2)}, defaultCards[0])
+}
+
+func TestSettingHandler_UpdateSettings_PreservesOmittedUsageCardAndLongContextSettings(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &settingHandlerRepoStub{values: map[string]string{
+		service.SettingKeyPromoCodeEnabled:                   "false",
+		service.SettingKeyLegacySubscriptionPurchaseEnabled:  "true",
+		service.SettingKeyLegacySubscriptionVisible:          "false",
+		service.SettingKeyUsageCardEnabled:                   "true",
+		service.SettingKeyUsageCardPaymentEnabled:            "true",
+		service.SettingKeyUsageCardRedeemEnabled:             "true",
+		service.SettingKeyUsageCardBillingEnabled:            "true",
+		service.SettingKeyUsageCardDefaultPriority:           service.BillingPriorityBalanceOnly,
+		service.SettingKeyDefaultUsageCards:                  `[{"plan_id":72,"quantity":3}]`,
+		service.SettingKeyOpenAILongContextBillingEnabled:    "true",
+		service.SettingKeyOpenAILongContextBillingThreshold:  "320000",
+		service.SettingKeyOpenAILongContextBillingMultiplier: "1.8",
+		service.SettingKeyOpenAILongContextOutputMultiplier:  "1.3",
+	}}
+	handler := NewSettingHandler(service.NewSettingService(repo, &config.Config{}), nil, nil, nil, nil, nil, nil)
+
+	rawBody, err := json.Marshal(map[string]any{"promo_code_enabled": true})
+	require.NoError(t, err)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPut, "/api/v1/admin/settings", bytes.NewReader(rawBody))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	handler.UpdateSettings(c)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "true", repo.values[service.SettingKeyLegacySubscriptionPurchaseEnabled])
+	require.Equal(t, "false", repo.values[service.SettingKeyLegacySubscriptionVisible])
+	require.Equal(t, "true", repo.values[service.SettingKeyUsageCardEnabled])
+	require.Equal(t, "true", repo.values[service.SettingKeyUsageCardPaymentEnabled])
+	require.Equal(t, "true", repo.values[service.SettingKeyUsageCardRedeemEnabled])
+	require.Equal(t, "true", repo.values[service.SettingKeyUsageCardBillingEnabled])
+	require.Equal(t, service.BillingPriorityBalanceOnly, repo.values[service.SettingKeyUsageCardDefaultPriority])
+	require.JSONEq(t, `[{"plan_id":72,"quantity":3}]`, repo.values[service.SettingKeyDefaultUsageCards])
+	require.Equal(t, "true", repo.values[service.SettingKeyOpenAILongContextBillingEnabled])
+	require.Equal(t, "320000", repo.values[service.SettingKeyOpenAILongContextBillingThreshold])
+	require.Equal(t, "1.8", repo.values[service.SettingKeyOpenAILongContextBillingMultiplier])
+	require.Equal(t, "1.3", repo.values[service.SettingKeyOpenAILongContextOutputMultiplier])
+}
+
+func TestSettingHandler_UpdateSettings_PersistsUsageCardAndLongContextSettings(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &settingHandlerRepoStub{values: map[string]string{
+		service.SettingKeyLegacySubscriptionPurchaseEnabled: "true",
+		service.SettingKeyLegacySubscriptionVisible:         "true",
+	}}
+	handler := NewSettingHandler(service.NewSettingService(repo, &config.Config{}), nil, nil, nil, nil, nil, nil)
+	body := map[string]any{
+		"legacy_subscription_purchase_enabled":   false,
+		"legacy_subscription_visible":            false,
+		"usage_card_enabled":                     true,
+		"usage_card_payment_enabled":             true,
+		"usage_card_redeem_enabled":              true,
+		"usage_card_billing_enabled":             true,
+		"usage_card_default_priority":            service.BillingPriorityUsageCardOnly,
+		"default_usage_cards":                    []map[string]any{{"plan_id": 73, "quantity": 4}},
+		"openai_long_context_billing_enabled":    false,
+		"openai_long_context_billing_threshold":  330000,
+		"openai_long_context_billing_multiplier": 1.9,
+		"openai_long_context_output_multiplier":  1.4,
+	}
+	rawBody, err := json.Marshal(body)
+	require.NoError(t, err)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPut, "/api/v1/admin/settings", bytes.NewReader(rawBody))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	handler.UpdateSettings(c)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "false", repo.values[service.SettingKeyLegacySubscriptionPurchaseEnabled])
+	require.Equal(t, "false", repo.values[service.SettingKeyLegacySubscriptionVisible])
+	require.Equal(t, "true", repo.values[service.SettingKeyUsageCardEnabled])
+	require.Equal(t, "true", repo.values[service.SettingKeyUsageCardPaymentEnabled])
+	require.Equal(t, "true", repo.values[service.SettingKeyUsageCardRedeemEnabled])
+	require.Equal(t, "true", repo.values[service.SettingKeyUsageCardBillingEnabled])
+	require.Equal(t, service.BillingPriorityUsageCardOnly, repo.values[service.SettingKeyUsageCardDefaultPriority])
+	require.JSONEq(t, `[{"plan_id":73,"quantity":4}]`, repo.values[service.SettingKeyDefaultUsageCards])
+	require.Equal(t, "false", repo.values[service.SettingKeyOpenAILongContextBillingEnabled])
+	require.Equal(t, "330000", repo.values[service.SettingKeyOpenAILongContextBillingThreshold])
+	require.Equal(t, "1.9", repo.values[service.SettingKeyOpenAILongContextBillingMultiplier])
+	require.Equal(t, "1.4", repo.values[service.SettingKeyOpenAILongContextOutputMultiplier])
+
+	var resp response.Response
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	data, ok := resp.Data.(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, false, data["legacy_subscription_purchase_enabled"])
+	require.Equal(t, false, data["legacy_subscription_visible"])
+	require.Equal(t, true, data["usage_card_enabled"])
+	require.Equal(t, service.BillingPriorityUsageCardOnly, data["usage_card_default_priority"])
+	require.Equal(t, float64(330000), data["openai_long_context_billing_threshold"])
+}
+
 func TestSettingHandler_UpdateSettings_PersistsPaymentVisibleMethodsAndAdvancedScheduler(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	repo := &settingHandlerRepoStub{
@@ -259,10 +404,10 @@ func TestSettingHandler_GetSettings_ReturnsPaymentMerchantOrderPrefix(t *testing
 	gin.SetMode(gin.TestMode)
 	repo := &settingHandlerRepoStub{
 		values: map[string]string{
-			service.SettingKeyPromoCodeEnabled:    "true",
-			service.SettingMerchantOrderPrefix:    "shop_",
-			service.SettingEnabledPaymentTypes:    "alipay",
-			service.SettingLoadBalanceStrategy:    "primary",
+			service.SettingKeyPromoCodeEnabled: "true",
+			service.SettingMerchantOrderPrefix: "shop_",
+			service.SettingEnabledPaymentTypes: "alipay",
+			service.SettingLoadBalanceStrategy: "primary",
 		},
 	}
 	svc := service.NewSettingService(repo, &config.Config{Default: config.DefaultConfig{UserConcurrency: 5}})
@@ -296,7 +441,7 @@ func TestSettingHandler_UpdateSettings_PersistsPaymentMerchantOrderPrefix(t *tes
 	handler := NewSettingHandler(svc, nil, nil, nil, paymentCfgSvc, nil, nil)
 
 	body := map[string]any{
-		"promo_code_enabled":             true,
+		"promo_code_enabled":            true,
 		"payment_merchant_order_prefix": "shop-01_",
 	}
 	rawBody, err := json.Marshal(body)
@@ -323,12 +468,12 @@ func TestSettingHandler_UpdateSettings_PrefixOnlyPreservesExistingPaymentConfig(
 	gin.SetMode(gin.TestMode)
 	repo := &settingHandlerRepoStub{
 		values: map[string]string{
-			service.SettingKeyPromoCodeEnabled:    "true",
-			service.SettingPaymentEnabled:         "true",
-			service.SettingMinRechargeAmount:      "5.00",
-			service.SettingEnabledPaymentTypes:    "alipay,wxpay",
-			service.SettingHelpText:               "keep me",
-			service.SettingMerchantOrderPrefix:    "old_",
+			service.SettingKeyPromoCodeEnabled: "true",
+			service.SettingPaymentEnabled:      "true",
+			service.SettingMinRechargeAmount:   "5.00",
+			service.SettingEnabledPaymentTypes: "alipay,wxpay",
+			service.SettingHelpText:            "keep me",
+			service.SettingMerchantOrderPrefix: "old_",
 		},
 	}
 	svc := service.NewSettingService(repo, &config.Config{Default: config.DefaultConfig{UserConcurrency: 5}})
@@ -336,7 +481,7 @@ func TestSettingHandler_UpdateSettings_PrefixOnlyPreservesExistingPaymentConfig(
 	handler := NewSettingHandler(svc, nil, nil, nil, paymentCfgSvc, nil, nil)
 
 	body := map[string]any{
-		"promo_code_enabled":             true,
+		"promo_code_enabled":            true,
 		"payment_merchant_order_prefix": "shop_",
 	}
 	rawBody, err := json.Marshal(body)

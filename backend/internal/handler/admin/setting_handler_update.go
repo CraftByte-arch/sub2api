@@ -127,20 +127,31 @@ type UpdateSettingsRequest struct {
 	GoogleOAuthFrontendRedirectURL string `json:"google_oauth_frontend_redirect_url"`
 
 	// OEM设置
-	SiteName                    string                `json:"site_name"`
-	SiteLogo                    string                `json:"site_logo"`
-	SiteSubtitle                string                `json:"site_subtitle"`
-	APIBaseURL                  string                `json:"api_base_url"`
-	ContactInfo                 string                `json:"contact_info"`
-	DocURL                      string                `json:"doc_url"`
-	HomeContent                 string                `json:"home_content"`
-	HideCcsImportButton         bool                  `json:"hide_ccs_import_button"`
-	PurchaseSubscriptionEnabled *bool                 `json:"purchase_subscription_enabled"`
-	PurchaseSubscriptionURL     *string               `json:"purchase_subscription_url"`
-	TableDefaultPageSize        int                   `json:"table_default_page_size"`
-	TablePageSizeOptions        []int                 `json:"table_page_size_options"`
-	CustomMenuItems             *[]dto.CustomMenuItem `json:"custom_menu_items"`
-	CustomEndpoints             *[]dto.CustomEndpoint `json:"custom_endpoints"`
+	SiteName                           string                `json:"site_name"`
+	SiteLogo                           string                `json:"site_logo"`
+	SiteSubtitle                       string                `json:"site_subtitle"`
+	APIBaseURL                         string                `json:"api_base_url"`
+	ContactInfo                        string                `json:"contact_info"`
+	DocURL                             string                `json:"doc_url"`
+	HomeContent                        string                `json:"home_content"`
+	HideCcsImportButton                bool                  `json:"hide_ccs_import_button"`
+	PurchaseSubscriptionEnabled        *bool                 `json:"purchase_subscription_enabled"`
+	PurchaseSubscriptionURL            *string               `json:"purchase_subscription_url"`
+	LegacySubscriptionPurchaseEnabled  *bool                 `json:"legacy_subscription_purchase_enabled"`
+	LegacySubscriptionVisible          *bool                 `json:"legacy_subscription_visible"`
+	UsageCardEnabled                   *bool                 `json:"usage_card_enabled"`
+	UsageCardPaymentEnabled            *bool                 `json:"usage_card_payment_enabled"`
+	UsageCardRedeemEnabled             *bool                 `json:"usage_card_redeem_enabled"`
+	UsageCardBillingEnabled            *bool                 `json:"usage_card_billing_enabled"`
+	UsageCardDefaultPriority           *string               `json:"usage_card_default_priority"`
+	OpenAILongContextBillingEnabled    *bool                 `json:"openai_long_context_billing_enabled"`
+	OpenAILongContextBillingThreshold  *int                  `json:"openai_long_context_billing_threshold"`
+	OpenAILongContextBillingMultiplier *float64              `json:"openai_long_context_billing_multiplier"`
+	OpenAILongContextOutputMultiplier  *float64              `json:"openai_long_context_output_multiplier"`
+	TableDefaultPageSize               int                   `json:"table_default_page_size"`
+	TablePageSizeOptions               []int                 `json:"table_page_size_options"`
+	CustomMenuItems                    *[]dto.CustomMenuItem `json:"custom_menu_items"`
+	CustomEndpoints                    *[]dto.CustomEndpoint `json:"custom_endpoints"`
 
 	// 默认配置
 	DefaultConcurrency                        int                               `json:"default_concurrency"`
@@ -151,6 +162,7 @@ type UpdateSettingsRequest struct {
 	AffiliateRebatePerInviteeCap              *float64                          `json:"affiliate_rebate_per_invitee_cap"`
 	DefaultUserRPMLimit                       int                               `json:"default_user_rpm_limit"`
 	DefaultSubscriptions                      []dto.DefaultSubscriptionSetting  `json:"default_subscriptions"`
+	DefaultUsageCards                         *[]dto.DefaultUsageCardSetting    `json:"default_usage_cards"`
 	AuthSourceDefaultEmailBalance             *float64                          `json:"auth_source_default_email_balance"`
 	AuthSourceDefaultEmailConcurrency         *int                              `json:"auth_source_default_email_concurrency"`
 	AuthSourceDefaultEmailSubscriptions       *[]dto.DefaultSubscriptionSetting `json:"auth_source_default_email_subscriptions"`
@@ -908,6 +920,62 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 	if req.PurchaseSubscriptionURL != nil {
 		purchaseURL = strings.TrimSpace(*req.PurchaseSubscriptionURL)
 	}
+	legacySubscriptionPurchaseEnabled := previousSettings.LegacySubscriptionPurchaseEnabled
+	if req.LegacySubscriptionPurchaseEnabled != nil {
+		legacySubscriptionPurchaseEnabled = *req.LegacySubscriptionPurchaseEnabled
+	}
+	legacySubscriptionVisible := previousSettings.LegacySubscriptionVisible
+	if req.LegacySubscriptionVisible != nil {
+		legacySubscriptionVisible = *req.LegacySubscriptionVisible
+	}
+	usageCardEnabled := previousSettings.UsageCardEnabled
+	if req.UsageCardEnabled != nil {
+		usageCardEnabled = *req.UsageCardEnabled
+	}
+	usageCardPaymentEnabled := previousSettings.UsageCardPaymentEnabled
+	if req.UsageCardPaymentEnabled != nil {
+		usageCardPaymentEnabled = *req.UsageCardPaymentEnabled
+	}
+	usageCardRedeemEnabled := previousSettings.UsageCardRedeemEnabled
+	if req.UsageCardRedeemEnabled != nil {
+		usageCardRedeemEnabled = *req.UsageCardRedeemEnabled
+	}
+	usageCardBillingEnabled := previousSettings.UsageCardBillingEnabled
+	if req.UsageCardBillingEnabled != nil {
+		usageCardBillingEnabled = *req.UsageCardBillingEnabled
+	}
+	usageCardDefaultPriority := previousSettings.UsageCardDefaultPriority
+	if req.UsageCardDefaultPriority != nil {
+		usageCardDefaultPriority = service.NormalizeBillingPriority(*req.UsageCardDefaultPriority)
+	}
+	openaiLongContextBillingEnabled := previousSettings.OpenAILongContextBillingEnabled
+	if req.OpenAILongContextBillingEnabled != nil {
+		openaiLongContextBillingEnabled = *req.OpenAILongContextBillingEnabled
+	}
+	openaiLongContextBillingThreshold := previousSettings.OpenAILongContextBillingThreshold
+	if req.OpenAILongContextBillingThreshold != nil {
+		openaiLongContextBillingThreshold = *req.OpenAILongContextBillingThreshold
+	}
+	openaiLongContextBillingMultiplier := previousSettings.OpenAILongContextBillingMultiplier
+	if req.OpenAILongContextBillingMultiplier != nil {
+		openaiLongContextBillingMultiplier = *req.OpenAILongContextBillingMultiplier
+	}
+	openaiLongContextOutputMultiplier := previousSettings.OpenAILongContextOutputMultiplier
+	if req.OpenAILongContextOutputMultiplier != nil {
+		openaiLongContextOutputMultiplier = *req.OpenAILongContextOutputMultiplier
+	}
+	if openaiLongContextBillingThreshold <= 0 {
+		response.BadRequest(c, "OpenAI long context billing threshold must be greater than 0")
+		return
+	}
+	if openaiLongContextBillingMultiplier <= 0 {
+		response.BadRequest(c, "OpenAI long context input multiplier must be greater than 0")
+		return
+	}
+	if openaiLongContextOutputMultiplier <= 0 {
+		response.BadRequest(c, "OpenAI long context output multiplier must be greater than 0")
+		return
+	}
 
 	// - 启用时要求 URL 合法且非空
 	// - 禁用时允许为空；若提供了 URL 也做基本校验，避免误配置
@@ -1090,6 +1158,16 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			GroupID:      sub.GroupID,
 			ValidityDays: sub.ValidityDays,
 		})
+	}
+	defaultUsageCards := previousSettings.DefaultUsageCards
+	if req.DefaultUsageCards != nil {
+		defaultUsageCards = make([]service.DefaultUsageCardSetting, 0, len(*req.DefaultUsageCards))
+		for _, item := range *req.DefaultUsageCards {
+			defaultUsageCards = append(defaultUsageCards, service.DefaultUsageCardSetting{
+				PlanID:   item.PlanID,
+				Quantity: item.Quantity,
+			})
+		}
 	}
 
 	// 验证最低版本号格式（空字符串=禁用，或合法 semver）
@@ -1277,6 +1355,17 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		HideCcsImportButton:                    req.HideCcsImportButton,
 		PurchaseSubscriptionEnabled:            purchaseEnabled,
 		PurchaseSubscriptionURL:                purchaseURL,
+		LegacySubscriptionPurchaseEnabled:      legacySubscriptionPurchaseEnabled,
+		LegacySubscriptionVisible:              legacySubscriptionVisible,
+		UsageCardEnabled:                       usageCardEnabled,
+		UsageCardPaymentEnabled:                usageCardPaymentEnabled,
+		UsageCardRedeemEnabled:                 usageCardRedeemEnabled,
+		UsageCardBillingEnabled:                usageCardBillingEnabled,
+		UsageCardDefaultPriority:               usageCardDefaultPriority,
+		OpenAILongContextBillingEnabled:        openaiLongContextBillingEnabled,
+		OpenAILongContextBillingThreshold:      openaiLongContextBillingThreshold,
+		OpenAILongContextBillingMultiplier:     openaiLongContextBillingMultiplier,
+		OpenAILongContextOutputMultiplier:      openaiLongContextOutputMultiplier,
 		TableDefaultPageSize:                   req.TableDefaultPageSize,
 		TablePageSizeOptions:                   req.TablePageSizeOptions,
 		CustomMenuItems:                        customMenuJSON,
@@ -1289,6 +1378,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		AffiliateRebatePerInviteeCap:           affiliateRebatePerInviteeCap,
 		DefaultUserRPMLimit:                    req.DefaultUserRPMLimit,
 		DefaultSubscriptions:                   defaultSubscriptions,
+		DefaultUsageCards:                      defaultUsageCards,
 		EnableModelFallback:                    req.EnableModelFallback,
 		FallbackModelAnthropic:                 req.FallbackModelAnthropic,
 		FallbackModelOpenAI:                    req.FallbackModelOpenAI,
@@ -1677,6 +1767,13 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			ValidityDays: sub.ValidityDays,
 		})
 	}
+	updatedDefaultUsageCards := make([]dto.DefaultUsageCardSetting, 0, len(updatedSettings.DefaultUsageCards))
+	for _, item := range updatedSettings.DefaultUsageCards {
+		updatedDefaultUsageCards = append(updatedDefaultUsageCards, dto.DefaultUsageCardSetting{
+			PlanID:   item.PlanID,
+			Quantity: item.Quantity,
+		})
+	}
 
 	// Reload payment config for response
 	var updatedPaymentCfg *service.PaymentConfig
@@ -1790,6 +1887,17 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		HideCcsImportButton:                                    updatedSettings.HideCcsImportButton,
 		PurchaseSubscriptionEnabled:                            updatedSettings.PurchaseSubscriptionEnabled,
 		PurchaseSubscriptionURL:                                updatedSettings.PurchaseSubscriptionURL,
+		LegacySubscriptionPurchaseEnabled:                      updatedSettings.LegacySubscriptionPurchaseEnabled,
+		LegacySubscriptionVisible:                              updatedSettings.LegacySubscriptionVisible,
+		UsageCardEnabled:                                       updatedSettings.UsageCardEnabled,
+		UsageCardPaymentEnabled:                                updatedSettings.UsageCardPaymentEnabled,
+		UsageCardRedeemEnabled:                                 updatedSettings.UsageCardRedeemEnabled,
+		UsageCardBillingEnabled:                                updatedSettings.UsageCardBillingEnabled,
+		UsageCardDefaultPriority:                               updatedSettings.UsageCardDefaultPriority,
+		OpenAILongContextBillingEnabled:                        updatedSettings.OpenAILongContextBillingEnabled,
+		OpenAILongContextBillingThreshold:                      updatedSettings.OpenAILongContextBillingThreshold,
+		OpenAILongContextBillingMultiplier:                     updatedSettings.OpenAILongContextBillingMultiplier,
+		OpenAILongContextOutputMultiplier:                      updatedSettings.OpenAILongContextOutputMultiplier,
 		TableDefaultPageSize:                                   updatedSettings.TableDefaultPageSize,
 		TablePageSizeOptions:                                   updatedSettings.TablePageSizeOptions,
 		CustomMenuItems:                                        dto.ParseCustomMenuItems(updatedSettings.CustomMenuItems),
@@ -1802,6 +1910,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		AffiliateRebatePerInviteeCap:                           updatedSettings.AffiliateRebatePerInviteeCap,
 		DefaultUserRPMLimit:                                    updatedSettings.DefaultUserRPMLimit,
 		DefaultSubscriptions:                                   updatedDefaultSubscriptions,
+		DefaultUsageCards:                                      updatedDefaultUsageCards,
 		EnableModelFallback:                                    updatedSettings.EnableModelFallback,
 		FallbackModelAnthropic:                                 updatedSettings.FallbackModelAnthropic,
 		FallbackModelOpenAI:                                    updatedSettings.FallbackModelOpenAI,

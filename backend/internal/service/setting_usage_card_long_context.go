@@ -136,13 +136,13 @@ func parseDefaultUsageCards(raw string) []DefaultUsageCardSetting {
 	}
 	normalized := make([]DefaultUsageCardSetting, 0, len(items))
 	for _, item := range items {
-		if item.PlanID <= 0 || item.Quantity <= 0 {
+		if item.PlanID <= 0 {
 			continue
 		}
-		normalized = append(normalized, DefaultUsageCardSetting{
-			PlanID:   item.PlanID,
-			Quantity: item.Quantity,
-		})
+		if item.Quantity <= 0 {
+			item.Quantity = 1
+		}
+		normalized = append(normalized, item)
 	}
 	return normalized
 }

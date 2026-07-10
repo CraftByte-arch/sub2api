@@ -729,11 +729,11 @@ git commit -m "chore: sync image studio admin controls tasks"
 - Modify: `backend/internal/service/setting_usage_card_long_context.go`
 - Test: admin settings handler and setting service tests
 
-- [ ] **Step 1: Add a failing unrelated-save preservation test**
-- [ ] **Step 2: Add failing GET/update response tests for legacy subscriptions, usage cards, default usage cards, and long-context billing**
-- [ ] **Step 3: Port request fields, previous-value merging, validation, DTO conversion, persistence, response, and audit behavior from `58583dbd`**
-- [ ] **Step 4: Restore default usage-card parsing compatibility and run focused tests**
-- [ ] **Step 5: Commit the settings reconciliation**
+- [x] **Step 1: Add a failing unrelated-save preservation test**
+- [x] **Step 2: Add failing GET/update response tests for legacy subscriptions, usage cards, default usage cards, and long-context billing**
+- [x] **Step 3: Port request fields, previous-value merging, validation, DTO conversion, persistence, response, and audit behavior from `58583dbd`**
+- [x] **Step 4: Restore default usage-card parsing compatibility and run focused tests**
+- [x] **Step 5: Commit the settings reconciliation**
 
 ---
 
