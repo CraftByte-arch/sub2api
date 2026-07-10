@@ -16,7 +16,7 @@ verification_report: docs/superpowers/reports/2026-07-09-configure-image-studio-
 branch_status: handled
 created_at: 2026-07-09
 verified_at: 2026-07-10
-archived: false
+archived: true
 handoff_context: openspec/changes/configure-image-studio-available-groups/.comet/handoff/design-context.json
 handoff_hash: 574c26c14a36b71682aea6b5126602dbfbf9621fdcc1caa7364d43589d3307a0
 build_command: make build

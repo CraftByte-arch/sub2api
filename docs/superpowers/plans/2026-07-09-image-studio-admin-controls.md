@@ -2,6 +2,7 @@
 change: configure-image-studio-available-groups
 design-doc: docs/superpowers/specs/2026-07-09-image-studio-admin-controls-design.md
 base-ref: f5cd222e59e2e576fe4c5e751e3fd240687a0377
+archived-with: 2026-07-10-configure-image-studio-available-groups
 ---
 
 # Image Studio Admin Controls Implementation Plan

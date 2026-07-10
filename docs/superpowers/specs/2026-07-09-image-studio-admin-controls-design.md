@@ -2,6 +2,8 @@
 comet_change: configure-image-studio-available-groups
 role: technical-design
 canonical_spec: openspec
+archived-with: 2026-07-10-configure-image-studio-available-groups
+status: final
 ---
 
 # Image Studio Admin Controls Design
