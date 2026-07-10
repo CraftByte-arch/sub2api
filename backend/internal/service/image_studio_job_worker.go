@@ -436,6 +436,15 @@ func (s *ImageStudioJobService) processSettlingJob(ctx context.Context, job Imag
 	if err != nil || !claimed {
 		return
 	}
+	if receipt, err := s.findImageStudioUsageReceipt(ctx, job); err == nil {
+		if err := s.markImageStudioSucceeded(ctx, job, receipt.ActualCost); err != nil {
+			s.requeueSettlement(ctx, job, err)
+		}
+		return
+	} else if !errors.Is(err, ErrUsageLogNotFound) {
+		s.requeueSettlement(ctx, job, fmt.Errorf("load image studio usage receipt: %w", err))
+		return
+	}
 	apiKey, err := s.apiKeyService.GetByID(ctx, job.APIKeyID)
 	if err != nil {
 		s.requeueSettlement(ctx, job, fmt.Errorf("load api key: %w", err))
@@ -486,12 +495,27 @@ func (s *ImageStudioJobService) settleJob(ctx context.Context, job ImageStudioJo
 	if err != nil {
 		return fmt.Errorf("record image studio usage: %w", err)
 	}
+	return s.markImageStudioSucceeded(ctx, job, usageLog.ActualCost)
+}
+
+func (s *ImageStudioJobService) findImageStudioUsageReceipt(ctx context.Context, job ImageStudioJob) (*UsageLog, error) {
+	if s == nil || s.openAIGateway == nil || s.openAIGateway.usageLogRepo == nil {
+		return nil, ErrUsageLogNotFound
+	}
+	return s.openAIGateway.usageLogRepo.GetByRequestIDAndAPIKey(
+		ctx,
+		fmt.Sprintf("image-studio-job:%d", job.ID),
+		job.APIKeyID,
+	)
+}
+
+func (s *ImageStudioJobService) markImageStudioSucceeded(ctx context.Context, job ImageStudioJob, chargedAmountUSD float64) error {
 	completedAt := time.Now()
 	if err := s.repo.MarkSucceeded(
 		ctx,
 		job.ID,
 		completedAt,
-		usageLog.ActualCost,
+		chargedAmountUSD,
 		job.OriginalPath,
 		job.ThumbnailPath,
 		job.MIMEType,

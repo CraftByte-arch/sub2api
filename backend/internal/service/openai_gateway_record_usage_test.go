@@ -15,11 +15,14 @@ import (
 type openAIRecordUsageLogRepoStub struct {
 	UsageLogRepository
 
-	inserted   bool
-	err        error
-	calls      int
-	lastLog    *UsageLog
-	lastCtxErr error
+	inserted    bool
+	err         error
+	calls       int
+	lastLog     *UsageLog
+	lastCtxErr  error
+	receipt     *UsageLog
+	lookupErr   error
+	lookupCalls int
 }
 
 func (s *openAIRecordUsageLogRepoStub) Create(ctx context.Context, log *UsageLog) (bool, error) {
@@ -27,6 +30,50 @@ func (s *openAIRecordUsageLogRepoStub) Create(ctx context.Context, log *UsageLog
 	s.lastLog = log
 	s.lastCtxErr = ctx.Err()
 	return s.inserted, s.err
+}
+
+func (s *openAIRecordUsageLogRepoStub) GetByRequestIDAndAPIKey(context.Context, string, int64) (*UsageLog, error) {
+	s.lookupCalls++
+	if s.lookupErr != nil {
+		return nil, s.lookupErr
+	}
+	if s.receipt == nil {
+		return nil, ErrUsageLogNotFound
+	}
+	return s.receipt, nil
+}
+
+func TestOpenAIGatewayServiceRecordUsageDetailed_DuplicateReturnsExistingReceipt(t *testing.T) {
+	usageCardID := int64(88)
+	receipt := &UsageLog{
+		ID:          901,
+		APIKeyID:    1004,
+		RequestID:   "resp_duplicate_receipt",
+		UsageCardID: &usageCardID,
+		BillingType: BillingTypeUsageCard,
+		ActualCost:  0.25,
+	}
+	usageRepo := &openAIRecordUsageLogRepoStub{receipt: receipt}
+	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: false}}
+	svc := newOpenAIRecordUsageServiceWithBillingRepoForTest(
+		usageRepo,
+		billingRepo,
+		&openAIRecordUsageUserRepoStub{},
+		&openAIRecordUsageSubRepoStub{},
+		nil,
+	)
+
+	got, err := svc.recordUsageDetailed(context.Background(), &OpenAIRecordUsageInput{
+		Result:  &OpenAIForwardResult{RequestID: receipt.RequestID, Model: "gpt-image-1", ImageCount: 1, ImageSize: "1K"},
+		APIKey:  &APIKey{ID: receipt.APIKeyID},
+		User:    &User{ID: 2004},
+		Account: &Account{ID: 3004},
+	})
+
+	require.NoError(t, err)
+	require.Same(t, receipt, got)
+	require.Equal(t, 1, usageRepo.lookupCalls)
+	require.Zero(t, usageRepo.calls)
 }
 
 type openAIRecordUsageBillingRepoStub struct {
@@ -419,7 +466,8 @@ func TestOpenAIGatewayServiceRecordUsage_ZeroUsageStillWritesUsageLog(t *testing
 
 	require.NoError(t, err)
 	require.Equal(t, 1, billingRepo.calls)
-	require.Equal(t, 1, usageRepo.calls)
+	require.Zero(t, usageRepo.calls)
+	require.Equal(t, 1, usageRepo.lookupCalls)
 	require.Equal(t, 0, userRepo.deductCalls)
 	require.Equal(t, 0, subRepo.incrementCalls)
 	require.Equal(t, 0, quotaSvc.quotaCalls)
@@ -717,7 +765,7 @@ func TestOpenAIGatewayServiceRecordUsage_FallsBackToGroupDefaultRateWhenResolver
 }
 
 func TestOpenAIGatewayServiceRecordUsage_DuplicateUsageLogSkipsBilling(t *testing.T) {
-	usageRepo := &openAIRecordUsageLogRepoStub{inserted: false}
+	usageRepo := &openAIRecordUsageLogRepoStub{receipt: &UsageLog{APIKeyID: 1004, RequestID: "resp_duplicate"}}
 	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: false}}
 	userRepo := &openAIRecordUsageUserRepoStub{}
 	subRepo := &openAIRecordUsageSubRepoStub{}
@@ -740,13 +788,14 @@ func TestOpenAIGatewayServiceRecordUsage_DuplicateUsageLogSkipsBilling(t *testin
 
 	require.NoError(t, err)
 	require.Equal(t, 1, billingRepo.calls)
-	require.Equal(t, 1, usageRepo.calls)
+	require.Zero(t, usageRepo.calls)
+	require.Equal(t, 1, usageRepo.lookupCalls)
 	require.Equal(t, 0, userRepo.deductCalls)
 	require.Equal(t, 0, subRepo.incrementCalls)
 }
 
 func TestOpenAIGatewayServiceRecordUsage_DuplicateBillingKeySkipsBillingWithRepo(t *testing.T) {
-	usageRepo := &openAIRecordUsageLogRepoStub{inserted: false}
+	usageRepo := &openAIRecordUsageLogRepoStub{receipt: &UsageLog{APIKeyID: 10045, RequestID: "resp_duplicate_billing_key"}}
 	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: false}}
 	userRepo := &openAIRecordUsageUserRepoStub{}
 	subRepo := &openAIRecordUsageSubRepoStub{}
@@ -774,7 +823,8 @@ func TestOpenAIGatewayServiceRecordUsage_DuplicateBillingKeySkipsBillingWithRepo
 
 	require.NoError(t, err)
 	require.Equal(t, 1, billingRepo.calls)
-	require.Equal(t, 1, usageRepo.calls)
+	require.Zero(t, usageRepo.calls)
+	require.Equal(t, 1, usageRepo.lookupCalls)
 	require.Equal(t, 0, userRepo.deductCalls)
 	require.Equal(t, 0, subRepo.incrementCalls)
 	require.Equal(t, 0, quotaSvc.quotaCalls)

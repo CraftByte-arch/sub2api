@@ -320,8 +320,8 @@ func (s *OpenAIGatewayService) recordUsageDetailed(ctx context.Context, input *O
 		quotaPlatform = PlatformFromAPIKey(apiKey)
 	}
 
-	billingErr := func() error {
-		_, err := applyUsageBilling(ctx, requestID, usageLog, &postUsageBillingParams{
+	billingApplied, billingErr := func() (bool, error) {
+		return applyUsageBilling(ctx, requestID, usageLog, &postUsageBillingParams{
 			Cost:                    cost,
 			User:                    user,
 			APIKey:                  apiKey,
@@ -335,11 +335,20 @@ func (s *OpenAIGatewayService) recordUsageDetailed(ctx context.Context, input *O
 			APIKeyService:           input.APIKeyService,
 			Platform:                quotaPlatform,
 		}, s.billingDeps(), s.usageBillingRepo)
-		return err
 	}()
 
 	if billingErr != nil {
 		return nil, billingErr
+	}
+	if !billingApplied {
+		if s.usageLogRepo == nil {
+			return nil, fmt.Errorf("load duplicate usage receipt: usage log repository is nil")
+		}
+		receipt, err := s.usageLogRepo.GetByRequestIDAndAPIKey(ctx, requestID, apiKey.ID)
+		if err != nil {
+			return nil, fmt.Errorf("load duplicate usage receipt: %w", err)
+		}
+		return receipt, nil
 	}
 	writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.openai_gateway")
 

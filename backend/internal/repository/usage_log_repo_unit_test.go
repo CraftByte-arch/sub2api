@@ -3,13 +3,58 @@
 package repository
 
 import (
+	"context"
+	"database/sql/driver"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 )
+
+func TestUsageLogRepositoryGetByRequestIDAndAPIKey(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	usageCardID := int64(77)
+	receipt := &service.UsageLog{
+		ID:             99,
+		UserID:         1,
+		APIKeyID:       2,
+		AccountID:      3,
+		RequestID:      "image-studio-job:39",
+		Model:          "gpt-image-1",
+		RequestedModel: "gpt-image-1",
+		UsageCardID:    &usageCardID,
+		ActualCost:     0.25,
+		BillingType:    service.BillingTypeUsageCard,
+		CreatedAt:      time.Now().UTC(),
+	}
+	prepared := prepareUsageLogInsert(receipt)
+	values := make([]driver.Value, 0, len(prepared.args)+1)
+	values = append(values, receipt.ID)
+	for _, value := range prepared.args {
+		values = append(values, value)
+	}
+	columns := strings.Split(usageLogSelectColumns, ", ")
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT "+usageLogSelectColumns+" FROM usage_logs WHERE request_id = $1 AND api_key_id = $2")).
+		WithArgs(receipt.RequestID, receipt.APIKeyID).
+		WillReturnRows(sqlmock.NewRows(columns).AddRow(values...))
+
+	repo := &usageLogRepository{sql: db}
+	got, err := repo.GetByRequestIDAndAPIKey(context.Background(), receipt.RequestID, receipt.APIKeyID)
+
+	require.NoError(t, err)
+	require.Equal(t, receipt.ID, got.ID)
+	require.Equal(t, receipt.ActualCost, got.ActualCost)
+	require.Equal(t, service.BillingTypeUsageCard, got.BillingType)
+	require.Equal(t, usageCardID, *got.UsageCardID)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
 
 func TestSafeDateFormat(t *testing.T) {
 	tests := []struct {

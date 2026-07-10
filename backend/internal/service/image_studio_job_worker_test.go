@@ -189,6 +189,38 @@ func TestImageStudioJobServiceSettlingRetrySkipsUpstreamAndRequeuesCompletionFai
 	require.Equal(t, "settlement_failed", repo.retryErrorCode)
 }
 
+func TestImageStudioJobServiceExistingReceiptCompletesWithoutMutableDependencies(t *testing.T) {
+	receipt := &UsageLog{
+		ID:         701,
+		APIKeyID:   41,
+		RequestID:  "image-studio-job:39",
+		ActualCost: 0.37,
+	}
+	usageRepo := &openAIRecordUsageLogRepoStub{receipt: receipt}
+	billingRepo := &openAIRecordUsageBillingRepoStub{}
+	gateway := newOpenAIRecordUsageServiceWithBillingRepoForTest(
+		usageRepo,
+		billingRepo,
+		&openAIRecordUsageUserRepoStub{},
+		&openAIRecordUsageSubRepoStub{},
+		nil,
+	)
+	repo := &imageStudioWorkerRepoStub{claimSettling: true}
+	svc := &ImageStudioJobService{repo: repo, openAIGateway: gateway}
+
+	svc.processJob(context.Background(), ImageStudioJob{
+		ID:       39,
+		UserID:   42,
+		APIKeyID: 41,
+		Status:   ImageStudioJobStatusSettling,
+	})
+
+	require.Equal(t, 1, usageRepo.lookupCalls)
+	require.Zero(t, billingRepo.calls)
+	require.Equal(t, 1, repo.markSucceededCalls)
+	require.InDelta(t, receipt.ActualCost, repo.chargedAmountUSD, 1e-12)
+}
+
 type imageStudioWorkerRepoStub struct {
 	ImageStudioJobRepository
 	claimSettling                bool
