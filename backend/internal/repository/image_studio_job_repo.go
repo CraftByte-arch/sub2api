@@ -285,6 +285,23 @@ func (r *imageStudioJobRepository) MarkSettlementRetryable(ctx context.Context, 
 	return err
 }
 
+func (r *imageStudioJobRepository) MarkSettlementFailed(ctx context.Context, id int64, completedAt time.Time, errorCode, errorMessage string) (bool, error) {
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE image_studio_jobs
+		SET status = $2, completed_at = $3, error_code = $4, error_message = $5,
+			next_attempt_at = NULL, heartbeat_at = NULL, updated_at = NOW()
+		WHERE id = $1 AND status = $6
+	`, id, service.ImageStudioJobStatusFailed, completedAt, errorCode, errorMessage, service.ImageStudioJobStatusSettling)
+	if err != nil {
+		return false, err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return rowsAffected > 0, nil
+}
+
 func (r *imageStudioJobRepository) UpdateHeartbeat(ctx context.Context, id int64, heartbeatAt time.Time) error {
 	_, err := r.db.ExecContext(ctx, `UPDATE image_studio_jobs SET heartbeat_at = $2, updated_at = NOW() WHERE id = $1 AND status = $3`, id, heartbeatAt, service.ImageStudioJobStatusRunning)
 	return err

@@ -268,6 +268,31 @@ func TestImageStudioJobRepositoryMarkSettlementRetryableKeepsSettlementStage(t *
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestImageStudioJobRepositoryMarkSettlementFailedRequiresSettlingState(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	completedAt := time.Now()
+	mock.ExpectExec("UPDATE image_studio_jobs[\\s\\S]*status = \\$2[\\s\\S]*WHERE id = \\$1 AND status = \\$6").
+		WithArgs(
+			int64(39),
+			service.ImageStudioJobStatusFailed,
+			completedAt,
+			"settlement_unrecoverable",
+			"missing account",
+			service.ImageStudioJobStatusSettling,
+		).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	repo := NewImageStudioJobRepository(nil, db)
+	changed, err := repo.MarkSettlementFailed(context.Background(), 39, completedAt, "settlement_unrecoverable", "missing account")
+
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestImageStudioJobRepositoryMarkSucceededRequiresSettlingState(t *testing.T) {
 	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
 	require.NoError(t, err)

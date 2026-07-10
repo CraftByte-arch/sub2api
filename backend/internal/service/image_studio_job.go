@@ -107,6 +107,7 @@ type ImageStudioJobRepository interface {
 	UpdateHeartbeat(ctx context.Context, id int64, heartbeatAt time.Time) error
 	MarkRetryable(ctx context.Context, id int64, nextAttemptAt time.Time, errorCode, errorMessage string) error
 	MarkSettlementRetryable(ctx context.Context, id int64, nextAttemptAt time.Time, errorCode, errorMessage string) error
+	MarkSettlementFailed(ctx context.Context, id int64, completedAt time.Time, errorCode, errorMessage string) (bool, error)
 	MarkSucceeded(ctx context.Context, id int64, completedAt time.Time, chargedAmountUSD float64, originalPath, thumbnailPath, mimeType string, fileSizeBytes int64, width, height int, expiresAt *time.Time) error
 	MarkFailed(ctx context.Context, id int64, completedAt time.Time, errorCode, errorMessage string) error
 	ListExpiredAssets(ctx context.Context, now time.Time, limit int) ([]ImageStudioJob, error)

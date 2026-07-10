@@ -263,6 +263,9 @@ func (r *imageStudioHandlerJobRepoStub) MarkRetryable(ctx context.Context, id in
 func (r *imageStudioHandlerJobRepoStub) MarkSettlementRetryable(context.Context, int64, time.Time, string, string) error {
 	panic("unexpected MarkSettlementRetryable call")
 }
+func (r *imageStudioHandlerJobRepoStub) MarkSettlementFailed(context.Context, int64, time.Time, string, string) (bool, error) {
+	panic("unexpected MarkSettlementFailed call")
+}
 func (r *imageStudioHandlerJobRepoStub) MarkSucceeded(ctx context.Context, id int64, completedAt time.Time, chargedAmountUSD float64, originalPath, thumbnailPath, mimeType string, fileSizeBytes int64, width, height int, expiresAt *time.Time) error {
 	panic("unexpected MarkSucceeded call")
 }

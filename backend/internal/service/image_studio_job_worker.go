@@ -37,6 +37,11 @@ const (
 
 const imageStudioSettlementPayloadVersion = 1
 
+var (
+	errImageStudioSettlementPayloadInvalid    = errors.New("image studio settlement payload is invalid")
+	errImageStudioSettlementDependencyInvalid = errors.New("image studio settlement dependency is invalid")
+)
+
 type imageStudioSettlementPayload struct {
 	Version            int                         `json:"version"`
 	AccountID          int64                       `json:"account_id"`
@@ -126,13 +131,13 @@ func marshalImageStudioSettlementPayloadWithSubscription(accountID int64, result
 func unmarshalImageStudioSettlementPayload(raw json.RawMessage) (*imageStudioSettlementPayload, *OpenAIForwardResult, error) {
 	var payload imageStudioSettlementPayload
 	if len(raw) == 0 {
-		return nil, nil, fmt.Errorf("image studio settlement payload is empty")
+		return nil, nil, fmt.Errorf("%w: payload is empty", errImageStudioSettlementPayloadInvalid)
 	}
 	if err := json.Unmarshal(raw, &payload); err != nil {
-		return nil, nil, fmt.Errorf("decode image studio settlement payload: %w", err)
+		return nil, nil, fmt.Errorf("%w: decode payload: %v", errImageStudioSettlementPayloadInvalid, err)
 	}
 	if payload.Version != imageStudioSettlementPayloadVersion || payload.AccountID <= 0 {
-		return nil, nil, fmt.Errorf("image studio settlement payload is invalid")
+		return nil, nil, errImageStudioSettlementPayloadInvalid
 	}
 	result := &OpenAIForwardResult{
 		RequestID:            payload.Result.RequestID,
@@ -290,11 +295,12 @@ func (s *ImageStudioJobService) processJob(ctx context.Context, job ImageStudioJ
 		subscription,
 	)
 	if err != nil {
+		removeUncommittedImageStudioAssets(originalPath, thumbnailPath)
 		s.handleJobError(ctx, job, "settlement_payload_failed", err)
 		return
 	}
 	leaseAt := time.Now()
-	if err := s.repo.MarkSettling(ctx, job.ID, settlementPayload, originalPath, thumbnailPath, mimeType, fileSizeBytes, width, height, leaseAt); err != nil {
+	if err := s.markImageStudioSettling(ctx, job.ID, settlementPayload, originalPath, thumbnailPath, mimeType, fileSizeBytes, width, height, leaseAt); err != nil {
 		s.handleJobError(ctx, job, "settlement_persist_failed", err)
 		return
 	}
@@ -308,8 +314,16 @@ func (s *ImageStudioJobService) processJob(ctx context.Context, job ImageStudioJ
 	job.Width = width
 	job.Height = height
 	if err := s.settleJob(ctx, job, apiKey); err != nil {
-		s.requeueSettlement(ctx, job, err)
+		s.handleImageStudioSettlementError(ctx, job, err)
 	}
+}
+
+func (s *ImageStudioJobService) markImageStudioSettling(ctx context.Context, jobID int64, settlementPayload json.RawMessage, originalPath, thumbnailPath, mimeType string, fileSizeBytes int64, width, height int, leaseAt time.Time) error {
+	if err := s.repo.MarkSettling(ctx, jobID, settlementPayload, originalPath, thumbnailPath, mimeType, fileSizeBytes, width, height, leaseAt); err != nil {
+		removeUncommittedImageStudioAssets(originalPath, thumbnailPath)
+		return err
+	}
+	return nil
 }
 
 func (s *ImageStudioJobService) recoverStaleRunningJob(ctx context.Context, job ImageStudioJob) {
@@ -488,24 +502,24 @@ func (s *ImageStudioJobService) processSettlingJob(ctx context.Context, job Imag
 	}
 	if receipt, err := s.findImageStudioUsageReceipt(ctx, job); err == nil {
 		if err := s.markImageStudioSucceeded(ctx, job, receipt.ActualCost); err != nil {
-			s.requeueSettlement(ctx, job, err)
+			s.handleImageStudioSettlementError(ctx, job, err)
 		}
 		return
 	} else if !errors.Is(err, ErrUsageLogNotFound) {
-		s.requeueSettlement(ctx, job, fmt.Errorf("load image studio usage receipt: %w", err))
+		s.handleImageStudioSettlementError(ctx, job, fmt.Errorf("load image studio usage receipt: %w", err))
 		return
 	}
 	apiKey, err := s.apiKeyService.GetByID(ctx, job.APIKeyID)
 	if err != nil {
-		s.requeueSettlement(ctx, job, fmt.Errorf("load api key: %w", err))
+		s.handleImageStudioSettlementError(ctx, job, fmt.Errorf("load api key: %w", err))
 		return
 	}
 	if apiKey == nil || apiKey.UserID != job.UserID || apiKey.User == nil || apiKey.Group == nil {
-		s.requeueSettlement(ctx, job, fmt.Errorf("image studio settlement api key snapshot is incomplete"))
+		s.handleImageStudioSettlementError(ctx, job, fmt.Errorf("%w: api key snapshot is incomplete", errImageStudioSettlementDependencyInvalid))
 		return
 	}
 	if err := s.settleJob(ctx, job, apiKey); err != nil {
-		s.requeueSettlement(ctx, job, err)
+		s.handleImageStudioSettlementError(ctx, job, err)
 	}
 }
 
@@ -522,7 +536,7 @@ func (s *ImageStudioJobService) settleJob(ctx context.Context, job ImageStudioJo
 		return fmt.Errorf("load settlement account: %w", err)
 	}
 	if account == nil || account.ID != payload.AccountID {
-		return fmt.Errorf("settlement account %d not found", payload.AccountID)
+		return fmt.Errorf("%w: settlement account %d not found", errImageStudioSettlementDependencyInvalid, payload.AccountID)
 	}
 	subscription, err := s.resolveImageStudioSettlementSubscription(ctx, apiKey, payload.SubscriptionID)
 	if err != nil {
@@ -611,7 +625,7 @@ func (s *ImageStudioJobService) resolveImageStudioSettlementSubscription(ctx con
 		return nil, ErrSubscriptionNotFound
 	}
 	if subscription.UserID != apiKey.UserID || subscription.GroupID != *apiKey.GroupID {
-		return nil, fmt.Errorf("settlement subscription ownership mismatch")
+		return nil, fmt.Errorf("%w: settlement subscription ownership mismatch", errImageStudioSettlementDependencyInvalid)
 	}
 	return subscription, nil
 }
@@ -623,6 +637,37 @@ func (s *ImageStudioJobService) requeueSettlement(ctx context.Context, job Image
 	}
 	nextAttemptAt := time.Now().Add(imageStudioRetryDelay(job.AttemptCount + 1))
 	_ = s.repo.MarkSettlementRetryable(ctx, job.ID, nextAttemptAt, "settlement_failed", message)
+}
+
+func (s *ImageStudioJobService) handleImageStudioSettlementError(ctx context.Context, job ImageStudioJob, err error) {
+	if isTerminalImageStudioSettlementError(err) {
+		message := ""
+		if err != nil {
+			message = err.Error()
+		}
+		_, _ = s.repo.MarkSettlementFailed(ctx, job.ID, time.Now(), "settlement_unrecoverable", message)
+		return
+	}
+	s.requeueSettlement(ctx, job, err)
+}
+
+func isTerminalImageStudioSettlementError(err error) bool {
+	return errors.Is(err, errImageStudioSettlementPayloadInvalid) ||
+		errors.Is(err, errImageStudioSettlementDependencyInvalid) ||
+		errors.Is(err, ErrAPIKeyNotFound) ||
+		errors.Is(err, ErrAccountNotFound) ||
+		errors.Is(err, ErrSubscriptionNotFound)
+}
+
+func removeUncommittedImageStudioAssets(originalPath, thumbnailPath string) {
+	originalDir := filepath.Dir(strings.TrimSpace(originalPath))
+	thumbnailDir := filepath.Dir(strings.TrimSpace(thumbnailPath))
+	if originalDir != "." && originalDir == thumbnailDir {
+		_ = os.RemoveAll(originalDir)
+		return
+	}
+	_ = removeImageStudioAsset(originalPath)
+	_ = removeImageStudioAsset(thumbnailPath)
 }
 
 func (s *ImageStudioJobService) persistAssets(jobID int64, imageBytes []byte, mimeType string) (string, string, int64, int, int, error) {

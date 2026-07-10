@@ -152,6 +152,10 @@ func (r *imageStudioJobDeleteRepoStub) MarkSettlementRetryable(context.Context, 
 	panic("unexpected MarkSettlementRetryable call")
 }
 
+func (r *imageStudioJobDeleteRepoStub) MarkSettlementFailed(context.Context, int64, time.Time, string, string) (bool, error) {
+	panic("unexpected MarkSettlementFailed call")
+}
+
 func (r *imageStudioJobDeleteRepoStub) MarkSucceeded(context.Context, int64, time.Time, float64, string, string, string, int64, int, int, *time.Time) error {
 	panic("unexpected MarkSucceeded call")
 }

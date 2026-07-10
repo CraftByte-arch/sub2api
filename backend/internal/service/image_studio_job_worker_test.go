@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -310,11 +312,136 @@ func TestImageStudioJobServiceRunningHeartbeatRefreshesUntilStopped(t *testing.T
 	require.Equal(t, callsAfterStop, repo.heartbeatCalls)
 }
 
+func TestImageStudioJobServiceTerminalSettlementErrorsAreFailed(t *testing.T) {
+	groupID := int64(12)
+	validAPIKey := &APIKey{
+		ID:      41,
+		UserID:  42,
+		Status:  StatusAPIKeyActive,
+		GroupID: &groupID,
+		Group:   &Group{ID: groupID, Platform: PlatformOpenAI, RateMultiplier: 1},
+		User:    &User{ID: 42},
+	}
+	validPayload, err := marshalImageStudioSettlementPayload(
+		77,
+		&OpenAIForwardResult{Model: "gpt-image-1", ImageCount: 1, ImageSize: "1K"},
+		ChannelUsageFields{},
+		"/v1/images/generations",
+		"/v1/images/generations",
+	)
+	require.NoError(t, err)
+	selectedSubscription := &UserSubscription{ID: 91, UserID: 42, GroupID: groupID}
+	subscriptionPayload, err := marshalImageStudioSettlementPayloadWithSubscription(
+		77,
+		&OpenAIForwardResult{Model: "gpt-image-1", ImageCount: 1, ImageSize: "1K"},
+		ChannelUsageFields{},
+		"/v1/images/generations",
+		"/v1/images/generations",
+		selectedSubscription,
+	)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name            string
+		payload         json.RawMessage
+		apiKey          *APIKey
+		apiKeyErr       error
+		account         *Account
+		accountErr      error
+		subscription    *UserSubscription
+		subscriptionErr error
+	}{
+		{name: "malformed payload", payload: json.RawMessage(`{"version":999}`), apiKey: validAPIKey, account: &Account{ID: 77}},
+		{name: "missing api key", payload: validPayload, apiKeyErr: ErrAPIKeyNotFound, account: &Account{ID: 77}},
+		{name: "missing account", payload: validPayload, apiKey: validAPIKey, accountErr: ErrAccountNotFound},
+		{name: "missing persisted subscription", payload: subscriptionPayload, apiKey: validAPIKey, account: &Account{ID: 77}, subscriptionErr: ErrSubscriptionNotFound},
+		{name: "subscription ownership mismatch", payload: subscriptionPayload, apiKey: validAPIKey, account: &Account{ID: 77}, subscription: &UserSubscription{ID: 91, UserID: 999, GroupID: groupID}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			usageRepo := &openAIRecordUsageLogRepoStub{}
+			gateway := newOpenAIRecordUsageServiceWithBillingRepoForTest(
+				usageRepo,
+				&openAIRecordUsageBillingRepoStub{},
+				&openAIRecordUsageUserRepoStub{},
+				&openAIRecordUsageSubRepoStub{},
+				nil,
+			)
+			gateway.accountRepo = &imageStudioAccountRepoStub{account: tt.account, err: tt.accountErr}
+			apiKeyService := NewAPIKeyService(&imageStudioAPIKeyRepoStub{apiKey: tt.apiKey, err: tt.apiKeyErr}, nil, nil, nil, nil, nil, nil)
+			repo := &imageStudioWorkerRepoStub{claimSettling: true}
+			resolver := &imageStudioSubscriptionResolverStub{subscription: tt.subscription, err: tt.subscriptionErr}
+			svc := &ImageStudioJobService{repo: repo, openAIGateway: gateway, apiKeyService: apiKeyService, subscriptionResolver: resolver}
+
+			svc.processJob(context.Background(), ImageStudioJob{
+				ID:                39,
+				UserID:            42,
+				APIKeyID:          41,
+				Status:            ImageStudioJobStatusSettling,
+				SettlementPayload: tt.payload,
+			})
+
+			require.Equal(t, 1, repo.markSettlementFailedCalls)
+			require.Zero(t, repo.markSettlementRetryableCalls)
+			require.Equal(t, "settlement_unrecoverable", repo.failedErrorCode)
+		})
+	}
+}
+
+func TestImageStudioJobServiceRetryableSettlementErrorStaysSettling(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{lookupErr: errors.New("database unavailable")}
+	gateway := newOpenAIRecordUsageServiceWithBillingRepoForTest(
+		usageRepo,
+		&openAIRecordUsageBillingRepoStub{},
+		&openAIRecordUsageUserRepoStub{},
+		&openAIRecordUsageSubRepoStub{},
+		nil,
+	)
+	repo := &imageStudioWorkerRepoStub{claimSettling: true}
+	svc := &ImageStudioJobService{repo: repo, openAIGateway: gateway}
+
+	svc.processJob(context.Background(), ImageStudioJob{ID: 39, APIKeyID: 41, Status: ImageStudioJobStatusSettling})
+
+	require.Zero(t, repo.markSettlementFailedCalls)
+	require.Equal(t, 1, repo.markSettlementRetryableCalls)
+}
+
+func TestImageStudioJobServiceMarkSettlingFailureRemovesUncommittedAssets(t *testing.T) {
+	jobDir := filepath.Join(t.TempDir(), "39")
+	require.NoError(t, os.MkdirAll(jobDir, 0o755))
+	originalPath := filepath.Join(jobDir, "original.png")
+	thumbnailPath := filepath.Join(jobDir, "thumbnail.jpg")
+	require.NoError(t, os.WriteFile(originalPath, []byte("original"), 0o600))
+	require.NoError(t, os.WriteFile(thumbnailPath, []byte("thumbnail"), 0o600))
+
+	repo := &imageStudioWorkerRepoStub{markSettlingErr: errors.New("database unavailable")}
+	svc := &ImageStudioJobService{repo: repo}
+	err := svc.markImageStudioSettling(
+		context.Background(),
+		39,
+		json.RawMessage(`{"version":1}`),
+		originalPath,
+		thumbnailPath,
+		"image/png",
+		int64(len("original")),
+		1,
+		1,
+		time.Now(),
+	)
+
+	require.EqualError(t, err, "database unavailable")
+	require.Equal(t, 1, repo.markSettlingCalls)
+	require.NoDirExists(t, jobDir)
+}
+
 type imageStudioWorkerRepoStub struct {
 	ImageStudioJobRepository
 	claimSettling                bool
 	markSucceededErr             error
+	markSettlingErr              error
 	markRunningCalls             int
+	markSettlingCalls            int
 	claimSettlingCalls           int
 	markSucceededCalls           int
 	markSettlementRetryableCalls int
@@ -324,6 +451,8 @@ type imageStudioWorkerRepoStub struct {
 	markStaleRunningCalls        int
 	heartbeatCalls               int
 	heartbeatCh                  chan struct{}
+	markSettlementFailedCalls    int
+	failedErrorCode              string
 }
 
 func (r *imageStudioWorkerRepoStub) UpdateHeartbeat(context.Context, int64, time.Time) error {
@@ -347,6 +476,11 @@ func (r *imageStudioWorkerRepoStub) MarkRunning(context.Context, int64, time.Tim
 	return true, nil
 }
 
+func (r *imageStudioWorkerRepoStub) MarkSettling(context.Context, int64, json.RawMessage, string, string, string, int64, int, int, time.Time) error {
+	r.markSettlingCalls++
+	return r.markSettlingErr
+}
+
 func (r *imageStudioWorkerRepoStub) ClaimSettling(context.Context, int64, time.Time, time.Time) (bool, error) {
 	r.claimSettlingCalls++
 	return r.claimSettling, nil
@@ -362,6 +496,12 @@ func (r *imageStudioWorkerRepoStub) MarkSettlementRetryable(_ context.Context, _
 	r.markSettlementRetryableCalls++
 	r.retryErrorCode = errorCode
 	return nil
+}
+
+func (r *imageStudioWorkerRepoStub) MarkSettlementFailed(_ context.Context, _ int64, _ time.Time, errorCode, _ string) (bool, error) {
+	r.markSettlementFailedCalls++
+	r.failedErrorCode = errorCode
+	return true, nil
 }
 
 type imageStudioAccountRepoStub struct {
