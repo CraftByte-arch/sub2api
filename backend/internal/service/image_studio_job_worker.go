@@ -38,6 +38,7 @@ const imageStudioSettlementPayloadVersion = 1
 type imageStudioSettlementPayload struct {
 	Version            int                         `json:"version"`
 	AccountID          int64                       `json:"account_id"`
+	SubscriptionID     *int64                      `json:"subscription_id,omitempty"`
 	Result             imageStudioSettlementResult `json:"result"`
 	ChannelUsageFields ChannelUsageFields          `json:"channel_usage_fields"`
 	InboundEndpoint    string                      `json:"inbound_endpoint"`
@@ -71,12 +72,22 @@ type imageStudioSettlementResult struct {
 }
 
 func marshalImageStudioSettlementPayload(accountID int64, result *OpenAIForwardResult, fields ChannelUsageFields, inboundEndpoint, upstreamEndpoint string) (json.RawMessage, error) {
+	return marshalImageStudioSettlementPayloadWithSubscription(accountID, result, fields, inboundEndpoint, upstreamEndpoint, nil)
+}
+
+func marshalImageStudioSettlementPayloadWithSubscription(accountID int64, result *OpenAIForwardResult, fields ChannelUsageFields, inboundEndpoint, upstreamEndpoint string, subscription *UserSubscription) (json.RawMessage, error) {
 	if result == nil {
 		return nil, fmt.Errorf("image studio settlement result is nil")
+	}
+	var subscriptionID *int64
+	if subscription != nil && subscription.ID > 0 {
+		value := subscription.ID
+		subscriptionID = &value
 	}
 	payload := imageStudioSettlementPayload{
 		Version:            imageStudioSettlementPayloadVersion,
 		AccountID:          accountID,
+		SubscriptionID:     subscriptionID,
 		ChannelUsageFields: fields,
 		InboundEndpoint:    inboundEndpoint,
 		UpstreamEndpoint:   upstreamEndpoint,
@@ -262,12 +273,13 @@ func (s *ImageStudioJobService) processJob(ctx context.Context, job ImageStudioJ
 		return
 	}
 
-	settlementPayload, err := marshalImageStudioSettlementPayload(
+	settlementPayload, err := marshalImageStudioSettlementPayloadWithSubscription(
 		forwarded.accountID,
 		forwarded.result,
 		forwarded.channelUsageFields,
 		forwarded.inboundEndpoint,
 		forwarded.upstreamEndpoint,
+		subscription,
 	)
 	if err != nil {
 		s.handleJobError(ctx, job, "settlement_payload_failed", err)
@@ -474,7 +486,7 @@ func (s *ImageStudioJobService) settleJob(ctx context.Context, job ImageStudioJo
 	if account == nil || account.ID != payload.AccountID {
 		return fmt.Errorf("settlement account %d not found", payload.AccountID)
 	}
-	subscription, err := s.resolveImageStudioSubscription(ctx, apiKey)
+	subscription, err := s.resolveImageStudioSettlementSubscription(ctx, apiKey, payload.SubscriptionID)
 	if err != nil {
 		return err
 	}
@@ -542,6 +554,26 @@ func (s *ImageStudioJobService) resolveImageStudioSubscription(ctx context.Conte
 	}
 	if subscription == nil {
 		return nil, ErrSubscriptionNotFound
+	}
+	return subscription, nil
+}
+
+func (s *ImageStudioJobService) resolveImageStudioSettlementSubscription(ctx context.Context, apiKey *APIKey, subscriptionID *int64) (*UserSubscription, error) {
+	if subscriptionID == nil {
+		return s.resolveImageStudioSubscription(ctx, apiKey)
+	}
+	if apiKey == nil || apiKey.GroupID == nil || s.subscriptionResolver == nil {
+		return nil, fmt.Errorf("subscription service is not configured")
+	}
+	subscription, err := s.subscriptionResolver.GetByID(ctx, *subscriptionID)
+	if err != nil {
+		return nil, fmt.Errorf("get settlement subscription: %w", err)
+	}
+	if subscription == nil || subscription.ID != *subscriptionID {
+		return nil, ErrSubscriptionNotFound
+	}
+	if subscription.UserID != apiKey.UserID || subscription.GroupID != *apiKey.GroupID {
+		return nil, fmt.Errorf("settlement subscription ownership mismatch")
 	}
 	return subscription, nil
 }

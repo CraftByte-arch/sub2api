@@ -34,6 +34,7 @@ type ImageStudioJobService struct {
 }
 
 type imageStudioSubscriptionResolver interface {
+	GetByID(ctx context.Context, id int64) (*UserSubscription, error)
 	GetActiveSubscription(ctx context.Context, userID, groupID int64) (*UserSubscription, error)
 }
 

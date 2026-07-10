@@ -136,6 +136,66 @@ func TestImageStudioJobServiceSettleResolvesActiveSubscription(t *testing.T) {
 	require.Equal(t, BillingTypeSubscription, usageRepo.lastLog.BillingType)
 }
 
+func TestImageStudioJobServiceSettleUsesPersistedSubscriptionAfterExpiry(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true}}
+	gateway := newOpenAIRecordUsageServiceWithBillingRepoForTest(
+		usageRepo,
+		billingRepo,
+		&openAIRecordUsageUserRepoStub{},
+		&openAIRecordUsageSubRepoStub{},
+		nil,
+	)
+	gateway.accountRepo = &imageStudioAccountRepoStub{account: &Account{ID: 77, Platform: PlatformOpenAI}}
+
+	groupID := int64(12)
+	apiKey := &APIKey{
+		ID:      41,
+		UserID:  42,
+		GroupID: &groupID,
+		Group: &Group{
+			ID:               groupID,
+			Platform:         PlatformOpenAI,
+			RateMultiplier:   1,
+			SubscriptionType: SubscriptionTypeSubscription,
+		},
+		User: &User{ID: 42},
+	}
+	expiredSubscription := &UserSubscription{
+		ID:        91,
+		UserID:    42,
+		GroupID:   groupID,
+		Status:    SubscriptionStatusExpired,
+		ExpiresAt: time.Now().Add(-time.Hour),
+	}
+	resolver := &imageStudioSubscriptionResolverStub{subscription: expiredSubscription}
+	settlementPayload, err := marshalImageStudioSettlementPayloadWithSubscription(
+		77,
+		&OpenAIForwardResult{Model: "gpt-image-1", ImageCount: 1, ImageSize: "1024x1024"},
+		ChannelUsageFields{},
+		"/v1/images/generations",
+		"/v1/images/generations",
+		expiredSubscription,
+	)
+	require.NoError(t, err)
+
+	repo := &imageStudioWorkerRepoStub{}
+	svc := &ImageStudioJobService{repo: repo, openAIGateway: gateway, subscriptionResolver: resolver}
+	err = svc.settleJob(context.Background(), ImageStudioJob{
+		ID:                39,
+		UserID:            42,
+		APIKeyID:          41,
+		RequestPayload:    json.RawMessage(`{"model":"gpt-image-1"}`),
+		SettlementPayload: settlementPayload,
+	}, apiKey)
+
+	require.NoError(t, err)
+	require.Equal(t, 1, resolver.getByIDCalls)
+	require.Zero(t, resolver.calls)
+	require.NotNil(t, billingRepo.lastCmd.SubscriptionID)
+	require.Equal(t, expiredSubscription.ID, *billingRepo.lastCmd.SubscriptionID)
+}
+
 func TestImageStudioJobServiceSettlingRetrySkipsUpstreamAndRequeuesCompletionFailure(t *testing.T) {
 	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
 	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true}}
@@ -279,8 +339,14 @@ type imageStudioSubscriptionResolverStub struct {
 	subscription *UserSubscription
 	err          error
 	calls        int
+	getByIDCalls int
 	userID       int64
 	groupID      int64
+}
+
+func (r *imageStudioSubscriptionResolverStub) GetByID(context.Context, int64) (*UserSubscription, error) {
+	r.getByIDCalls++
+	return r.subscription, r.err
 }
 
 func (r *imageStudioSubscriptionResolverStub) GetActiveSubscription(_ context.Context, userID, groupID int64) (*UserSubscription, error) {
@@ -342,6 +408,24 @@ func TestImageStudioSettlementPayloadRoundTripPreservesBillingMetadata(t *testin
 	require.Equal(t, result.FirstTokenMs, restored.FirstTokenMs)
 	require.Equal(t, result.ImageSizeBreakdown, restored.ImageSizeBreakdown)
 	require.Nil(t, restored.ResponseHeaders)
+}
+
+func TestImageStudioSettlementPayloadPreservesSubscriptionID(t *testing.T) {
+	subscription := &UserSubscription{ID: 91, UserID: 42, GroupID: 12}
+	raw, err := marshalImageStudioSettlementPayloadWithSubscription(
+		77,
+		&OpenAIForwardResult{Model: "gpt-image-1", ImageCount: 1, ImageSize: "1K"},
+		ChannelUsageFields{},
+		"/v1/images/generations",
+		"/v1/images/generations",
+		subscription,
+	)
+	require.NoError(t, err)
+
+	payload, _, err := unmarshalImageStudioSettlementPayload(raw)
+	require.NoError(t, err)
+	require.NotNil(t, payload.SubscriptionID)
+	require.Equal(t, subscription.ID, *payload.SubscriptionID)
 }
 
 func TestIsImageStudioRetryableError(t *testing.T) {
