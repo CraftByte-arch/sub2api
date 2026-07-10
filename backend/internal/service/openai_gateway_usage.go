@@ -100,12 +100,17 @@ func (s *OpenAIGatewayService) RecordCyberPolicyUsageLog(ctx context.Context, in
 
 // RecordUsage records usage and deducts balance
 func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRecordUsageInput) error {
+	_, err := s.recordUsageDetailed(ctx, input)
+	return err
+}
+
+func (s *OpenAIGatewayService) recordUsageDetailed(ctx context.Context, input *OpenAIRecordUsageInput) (*UsageLog, error) {
 	if input == nil {
-		return errors.New("openai usage input is nil")
+		return nil, errors.New("openai usage input is nil")
 	}
 	result := input.Result
 	if result == nil {
-		return errors.New("openai usage result is nil")
+		return nil, errors.New("openai usage result is nil")
 	}
 	if s.rateLimitService != nil && input.Account != nil && input.Account.Platform == PlatformOpenAI {
 		s.rateLimitService.ResetOpenAI403Counter(ctx, input.Account.ID)
@@ -136,23 +141,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		ImageOutputTokens:   result.Usage.ImageOutputTokens,
 	}
 
-	// Get rate multiplier
-	multiplier := 1.0
-	if s.cfg != nil {
-		multiplier = s.cfg.Default.RateMultiplier
-	}
-	if apiKey.GroupID != nil && apiKey.Group != nil {
-		resolver := s.userGroupRateResolver
-		if resolver == nil {
-			resolver = newUserGroupRateResolver(nil, nil, resolveUserGroupRateCacheTTL(s.cfg), nil, "service.openai_gateway")
-		}
-		multiplier = resolver.Resolve(ctx, user.ID, *apiKey.GroupID, apiKey.Group.RateMultiplier)
-	}
-	// token 倍率叠加高峰因子（token 计费含图片 token，图片按次倍率不受影响）。高峰因子按请求时刻现算，
-	// 不并入上面的 Resolve，以免污染 user:group 倍率缓存。
-	baseMultiplier := multiplier
-	multiplier, imageMultiplier := computePeakAwareMultipliers(apiKey, baseMultiplier, timezone.Now())
-	videoMultiplier := resolveVideoRateMultiplier(apiKey, baseMultiplier)
+	multiplier, imageMultiplier, videoMultiplier := s.resolveOpenAIUsageMultipliers(ctx, user, apiKey)
 
 	var cost *CostBreakdown
 	var err error
@@ -181,7 +170,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	cost, err = s.calculateOpenAIRecordUsageCost(ctx, result, apiKey, billingModels, multiplier, imageMultiplier, videoMultiplier, tokens, serviceTier)
 	if err != nil {
 		if !isUsagePricingUnavailableError(err) {
-			return err
+			return nil, err
 		}
 		logger.L().With(
 			zap.String("component", "service.openai_gateway"),
@@ -321,7 +310,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.openai_gateway")
 		logger.LegacyPrintf("service.openai_gateway", "[SIMPLE MODE] Usage recorded (not billed): user=%d, tokens=%d", usageLog.UserID, usageLog.TotalTokens())
 		s.deferredService.ScheduleLastUsedUpdate(account.ID)
-		return nil
+		return usageLog, nil
 	}
 
 	// Async usage billing runs outside the original request context, so it
@@ -350,11 +339,28 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	}()
 
 	if billingErr != nil {
-		return billingErr
+		return nil, billingErr
 	}
 	writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.openai_gateway")
 
-	return nil
+	return usageLog, nil
+}
+
+func (s *OpenAIGatewayService) resolveOpenAIUsageMultipliers(ctx context.Context, user *User, apiKey *APIKey) (float64, float64, float64) {
+	multiplier := 1.0
+	if s != nil && s.cfg != nil {
+		multiplier = s.cfg.Default.RateMultiplier
+	}
+	if apiKey != nil && user != nil && apiKey.GroupID != nil && apiKey.Group != nil {
+		resolver := s.userGroupRateResolver
+		if resolver == nil {
+			resolver = newUserGroupRateResolver(nil, nil, resolveUserGroupRateCacheTTL(s.cfg), nil, "service.openai_gateway")
+		}
+		multiplier = resolver.Resolve(ctx, user.ID, *apiKey.GroupID, apiKey.Group.RateMultiplier)
+	}
+	baseMultiplier := multiplier
+	multiplier, imageMultiplier := computePeakAwareMultipliers(apiKey, baseMultiplier, timezone.Now())
+	return multiplier, imageMultiplier, resolveVideoRateMultiplier(apiKey, baseMultiplier)
 }
 
 func (s *OpenAIGatewayService) calculateOpenAIRecordUsageCost(

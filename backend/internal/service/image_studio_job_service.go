@@ -21,17 +21,20 @@ const (
 )
 
 type ImageStudioJobService struct {
-	repo                ImageStudioJobRepository
-	settingService      *SettingService
-	openAIGateway       *OpenAIGatewayService
-	apiKeyService       *APIKeyService
-	billingCacheService *BillingCacheService
-	userRepo            UserRepository
-	usageCardService    *UsageCardService
-	stopCh              chan struct{}
-	stopOnce            sync.Once
-	wg                  sync.WaitGroup
-	running             int32
+	repo                 ImageStudioJobRepository
+	settingService       *SettingService
+	openAIGateway        *OpenAIGatewayService
+	apiKeyService        *APIKeyService
+	billingCacheService  *BillingCacheService
+	subscriptionResolver imageStudioSubscriptionResolver
+	stopCh               chan struct{}
+	stopOnce             sync.Once
+	wg                   sync.WaitGroup
+	running              int32
+}
+
+type imageStudioSubscriptionResolver interface {
+	GetActiveSubscription(ctx context.Context, userID, groupID int64) (*UserSubscription, error)
 }
 
 func NewImageStudioJobService(repo ImageStudioJobRepository, settingService *SettingService) *ImageStudioJobService {
@@ -160,6 +163,26 @@ func (s *ImageStudioJobService) AssetBaseDir() string {
 		dataDir = "/app/data"
 	}
 	return filepath.Join(dataDir, imageStudioAssetBaseDir)
+}
+
+func (s *ImageStudioJobService) EstimateCost(ctx context.Context, apiKey *APIKey, model, size string) (*CostBreakdown, error) {
+	if s == nil || s.openAIGateway == nil || s.openAIGateway.billingService == nil {
+		return nil, fmt.Errorf("openai gateway billing is not configured")
+	}
+	if apiKey == nil || apiKey.User == nil || apiKey.Group == nil {
+		return nil, fmt.Errorf("api key billing context is incomplete")
+	}
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return nil, fmt.Errorf("model is required")
+	}
+	_, imageMultiplier, _ := s.openAIGateway.resolveOpenAIUsageMultipliers(ctx, apiKey.User, apiKey)
+	result := &OpenAIForwardResult{
+		Model:      model,
+		ImageCount: 1,
+		ImageSize:  NormalizeImageBillingTierOrDefault(size),
+	}
+	return s.openAIGateway.calculateOpenAIImageCost(ctx, model, apiKey, result, imageMultiplier), nil
 }
 
 func (s *ImageStudioJobService) runQueueLoop() {

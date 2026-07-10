@@ -132,7 +132,15 @@ func (h *ImageStudioJobHandler) Create(c *gin.Context) {
 		response.BadRequest(c, err.Error())
 		return
 	}
-	estimatedCost := estimateImageStudioJobCost(apiKey, req.Size)
+	estimatedCostBreakdown, err := h.jobService.EstimateCost(c.Request.Context(), apiKey, req.Model, req.Size)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	estimatedCost := 0.0
+	if estimatedCostBreakdown != nil {
+		estimatedCost = estimatedCostBreakdown.ActualCost
+	}
 	outputFormat := strings.TrimSpace(req.OutputFormat)
 	if outputFormat == "" {
 		outputFormat = "png"
@@ -364,30 +372,6 @@ func buildImageStudioJobPayload(req imageStudioCreateJobRequest, mode string) (j
 		return nil, err
 	}
 	return raw, nil
-}
-
-func estimateImageStudioJobCost(apiKey *service.APIKey, size string) float64 {
-	if apiKey == nil || apiKey.Group == nil {
-		return 0
-	}
-	price := apiKey.Group.GetImagePrice(service.NormalizeImageBillingTierOrDefault(size))
-	if price == nil {
-		return 0
-	}
-	return *price * resolveImageStudioMultiplier(apiKey)
-}
-
-func resolveImageStudioMultiplier(apiKey *service.APIKey) float64 {
-	if apiKey == nil || apiKey.Group == nil {
-		return 0
-	}
-	if apiKey.Group.ImageRateIndependent {
-		if apiKey.Group.ImageRateMultiplier < 0 {
-			return 0
-		}
-		return apiKey.Group.ImageRateMultiplier
-	}
-	return apiKey.Group.RateMultiplier
 }
 
 func firstNonEmptyImageStudio(values ...string) string {

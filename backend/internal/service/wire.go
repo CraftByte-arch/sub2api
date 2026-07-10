@@ -212,11 +212,10 @@ func ProvideImageStudioJobService(
 	openAIGateway *OpenAIGatewayService,
 	apiKeyService *APIKeyService,
 	billingCacheService *BillingCacheService,
-	userRepo UserRepository,
-	usageCardService *UsageCardService,
+	subscriptionService *SubscriptionService,
 ) *ImageStudioJobService {
 	svc := NewImageStudioJobService(repo, settingService)
-	svc.SetRuntimeDependencies(openAIGateway, apiKeyService, billingCacheService, userRepo, usageCardService)
+	svc.SetRuntimeDependencies(openAIGateway, apiKeyService, billingCacheService, subscriptionService)
 	svc.Start()
 	return svc
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"image"
@@ -32,17 +33,127 @@ const (
 	imageStudioMaxAttempts      = 3
 )
 
-type imageStudioChargeResult struct {
-	chargedAmountUSD float64
-	usedBalance      bool
+const imageStudioSettlementPayloadVersion = 1
+
+type imageStudioSettlementPayload struct {
+	Version            int                         `json:"version"`
+	AccountID          int64                       `json:"account_id"`
+	Result             imageStudioSettlementResult `json:"result"`
+	ChannelUsageFields ChannelUsageFields          `json:"channel_usage_fields"`
+	InboundEndpoint    string                      `json:"inbound_endpoint"`
+	UpstreamEndpoint   string                      `json:"upstream_endpoint"`
+}
+
+type imageStudioSettlementResult struct {
+	RequestID            string         `json:"request_id"`
+	ResponseID           string         `json:"response_id"`
+	Usage                OpenAIUsage    `json:"usage"`
+	Model                string         `json:"model"`
+	BillingModel         string         `json:"billing_model"`
+	UpstreamModel        string         `json:"upstream_model"`
+	ServiceTier          *string        `json:"service_tier,omitempty"`
+	ReasoningEffort      *string        `json:"reasoning_effort,omitempty"`
+	Stream               bool           `json:"stream"`
+	OpenAIWSMode         bool           `json:"openai_ws_mode"`
+	DurationNanoseconds  int64          `json:"duration_nanoseconds"`
+	FirstTokenMs         *int           `json:"first_token_ms,omitempty"`
+	ClientDisconnect     bool           `json:"client_disconnect"`
+	ImageCount           int            `json:"image_count"`
+	ImageSize            string         `json:"image_size"`
+	ImageInputSize       string         `json:"image_input_size"`
+	ImageOutputSize      string         `json:"image_output_size"`
+	ImageOutputSizes     []string       `json:"image_output_sizes,omitempty"`
+	ImageSizeSource      string         `json:"image_size_source"`
+	ImageSizeBreakdown   map[string]int `json:"image_size_breakdown,omitempty"`
+	VideoCount           int            `json:"video_count"`
+	VideoResolution      string         `json:"video_resolution"`
+	VideoDurationSeconds int            `json:"video_duration_seconds"`
+}
+
+func marshalImageStudioSettlementPayload(accountID int64, result *OpenAIForwardResult, fields ChannelUsageFields, inboundEndpoint, upstreamEndpoint string) (json.RawMessage, error) {
+	if result == nil {
+		return nil, fmt.Errorf("image studio settlement result is nil")
+	}
+	payload := imageStudioSettlementPayload{
+		Version:            imageStudioSettlementPayloadVersion,
+		AccountID:          accountID,
+		ChannelUsageFields: fields,
+		InboundEndpoint:    inboundEndpoint,
+		UpstreamEndpoint:   upstreamEndpoint,
+		Result: imageStudioSettlementResult{
+			RequestID:            result.RequestID,
+			ResponseID:           result.ResponseID,
+			Usage:                result.Usage,
+			Model:                result.Model,
+			BillingModel:         result.BillingModel,
+			UpstreamModel:        result.UpstreamModel,
+			ServiceTier:          result.ServiceTier,
+			ReasoningEffort:      result.ReasoningEffort,
+			Stream:               result.Stream,
+			OpenAIWSMode:         result.OpenAIWSMode,
+			DurationNanoseconds:  int64(result.Duration),
+			FirstTokenMs:         result.FirstTokenMs,
+			ClientDisconnect:     result.ClientDisconnect,
+			ImageCount:           result.ImageCount,
+			ImageSize:            result.ImageSize,
+			ImageInputSize:       result.ImageInputSize,
+			ImageOutputSize:      result.ImageOutputSize,
+			ImageOutputSizes:     result.ImageOutputSizes,
+			ImageSizeSource:      result.ImageSizeSource,
+			ImageSizeBreakdown:   result.ImageSizeBreakdown,
+			VideoCount:           result.VideoCount,
+			VideoResolution:      result.VideoResolution,
+			VideoDurationSeconds: result.VideoDurationSeconds,
+		},
+	}
+	raw, err := json.Marshal(payload)
+	return json.RawMessage(raw), err
+}
+
+func unmarshalImageStudioSettlementPayload(raw json.RawMessage) (*imageStudioSettlementPayload, *OpenAIForwardResult, error) {
+	var payload imageStudioSettlementPayload
+	if len(raw) == 0 {
+		return nil, nil, fmt.Errorf("image studio settlement payload is empty")
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil, nil, fmt.Errorf("decode image studio settlement payload: %w", err)
+	}
+	if payload.Version != imageStudioSettlementPayloadVersion || payload.AccountID <= 0 {
+		return nil, nil, fmt.Errorf("image studio settlement payload is invalid")
+	}
+	result := &OpenAIForwardResult{
+		RequestID:            payload.Result.RequestID,
+		ResponseID:           payload.Result.ResponseID,
+		Usage:                payload.Result.Usage,
+		Model:                payload.Result.Model,
+		BillingModel:         payload.Result.BillingModel,
+		UpstreamModel:        payload.Result.UpstreamModel,
+		ServiceTier:          payload.Result.ServiceTier,
+		ReasoningEffort:      payload.Result.ReasoningEffort,
+		Stream:               payload.Result.Stream,
+		OpenAIWSMode:         payload.Result.OpenAIWSMode,
+		Duration:             time.Duration(payload.Result.DurationNanoseconds),
+		FirstTokenMs:         payload.Result.FirstTokenMs,
+		ClientDisconnect:     payload.Result.ClientDisconnect,
+		ImageCount:           payload.Result.ImageCount,
+		ImageSize:            payload.Result.ImageSize,
+		ImageInputSize:       payload.Result.ImageInputSize,
+		ImageOutputSize:      payload.Result.ImageOutputSize,
+		ImageOutputSizes:     payload.Result.ImageOutputSizes,
+		ImageSizeSource:      payload.Result.ImageSizeSource,
+		ImageSizeBreakdown:   payload.Result.ImageSizeBreakdown,
+		VideoCount:           payload.Result.VideoCount,
+		VideoResolution:      payload.Result.VideoResolution,
+		VideoDurationSeconds: payload.Result.VideoDurationSeconds,
+	}
+	return &payload, result, nil
 }
 
 func (s *ImageStudioJobService) SetRuntimeDependencies(
 	openAIGateway *OpenAIGatewayService,
 	apiKeyService *APIKeyService,
 	billingCacheService *BillingCacheService,
-	userRepo UserRepository,
-	usageCardService *UsageCardService,
+	subscriptionResolver *SubscriptionService,
 ) {
 	if s == nil {
 		return
@@ -50,8 +161,7 @@ func (s *ImageStudioJobService) SetRuntimeDependencies(
 	s.openAIGateway = openAIGateway
 	s.apiKeyService = apiKeyService
 	s.billingCacheService = billingCacheService
-	s.userRepo = userRepo
-	s.usageCardService = usageCardService
+	s.subscriptionResolver = subscriptionResolver
 }
 
 func (s *ImageStudioJobService) drainQueueOnce(ctx context.Context) {
@@ -83,6 +193,11 @@ func (s *ImageStudioJobService) drainQueueOnce(ctx context.Context) {
 }
 
 func (s *ImageStudioJobService) processJob(ctx context.Context, job ImageStudioJob) {
+	if job.Status == ImageStudioJobStatusSettling {
+		s.processSettlingJob(ctx, job)
+		return
+	}
+
 	startedAt := time.Now()
 	acquired, err := s.repo.MarkRunning(ctx, job.ID, startedAt)
 	if err != nil {
@@ -116,29 +231,28 @@ func (s *ImageStudioJobService) processJob(ctx context.Context, job ImageStudioJ
 		s.failJob(ctx, job.ID, "image_studio_group_not_available", err)
 		return
 	}
+	subscription, err := s.resolveImageStudioSubscription(ctx, apiKey)
+	if err != nil {
+		s.failJob(ctx, job.ID, "subscription_unavailable", err)
+		return
+	}
 	if s.billingCacheService != nil {
-		if err := s.billingCacheService.CheckBillingEligibility(ctx, apiKey.User, apiKey, apiKey.Group, nil, QuotaPlatform(ctx, apiKey)); err != nil {
+		if err := s.billingCacheService.CheckBillingEligibility(ctx, apiKey.User, apiKey, apiKey.Group, subscription, QuotaPlatform(ctx, apiKey)); err != nil {
 			s.failJob(ctx, job.ID, "billing_ineligible", err)
 			return
 		}
 	}
 
 	body := append([]byte(nil), job.RequestPayload...)
-	result, rawBody, err := s.forwardJob(ctx, job, apiKey, body)
+	forwarded, err := s.forwardJob(ctx, job, apiKey, body)
 	if err != nil {
 		s.handleJobError(ctx, job, "upstream_failed", err)
 		return
 	}
 
-	imageBytes, mimeType, err := decodeImageStudioResponseImage(rawBody, job.OutputFormat)
+	imageBytes, mimeType, err := decodeImageStudioResponseImage(forwarded.rawBody, job.OutputFormat)
 	if err != nil {
 		s.handleJobError(ctx, job, "invalid_image_response", err)
-		return
-	}
-
-	chargeResult, err := s.chargeJob(ctx, apiKey, job.EstimatedCostUSD)
-	if err != nil {
-		s.handleJobError(ctx, job, "billing_failed", err)
 		return
 	}
 
@@ -148,34 +262,48 @@ func (s *ImageStudioJobService) processJob(ctx context.Context, job ImageStudioJ
 		return
 	}
 
-	if s.apiKeyService != nil && chargeResult.chargedAmountUSD > 0 {
-		_ = s.apiKeyService.UpdateQuotaUsed(ctx, apiKey.ID, chargeResult.chargedAmountUSD)
-		_ = s.apiKeyService.UpdateRateLimitUsage(ctx, apiKey.ID, chargeResult.chargedAmountUSD)
+	settlementPayload, err := marshalImageStudioSettlementPayload(
+		forwarded.accountID,
+		forwarded.result,
+		forwarded.channelUsageFields,
+		forwarded.inboundEndpoint,
+		forwarded.upstreamEndpoint,
+	)
+	if err != nil {
+		s.handleJobError(ctx, job, "settlement_payload_failed", err)
+		return
 	}
-	if chargeResult.usedBalance && s.billingCacheService != nil && chargeResult.chargedAmountUSD > 0 {
-		s.billingCacheService.QueueDeductBalance(apiKey.UserID, chargeResult.chargedAmountUSD)
+	leaseAt := time.Now()
+	if err := s.repo.MarkSettling(ctx, job.ID, settlementPayload, originalPath, thumbnailPath, mimeType, fileSizeBytes, width, height, leaseAt); err != nil {
+		s.handleJobError(ctx, job, "settlement_persist_failed", err)
+		return
 	}
 
-	completedAt := time.Now()
-	_ = s.repo.MarkSucceeded(
-		ctx,
-		job.ID,
-		completedAt,
-		chargeResult.chargedAmountUSD,
-		originalPath,
-		thumbnailPath,
-		mimeType,
-		fileSizeBytes,
-		width,
-		height,
-		s.ResolveRetention(completedAt),
-	)
-	_ = result
+	job.Status = ImageStudioJobStatusSettling
+	job.SettlementPayload = settlementPayload
+	job.OriginalPath = originalPath
+	job.ThumbnailPath = thumbnailPath
+	job.MIMEType = mimeType
+	job.FileSizeBytes = fileSizeBytes
+	job.Width = width
+	job.Height = height
+	if err := s.settleJob(ctx, job, apiKey); err != nil {
+		s.requeueSettlement(ctx, job, err)
+	}
 }
 
-func (s *ImageStudioJobService) forwardJob(ctx context.Context, job ImageStudioJob, apiKey *APIKey, body []byte) (*OpenAIForwardResult, []byte, error) {
+type imageStudioForwardOutcome struct {
+	result             *OpenAIForwardResult
+	rawBody            []byte
+	accountID          int64
+	channelUsageFields ChannelUsageFields
+	inboundEndpoint    string
+	upstreamEndpoint   string
+}
+
+func (s *ImageStudioJobService) forwardJob(ctx context.Context, job ImageStudioJob, apiKey *APIKey, body []byte) (*imageStudioForwardOutcome, error) {
 	if s == nil || s.openAIGateway == nil {
-		return nil, nil, fmt.Errorf("openai gateway service is not configured")
+		return nil, fmt.Errorf("openai gateway service is not configured")
 	}
 
 	endpoint := openAIImagesGenerationsEndpoint
@@ -194,7 +322,7 @@ func (s *ImageStudioJobService) forwardJob(ctx context.Context, job ImageStudioJ
 		if imageStudioPayloadLooksLikeResponses(body) {
 			return s.forwardResponsesJob(ctx, job, apiKey, body)
 		}
-		return nil, nil, err
+		return nil, err
 	}
 	requestModel := parsed.Model
 	channelMapping, _ := s.openAIGateway.ResolveChannelMappingAndRestrict(ctx, apiKey.GroupID, requestModel)
@@ -208,10 +336,10 @@ func (s *ImageStudioJobService) forwardJob(ctx context.Context, job ImageStudioJ
 		parsed.RequiredCapability,
 	)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	if selection == nil || selection.Account == nil {
-		return nil, nil, fmt.Errorf("no available image account")
+		return nil, fmt.Errorf("no available image account")
 	}
 	if selection.ReleaseFunc != nil {
 		defer selection.ReleaseFunc()
@@ -219,12 +347,19 @@ func (s *ImageStudioJobService) forwardJob(ctx context.Context, job ImageStudioJ
 
 	result, err := s.openAIGateway.ForwardImages(requestCtx, ginCtx, selection.Account, body, parsed, channelMapping.MappedModel)
 	if err != nil {
-		return result, recorder.Body.Bytes(), err
+		return nil, err
 	}
 	if recorder.Code >= 400 {
-		return result, recorder.Body.Bytes(), fmt.Errorf("upstream request failed with status %d", recorder.Code)
+		return nil, fmt.Errorf("upstream request failed with status %d", recorder.Code)
 	}
-	return result, recorder.Body.Bytes(), nil
+	return &imageStudioForwardOutcome{
+		result:             result,
+		rawBody:            append([]byte(nil), recorder.Body.Bytes()...),
+		accountID:          selection.Account.ID,
+		channelUsageFields: channelMapping.ToUsageFields(requestModel, result.UpstreamModel),
+		inboundEndpoint:    endpoint,
+		upstreamEndpoint:   endpoint,
+	}, nil
 }
 
 func imageStudioPayloadLooksLikeResponses(body []byte) bool {
@@ -237,7 +372,7 @@ func imageStudioPayloadLooksLikeResponses(body []byte) bool {
 	return false
 }
 
-func (s *ImageStudioJobService) forwardResponsesJob(ctx context.Context, job ImageStudioJob, apiKey *APIKey, body []byte) (*OpenAIForwardResult, []byte, error) {
+func (s *ImageStudioJobService) forwardResponsesJob(ctx context.Context, job ImageStudioJob, apiKey *APIKey, body []byte) (*imageStudioForwardOutcome, error) {
 	recorder := httptest.NewRecorder()
 	ginCtx, _ := gin.CreateTestContext(recorder)
 	req := httptest.NewRequest("POST", openAIResponsesEndpoint, bytes.NewReader(body))
@@ -247,8 +382,9 @@ func (s *ImageStudioJobService) forwardResponsesJob(ctx context.Context, job Ima
 
 	requestModel := strings.TrimSpace(gjson.GetBytes(body, "model").String())
 	if requestModel == "" {
-		return nil, nil, fmt.Errorf("responses model is required")
+		return nil, fmt.Errorf("responses model is required")
 	}
+	originalModel := requestModel
 	channelMapping, _ := s.openAIGateway.ResolveChannelMappingAndRestrict(ctx, apiKey.GroupID, requestModel)
 	forwardBody := body
 	if channelMapping.Mapped && strings.TrimSpace(channelMapping.MappedModel) != "" {
@@ -268,10 +404,10 @@ func (s *ImageStudioJobService) forwardResponsesJob(ctx context.Context, job Ima
 		false,
 	)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	if selection == nil || selection.Account == nil {
-		return nil, nil, fmt.Errorf("no available image account")
+		return nil, fmt.Errorf("no available image account")
 	}
 	if selection.ReleaseFunc != nil {
 		defer selection.ReleaseFunc()
@@ -279,65 +415,120 @@ func (s *ImageStudioJobService) forwardResponsesJob(ctx context.Context, job Ima
 
 	result, err := s.openAIGateway.Forward(ctx, ginCtx, selection.Account, forwardBody)
 	if err != nil {
-		return result, recorder.Body.Bytes(), err
+		return nil, err
 	}
 	if recorder.Code >= 400 {
-		return result, recorder.Body.Bytes(), fmt.Errorf("upstream request failed with status %d", recorder.Code)
+		return nil, fmt.Errorf("upstream request failed with status %d", recorder.Code)
 	}
-	return result, recorder.Body.Bytes(), nil
+	return &imageStudioForwardOutcome{
+		result:             result,
+		rawBody:            append([]byte(nil), recorder.Body.Bytes()...),
+		accountID:          selection.Account.ID,
+		channelUsageFields: channelMapping.ToUsageFields(originalModel, result.UpstreamModel),
+		inboundEndpoint:    openAIResponsesEndpoint,
+		upstreamEndpoint:   openAIResponsesEndpoint,
+	}, nil
 }
 
-func (s *ImageStudioJobService) chargeJob(ctx context.Context, apiKey *APIKey, amount float64) (imageStudioChargeResult, error) {
-	if amount <= 0 {
-		return imageStudioChargeResult{}, nil
+func (s *ImageStudioJobService) processSettlingJob(ctx context.Context, job ImageStudioJob) {
+	leaseAt := time.Now()
+	claimed, err := s.repo.ClaimSettling(ctx, job.ID, leaseAt, leaseAt.Add(-5*time.Minute))
+	if err != nil || !claimed {
+		return
 	}
-	if s == nil || s.userRepo == nil {
-		return imageStudioChargeResult{}, fmt.Errorf("user repository is not configured")
+	apiKey, err := s.apiKeyService.GetByID(ctx, job.APIKeyID)
+	if err != nil {
+		s.requeueSettlement(ctx, job, fmt.Errorf("load api key: %w", err))
+		return
 	}
-	priority := BillingPriorityBalanceFirst
-	if s.billingCacheService != nil {
-		priority = s.billingCacheService.ResolveWalletBillingPriority(ctx, apiKey)
+	if apiKey == nil || apiKey.UserID != job.UserID || apiKey.User == nil || apiKey.Group == nil {
+		s.requeueSettlement(ctx, job, fmt.Errorf("image studio settlement api key snapshot is incomplete"))
+		return
 	}
+	if err := s.settleJob(ctx, job, apiKey); err != nil {
+		s.requeueSettlement(ctx, job, err)
+	}
+}
 
-	tryUsageCard := func() error {
-		if s.usageCardService == nil || !s.usageCardService.IsBillingEnabled(ctx) {
-			return ErrUsageCardUnavailable
-		}
-		_, err := s.usageCardService.DeductFirstAvailable(ctx, apiKey.UserID, amount, time.Now())
+func (s *ImageStudioJobService) settleJob(ctx context.Context, job ImageStudioJob, apiKey *APIKey) error {
+	if s == nil || s.openAIGateway == nil || s.openAIGateway.accountRepo == nil {
+		return fmt.Errorf("openai gateway settlement dependencies are not configured")
+	}
+	payload, result, err := unmarshalImageStudioSettlementPayload(job.SettlementPayload)
+	if err != nil {
 		return err
 	}
-	tryBalance := func() error {
-		return s.userRepo.DeductBalance(ctx, apiKey.UserID, amount)
+	account, err := s.openAIGateway.accountRepo.GetByID(ctx, payload.AccountID)
+	if err != nil {
+		return fmt.Errorf("load settlement account: %w", err)
 	}
+	if account == nil || account.ID != payload.AccountID {
+		return fmt.Errorf("settlement account %d not found", payload.AccountID)
+	}
+	subscription, err := s.resolveImageStudioSubscription(ctx, apiKey)
+	if err != nil {
+		return err
+	}
+	result.RequestID = fmt.Sprintf("image-studio-job:%d", job.ID)
+	usageLog, err := s.openAIGateway.recordUsageDetailed(ctx, &OpenAIRecordUsageInput{
+		Result:             result,
+		APIKey:             apiKey,
+		User:               apiKey.User,
+		Account:            account,
+		Subscription:       subscription,
+		InboundEndpoint:    payload.InboundEndpoint,
+		UpstreamEndpoint:   payload.UpstreamEndpoint,
+		RequestPayloadHash: HashUsageRequestPayload(job.RequestPayload),
+		APIKeyService:      s.apiKeyService,
+		QuotaPlatform:      PlatformFromAPIKey(apiKey),
+		ChannelUsageFields: payload.ChannelUsageFields,
+	})
+	if err != nil {
+		return fmt.Errorf("record image studio usage: %w", err)
+	}
+	completedAt := time.Now()
+	if err := s.repo.MarkSucceeded(
+		ctx,
+		job.ID,
+		completedAt,
+		usageLog.ActualCost,
+		job.OriginalPath,
+		job.ThumbnailPath,
+		job.MIMEType,
+		job.FileSizeBytes,
+		job.Width,
+		job.Height,
+		s.ResolveRetention(completedAt),
+	); err != nil {
+		return fmt.Errorf("mark image studio job succeeded: %w", err)
+	}
+	return nil
+}
 
-	switch priority {
-	case BillingPriorityUsageCardOnly:
-		if err := tryUsageCard(); err != nil {
-			return imageStudioChargeResult{}, err
-		}
-		return imageStudioChargeResult{chargedAmountUSD: amount}, nil
-	case BillingPriorityUsageCardFirst:
-		if err := tryUsageCard(); err == nil {
-			return imageStudioChargeResult{chargedAmountUSD: amount}, nil
-		}
-		if err := tryBalance(); err != nil {
-			return imageStudioChargeResult{}, err
-		}
-		return imageStudioChargeResult{chargedAmountUSD: amount, usedBalance: true}, nil
-	case BillingPriorityBalanceOnly:
-		if err := tryBalance(); err != nil {
-			return imageStudioChargeResult{}, err
-		}
-		return imageStudioChargeResult{chargedAmountUSD: amount, usedBalance: true}, nil
-	default:
-		if err := tryBalance(); err == nil {
-			return imageStudioChargeResult{chargedAmountUSD: amount, usedBalance: true}, nil
-		}
-		if err := tryUsageCard(); err != nil {
-			return imageStudioChargeResult{}, err
-		}
-		return imageStudioChargeResult{chargedAmountUSD: amount}, nil
+func (s *ImageStudioJobService) resolveImageStudioSubscription(ctx context.Context, apiKey *APIKey) (*UserSubscription, error) {
+	if apiKey == nil || apiKey.Group == nil || !apiKey.Group.IsSubscriptionType() {
+		return nil, nil
 	}
+	if apiKey.GroupID == nil || s.subscriptionResolver == nil {
+		return nil, fmt.Errorf("subscription service is not configured")
+	}
+	subscription, err := s.subscriptionResolver.GetActiveSubscription(ctx, apiKey.UserID, *apiKey.GroupID)
+	if err != nil {
+		return nil, fmt.Errorf("get active subscription: %w", err)
+	}
+	if subscription == nil {
+		return nil, ErrSubscriptionNotFound
+	}
+	return subscription, nil
+}
+
+func (s *ImageStudioJobService) requeueSettlement(ctx context.Context, job ImageStudioJob, err error) {
+	message := ""
+	if err != nil {
+		message = err.Error()
+	}
+	nextAttemptAt := time.Now().Add(imageStudioRetryDelay(job.AttemptCount + 1))
+	_ = s.repo.MarkSettlementRetryable(ctx, job.ID, nextAttemptAt, "settlement_failed", message)
 }
 
 func (s *ImageStudioJobService) persistAssets(jobID int64, imageBytes []byte, mimeType string) (string, string, int64, int, int, error) {

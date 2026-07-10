@@ -17,7 +17,7 @@ type imageStudioJobRepository struct {
 }
 
 const imageStudioJobColumns = `
-	id, user_id, api_key_id, mode, status, request_payload, prompt, model, size, output_format,
+	id, user_id, api_key_id, mode, status, request_payload, settlement_payload, prompt, model, size, output_format,
 	estimated_cost_usd, charged_amount_usd, billing_priority, attempt_count, max_attempts,
 	next_attempt_at, hold_balance_amount_usd, hold_usage_card_amount_usd, hold_usage_card_id,
 	original_path, thumbnail_path, mime_type, file_size_bytes, width, height, error_code,
@@ -131,11 +131,11 @@ func (r *imageStudioJobRepository) CountStatusByUser(ctx context.Context, userID
 	var stats service.ImageStudioJobStats
 	err := r.db.QueryRowContext(ctx, `
 		SELECT
-			COUNT(*) FILTER (WHERE status IN ($2, $3)) AS pending_count,
-			COUNT(*) FILTER (WHERE status = $4) AS failed_count
+			COUNT(*) FILTER (WHERE status IN ($2, $3, $4)) AS pending_count,
+			COUNT(*) FILTER (WHERE status = $5) AS failed_count
 		FROM image_studio_jobs
 		WHERE user_id = $1
-	`, userID, service.ImageStudioJobStatusQueued, service.ImageStudioJobStatusRunning, service.ImageStudioJobStatusFailed).
+	`, userID, service.ImageStudioJobStatusQueued, service.ImageStudioJobStatusRunning, service.ImageStudioJobStatusSettling, service.ImageStudioJobStatusFailed).
 		Scan(&stats.PendingCount, &stats.FailedCount)
 	if err != nil {
 		return nil, err
@@ -154,16 +154,22 @@ func (r *imageStudioJobRepository) ListRunnableJobs(ctx context.Context, limit i
 		WITH first_per_user AS (
 			SELECT DISTINCT ON (user_id) id
 			FROM image_studio_jobs
-			WHERE status = $1
+			WHERE (
+				status = $1
 				AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
+			) OR (
+				status = $2
+				AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
+				AND (heartbeat_at IS NULL OR heartbeat_at <= NOW() - INTERVAL '5 minutes')
+			)
 			ORDER BY user_id, COALESCE(next_attempt_at, queued_at) ASC, id ASC
 		)
 		SELECT `+qualifiedImageStudioJobColumns("j")+`
 		FROM image_studio_jobs j
 		INNER JOIN first_per_user f ON f.id = j.id
 		ORDER BY j.queued_at ASC, j.id ASC
-		LIMIT $2
-	`, service.ImageStudioJobStatusQueued, limit)
+		LIMIT $3
+	`, service.ImageStudioJobStatusQueued, service.ImageStudioJobStatusSettling, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -196,6 +202,46 @@ func (r *imageStudioJobRepository) MarkRunning(ctx context.Context, id int64, st
 	return rowsAffected > 0, nil
 }
 
+func (r *imageStudioJobRepository) MarkSettling(ctx context.Context, id int64, settlementPayload json.RawMessage, originalPath, thumbnailPath, mimeType string, fileSizeBytes int64, width, height int, leaseAt time.Time) error {
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE image_studio_jobs
+		SET status = $2, settlement_payload = $4, original_path = $5, thumbnail_path = $6, mime_type = $7,
+			file_size_bytes = $8, width = $9, height = $10, heartbeat_at = $11,
+			next_attempt_at = NULL, error_code = '', error_message = '', updated_at = NOW()
+		WHERE id = $1 AND status = $3
+	`, id, service.ImageStudioJobStatusSettling, service.ImageStudioJobStatusRunning, []byte(settlementPayload), originalPath, thumbnailPath, mimeType, fileSizeBytes, width, height, leaseAt)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return service.ErrImageStudioJobInvalid
+	}
+	return nil
+}
+
+func (r *imageStudioJobRepository) ClaimSettling(ctx context.Context, id int64, leaseAt, staleBefore time.Time) (bool, error) {
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE image_studio_jobs
+		SET heartbeat_at = $2, updated_at = NOW()
+		WHERE id = $1
+			AND (heartbeat_at IS NULL OR heartbeat_at <= $3)
+			AND status = $4
+			AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
+	`, id, leaseAt, staleBefore, service.ImageStudioJobStatusSettling)
+	if err != nil {
+		return false, err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return rowsAffected > 0, nil
+}
+
 func (r *imageStudioJobRepository) MarkRetryable(ctx context.Context, id int64, nextAttemptAt time.Time, errorCode, errorMessage string) error {
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE image_studio_jobs
@@ -206,20 +252,40 @@ func (r *imageStudioJobRepository) MarkRetryable(ctx context.Context, id int64, 
 	return err
 }
 
+func (r *imageStudioJobRepository) MarkSettlementRetryable(ctx context.Context, id int64, nextAttemptAt time.Time, errorCode, errorMessage string) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE image_studio_jobs
+		SET status = $2, error_code = $3, error_message = $4, next_attempt_at = $5,
+			heartbeat_at = NULL, updated_at = NOW(), attempt_count = attempt_count + 1
+		WHERE id = $1 AND status = $6
+	`, id, service.ImageStudioJobStatusSettling, errorCode, errorMessage, nullableTime(&nextAttemptAt), service.ImageStudioJobStatusSettling)
+	return err
+}
+
 func (r *imageStudioJobRepository) UpdateHeartbeat(ctx context.Context, id int64, heartbeatAt time.Time) error {
 	_, err := r.db.ExecContext(ctx, `UPDATE image_studio_jobs SET heartbeat_at = $2, updated_at = NOW() WHERE id = $1`, id, heartbeatAt)
 	return err
 }
 
 func (r *imageStudioJobRepository) MarkSucceeded(ctx context.Context, id int64, completedAt time.Time, chargedAmountUSD float64, originalPath, thumbnailPath, mimeType string, fileSizeBytes int64, width, height int, expiresAt *time.Time) error {
-	_, err := r.db.ExecContext(ctx, `
+	result, err := r.db.ExecContext(ctx, `
 		UPDATE image_studio_jobs
 		SET status = $2, completed_at = $3, charged_amount_usd = $4, original_path = $5, thumbnail_path = $6,
 			mime_type = $7, file_size_bytes = $8, width = $9, height = $10, expires_at = $11, next_attempt_at = NULL,
-			updated_at = NOW()
-		WHERE id = $1
-	`, id, service.ImageStudioJobStatusSucceeded, completedAt, chargedAmountUSD, originalPath, thumbnailPath, mimeType, fileSizeBytes, width, height, nullableTime(expiresAt))
-	return err
+			heartbeat_at = NULL, updated_at = NOW()
+		WHERE id = $1 AND status = $12
+	`, id, service.ImageStudioJobStatusSucceeded, completedAt, chargedAmountUSD, originalPath, thumbnailPath, mimeType, fileSizeBytes, width, height, nullableTime(expiresAt), service.ImageStudioJobStatusSettling)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return service.ErrImageStudioJobInvalid
+	}
+	return nil
 }
 
 func (r *imageStudioJobRepository) MarkFailed(ctx context.Context, id int64, completedAt time.Time, errorCode, errorMessage string) error {
@@ -285,6 +351,7 @@ func scanImageStudioJob(scanner imageStudioJobScanner) (*service.ImageStudioJob,
 	var (
 		job             service.ImageStudioJob
 		payload         []byte
+		settlement      []byte
 		holdUsageCardID sql.NullInt64
 		startedAt       sql.NullTime
 		heartbeatAt     sql.NullTime
@@ -299,6 +366,7 @@ func scanImageStudioJob(scanner imageStudioJobScanner) (*service.ImageStudioJob,
 		&job.Mode,
 		&job.Status,
 		&payload,
+		&settlement,
 		&job.Prompt,
 		&job.Model,
 		&job.Size,
@@ -333,6 +401,7 @@ func scanImageStudioJob(scanner imageStudioJobScanner) (*service.ImageStudioJob,
 		return nil, err
 	}
 	job.RequestPayload = json.RawMessage(payload)
+	job.SettlementPayload = json.RawMessage(settlement)
 	if holdUsageCardID.Valid {
 		job.HoldUsageCardID = &holdUsageCardID.Int64
 	}

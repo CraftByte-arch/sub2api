@@ -243,6 +243,44 @@ func newOpenAIRecordUsageServiceWithBillingRepoForTest(usageRepo UsageLogReposit
 	return svc
 }
 
+func TestOpenAIGatewayServiceRecordUsageDetailed_ReturnsFinalUsageLog(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true}}
+	svc := newOpenAIRecordUsageServiceWithBillingRepoForTest(
+		usageRepo,
+		billingRepo,
+		&openAIRecordUsageUserRepoStub{},
+		&openAIRecordUsageSubRepoStub{},
+		nil,
+	)
+
+	groupID := int64(72)
+	usageLog, err := svc.recordUsageDetailed(context.Background(), &OpenAIRecordUsageInput{
+		Result: &OpenAIForwardResult{
+			RequestID: "detailed-usage-log",
+			Model:     "gpt-5.1",
+			Usage: OpenAIUsage{
+				InputTokens:  100,
+				OutputTokens: 20,
+			},
+			Duration: time.Second,
+		},
+		APIKey: &APIKey{
+			ID:      71,
+			GroupID: &groupID,
+			Group:   &Group{ID: groupID, RateMultiplier: 1},
+		},
+		User:    &User{ID: 73},
+		Account: &Account{ID: 74},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, usageLog)
+	require.Same(t, usageRepo.lastLog, usageLog)
+	require.Equal(t, "detailed-usage-log", usageLog.RequestID)
+	require.Positive(t, usageLog.ActualCost)
+}
+
 func newUsageCardBillingCacheForRecordUsageTest() *BillingCacheService {
 	settingRepo := usageCardSummarySettingRepoStub{values: map[string]string{
 		SettingKeyUsageCardEnabled:        "true",

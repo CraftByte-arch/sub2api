@@ -97,6 +97,8 @@ func TestImageStudioJobHandler_CreateEnforcesAvailableGroups(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{}
+			cfg.Default.RateMultiplier = 1
 			groupID := int64(42)
 			apiKeyRepo := &imageStudioHandlerAPIKeyRepoStub{apiKey: &service.APIKey{
 				ID:      1001,
@@ -110,13 +112,21 @@ func TestImageStudioJobHandler_CreateEnforcesAvailableGroups(t *testing.T) {
 					RateMultiplier:       1,
 					ImageRateMultiplier:  1,
 				},
+				User: &service.User{ID: 123},
 			}}
 			jobRepo := &imageStudioHandlerJobRepoStub{}
 			settingSvc := service.NewSettingService(&imageStudioHandlerSettingRepoStub{values: map[string]string{
 				service.SettingKeyImageStudioAvailableGroupIDs: tt.allowedGroups,
 			}}, &config.Config{})
+			jobService := service.NewImageStudioJobService(jobRepo, settingSvc)
+			openAIGateway := service.NewOpenAIGatewayService(
+				nil, nil, nil, nil, nil, nil, nil, cfg, nil, nil,
+				service.NewBillingService(cfg, nil), nil, &service.BillingCacheService{}, nil,
+				&service.DeferredService{}, nil, nil, nil, nil, nil, nil, nil,
+			)
+			jobService.SetRuntimeDependencies(openAIGateway, nil, nil, nil)
 			handler := NewImageStudioJobHandler(
-				service.NewImageStudioJobService(jobRepo, settingSvc),
+				jobService,
 				service.NewAPIKeyService(apiKeyRepo, nil, nil, nil, nil, nil, &config.Config{}),
 			)
 
@@ -137,6 +147,9 @@ func TestImageStudioJobHandler_CreateEnforcesAvailableGroups(t *testing.T) {
 
 			require.Equal(t, tt.wantStatus, rec.Code)
 			require.Equal(t, tt.wantCreated, jobRepo.created)
+			if tt.wantCreated {
+				require.Positive(t, jobRepo.lastInput.EstimatedCostUSD)
+			}
 			if !tt.wantCreated {
 				require.Contains(t, rec.Body.String(), "API key group is not available for image studio")
 			}
@@ -186,11 +199,13 @@ func (r *imageStudioHandlerSettingRepoStub) Delete(ctx context.Context, key stri
 }
 
 type imageStudioHandlerJobRepoStub struct {
-	created bool
+	created   bool
+	lastInput service.ImageStudioJobCreateInput
 }
 
 func (r *imageStudioHandlerJobRepoStub) Create(ctx context.Context, input service.ImageStudioJobCreateInput) (*service.ImageStudioJob, error) {
 	r.created = true
+	r.lastInput = input
 	now := time.Now()
 	return &service.ImageStudioJob{
 		ID:               9001,
@@ -230,11 +245,20 @@ func (r *imageStudioHandlerJobRepoStub) ListRunnableJobs(ctx context.Context, li
 func (r *imageStudioHandlerJobRepoStub) MarkRunning(ctx context.Context, id int64, startedAt time.Time) (bool, error) {
 	panic("unexpected MarkRunning call")
 }
+func (r *imageStudioHandlerJobRepoStub) MarkSettling(context.Context, int64, json.RawMessage, string, string, string, int64, int, int, time.Time) error {
+	panic("unexpected MarkSettling call")
+}
+func (r *imageStudioHandlerJobRepoStub) ClaimSettling(context.Context, int64, time.Time, time.Time) (bool, error) {
+	panic("unexpected ClaimSettling call")
+}
 func (r *imageStudioHandlerJobRepoStub) UpdateHeartbeat(ctx context.Context, id int64, heartbeatAt time.Time) error {
 	panic("unexpected UpdateHeartbeat call")
 }
 func (r *imageStudioHandlerJobRepoStub) MarkRetryable(ctx context.Context, id int64, nextAttemptAt time.Time, errorCode, errorMessage string) error {
 	panic("unexpected MarkRetryable call")
+}
+func (r *imageStudioHandlerJobRepoStub) MarkSettlementRetryable(context.Context, int64, time.Time, string, string) error {
+	panic("unexpected MarkSettlementRetryable call")
 }
 func (r *imageStudioHandlerJobRepoStub) MarkSucceeded(ctx context.Context, id int64, completedAt time.Time, chargedAmountUSD float64, originalPath, thumbnailPath, mimeType string, fileSizeBytes int64, width, height int, expiresAt *time.Time) error {
 	panic("unexpected MarkSucceeded call")

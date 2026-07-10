@@ -14,6 +14,7 @@ const (
 
 	ImageStudioJobStatusQueued    = "queued"
 	ImageStudioJobStatusRunning   = "running"
+	ImageStudioJobStatusSettling  = "settling"
 	ImageStudioJobStatusSucceeded = "succeeded"
 	ImageStudioJobStatusFailed    = "failed"
 )
@@ -36,6 +37,7 @@ type ImageStudioJob struct {
 	Mode                   string
 	Status                 string
 	RequestPayload         json.RawMessage
+	SettlementPayload      json.RawMessage
 	Prompt                 string
 	Model                  string
 	Size                   string
@@ -99,8 +101,11 @@ type ImageStudioJobRepository interface {
 	DeleteByIDForUser(ctx context.Context, id, userID int64) error
 	ListRunnableJobs(ctx context.Context, limit int) ([]ImageStudioJob, error)
 	MarkRunning(ctx context.Context, id int64, startedAt time.Time) (bool, error)
+	MarkSettling(ctx context.Context, id int64, settlementPayload json.RawMessage, originalPath, thumbnailPath, mimeType string, fileSizeBytes int64, width, height int, leaseAt time.Time) error
+	ClaimSettling(ctx context.Context, id int64, leaseAt, staleBefore time.Time) (bool, error)
 	UpdateHeartbeat(ctx context.Context, id int64, heartbeatAt time.Time) error
 	MarkRetryable(ctx context.Context, id int64, nextAttemptAt time.Time, errorCode, errorMessage string) error
+	MarkSettlementRetryable(ctx context.Context, id int64, nextAttemptAt time.Time, errorCode, errorMessage string) error
 	MarkSucceeded(ctx context.Context, id int64, completedAt time.Time, chargedAmountUSD float64, originalPath, thumbnailPath, mimeType string, fileSizeBytes int64, width, height int, expiresAt *time.Time) error
 	MarkFailed(ctx context.Context, id int64, completedAt time.Time, errorCode, errorMessage string) error
 	ListExpiredAssets(ctx context.Context, now time.Time, limit int) ([]ImageStudioJob, error)

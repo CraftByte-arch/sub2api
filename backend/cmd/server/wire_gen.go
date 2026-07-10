@@ -167,7 +167,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	announcementService := service.NewAnnouncementService(announcementRepository, announcementReadRepository, userRepository, userSubscriptionRepository)
 	announcementHandler := handler.NewAnnouncementHandler(announcementService)
 	imageStudioJobRepository := repository.NewImageStudioJobRepository(client, db)
-	imageStudioJobService := service.ProvideImageStudioJobService(imageStudioJobRepository, settingService, openAIGatewayService, apiKeyService, billingCacheService, userRepository, usageCardService)
+	imageStudioJobService := service.ProvideImageStudioJobService(imageStudioJobRepository, settingService, openAIGatewayService, apiKeyService, billingCacheService, subscriptionService)
 	imageStudioJobHandler := handler.NewImageStudioJobHandler(imageStudioJobService, apiKeyService)
 	channelMonitorRepository := repository.NewChannelMonitorRepository(client, db)
 	channelMonitorService := service.ProvideChannelMonitorService(channelMonitorRepository, secretEncryptor)

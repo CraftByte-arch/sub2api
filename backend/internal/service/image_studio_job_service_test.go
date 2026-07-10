@@ -2,11 +2,13 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/stretchr/testify/require"
 )
 
@@ -57,56 +59,30 @@ func TestImageStudioJobServiceDeleteJobDoesNotDeleteRecordWhenAssetRemovalFails(
 	require.Zero(t, repo.deletedID)
 }
 
-func TestImageStudioJobServiceChargeJobUsesBalanceWhenUsageCardBillingDisabled(t *testing.T) {
-	cardRepo := &imageStudioBillingUsageCardRepoStub{}
-	settings := usageCardSummarySettingRepoStub{values: map[string]string{
-		SettingKeyUsageCardEnabled:        "true",
-		SettingKeyUsageCardBillingEnabled: "false",
-	}}
-	usageCardService := NewUsageCardService(cardRepo, settings)
-	userRepo := &imageStudioBillingUserRepoStub{}
-	svc := &ImageStudioJobService{
-		billingCacheService: &BillingCacheService{usageCardService: usageCardService},
-		userRepo:            userRepo,
-		usageCardService:    usageCardService,
-	}
+func TestImageStudioJobServiceEstimateCostUsesGatewayDefaultImagePrice(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Default.RateMultiplier = 1
+	openAIGateway := NewOpenAIGatewayService(
+		nil, nil, nil, nil, nil, nil, nil, cfg, nil, nil,
+		NewBillingService(cfg, nil), nil, &BillingCacheService{}, nil,
+		&DeferredService{}, nil, nil, nil, nil, nil, nil, nil,
+	)
+	svc := &ImageStudioJobService{openAIGateway: openAIGateway}
+	groupID := int64(11)
 
-	result, err := svc.chargeJob(context.Background(), &APIKey{
-		UserID:          42,
-		BillingPriority: BillingPriorityAuto,
-	}, 1.5)
+	cost, err := svc.EstimateCost(context.Background(), &APIKey{
+		ID:      12,
+		GroupID: &groupID,
+		Group: &Group{
+			ID:             groupID,
+			RateMultiplier: 1,
+		},
+		User: &User{ID: 13},
+	}, "gpt-image-1", "1024x1024")
 
 	require.NoError(t, err)
-	require.True(t, result.usedBalance)
-	require.Equal(t, 1, userRepo.deductCalls)
-	require.Zero(t, cardRepo.listCalls)
-	require.Zero(t, cardRepo.deductCalls)
-}
-
-type imageStudioBillingUserRepoStub struct {
-	UserRepository
-	deductCalls int
-}
-
-func (r *imageStudioBillingUserRepoStub) DeductBalance(context.Context, int64, float64) error {
-	r.deductCalls++
-	return nil
-}
-
-type imageStudioBillingUsageCardRepoStub struct {
-	UsageCardRepository
-	listCalls   int
-	deductCalls int
-}
-
-func (r *imageStudioBillingUsageCardRepoStub) ListAvailableCards(context.Context, int64, time.Time) ([]UserUsageCard, error) {
-	r.listCalls++
-	return []UserUsageCard{{ID: 91}}, nil
-}
-
-func (r *imageStudioBillingUsageCardRepoStub) DeductCard(_ context.Context, cardID, userID int64, amount float64, now time.Time) (*UserUsageCard, error) {
-	r.deductCalls++
-	return &UserUsageCard{ID: cardID, UserID: userID, UsedUSD: amount, UpdatedAt: now}, nil
+	require.NotNil(t, cost)
+	require.Positive(t, cost.ActualCost)
 }
 
 type imageStudioJobDeleteRepoStub struct {
@@ -152,12 +128,24 @@ func (r *imageStudioJobDeleteRepoStub) MarkRunning(context.Context, int64, time.
 	panic("unexpected MarkRunning call")
 }
 
+func (r *imageStudioJobDeleteRepoStub) MarkSettling(context.Context, int64, json.RawMessage, string, string, string, int64, int, int, time.Time) error {
+	panic("unexpected MarkSettling call")
+}
+
+func (r *imageStudioJobDeleteRepoStub) ClaimSettling(context.Context, int64, time.Time, time.Time) (bool, error) {
+	panic("unexpected ClaimSettling call")
+}
+
 func (r *imageStudioJobDeleteRepoStub) UpdateHeartbeat(context.Context, int64, time.Time) error {
 	panic("unexpected UpdateHeartbeat call")
 }
 
 func (r *imageStudioJobDeleteRepoStub) MarkRetryable(context.Context, int64, time.Time, string, string) error {
 	panic("unexpected MarkRetryable call")
+}
+
+func (r *imageStudioJobDeleteRepoStub) MarkSettlementRetryable(context.Context, int64, time.Time, string, string) error {
+	panic("unexpected MarkSettlementRetryable call")
 }
 
 func (r *imageStudioJobDeleteRepoStub) MarkSucceeded(context.Context, int64, time.Time, float64, string, string, string, int64, int, int, *time.Time) error {
