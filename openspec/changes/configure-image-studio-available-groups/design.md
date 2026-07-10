@@ -69,3 +69,12 @@ The existing group image-generation switch also blocks clients that merely prede
 - [Risk] Settings payload drift can occur across backend service structs, DTOs, frontend API types, and settings form state. -> Mitigation: update focused backend/frontend tests around settings serialization and image studio filtering.
 - [Risk] Deleted groups could leave stale IDs in the stored allowlist. -> Mitigation: normalize to positive unique integers on write and ignore unknown group IDs when rendering choices or validating jobs.
 - [Risk] `allow` policy can let the model see an image tool even when the group cannot actually generate images. -> Mitigation: recommend `strip` as the default and keep explicit image-generation requests blocked by the group switch.
+
+## Merge Reconciliation
+
+The `main` merge split gateway, scheduling, settings, and billing code into smaller files after the original implementation was verified. Reconciliation uses the `main` file boundaries as the structural baseline while preserving the pre-merge business behavior.
+
+- Native flat `image_generation` declarations without explicit tool selection remain passive and follow the global declaration policy.
+- Codex `image_gen` namespace and Responses Lite `additional_tools` image requests remain actual image intent because `main` added those classifiers to close a group-permission bypass.
+- Declaration policy and actual-image permission checks run before HTTP passthrough forwarding so passthrough and transformed requests have the same access behavior.
+- Existing usage-card billing, settings round-trip, and image-protocol scheduling behavior must survive the structural merge even though those capabilities are not expanded by this change.

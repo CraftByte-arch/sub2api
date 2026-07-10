@@ -149,3 +149,13 @@ If no key remains, the empty state should explain that no administrator-enabled 
 ## Rollout Notes
 
 Defaulting declaration policy to `strip` reduces false positives for clients that predeclare tools. Defaulting image studio available groups to empty is explicit but may require administrators to configure groups after upgrade before the built-in image studio page shows keys.
+
+## Merge Reconciliation
+
+The post-verification `main` merge introduced split service files. Keep those new ownership boundaries, but port the complete pre-merge behavior rather than resolving at whole-file granularity.
+
+- `gateway_usage_billing.go` owns usage-card command construction and both gateway usage recorders must populate the global enablement and resolved key priority.
+- `setting_handler.go` and `setting_handler_update.go` must preserve every existing settings field on unrelated saves; pointer request fields use previous-value semantics.
+- Native flat `image_generation` declarations are passive when not explicitly selected. Codex `image_gen` namespace and Responses Lite `additional_tools` remain actual image requests and stay group-gated.
+- Image declaration/access preflight runs before passthrough forwarding.
+- `openai_gateway_scheduling.go` must carry image protocol preference through both scheduler and load-aware fallback paths.

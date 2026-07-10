@@ -63,3 +63,11 @@ The system SHALL provide an administrator setting that controls how OpenAI Respo
 #### Scenario: Responses WebSocket uses the same declaration policy
 - **WHEN** a Responses WebSocket client declares an `image_generation` tool
 - **THEN** the system applies the same declaration policy as HTTP `/v1/responses`
+
+#### Scenario: Passthrough accounts use the same declaration policy
+- **WHEN** an OpenAI passthrough account receives an ordinary `/v1/responses` request that predeclares the native `image_generation` tool
+- **THEN** the system applies the configured `strip`, `allow`, or `reject` policy before entering passthrough forwarding
+
+#### Scenario: Codex image namespace remains an actual image request
+- **WHEN** a client uses the Codex `image_gen` namespace or Responses Lite `additional_tools` image namespace for an image request
+- **THEN** the system continues to enforce the group's existing image-generation switch

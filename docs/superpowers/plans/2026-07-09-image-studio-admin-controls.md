@@ -701,3 +701,74 @@ Continue for all completed task lines.
 git add openspec/changes/configure-image-studio-available-groups/tasks.md docs/superpowers/plans/2026-07-09-image-studio-admin-controls.md
 git commit -m "chore: sync image studio admin controls tasks"
 ```
+
+---
+
+### Task 7: Restore usage-card billing after the service split
+
+**Files:**
+- Modify: `backend/internal/service/gateway_usage_billing.go`
+- Modify: `backend/internal/service/openai_gateway_usage.go`
+- Test: `backend/internal/service/gateway_service_subscription_billing_test.go`
+- Test: `backend/internal/service/openai_gateway_record_usage_test.go`
+
+- [ ] **Step 1: Run the existing usage-card command test and confirm RED**
+- [ ] **Step 2: Add focused tests for billing priority and both production recorder call sites**
+- [ ] **Step 3: Restore `BillingPriority`, usage-card enablement, group override, cost, and ID propagation from pre-merge commit `58583dbd`**
+- [ ] **Step 4: Run focused billing tests and commit**
+
+---
+
+### Task 8: Restore lossless admin settings round trips
+
+**Files:**
+- Modify: `backend/internal/handler/admin/setting_handler.go`
+- Modify: `backend/internal/handler/admin/setting_handler_update.go`
+- Modify: `backend/internal/handler/admin/setting_handler_audit.go`
+- Modify: `backend/internal/service/setting_update.go`
+- Modify: `backend/internal/service/setting_usage_card_long_context.go`
+- Test: admin settings handler and setting service tests
+
+- [ ] **Step 1: Add a failing unrelated-save preservation test**
+- [ ] **Step 2: Add failing GET/update response tests for legacy subscriptions, usage cards, default usage cards, and long-context billing**
+- [ ] **Step 3: Port request fields, previous-value merging, validation, DTO conversion, persistence, response, and audit behavior from `58583dbd`**
+- [ ] **Step 4: Restore default usage-card parsing compatibility and run focused tests**
+- [ ] **Step 5: Commit the settings reconciliation**
+
+---
+
+### Task 9: Reconcile image intent and passthrough policy
+
+**Files:**
+- Modify: `backend/internal/service/image_generation_intent.go`
+- Modify: `backend/internal/service/openai_gateway_forward.go`
+- Modify: `backend/internal/service/openai_gateway_passthrough.go`
+- Modify: `backend/internal/service/openai_ws_forwarder_ingress.go`
+- Modify: declaration and gateway tests
+
+- [ ] **Step 1: Add failing namespace group-gate tests for raw/map and HTTP/WS paths**
+- [ ] **Step 2: Add a failing passthrough `strip`/`allow`/`reject` matrix**
+- [ ] **Step 3: Limit passive classification to native flat declarations and retain namespace/additional-tools as actual image intent**
+- [ ] **Step 4: Apply shared declaration/access preflight before passthrough and run focused tests**
+- [ ] **Step 5: Commit the gateway reconciliation**
+
+---
+
+### Task 10: Restore fallback image-protocol scheduling
+
+**Files:**
+- Modify: `backend/internal/service/openai_gateway_scheduling.go`
+- Test: OpenAI scheduler tests
+
+- [ ] **Step 1: Add a failing test for `responses` preference with the scheduler unavailable**
+- [ ] **Step 2: Propagate protocol preference through model selection, load-aware sorting, and fallback wait ordering**
+- [ ] **Step 3: Run scheduler tests and commit**
+
+---
+
+### Task 11: Re-verify the merged implementation
+
+- [ ] **Step 1: Run focused service, handler, and frontend tests**
+- [ ] **Step 2: Run the complete backend unit suite and frontend typecheck/tests**
+- [ ] **Step 3: Run a post-merge code review and resolve critical findings**
+- [ ] **Step 4: Sync OpenSpec and plan task checkboxes, then commit verification evidence**

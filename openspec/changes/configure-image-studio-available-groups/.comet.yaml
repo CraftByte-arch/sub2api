@@ -1,5 +1,5 @@
 workflow: full
-phase: archive
+phase: build
 context_compression: off
 build_mode: executing-plans
 build_pause: null
@@ -11,11 +11,11 @@ auto_transition: true
 base_ref: f5cd222e59e2e576fe4c5e751e3fd240687a0377
 design_doc: docs/superpowers/specs/2026-07-09-image-studio-admin-controls-design.md
 plan: docs/superpowers/plans/2026-07-09-image-studio-admin-controls.md
-verify_result: pass
+verify_result: fail
 verification_report: docs/superpowers/reports/2026-07-09-configure-image-studio-available-groups-verify.md
 branch_status: handled
 created_at: 2026-07-09
-verified_at: 2026-07-09
+verified_at: null
 archived: false
 handoff_context: openspec/changes/configure-image-studio-available-groups/.comet/handoff/design-context.json
 handoff_hash: 574c26c14a36b71682aea6b5126602dbfbf9621fdcc1caa7364d43589d3307a0
