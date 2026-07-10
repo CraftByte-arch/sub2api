@@ -788,7 +788,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{},
 			sql.NullInt64{},
 			sql.NullInt64{},
-			sql.NullInt64{},
+			sql.NullInt64{Valid: true, Int64: 77},
 			0, 0, 0, 0, 0, 0,
 			0, 0.0, // image_output_tokens, image_output_cost
 			0.0, 0.0, 0.0, 0.0, 0.8, 0.8,
@@ -834,6 +834,8 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 		require.NotNil(t, log.ImageSizeSource)
 		require.Equal(t, "output", *log.ImageSizeSource)
 		require.Equal(t, map[string]int{"4K": 2}, log.ImageSizeBreakdown)
+		require.NotNil(t, log.UsageCardID)
+		require.Equal(t, int64(77), *log.UsageCardID)
 	})
 
 	t.Run("request_type_ws_v2_overrides_legacy", func(t *testing.T) {

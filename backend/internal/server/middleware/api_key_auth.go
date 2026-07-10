@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -15,8 +16,8 @@ import (
 )
 
 // NewAPIKeyAuthMiddleware 创建 API Key 认证中间件
-func NewAPIKeyAuthMiddleware(apiKeyService *service.APIKeyService, subscriptionService *service.SubscriptionService, cfg *config.Config) APIKeyAuthMiddleware {
-	return APIKeyAuthMiddleware(apiKeyAuthWithSubscription(apiKeyService, subscriptionService, cfg))
+func NewAPIKeyAuthMiddleware(apiKeyService *service.APIKeyService, subscriptionService *service.SubscriptionService, billingCacheService *service.BillingCacheService, cfg *config.Config) APIKeyAuthMiddleware {
+	return APIKeyAuthMiddleware(apiKeyAuthWithSubscription(apiKeyService, subscriptionService, billingCacheService, cfg))
 }
 
 // apiKeyAuthWithSubscription API Key认证中间件（支持订阅验证）
@@ -26,7 +27,7 @@ func NewAPIKeyAuthMiddleware(apiKeyService *service.APIKeyService, subscriptionS
 //   - 计费执行（Billing Enforcement）：过期/配额/订阅/余额检查 —— skipBilling 时整块跳过
 //
 // /v1/usage 端点只需鉴权，不需要计费执行（允许过期/配额耗尽的 Key 查询自身用量）。
-func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscriptionService *service.SubscriptionService, cfg *config.Config) gin.HandlerFunc {
+func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscriptionService *service.SubscriptionService, billingCacheService *service.BillingCacheService, cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// ── 1. 提取 API Key ──────────────────────────────────────────
 
@@ -212,8 +213,19 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 					subscriptionService.DoWindowMaintenance(&maintenanceCopy)
 				}
 			} else {
-				// 非订阅模式 或 订阅模式但 subscriptionService 未注入：回退到余额检查
-				if apiKeyBalanceBelowAuthThreshold(apiKey.User.Balance, cfg) {
+				// 非订阅模式或订阅服务未注入时复用统一资格检查，避免余额卡用户
+				// 在鉴权阶段被只看主余额的旧逻辑提前拦截。
+				if billingCacheService != nil {
+					if err := billingCacheService.CheckAuthBillingSourceEligibility(
+						c.Request.Context(),
+						apiKey.User,
+						apiKey,
+					); err != nil {
+						status, code, message := apiKeyAuthBillingErrorDetails(err)
+						AbortWithError(c, status, code, message)
+						return
+					}
+				} else if apiKeyBalanceBelowAuthThreshold(apiKey.User.Balance, cfg) {
 					AbortWithError(c, 403, "INSUFFICIENT_BALANCE", "Insufficient account balance")
 					return
 				}
@@ -235,6 +247,29 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 		_ = apiKeyService.TouchLastUsed(c.Request.Context(), apiKey.ID)
 
 		c.Next()
+	}
+}
+
+func apiKeyAuthBillingErrorDetails(err error) (status int, code, message string) {
+	switch {
+	case errors.Is(err, service.ErrGroupRPMExceeded), errors.Is(err, service.ErrUserRPMExceeded):
+		return http.StatusTooManyRequests, "rate_limit_exceeded", err.Error()
+	case errors.Is(err, service.ErrAPIKeyRateLimit5hExceeded),
+		errors.Is(err, service.ErrAPIKeyRateLimit1dExceeded),
+		errors.Is(err, service.ErrAPIKeyRateLimit7dExceeded),
+		errors.Is(err, service.ErrDailyLimitExceeded),
+		errors.Is(err, service.ErrWeeklyLimitExceeded),
+		errors.Is(err, service.ErrMonthlyLimitExceeded),
+		errors.Is(err, service.ErrUserPlatformDailyQuotaExhausted),
+		errors.Is(err, service.ErrUserPlatformWeeklyQuotaExhausted),
+		errors.Is(err, service.ErrUserPlatformMonthlyQuotaExhausted):
+		return http.StatusTooManyRequests, "USAGE_LIMIT_EXCEEDED", err.Error()
+	case errors.Is(err, service.ErrBillingServiceUnavailable):
+		return http.StatusServiceUnavailable, "BILLING_SERVICE_ERROR", "Billing service temporarily unavailable"
+	case errors.Is(err, service.ErrUsageCardUnavailable), errors.Is(err, service.ErrInsufficientBalance):
+		return http.StatusForbidden, "INSUFFICIENT_BALANCE", "Insufficient account balance"
+	default:
+		return http.StatusForbidden, "BILLING_ERROR", err.Error()
 	}
 }
 

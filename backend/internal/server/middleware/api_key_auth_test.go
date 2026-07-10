@@ -741,7 +741,7 @@ func TestAPIKeyAuthIPRestrictionIncludesClientIPForBlacklistDenial(t *testing.T)
 	apiKeyService := service.NewAPIKeyService(apiKeyRepo, nil, nil, nil, nil, nil, cfg)
 	router := gin.New()
 	require.NoError(t, router.SetTrustedProxies(nil))
-	router.Use(gin.HandlerFunc(NewAPIKeyAuthMiddleware(apiKeyService, nil, cfg)))
+	router.Use(gin.HandlerFunc(NewAPIKeyAuthMiddleware(apiKeyService, nil, nil, cfg)))
 	router.GET("/t", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	})
@@ -841,7 +841,7 @@ func TestAPIKeyAuthIPRestrictionUsesForwardedClientIPInDenialWhenTrusted(t *test
 	apiKeyService := service.NewAPIKeyService(apiKeyRepo, nil, nil, nil, nil, nil, cfg)
 	router := gin.New()
 	require.NoError(t, router.SetTrustedProxies(nil))
-	router.Use(gin.HandlerFunc(NewAPIKeyAuthMiddleware(apiKeyService, nil, cfg)))
+	router.Use(gin.HandlerFunc(NewAPIKeyAuthMiddleware(apiKeyService, nil, nil, cfg)))
 	router.GET("/t", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	})
@@ -1000,6 +1000,77 @@ func TestAPIKeyAuthTouchesLastUsedInStandardMode(t *testing.T) {
 	require.Equal(t, 1, touchCalls)
 }
 
+func TestAPIKeyAuthAllowsUsageCardOnlyKeyWithExhaustedBalance(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	cfg := &config.Config{RunMode: config.RunModeStandard}
+	user := &service.User{
+		ID:          10,
+		Role:        service.RoleUser,
+		Status:      service.StatusActive,
+		Balance:     0,
+		Concurrency: 3,
+		RPMLimit:    10,
+	}
+	group := &service.Group{
+		ID:               42,
+		Name:             "openai",
+		Platform:         service.PlatformOpenAI,
+		Status:           service.StatusActive,
+		Hydrated:         true,
+		SubscriptionType: service.SubscriptionTypeStandard,
+		RPMLimit:         10,
+	}
+	apiKey := &service.APIKey{
+		ID:              105,
+		UserID:          user.ID,
+		GroupID:         &group.ID,
+		Key:             "usage-card-only",
+		Status:          service.StatusActive,
+		BillingPriority: service.BillingPriorityUsageCardOnly,
+		User:            user,
+		Group:           group,
+	}
+	apiKeyRepo := &stubApiKeyRepo{
+		getByKey: func(ctx context.Context, key string) (*service.APIKey, error) {
+			if key != apiKey.Key {
+				return nil, service.ErrAPIKeyNotFound
+			}
+			clone := *apiKey
+			return &clone, nil
+		},
+	}
+	usageCardService := service.NewUsageCardService(
+		&stubUsageCardRepo{available: []service.UserUsageCard{{
+			ID:            1,
+			UserID:        user.ID,
+			StartsAt:      time.Now().Add(-time.Hour),
+			ExpiresAt:     time.Now().Add(time.Hour),
+			TotalLimitUSD: 10,
+			Status:        service.UsageCardStatusActive,
+		}}},
+		fakeSettingRepo{values: map[string]string{
+			service.SettingKeyUsageCardEnabled:        "true",
+			service.SettingKeyUsageCardBillingEnabled: "true",
+		}},
+	)
+	rpmCache := &apiKeyAuthRPMCacheStub{}
+	billingCacheService := service.NewBillingCacheService(nil, nil, nil, nil, rpmCache, nil, cfg, nil)
+	billingCacheService.SetUsageCardService(usageCardService)
+	t.Cleanup(billingCacheService.Stop)
+
+	apiKeyService := service.NewAPIKeyService(apiKeyRepo, nil, nil, nil, nil, nil, cfg)
+	router := newAuthTestRouterWithBilling(apiKeyService, nil, billingCacheService, cfg)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/t", nil)
+	req.Header.Set("x-api-key", apiKey.Key)
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Zero(t, rpmCache.userGroupCalls, "auth middleware must not consume group RPM quota")
+	require.Zero(t, rpmCache.userCalls, "auth middleware must not consume user RPM quota")
+}
+
 func TestAPIKeyAuthAllowsBalanceBelowMinimumReserve(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -1032,7 +1103,9 @@ func TestAPIKeyAuthAllowsBalanceBelowMinimumReserve(t *testing.T) {
 	cfg := &config.Config{RunMode: config.RunModeStandard}
 	cfg.Billing.MinimumBalanceReserve = 0.01
 	apiKeyService := service.NewAPIKeyService(apiKeyRepo, nil, nil, nil, nil, nil, cfg)
-	router := newAuthTestRouter(apiKeyService, nil, cfg)
+	billingCacheService := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg, nil)
+	t.Cleanup(billingCacheService.Stop)
+	router := newAuthTestRouterWithBilling(apiKeyService, nil, billingCacheService, cfg)
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/t", nil)
@@ -1087,8 +1160,12 @@ func TestAPIKeyAuthRejectsExhaustedBalance(t *testing.T) {
 }
 
 func newAuthTestRouter(apiKeyService *service.APIKeyService, subscriptionService *service.SubscriptionService, cfg *config.Config) *gin.Engine {
+	return newAuthTestRouterWithBilling(apiKeyService, subscriptionService, nil, cfg)
+}
+
+func newAuthTestRouterWithBilling(apiKeyService *service.APIKeyService, subscriptionService *service.SubscriptionService, billingCacheService *service.BillingCacheService, cfg *config.Config) *gin.Engine {
 	router := gin.New()
-	router.Use(gin.HandlerFunc(NewAPIKeyAuthMiddleware(apiKeyService, subscriptionService, nil, cfg)))
+	router.Use(gin.HandlerFunc(NewAPIKeyAuthMiddleware(apiKeyService, subscriptionService, billingCacheService, cfg)))
 	router.GET("/t", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	})
@@ -1107,6 +1184,29 @@ func requireAPIKeyAuthError(t *testing.T, w *httptest.ResponseRecorder, code, me
 type stubApiKeyRepo struct {
 	getByKey       func(ctx context.Context, key string) (*service.APIKey, error)
 	updateLastUsed func(ctx context.Context, id int64, usedAt time.Time) error
+}
+
+type apiKeyAuthRPMCacheStub struct {
+	userGroupCalls int
+	userCalls      int
+}
+
+func (s *apiKeyAuthRPMCacheStub) IncrementUserGroupRPM(context.Context, int64, int64) (int, error) {
+	s.userGroupCalls++
+	return s.userGroupCalls, nil
+}
+
+func (s *apiKeyAuthRPMCacheStub) IncrementUserRPM(context.Context, int64) (int, error) {
+	s.userCalls++
+	return s.userCalls, nil
+}
+
+func (s *apiKeyAuthRPMCacheStub) GetUserGroupRPM(context.Context, int64, int64) (int, error) {
+	return 0, nil
+}
+
+func (s *apiKeyAuthRPMCacheStub) GetUserRPM(context.Context, int64) (int, error) {
+	return 0, nil
 }
 
 func (r *stubApiKeyRepo) Create(ctx context.Context, key *service.APIKey) error {
@@ -1220,6 +1320,47 @@ type stubUserSubscriptionRepo struct {
 
 type fakeSettingRepo struct {
 	values map[string]string
+}
+
+type stubUsageCardRepo struct {
+	available []service.UserUsageCard
+}
+
+func (r *stubUsageCardRepo) ListPlans(context.Context, bool) ([]service.UsageCardPlan, error) {
+	return nil, errors.New("not implemented")
+}
+func (r *stubUsageCardRepo) CreateCard(context.Context, service.CreateUsageCardInput) (*service.UserUsageCard, error) {
+	return nil, errors.New("not implemented")
+}
+func (r *stubUsageCardRepo) CreatePlan(context.Context, service.UsageCardPlan) (*service.UsageCardPlan, error) {
+	return nil, errors.New("not implemented")
+}
+func (r *stubUsageCardRepo) GetCardBySourceOrderID(context.Context, int64) (*service.UserUsageCard, error) {
+	return nil, errors.New("not implemented")
+}
+func (r *stubUsageCardRepo) GetPlanByID(context.Context, int64) (*service.UsageCardPlan, error) {
+	return nil, errors.New("not implemented")
+}
+func (r *stubUsageCardRepo) UpdatePlan(context.Context, service.UsageCardPlan) (*service.UsageCardPlan, error) {
+	return nil, errors.New("not implemented")
+}
+func (r *stubUsageCardRepo) DeletePlan(context.Context, int64) error {
+	return errors.New("not implemented")
+}
+func (r *stubUsageCardRepo) ListUserCards(context.Context, int64, bool) ([]service.UserUsageCard, error) {
+	return nil, errors.New("not implemented")
+}
+func (r *stubUsageCardRepo) ListCards(context.Context, *int64, string) ([]service.UserUsageCard, error) {
+	return nil, errors.New("not implemented")
+}
+func (r *stubUsageCardRepo) ListAvailableCards(context.Context, int64, time.Time) ([]service.UserUsageCard, error) {
+	return r.available, nil
+}
+func (r *stubUsageCardRepo) DeductCard(context.Context, int64, int64, float64, time.Time) (*service.UserUsageCard, error) {
+	return nil, errors.New("not implemented")
+}
+func (r *stubUsageCardRepo) UpdateCardStatus(context.Context, int64, string, string, int64) error {
+	return errors.New("not implemented")
 }
 
 func (r fakeSettingRepo) Get(ctx context.Context, key string) (*service.Setting, error) {

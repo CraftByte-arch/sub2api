@@ -784,6 +784,45 @@ func (s *BillingCacheService) CheckBillingEligibility(ctx context.Context, user 
 	return nil
 }
 
+// CheckAuthBillingSourceEligibility only verifies that authentication can
+// proceed with either the account balance or an available usage card. Full
+// quota and RPM checks remain in the request handler and must run once there.
+func (s *BillingCacheService) CheckAuthBillingSourceEligibility(ctx context.Context, user *User, apiKey *APIKey) error {
+	if s == nil || s.cfg == nil || s.cfg.RunMode == config.RunModeSimple {
+		return nil
+	}
+	if user == nil {
+		return ErrInsufficientBalance
+	}
+
+	checkBalance := func() error {
+		if user.Balance <= 0 {
+			return ErrInsufficientBalance
+		}
+		return nil
+	}
+	if apiKey != nil && apiKey.Group != nil && apiKey.Group.UsageCardDisabled {
+		return checkBalance()
+	}
+
+	switch s.resolveWalletBillingPriority(ctx, apiKey) {
+	case BillingPriorityUsageCardOnly:
+		return s.checkUsageCardEligibility(ctx, user.ID)
+	case BillingPriorityUsageCardFirst:
+		if err := s.checkUsageCardEligibility(ctx, user.ID); err == nil {
+			return nil
+		}
+		return checkBalance()
+	case BillingPriorityBalanceOnly:
+		return checkBalance()
+	default:
+		if err := checkBalance(); err == nil {
+			return nil
+		}
+		return s.checkUsageCardEligibility(ctx, user.ID)
+	}
+}
+
 func (s *BillingCacheService) checkWalletEligibility(ctx context.Context, user *User, apiKey *APIKey) error {
 	if user == nil {
 		return ErrInsufficientBalance

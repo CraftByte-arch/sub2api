@@ -37,6 +37,7 @@ type AdminHandlers struct {
 	ContentModeration      *admin.ContentModerationHandler
 	Payment                *admin.PaymentHandler
 	Affiliate              *admin.AffiliateHandler
+	UsageCard              *admin.UsageCardHandler
 	Compliance             *admin.ComplianceHandler
 }
 
@@ -49,6 +50,7 @@ type Handlers struct {
 	Redeem           *RedeemHandler
 	Subscription     *SubscriptionHandler
 	Announcement     *AnnouncementHandler
+	ImageStudioJob   *ImageStudioJobHandler
 	ChannelMonitor   *ChannelMonitorUserHandler
 	Admin            *AdminHandlers
 	Gateway          *GatewayHandler
@@ -58,6 +60,7 @@ type Handlers struct {
 	Payment          *PaymentHandler
 	PaymentWebhook   *PaymentWebhookHandler
 	AvailableChannel *AvailableChannelHandler
+	UsageCard        *UsageCardHandler
 	BatchImage       *BatchImageHandler
 }
 

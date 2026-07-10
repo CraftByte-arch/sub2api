@@ -235,12 +235,13 @@ func TestAPIKeyService_SnapshotRoundTrip_PreservesMessagesDispatchModelConfig(t 
 	svc := NewAPIKeyService(nil, nil, nil, nil, nil, nil, &config.Config{})
 	groupID := int64(9)
 	apiKey := &APIKey{
-		ID:      1,
-		UserID:  2,
-		GroupID: &groupID,
-		Key:     "k-roundtrip",
-		Name:    "Audit Key",
-		Status:  StatusActive,
+		ID:              1,
+		UserID:          2,
+		GroupID:         &groupID,
+		Key:             "k-roundtrip",
+		Name:            "Audit Key",
+		Status:          StatusActive,
+		BillingPriority: BillingPriorityBalanceOnly,
 		User: &User{
 			ID:          2,
 			Status:      StatusActive,
@@ -249,15 +250,18 @@ func TestAPIKeyService_SnapshotRoundTrip_PreservesMessagesDispatchModelConfig(t 
 			Concurrency: 3,
 		},
 		Group: &Group{
-			ID:                    groupID,
-			Name:                  "openai",
-			Platform:              PlatformOpenAI,
-			Status:                StatusActive,
-			UsageCardDisabled:     true,
-			SubscriptionType:      SubscriptionTypeStandard,
-			RateMultiplier:        1,
-			AllowMessagesDispatch: true,
-			DefaultMappedModel:    "gpt-5.4",
+			ID:                        groupID,
+			Name:                      "openai",
+			Platform:                  PlatformOpenAI,
+			Status:                    StatusActive,
+			UsageCardDisabled:         true,
+			SubscriptionType:          SubscriptionTypeStandard,
+			RateMultiplier:            1,
+			AllowBatchImageGeneration: true,
+			VideoRateIndependent:      true,
+			VideoRateMultiplier:       1.75,
+			AllowMessagesDispatch:     true,
+			DefaultMappedModel:        "gpt-5.4",
 			MessagesDispatchModelConfig: OpenAIMessagesDispatchModelConfig{
 				OpusMappedModel:   "gpt-5.4-nano",
 				SonnetMappedModel: "gpt-5.3-codex",
@@ -274,8 +278,12 @@ func TestAPIKeyService_SnapshotRoundTrip_PreservesMessagesDispatchModelConfig(t 
 
 	require.NotNil(t, roundTrip)
 	require.Equal(t, apiKey.Name, roundTrip.Name)
+	require.Equal(t, apiKey.BillingPriority, roundTrip.BillingPriority)
 	require.NotNil(t, roundTrip.Group)
 	require.Equal(t, apiKey.Group.UsageCardDisabled, roundTrip.Group.UsageCardDisabled)
+	require.Equal(t, apiKey.Group.AllowBatchImageGeneration, roundTrip.Group.AllowBatchImageGeneration)
+	require.Equal(t, apiKey.Group.VideoRateIndependent, roundTrip.Group.VideoRateIndependent)
+	require.Equal(t, apiKey.Group.VideoRateMultiplier, roundTrip.Group.VideoRateMultiplier)
 	require.Equal(t, apiKey.Group.MessagesDispatchModelConfig, roundTrip.Group.MessagesDispatchModelConfig)
 }
 

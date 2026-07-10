@@ -232,6 +232,30 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			codexImageGenerationExplicitToolPolicy = account.CodexImageGenerationExplicitToolPolicy()
 		}
 		codexBridgeEnabled := isCodexCLI && imageGenerationAllowed && codexImageGenerationExplicitToolPolicy != codexImageGenerationExplicitToolPolicyStrip && s.isCodexImageGenerationBridgeEnabled(ctx, account, apiKey)
+		upstreamModel := normalizeOpenAIModelForUpstream(account, account.GetMappedModel(originalModel))
+		if modelMissing || upstreamModel != originalModel {
+			next, setErr := applyPayloadMutation(normalized, "model", upstreamModel)
+			if setErr != nil {
+				return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request payload", setErr)
+			}
+			normalized = next
+		}
+		declarationPolicy := ImageGenerationToolDeclarationPolicyStrip
+		if HasPassiveImageGenerationToolDeclaration(openAIResponsesEndpoint, originalModel, normalized) {
+			declarationPolicy = s.imageGenerationToolDeclarationPolicy(ctx)
+		}
+		imagePreflight, imagePreflightErr := evaluateOpenAIImageGenerationPreflight(openAIResponsesEndpoint, originalModel, normalized, declarationPolicy)
+		if imagePreflightErr != nil {
+			return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request payload", imagePreflightErr)
+		}
+		if imagePreflight.DeclarationRejected {
+			MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalFeatureGate)
+			return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "image_generation tool declaration is disabled", nil)
+		}
+		normalized = imagePreflight.Body
+		if imagePreflight.DeclarationStripped {
+			logOpenAIWSModeInfo("ingress_ws_passive_image_tool_stripped_by_global_policy account_id=%d", account.ID)
+		}
 		if codexBridgeEnabled {
 			payloadMap := make(map[string]any)
 			if err := json.Unmarshal(normalized, &payloadMap); err != nil {
@@ -260,30 +284,6 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				}
 				normalized = rebuilt
 			}
-		}
-		upstreamModel := normalizeOpenAIModelForUpstream(account, account.GetMappedModel(originalModel))
-		if modelMissing || upstreamModel != originalModel {
-			next, setErr := applyPayloadMutation(normalized, "model", upstreamModel)
-			if setErr != nil {
-				return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request payload", setErr)
-			}
-			normalized = next
-		}
-		declarationPolicy := ImageGenerationToolDeclarationPolicyStrip
-		if HasPassiveImageGenerationToolDeclaration(openAIResponsesEndpoint, originalModel, normalized) {
-			declarationPolicy = s.imageGenerationToolDeclarationPolicy(ctx)
-		}
-		imagePreflight, imagePreflightErr := evaluateOpenAIImageGenerationPreflight(openAIResponsesEndpoint, originalModel, normalized, declarationPolicy)
-		if imagePreflightErr != nil {
-			return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request payload", imagePreflightErr)
-		}
-		if imagePreflight.DeclarationRejected {
-			MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalFeatureGate)
-			return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "image_generation tool declaration is disabled", nil)
-		}
-		normalized = imagePreflight.Body
-		if imagePreflight.DeclarationStripped {
-			logOpenAIWSModeInfo("ingress_ws_passive_image_tool_stripped_by_global_policy account_id=%d", account.ID)
 		}
 		if isCodexCLI && codexImageGenerationExplicitToolPolicy == codexImageGenerationExplicitToolPolicyStrip {
 			if stripped, changed, stripErr := stripOpenAIImageGenerationToolFromRawPayload(normalized); stripErr != nil {

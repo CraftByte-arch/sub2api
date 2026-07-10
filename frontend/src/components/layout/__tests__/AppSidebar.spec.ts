@@ -42,6 +42,20 @@ describe('AppSidebar scroll position persistence', () => {
   })
 })
 
+describe('AppSidebar merged feature navigation', () => {
+  it('keeps Image Studio beside the new batch image entry', () => {
+    expect(componentSource).toContain("path: '/batch-image'")
+    expect(componentSource).toContain("path: '/image-studio'")
+    expect(componentSource).toContain("label: t('nav.imageStudio')")
+  })
+
+  it('keeps user and admin usage card entries behind their feature flag', () => {
+    expect(componentSource).toContain("const flagUsageCard = () => isUsageCardFeatureVisible()")
+    expect(componentSource).toContain("path: '/usage-cards'")
+    expect(componentSource).toContain("path: '/admin/usage-cards'")
+  })
+})
+
 describe('AppSidebar header styles', () => {
   it('does not clip the version badge dropdown', () => {
     const sidebarHeaderBlockMatch = styleSource.match(/\.sidebar-header\s*\{[\s\S]*?\n {2}\}/)
