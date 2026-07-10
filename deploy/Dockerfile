@@ -20,12 +20,13 @@ FROM ${NODE_IMAGE} AS frontend-builder
 WORKDIR /app/frontend
 ENV NODE_OPTIONS=--max-old-space-size=1536
 
-# Install pnpm. Keep this pinned to the lockfile-compatible major version so
-# Docker builds remain reproducible when pnpm changes config validation rules.
-RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
+# Keep Corepack aligned with frontend/package.json so it does not download a
+# different pnpm version when the project manifest is copied.
+RUN corepack enable && corepack prepare pnpm@11.1.2 --activate
 
-# Install dependencies first (better caching)
-COPY frontend/package.json frontend/pnpm-lock.yaml ./
+# Install dependencies first (better caching). pnpm-workspace.yaml contains the
+# allowBuilds policy required by pnpm 11 for esbuild and vue-demi postinstall.
+COPY frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml frontend/.npmrc ./
 RUN pnpm install --frozen-lockfile
 
 # Copy frontend source and build.
