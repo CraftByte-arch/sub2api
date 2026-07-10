@@ -300,7 +300,7 @@ func (s *ImageStudioJobService) chargeJob(ctx context.Context, apiKey *APIKey, a
 	}
 
 	tryUsageCard := func() error {
-		if s.usageCardService == nil {
+		if s.usageCardService == nil || !s.usageCardService.IsBillingEnabled(ctx) {
 			return ErrUsageCardUnavailable
 		}
 		_, err := s.usageCardService.DeductFirstAvailable(ctx, apiKey.UserID, amount, time.Now())

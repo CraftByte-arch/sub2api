@@ -294,6 +294,49 @@ func TestOpenAIGatewayServiceRecordUsage_PropagatesUsageCardBillingPolicy(t *tes
 	require.Equal(t, billingRepo.lastCmd.BalanceCost, billingRepo.lastCmd.UsageCardCost)
 }
 
+func TestOpenAIGatewayServiceRecordUsage_PersistsUsageCardIDFromBillingResult(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	usageCardID := int64(987)
+	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{
+		Applied:     true,
+		UsageCardID: &usageCardID,
+	}}
+	svc := newOpenAIRecordUsageServiceWithBillingRepoForTest(
+		usageRepo,
+		billingRepo,
+		&openAIRecordUsageUserRepoStub{},
+		&openAIRecordUsageSubRepoStub{},
+		nil,
+	)
+	svc.billingCacheService = newUsageCardBillingCacheForRecordUsageTest()
+
+	groupID := int64(802)
+	err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+		Result: &OpenAIForwardResult{
+			RequestID: "openai-usage-card-log",
+			Model:     "gpt-5.1",
+			Usage: OpenAIUsage{
+				InputTokens:  100,
+				OutputTokens: 20,
+			},
+			Duration: time.Second,
+		},
+		APIKey: &APIKey{
+			ID:              801,
+			GroupID:         &groupID,
+			Group:           &Group{ID: groupID, RateMultiplier: 1},
+			BillingPriority: BillingPriorityAuto,
+		},
+		User:    &User{ID: 803},
+		Account: &Account{ID: 804},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, usageRepo.lastLog)
+	require.NotNil(t, usageRepo.lastLog.UsageCardID)
+	require.Equal(t, usageCardID, *usageRepo.lastLog.UsageCardID)
+}
+
 func expectedOpenAICost(t *testing.T, svc *OpenAIGatewayService, model string, usage OpenAIUsage, multiplier float64) *CostBreakdown {
 	t.Helper()
 

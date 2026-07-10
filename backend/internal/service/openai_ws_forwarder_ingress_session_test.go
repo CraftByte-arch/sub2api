@@ -376,6 +376,84 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_RejectsDisabledN
 	}
 }
 
+func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_AppliesDeclarationPolicyBeforeModelMapping(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	cfg := &config.Config{}
+	cfg.Gateway.OpenAIWS.Enabled = true
+	cfg.Gateway.OpenAIWS.OAuthEnabled = true
+	cfg.Gateway.OpenAIWS.APIKeyEnabled = true
+	cfg.Gateway.OpenAIWS.ResponsesWebsocketsV2 = true
+	cfg.Gateway.OpenAIWS.MaxConnsPerAccount = 1
+	cfg.Gateway.OpenAIWS.QueueLimitPerConn = 1
+
+	dialer := &openAIWSFailDialer{}
+	pool := newOpenAIWSConnPool(cfg)
+	pool.setClientDialerForTest(dialer)
+	svc := &OpenAIGatewayService{
+		cfg:              cfg,
+		openaiWSResolver: NewOpenAIWSProtocolResolver(cfg),
+		openaiWSPool:     pool,
+		settingService: NewSettingService(
+			&imageGenerationToolPolicyRepo{policy: ImageGenerationToolDeclarationPolicyReject},
+			cfg,
+		),
+	}
+	groupID := int64(44)
+	apiKey := &APIKey{
+		GroupID: &groupID,
+		Group:   &Group{ID: groupID, AllowImageGeneration: true},
+	}
+	account := &Account{
+		ID:          45,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Status:      StatusActive,
+		Schedulable: true,
+		Credentials: map[string]any{
+			"access_token": "test-token",
+			"model_mapping": map[string]any{
+				"client-text-model": "gpt-image-2",
+			},
+		},
+		Extra: map[string]any{
+			"openai_oauth_responses_websockets_v2_enabled": true,
+		},
+	}
+	payload := []byte(`{"type":"response.create","model":"client-text-model","tools":[{"type":"image_generation"}],"tool_choice":"auto","input":"hello"}`)
+
+	serverErrCh := make(chan error, 1)
+	wsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := coderws.Accept(w, r, nil)
+		if err != nil {
+			serverErrCh <- err
+			return
+		}
+		defer func() { _ = conn.CloseNow() }()
+		rec := httptest.NewRecorder()
+		ginCtx, _ := gin.CreateTestContext(rec)
+		ginCtx.Request = r
+		ginCtx.Set("api_key", apiKey)
+		serverErrCh <- svc.ProxyResponsesWebSocketFromClient(r.Context(), ginCtx, conn, account, "test-token", payload, nil)
+	}))
+	defer wsServer.Close()
+
+	dialCtx, cancelDial := context.WithTimeout(context.Background(), 3*time.Second)
+	clientConn, _, err := coderws.Dial(dialCtx, "ws"+strings.TrimPrefix(wsServer.URL, "http"), nil)
+	cancelDial()
+	require.NoError(t, err)
+	defer func() { _ = clientConn.CloseNow() }()
+
+	select {
+	case proxyErr := <-serverErrCh:
+		require.Error(t, proxyErr)
+		require.ErrorContains(t, proxyErr, "image_generation tool declaration is disabled")
+		require.Zero(t, dialer.calls)
+	case <-time.After(5 * time.Second):
+		t.Fatal("等待被动图片工具声明策略校验超时")
+	}
+}
+
 func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_InjectsCodexImageBridge(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -511,6 +589,15 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_InjectsCodexImag
 	require.Equal(t, "png", gjson.Get(upstreamPayload, `tools.#(type=="image_generation").output_format`).String())
 	require.Equal(t, "auto", gjson.Get(upstreamPayload, "tool_choice").String())
 	require.Contains(t, gjson.Get(upstreamPayload, "instructions").String(), "image_generation")
+}
+
+type openAIWSFailDialer struct {
+	calls int
+}
+
+func (d *openAIWSFailDialer) Dial(context.Context, string, http.Header, string) (openAIWSClientConn, int, http.Header, error) {
+	d.calls++
+	return nil, 0, nil, errors.New("unexpected upstream websocket dial")
 }
 
 func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_DedicatedModeDoesNotReuseConnAcrossSessions(t *testing.T) {

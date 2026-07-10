@@ -57,6 +57,57 @@ func TestImageStudioJobServiceDeleteJobDoesNotDeleteRecordWhenAssetRemovalFails(
 	require.Zero(t, repo.deletedID)
 }
 
+func TestImageStudioJobServiceChargeJobUsesBalanceWhenUsageCardBillingDisabled(t *testing.T) {
+	cardRepo := &imageStudioBillingUsageCardRepoStub{}
+	settings := usageCardSummarySettingRepoStub{values: map[string]string{
+		SettingKeyUsageCardEnabled:        "true",
+		SettingKeyUsageCardBillingEnabled: "false",
+	}}
+	usageCardService := NewUsageCardService(cardRepo, settings)
+	userRepo := &imageStudioBillingUserRepoStub{}
+	svc := &ImageStudioJobService{
+		billingCacheService: &BillingCacheService{usageCardService: usageCardService},
+		userRepo:            userRepo,
+		usageCardService:    usageCardService,
+	}
+
+	result, err := svc.chargeJob(context.Background(), &APIKey{
+		UserID:          42,
+		BillingPriority: BillingPriorityAuto,
+	}, 1.5)
+
+	require.NoError(t, err)
+	require.True(t, result.usedBalance)
+	require.Equal(t, 1, userRepo.deductCalls)
+	require.Zero(t, cardRepo.listCalls)
+	require.Zero(t, cardRepo.deductCalls)
+}
+
+type imageStudioBillingUserRepoStub struct {
+	UserRepository
+	deductCalls int
+}
+
+func (r *imageStudioBillingUserRepoStub) DeductBalance(context.Context, int64, float64) error {
+	r.deductCalls++
+	return nil
+}
+
+type imageStudioBillingUsageCardRepoStub struct {
+	UsageCardRepository
+	listCalls   int
+	deductCalls int
+}
+
+func (r *imageStudioBillingUsageCardRepoStub) ListAvailableCards(context.Context, int64, time.Time) ([]UserUsageCard, error) {
+	r.listCalls++
+	return []UserUsageCard{{ID: 91}}, nil
+}
+
+func (r *imageStudioBillingUsageCardRepoStub) DeductCard(_ context.Context, cardID, userID int64, amount float64, now time.Time) (*UserUsageCard, error) {
+	r.deductCalls++
+	return &UserUsageCard{ID: cardID, UserID: userID, UsedUSD: amount, UpdatedAt: now}, nil
+}
 
 type imageStudioJobDeleteRepoStub struct {
 	job           *ImageStudioJob

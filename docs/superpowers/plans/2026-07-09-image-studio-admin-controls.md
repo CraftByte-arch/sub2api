@@ -768,7 +768,7 @@ git commit -m "chore: sync image studio admin controls tasks"
 
 ### Task 11: Re-verify the merged implementation
 
-- [ ] **Step 1: Run focused service, handler, and frontend tests**
-- [ ] **Step 2: Run the complete backend unit suite and frontend typecheck/tests**
-- [ ] **Step 3: Run a post-merge code review and resolve critical findings**
-- [ ] **Step 4: Sync OpenSpec and plan task checkboxes, then commit verification evidence**
+- [x] **Step 1: Run focused service, handler, and frontend tests**
+- [x] **Step 2: Run the complete backend unit suite and frontend typecheck/tests**
+- [x] **Step 3: Run a post-merge code review and resolve critical findings**
+- [x] **Step 4: Sync OpenSpec and plan task checkboxes, then commit verification evidence**

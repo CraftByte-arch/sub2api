@@ -331,6 +331,9 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 			invalidator.InvalidateAuthCacheByKey(billingCtx, p.APIKey.Key)
 		}
 	}
+	if usageLog != nil && result.UsageCardID != nil {
+		usageLog.UsageCardID = result.UsageCardID
+	}
 
 	finalizePostUsageBilling(billingCtx, p, deps, result)
 	return true, nil
