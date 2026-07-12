@@ -838,6 +838,9 @@ func ensureOpenAIResponsesImageGenerationTool(reqBody map[string]any) bool {
 	if isCodexSparkModel(firstNonEmptyString(reqBody["model"])) {
 		return false
 	}
+	if openAIMapContainsImageGenNamespace(reqBody) {
+		return false
+	}
 
 	tool := map[string]any{
 		"type":          "image_generation",
@@ -888,6 +891,9 @@ func applyCodexImageGenerationBridgeInstructions(reqBody map[string]any) bool {
 		return false
 	}
 	if isCodexSparkModel(firstNonEmptyString(reqBody["model"])) {
+		return false
+	}
+	if openAIMapContainsImageGenNamespace(reqBody) {
 		return false
 	}
 
