@@ -435,7 +435,7 @@ func TestOpenAIGatewayServiceForward_ChannelBridgeOverrideEnablesCodexInjection(
 	require.Contains(t, instructions, "image_generation")
 }
 
-func TestOpenAIGatewayServiceForward_CodexBridgeDoesNotConflictWithClientImageGenNamespace(t *testing.T) {
+func TestOpenAIGatewayServiceForward_CodexBridgeReplacesClientImageGenNamespace(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	upstream := &httpUpstreamRecorder{
@@ -463,9 +463,9 @@ func TestOpenAIGatewayServiceForward_CodexBridgeDoesNotConflictWithClientImageGe
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.NotNil(t, upstream.lastReq)
-	require.True(t, gjson.GetBytes(upstream.lastBody, `tools.#(name=="image_gen")`).Exists())
-	require.False(t, gjson.GetBytes(upstream.lastBody, `tools.#(type=="image_generation")`).Exists())
-	require.NotContains(t, gjson.GetBytes(upstream.lastBody, "instructions").String(), codexImageGenerationBridgeMarker)
+	require.False(t, gjson.GetBytes(upstream.lastBody, `tools.#(name=="image_gen")`).Exists())
+	require.True(t, gjson.GetBytes(upstream.lastBody, `tools.#(type=="image_generation")`).Exists())
+	require.Contains(t, gjson.GetBytes(upstream.lastBody, "instructions").String(), codexImageGenerationBridgeMarker)
 }
 
 func TestOpenAIGatewayServiceForward_CodexBridgePreservesExistingToolChoice(t *testing.T) {

@@ -629,6 +629,78 @@ func isImageGenNamespaceToolMap(tool map[string]any) bool {
 		isOpenAIImageGenNamespaceName(firstNonEmptyString(tool["name"]))
 }
 
+func stripOpenAIImageGenNamespaceTools(reqBody map[string]any) bool {
+	if reqBody == nil {
+		return false
+	}
+	modified := stripOpenAIImageGenNamespaceToolList(reqBody, "tools")
+	if input, ok := reqBody["input"].([]any); ok {
+		filteredInput := make([]any, 0, len(input))
+		inputModified := false
+		for _, rawItem := range input {
+			item, ok := rawItem.(map[string]any)
+			if !ok || strings.TrimSpace(firstNonEmptyString(item["type"])) != "additional_tools" || !stripOpenAIImageGenNamespaceToolList(item, "tools") {
+				filteredInput = append(filteredInput, rawItem)
+				continue
+			}
+			inputModified = true
+			if _, hasTools := item["tools"]; hasTools {
+				filteredInput = append(filteredInput, rawItem)
+			}
+		}
+		if inputModified {
+			reqBody["input"] = filteredInput
+			modified = true
+		}
+	}
+	if openAIAnyToolChoiceSelectsImageGenNamespace(reqBody["tool_choice"]) {
+		delete(reqBody, "tool_choice")
+		modified = true
+	}
+	return modified
+}
+
+func stripOpenAIImageGenNamespaceToolList(container map[string]any, key string) bool {
+	rawTools, ok := container[key].([]any)
+	if !ok {
+		return false
+	}
+	filtered := make([]any, 0, len(rawTools))
+	removed := false
+	for _, rawTool := range rawTools {
+		if tool, ok := rawTool.(map[string]any); ok && isImageGenNamespaceToolMap(tool) {
+			removed = true
+			continue
+		}
+		filtered = append(filtered, rawTool)
+	}
+	if !removed {
+		return false
+	}
+	if len(filtered) == 0 {
+		delete(container, key)
+	} else {
+		container[key] = filtered
+	}
+	return true
+}
+
+func openAIAnyToolChoiceSelectsImageGenNamespace(choice any) bool {
+	value, ok := choice.(map[string]any)
+	if !ok {
+		return false
+	}
+	if strings.TrimSpace(firstNonEmptyString(value["type"])) == "namespace" &&
+		(isOpenAIImageGenNamespaceName(firstNonEmptyString(value["name"])) ||
+			isOpenAIImageGenNamespaceName(firstNonEmptyString(value["namespace"]))) {
+		return true
+	}
+	if tool, ok := value["tool"].(map[string]any); ok {
+		return openAIAnyToolChoiceSelectsImageGenNamespace(tool)
+	}
+	return false
+}
+
 func inputContainsImageGenerationTool(rawInput any) bool {
 	input, ok := rawInput.([]any)
 	if !ok {
@@ -838,9 +910,7 @@ func ensureOpenAIResponsesImageGenerationTool(reqBody map[string]any) bool {
 	if isCodexSparkModel(firstNonEmptyString(reqBody["model"])) {
 		return false
 	}
-	if openAIMapContainsImageGenNamespace(reqBody) {
-		return false
-	}
+	modified := stripOpenAIImageGenNamespaceTools(reqBody)
 
 	tool := map[string]any{
 		"type":          "image_generation",
@@ -864,7 +934,7 @@ func ensureOpenAIResponsesImageGenerationTool(reqBody map[string]any) bool {
 			continue
 		}
 		if strings.TrimSpace(firstNonEmptyString(toolMap["type"])) == "image_generation" {
-			return false
+			return modified
 		}
 	}
 
@@ -893,10 +963,6 @@ func applyCodexImageGenerationBridgeInstructions(reqBody map[string]any) bool {
 	if isCodexSparkModel(firstNonEmptyString(reqBody["model"])) {
 		return false
 	}
-	if openAIMapContainsImageGenNamespace(reqBody) {
-		return false
-	}
-
 	existing, _ := reqBody["instructions"].(string)
 	if strings.Contains(existing, codexImageGenerationBridgeMarker) {
 		return false
