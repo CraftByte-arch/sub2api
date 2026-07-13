@@ -1535,6 +1535,17 @@ describe('ImageStudioView', () => {
     expect(composerStyles).toContain('@container (max-width: 600px)')
     expect(darkOverrides).toContain('@container (max-width: 600px)')
   })
+
+  it('keeps the prompt polish model selector at a stable width', () => {
+    const composerStyles = readFileSync(
+      resolve(__dirname, '../styles/composer-base.css'),
+      'utf8'
+    )
+
+    expect(composerStyles).toMatch(
+      /\.prompt-polish-model-select\s*\{[^}]*\bwidth:\s*96px;/s
+    )
+  })
 })
 
 function mountView() {
