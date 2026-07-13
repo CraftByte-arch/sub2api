@@ -16,6 +16,7 @@ import {
   getImageStudioJob,
   fetchImageStudioOriginal,
   fetchImageStudioThumbnail,
+  listGatewayModels,
   sendImagesEditRequest,
   sendImagesGenerationRequest,
   sendPromptPolishRequest,
@@ -115,6 +116,37 @@ describe('imageStudioApi', () => {
       output: [],
       output_text: '润色后的提示词'
     })
+  })
+
+  it('lists gateway models with the supplied API key', async () => {
+    const fetchMock = mockJsonFetch({
+      data: [
+        { id: 'gpt-5.6-sol' },
+        { id: 'gpt-5.6-terra' },
+        { id: 'gpt-5.6-sol' },
+        { id: '' }
+      ]
+    })
+
+    await expect(listGatewayModels('sk-polish')).resolves.toEqual([
+      'gpt-5.6-sol',
+      'gpt-5.6-terra'
+    ])
+    expect(fetchMock).toHaveBeenCalledWith('/v1/models', {
+      headers: { Authorization: 'Bearer sk-polish' }
+    })
+  })
+
+  it('propagates gateway model-list errors', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      text: vi.fn().mockResolvedValue(JSON.stringify({
+        error: { message: 'model list unavailable' }
+      }))
+    }))
+
+    await expect(listGatewayModels('sk-polish')).rejects.toThrow('model list unavailable')
   })
 
   it('sends multipart edit requests without forcing JSON content type', async () => {

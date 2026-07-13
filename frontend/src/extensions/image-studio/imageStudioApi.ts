@@ -95,6 +95,18 @@ export async function sendPromptPolishRequest(input: JsonRequestInput): Promise<
   return parseResponsesTextStream(response.body)
 }
 
+export async function listGatewayModels(apiKey: string): Promise<string[]> {
+  const response = await fetch('/v1/models', {
+    headers: { Authorization: `Bearer ${apiKey}` }
+  })
+  const payload = await parseGatewayResponse(response) as { data?: Array<{ id?: unknown }> }
+  const seen = new Set<string>()
+
+  return (Array.isArray(payload?.data) ? payload.data : [])
+    .map((item) => typeof item?.id === 'string' ? item.id.trim() : '')
+    .filter((id) => id.length > 0 && !seen.has(id) && Boolean(seen.add(id)))
+}
+
 export async function createImageStudioJob(input: ImageStudioJobCreateInput): Promise<ImageStudioJob> {
   const { data } = await apiClient.post<ImageStudioJob>('/image-studio/jobs', {
     api_key_id: input.apiKeyId,
