@@ -92,7 +92,7 @@ describe('ImageStudioView', () => {
     vi.mocked(getPublicSettings).mockResolvedValue({
       image_studio_available_group_ids: [10]
     } as any)
-    vi.mocked(listGatewayModels).mockResolvedValue(['gpt-5.4-mini'])
+    vi.mocked(listGatewayModels).mockResolvedValue(['gpt-5.6-sol'])
 
     Object.defineProperty(URL, 'createObjectURL', {
       value: vi.fn((value: Blob | File) => {
@@ -387,7 +387,7 @@ describe('ImageStudioView', () => {
     })
     vi.mocked(listGatewayModels).mockImplementation(async (key) => ({
       'sk-page-one': ['gpt-image-2'],
-      'sk-page-two': ['gpt-5.4-mini']
+      'sk-page-two': ['gpt-5.6-sol']
     }[key] || []))
 
     const wrapper = mountView()
@@ -401,7 +401,7 @@ describe('ImageStudioView', () => {
     expect(keysAPI.list).toHaveBeenCalledWith(2, 1000)
   })
 
-  it('filters prompt polish keys by the selected model and queries each group once', async () => {
+  it('only offers the three 5.6 prompt polish models in bottom-up Luna, Terra, Sol order', async () => {
     vi.mocked(keysAPI.list).mockResolvedValueOnce({
       items: [
         {
@@ -455,12 +455,17 @@ describe('ImageStudioView', () => {
 
     const modelSelect = wrapper.get('[data-testid="prompt-polish-model-select"]')
     expect(modelSelect.findAll('option').map((option) => option.attributes('value'))).toEqual([
-      'gpt-5.4-mini',
-      'gpt-5.4',
-      'gpt-5.5',
       'gpt-5.6-sol',
       'gpt-5.6-terra',
       'gpt-5.6-luna'
+    ])
+    expect((modelSelect.element as HTMLSelectElement).value).toBe('gpt-5.6-sol')
+
+    await wrapper.get('.prompt-polish-model-select').trigger('click')
+    expect(wrapper.findAll('[role="option"]').map((option) => option.text()).reverse()).toEqual([
+      '5.6 Luna',
+      '5.6 Terra',
+      '5.6 Sol'
     ])
 
     await modelSelect.setValue('gpt-5.6-sol')

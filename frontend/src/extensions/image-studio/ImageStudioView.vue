@@ -568,7 +568,7 @@ const advancedOpen = ref(false)
 const composerExpanded = ref(false)
 const loadingKeys = ref(false)
 const polishingPrompt = ref(false)
-const promptPolishModel = ref('gpt-5.4-mini')
+const promptPolishModel = ref('gpt-5.6-sol')
 const promptPolishKeyValue = ref('')
 const apiKeys = ref<StudioApiKey[]>([])
 const promptPolishApiKeys = ref<StudioApiKey[]>([])
@@ -755,9 +755,6 @@ const modelOptions = [
 ]
 
 const promptPolishModelOptions = [
-  { value: 'gpt-5.4-mini', label: '5.4 mini' },
-  { value: 'gpt-5.4', label: '5.4' },
-  { value: 'gpt-5.5', label: '5.5' },
   { value: 'gpt-5.6-sol', label: '5.6 Sol' },
   { value: 'gpt-5.6-terra', label: '5.6 Terra' },
   { value: 'gpt-5.6-luna', label: '5.6 Luna' }
