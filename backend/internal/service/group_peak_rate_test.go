@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 )
 
@@ -202,6 +203,19 @@ func TestPeakMultiplier_GatewayBillingSequence(t *testing.T) {
 			t.Fatalf("nil group image multiplier: got %v, want %v", imageMultiplier, baseMultiplier)
 		}
 	})
+}
+
+func TestResolveOpenAIUsageMultipliers_ReturnsBaseMultiplier(t *testing.T) {
+	svc := &OpenAIGatewayService{
+		cfg: &config.Config{
+			Default: config.DefaultConfig{RateMultiplier: 1.75},
+		},
+	}
+
+	tokenMultiplier, imageMultiplier, videoMultiplier, baseMultiplier := svc.resolveOpenAIUsageMultipliers(context.Background(), nil, nil)
+	if tokenMultiplier != 1.75 || imageMultiplier != 1.75 || videoMultiplier != 1.75 || baseMultiplier != 1.75 {
+		t.Fatalf("unexpected multipliers: token=%v image=%v video=%v base=%v", tokenMultiplier, imageMultiplier, videoMultiplier, baseMultiplier)
+	}
 }
 
 // TestPeakMultiplier_SnapshotRoundTrip 防回归：认证缓存快照（APIKeyAuthGroupSnapshot）

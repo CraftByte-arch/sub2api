@@ -177,7 +177,7 @@ func (s *ImageStudioJobService) EstimateCost(ctx context.Context, apiKey *APIKey
 	if model == "" {
 		return nil, fmt.Errorf("model is required")
 	}
-	_, imageMultiplier, _ := s.openAIGateway.resolveOpenAIUsageMultipliers(ctx, apiKey.User, apiKey)
+	_, imageMultiplier, _, _ := s.openAIGateway.resolveOpenAIUsageMultipliers(ctx, apiKey.User, apiKey)
 	result := &OpenAIForwardResult{
 		Model:      model,
 		ImageCount: 1,
