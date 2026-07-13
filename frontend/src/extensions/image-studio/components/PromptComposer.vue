@@ -23,7 +23,7 @@
               type="button"
               class="composer-tool-button prompt-polish-action"
               data-testid="polish-prompt-button"
-              :disabled="polishingPrompt || !prompt.trim()"
+              :disabled="polishingPrompt || !prompt.trim() || promptPolishDisabled"
               @click="$emit('polish-prompt')"
             >
               <Icon name="sparkles" size="xs" />
@@ -35,7 +35,20 @@
               button-class="composer-tool-button prompt-polish-model-select"
               placement="top"
               aria-label="润色模型"
+              data-testid="prompt-polish-model-select"
               @update:model-value="$emit('update:prompt-polish-model', $event)"
+            />
+            <StudioSelect
+              :model-value="promptPolishKey"
+              :options="promptPolishKeyOptions"
+              placeholder="选择密钥"
+              placeholder-disabled
+              :disabled="polishingPrompt || promptPolishDisabled"
+              button-class="composer-tool-button prompt-polish-key-select"
+              placement="top"
+              aria-label="润色密钥"
+              data-testid="prompt-polish-key-select"
+              @update:model-value="$emit('update:prompt-polish-key', $event)"
             />
           </span>
           <button
@@ -226,6 +239,9 @@ const props = defineProps<{
   promptExamples: string[]
   promptPolishModel: string
   promptPolishModelOptions: ImageStudioSelectOption[]
+  promptPolishKey: string
+  promptPolishKeyOptions: ImageStudioSelectOption[]
+  promptPolishDisabled: boolean
 }>()
 
 defineEmits<{
@@ -236,6 +252,7 @@ defineEmits<{
   'update:prompt-history-mode': [mode: Exclude<ImageStudioMode, 'history'>]
   'update:prompt-history-search': [value: string]
   'update:prompt-polish-model': [value: string]
+  'update:prompt-polish-key': [value: string]
   'clear-prompt-history': []
   'close-prompt-history': []
   'append-prompt-history': [prompt: string]

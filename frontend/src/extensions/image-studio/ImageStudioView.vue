@@ -405,6 +405,9 @@
               :prompt-examples="promptExamples"
               :prompt-polish-model="promptPolishModel"
               :prompt-polish-model-options="promptPolishModelOptions"
+              :prompt-polish-key="promptPolishKeyValue"
+              :prompt-polish-key-options="promptPolishKeyOptions"
+              :prompt-polish-disabled="promptPolishDisabled"
               @toggle-template="toggleTemplateDrawer"
               @polish-prompt="polishPrompt"
               @clear-prompt="clearPrompt"
@@ -412,6 +415,7 @@
               @update:prompt-history-mode="promptHistoryMode = $event"
               @update:prompt-history-search="promptHistorySearch = $event"
               @update:prompt-polish-model="promptPolishModel = $event"
+              @update:prompt-polish-key="promptPolishKeyValue = $event"
               @clear-prompt-history="clearPromptHistoryForMode"
               @close-prompt-history="closePromptHistory"
               @append-prompt-history="appendPromptHistory"
@@ -492,6 +496,7 @@ import {
   fetchImageStudioThumbnail,
   fetchImageStudioOriginal,
   getImageStudioJobStats,
+  listGatewayModels,
   listImageStudioJobs,
   sendPromptPolishRequest
 } from './imageStudioApi'
@@ -564,7 +569,11 @@ const composerExpanded = ref(false)
 const loadingKeys = ref(false)
 const polishingPrompt = ref(false)
 const promptPolishModel = ref('gpt-5.4-mini')
+const promptPolishKeyValue = ref('')
 const apiKeys = ref<StudioApiKey[]>([])
+const promptPolishApiKeys = ref<StudioApiKey[]>([])
+const promptPolishModelsByGroup = ref<Record<number, string[]>>({})
+const loadingPromptPolishModels = ref(false)
 const imageStudioAvailableGroupIDs = ref<number[]>([])
 const creationSessions = reactive<Record<CreationMode, ImageStudioCreationSession>>({
   generate: createCreationSession(),
@@ -748,11 +757,26 @@ const modelOptions = [
 const promptPolishModelOptions = [
   { value: 'gpt-5.4-mini', label: '5.4 mini' },
   { value: 'gpt-5.4', label: '5.4' },
-  { value: 'gpt-5.5', label: '5.5' }
+  { value: 'gpt-5.5', label: '5.5' },
+  { value: 'gpt-5.6-sol', label: '5.6 Sol' },
+  { value: 'gpt-5.6-terra', label: '5.6 Terra' },
+  { value: 'gpt-5.6-luna', label: '5.6 Luna' }
 ]
 
 const activeKeys = computed(() => apiKeys.value.filter((key) => key.status === 'active'))
 const selectedKey = computed(() => activeKeys.value.find((key) => key.key === selectedKeyValue.value) ?? null)
+const compatiblePromptPolishKeys = computed(() => promptPolishApiKeys.value.filter((key) => {
+  const groupID = key.group?.id
+  return typeof groupID === 'number' &&
+    (promptPolishModelsByGroup.value[groupID] || []).includes(promptPolishModel.value)
+}))
+const promptPolishKeyOptions = computed(() => compatiblePromptPolishKeys.value.map((key) => ({
+  value: key.key,
+  label: `${key.name} · ${key.group?.name || '未命名分组'}`
+})))
+const promptPolishDisabled = computed(() =>
+  loadingPromptPolishModels.value || !promptPolishKeyValue.value
+)
 const selectedRatio = computed(() => ratioOptions.find((item) => item.value === selectedRatioValue.value) ?? ratioOptions[0])
 const selectedResolutionOptions = computed(() =>
   resolutionMap[selectedRatio.value.value] ?? []
@@ -930,6 +954,12 @@ watch(model, () => {
   }
 })
 
+watch([promptPolishModel, compatiblePromptPolishKeys], () => {
+  if (!compatiblePromptPolishKeys.value.some((key) => key.key === promptPolishKeyValue.value)) {
+    promptPolishKeyValue.value = compatiblePromptPolishKeys.value[0]?.key || ''
+  }
+}, { immediate: true })
+
 onBeforeUnmount(() => {
   document.removeEventListener('pointerdown', handleDocumentPointerDown)
   document.removeEventListener('paste', handleDocumentPaste)
@@ -1027,9 +1057,12 @@ async function loadKeys() {
       keysAPI.list(1, 100)
     ])
     imageStudioAvailableGroupIDs.value = settings.image_studio_available_group_ids ?? []
-    apiKeys.value = (response.items as StudioApiKey[]).filter(isImageStudioApiKey)
+    const keys = response.items as StudioApiKey[]
+    apiKeys.value = keys.filter(isImageStudioApiKey)
+    promptPolishApiKeys.value = keys.filter(isPromptPolishApiKey)
     const preferred = apiKeys.value[0]
     selectedKeyValue.value = preferred?.key ?? ''
+    await loadPromptPolishModels(promptPolishApiKeys.value)
   } catch (error) {
     setSessionError(activeCreationSession.value, error instanceof Error ? error.message : '加载 API Key 失败')
   } finally {
@@ -1044,6 +1077,33 @@ function isImageStudioApiKey(key: StudioApiKey) {
     key.group?.allow_image_generation === true &&
     typeof groupID === 'number' &&
     imageStudioAvailableGroupIDs.value.includes(groupID)
+}
+
+function isPromptPolishApiKey(key: StudioApiKey) {
+  return key.status === 'active' &&
+    key.group?.platform === 'openai' &&
+    typeof key.group?.id === 'number'
+}
+
+async function loadPromptPolishModels(keys: StudioApiKey[]) {
+  loadingPromptPolishModels.value = true
+  const representatives = new Map<number, StudioApiKey>()
+  for (const key of keys) {
+    const groupID = key.group?.id
+    if (typeof groupID === 'number' && !representatives.has(groupID)) {
+      representatives.set(groupID, key)
+    }
+  }
+
+  const entries = await Promise.all([...representatives.entries()].map(async ([groupID, key]) => {
+    try {
+      return [groupID, await listGatewayModels(key.key)] as const
+    } catch {
+      return [groupID, []] as const
+    }
+  }))
+  promptPolishModelsByGroup.value = Object.fromEntries(entries)
+  loadingPromptPolishModels.value = false
 }
 
 async function handleSubmit() {
@@ -1300,14 +1360,14 @@ function normalizedPromptForSubmit(): string {
 }
 
 async function polishPrompt() {
-  if (!prompt.value.trim() || !selectedKeyValue.value || polishingPrompt.value) return
+  if (!prompt.value.trim() || !promptPolishKeyValue.value || polishingPrompt.value) return
   polishingPrompt.value = true
   setSessionError(activeCreationSession.value, '')
   const mode = activeTab.value === 'edit' ? 'edit' : 'generate'
   const originalPrompt = prompt.value.trim()
   try {
     const response = await sendPromptPolishRequest({
-      apiKey: selectedKeyValue.value,
+      apiKey: promptPolishKeyValue.value,
       body: {
         model: promptPolishModel.value,
         instructions: '你是专业图像生成提示词编辑。请在保留用户原意的基础上，把提示词润色成更清晰、具体、适合图像生成的中文提示词。只输出润色后的提示词，不要解释。',

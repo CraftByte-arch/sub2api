@@ -135,6 +135,26 @@
   background: rgba(15, 23, 42, 0.82);
 }
 
+.dark .prompt-polish-action {
+  background: rgba(20, 184, 166, 0.16) !important;
+}
+
+.dark .prompt-polish-key-select {
+  border-left-color: rgba(148, 163, 184, 0.24) !important;
+}
+
+.dark .prompt-polish-model-select::before,
+.dark .prompt-polish-key-select::before {
+  color: rgba(148, 163, 184, 0.82);
+}
+
+@media (max-width: 720px) {
+  .dark .prompt-polish-key-select {
+    border-top-color: rgba(148, 163, 184, 0.24) !important;
+    border-left-color: transparent !important;
+  }
+}
+
 .dark .generate-button {
   background: linear-gradient(135deg, #14b8a6 0%, #0891b2 100%);
   color: #ecfeff;

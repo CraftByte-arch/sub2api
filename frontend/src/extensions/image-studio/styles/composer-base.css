@@ -249,7 +249,8 @@
 }
 
 .prompt-polish-action,
-.prompt-polish-model-select {
+.prompt-polish-model-select,
+.prompt-polish-key-select {
   min-height: 22px;
   border: 0 !important;
   background: transparent !important;
@@ -259,6 +260,7 @@
 .prompt-polish-action {
   order: 0;
   padding: 0 8px 0 9px;
+  background: #f0fdfa !important;
   color: #0f766e !important;
 }
 
@@ -292,7 +294,30 @@
   color: #475569 !important;
 }
 
-.prompt-polish-model-select .studio-custom-select-label {
+.prompt-polish-model-select::before,
+.prompt-polish-key-select::before {
+  color: #94a3b8;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.prompt-polish-model-select::before {
+  content: "模型";
+}
+
+.prompt-polish-key-select {
+  min-width: 142px;
+  border-left: 1px solid rgba(148, 163, 184, 0.28) !important;
+  padding: 0 8px;
+  color: #475569 !important;
+}
+
+.prompt-polish-key-select::before {
+  content: "密钥";
+}
+
+.prompt-polish-model-select .studio-custom-select-label,
+.prompt-polish-key-select .studio-custom-select-label {
   font-size: 10px;
   font-weight: 850;
 }
@@ -335,6 +360,24 @@
 .composer-size-button:disabled {
   cursor: not-allowed;
   opacity: 0.55;
+}
+
+@media (max-width: 720px) {
+  .prompt-polish-combo {
+    border-radius: 12px;
+    flex-wrap: wrap;
+  }
+
+  .prompt-polish-combo > .studio-custom-select:last-child {
+    flex-basis: 100%;
+    width: 100%;
+  }
+
+  .prompt-polish-key-select {
+    width: 100%;
+    border-top: 1px solid rgba(148, 163, 184, 0.28) !important;
+    border-left: 0 !important;
+  }
 }
 
 .composer-row {
@@ -682,4 +725,3 @@
 .reference-strip.hidden {
   display: none;
 }
-

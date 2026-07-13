@@ -12,6 +12,7 @@ import {
   fetchImageStudioThumbnail,
   getImageStudioJobStats,
   getImageStudioJob,
+  listGatewayModels,
   listImageStudioJobs,
   sendPromptPolishRequest
 } from '../imageStudioApi'
@@ -44,6 +45,7 @@ vi.mock('../imageStudioApi', () => ({
   deleteImageStudioJob: vi.fn(),
   getImageStudioJobStats: vi.fn(),
   getImageStudioJob: vi.fn(),
+  listGatewayModels: vi.fn(),
   listImageStudioJobs: vi.fn(),
   fetchImageStudioOriginal: vi.fn(),
   fetchImageStudioThumbnail: vi.fn(),
@@ -73,6 +75,7 @@ describe('ImageStudioView', () => {
     vi.mocked(deleteImageStudioJob).mockReset()
     vi.mocked(getImageStudioJobStats).mockReset()
     vi.mocked(getImageStudioJob).mockReset()
+    vi.mocked(listGatewayModels).mockReset()
     vi.mocked(listImageStudioJobs).mockReset()
     vi.mocked(fetchImageStudioOriginal).mockReset()
     vi.mocked(fetchImageStudioThumbnail).mockReset()
@@ -89,6 +92,7 @@ describe('ImageStudioView', () => {
     vi.mocked(getPublicSettings).mockResolvedValue({
       image_studio_available_group_ids: [10]
     } as any)
+    vi.mocked(listGatewayModels).mockResolvedValue(['gpt-5.4-mini'])
 
     Object.defineProperty(URL, 'createObjectURL', {
       value: vi.fn((value: Blob | File) => {
@@ -342,6 +346,156 @@ describe('ImageStudioView', () => {
     expect(selectableOptions).toHaveLength(0)
     expect(wrapper.text()).toContain('没有可用于生图的 API 密钥')
     expect((wrapper.get('[data-testid="api-key-select"]').element as HTMLSelectElement).value).toBe('')
+  })
+
+  it('filters prompt polish keys by the selected model and queries each group once', async () => {
+    vi.mocked(keysAPI.list).mockResolvedValueOnce({
+      items: [
+        {
+          id: 1,
+          key: 'sk-image',
+          name: '生图 Key',
+          status: 'active',
+          group: {
+            id: 10,
+            name: '生图分组',
+            platform: 'openai',
+            allow_image_generation: true,
+            image_price_1k: 1
+          }
+        },
+        {
+          id: 2,
+          key: 'sk-sol-a',
+          name: 'Sol A',
+          status: 'active',
+          group: { id: 20, name: '文本分组', platform: 'openai' }
+        },
+        {
+          id: 3,
+          key: 'sk-sol-b',
+          name: 'Sol B',
+          status: 'active',
+          group: { id: 20, name: '文本分组', platform: 'openai' }
+        },
+        {
+          id: 4,
+          key: 'sk-luna',
+          name: 'Luna',
+          status: 'active',
+          group: { id: 30, name: 'Luna 分组', platform: 'openai' }
+        }
+      ],
+      total: 4,
+      page: 1,
+      page_size: 20,
+      pages: 1
+    } as any)
+    vi.mocked(listGatewayModels).mockImplementation(async (key) => ({
+      'sk-image': ['gpt-image-2'],
+      'sk-sol-a': ['gpt-5.6-sol', 'gpt-5.5'],
+      'sk-luna': ['gpt-5.6-luna']
+    }[key] || []))
+
+    const wrapper = mountView()
+    await flushPromises()
+
+    const modelSelect = wrapper.get('[data-testid="prompt-polish-model-select"]')
+    expect(modelSelect.findAll('option').map((option) => option.attributes('value'))).toEqual([
+      'gpt-5.4-mini',
+      'gpt-5.4',
+      'gpt-5.5',
+      'gpt-5.6-sol',
+      'gpt-5.6-terra',
+      'gpt-5.6-luna'
+    ])
+
+    await modelSelect.setValue('gpt-5.6-sol')
+    await flushPromises()
+
+    const polishKeySelect = wrapper.get('[data-testid="prompt-polish-key-select"]')
+    const selectableOptions = polishKeySelect.findAll('option').filter((option) => option.attributes('value'))
+    expect(selectableOptions.map((option) => option.text())).toEqual([
+      'Sol A · 文本分组',
+      'Sol B · 文本分组'
+    ])
+    expect(listGatewayModels).toHaveBeenCalledTimes(3)
+
+    await modelSelect.setValue('gpt-5.6-luna')
+    await flushPromises()
+
+    expect(polishKeySelect.findAll('option').filter((option) => option.attributes('value')).map((option) => option.text())).toEqual([
+      'Luna · Luna 分组'
+    ])
+
+    await modelSelect.setValue('gpt-5.6-terra')
+    await flushPromises()
+    await wrapper.get('[data-testid="prompt-input"]').setValue('一座安静茶室')
+
+    expect(polishKeySelect.findAll('option').filter((option) => option.attributes('value'))).toHaveLength(0)
+    expect((polishKeySelect.element as HTMLSelectElement).disabled).toBe(true)
+    expect(wrapper.get('[data-testid="polish-prompt-button"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-testid="generate-button"]').attributes('disabled')).toBeUndefined()
+  })
+
+  it('uses the selected prompt polish key instead of the image key', async () => {
+    vi.mocked(keysAPI.list).mockResolvedValueOnce({
+      items: [
+        {
+          id: 1,
+          key: 'sk-image',
+          name: '生图 Key',
+          status: 'active',
+          group: {
+            id: 10,
+            name: '生图分组',
+            platform: 'openai',
+            allow_image_generation: true,
+            image_price_1k: 1
+          }
+        },
+        {
+          id: 2,
+          key: 'sk-sol-a',
+          name: 'Sol A',
+          status: 'active',
+          group: { id: 20, name: '文本分组', platform: 'openai' }
+        },
+        {
+          id: 3,
+          key: 'sk-sol-b',
+          name: 'Sol B',
+          status: 'active',
+          group: { id: 20, name: '文本分组', platform: 'openai' }
+        }
+      ],
+      total: 3,
+      page: 1,
+      page_size: 20,
+      pages: 1
+    } as any)
+    vi.mocked(listGatewayModels).mockImplementation(async (key) => ({
+      'sk-image': ['gpt-image-2'],
+      'sk-sol-a': ['gpt-5.6-sol'],
+      'sk-sol-b': ['gpt-5.6-sol']
+    }[key] || []))
+    vi.mocked(sendPromptPolishRequest).mockResolvedValue({ output_text: '润色后的提示词' })
+
+    const wrapper = mountView()
+    await flushPromises()
+
+    await wrapper.get('[data-testid="prompt-polish-model-select"]').setValue('gpt-5.6-sol')
+    await flushPromises()
+    await wrapper.get('[data-testid="prompt-polish-key-select"]').setValue('sk-sol-b')
+    await wrapper.get('[data-testid="prompt-input"]').setValue('原始提示词')
+    await wrapper.get('[data-testid="polish-prompt-button"]').trigger('click')
+    await flushPromises()
+
+    expect(sendPromptPolishRequest).toHaveBeenCalledWith(expect.objectContaining({
+      apiKey: 'sk-sol-b',
+      body: expect.objectContaining({ model: 'gpt-5.6-sol' })
+    }))
+    expect(createImageStudioJob).not.toHaveBeenCalled()
   })
 
   it('submits a generate job through the site API and adds the queued task to history', async () => {
