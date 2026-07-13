@@ -155,6 +155,13 @@
   }
 }
 
+@container (max-width: 600px) {
+  .dark .prompt-polish-key-select {
+    border-top-color: rgba(148, 163, 184, 0.24) !important;
+    border-left-color: transparent !important;
+  }
+}
+
 .dark .generate-button {
   background: linear-gradient(135deg, #14b8a6 0%, #0891b2 100%);
   color: #ecfeff;

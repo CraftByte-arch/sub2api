@@ -348,6 +348,59 @@ describe('ImageStudioView', () => {
     expect((wrapper.get('[data-testid="api-key-select"]').element as HTMLSelectElement).value).toBe('')
   })
 
+  it('loads compatible prompt polish keys from every API-key page', async () => {
+    vi.mocked(keysAPI.list).mockImplementation(async (page = 1) => {
+      if (page === 1) {
+        return {
+          items: [{
+            id: 1,
+            key: 'sk-page-one',
+            name: '生图 Key',
+            status: 'active',
+            group: {
+              id: 10,
+              name: '生图分组',
+              platform: 'openai',
+              allow_image_generation: true
+            }
+          }],
+          total: 2,
+          page: 1,
+          page_size: 1000,
+          pages: 2
+        } as any
+      }
+
+      return {
+        items: [{
+          id: 2,
+          key: 'sk-page-two',
+          name: 'Sol',
+          status: 'active',
+          group: { id: 20, name: '文本分组', platform: 'openai' }
+        }],
+        total: 2,
+        page: 2,
+        page_size: 1000,
+        pages: 2
+      } as any
+    })
+    vi.mocked(listGatewayModels).mockImplementation(async (key) => ({
+      'sk-page-one': ['gpt-image-2'],
+      'sk-page-two': ['gpt-5.4-mini']
+    }[key] || []))
+
+    const wrapper = mountView()
+    await flushPromises()
+
+    const options = wrapper.get('[data-testid="prompt-polish-key-select"]').findAll('option')
+    expect(options.filter((option) => option.attributes('value')).map((option) => option.text())).toEqual([
+      'Sol · 文本分组'
+    ])
+    expect(keysAPI.list).toHaveBeenCalledWith(1, 1000)
+    expect(keysAPI.list).toHaveBeenCalledWith(2, 1000)
+  })
+
   it('filters prompt polish keys by the selected model and queries each group once', async () => {
     vi.mocked(keysAPI.list).mockResolvedValueOnce({
       items: [
@@ -1459,6 +1512,23 @@ describe('ImageStudioView', () => {
     expect(darkOverrides).toContain('.dark .history-mode .detail-actions .result-download')
     expect(darkOverrides).toContain('.dark .history-mode .detail-actions .result-delete')
     expect(darkOverrides).toContain('background: linear-gradient(135deg, rgba(20, 184, 166, 0.22), rgba(8, 145, 178, 0.14))')
+  })
+
+  it('wraps prompt polish controls by the composer width', () => {
+    const composerStyles = readFileSync(
+      resolve(__dirname, '../styles/composer-base.css'),
+      'utf8'
+    )
+    const darkOverrides = readFileSync(
+      resolve(__dirname, '../styles/dark-overrides.css'),
+      'utf8'
+    )
+
+    expect(composerStyles).toContain('container-type: inline-size')
+    expect(composerStyles).toContain('@container (max-width: 780px)')
+    expect(composerStyles).toContain('.prompt-head-actions {\n    flex-wrap: wrap')
+    expect(composerStyles).toContain('@container (max-width: 600px)')
+    expect(darkOverrides).toContain('@container (max-width: 600px)')
   })
 })
 

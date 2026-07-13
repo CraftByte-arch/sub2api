@@ -1052,12 +1052,11 @@ async function loadKeys() {
   loadingKeys.value = true
   setSessionError(activeCreationSession.value, '')
   try {
-    const [settings, response] = await Promise.all([
+    const [settings, keys] = await Promise.all([
       getPublicSettings(),
-      keysAPI.list(1, 100)
+      listAllApiKeys()
     ])
     imageStudioAvailableGroupIDs.value = settings.image_studio_available_group_ids ?? []
-    const keys = response.items as StudioApiKey[]
     apiKeys.value = keys.filter(isImageStudioApiKey)
     promptPolishApiKeys.value = keys.filter(isPromptPolishApiKey)
     const preferred = apiKeys.value[0]
@@ -1068,6 +1067,19 @@ async function loadKeys() {
   } finally {
     loadingKeys.value = false
   }
+}
+
+async function listAllApiKeys(): Promise<StudioApiKey[]> {
+  const pageSize = 1000
+  const firstPage = await keysAPI.list(1, pageSize)
+  const keys = [...firstPage.items] as StudioApiKey[]
+
+  for (let page = 2; page <= firstPage.pages; page += 1) {
+    const response = await keysAPI.list(page, pageSize)
+    keys.push(...response.items as StudioApiKey[])
+  }
+
+  return keys
 }
 
 function isImageStudioApiKey(key: StudioApiKey) {
