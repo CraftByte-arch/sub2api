@@ -69,6 +69,21 @@ func TestFirstTokenDetector(t *testing.T) {
 			data:     `{"type":"response.output_text.delta","delta":""}`,
 		},
 		{
+			name:     "responses numeric delta",
+			protocol: ProtocolResponses,
+			data:     `{"type":"response.output_text.delta","delta":1}`,
+		},
+		{
+			name:     "responses object delta",
+			protocol: ProtocolResponses,
+			data:     `{"type":"response.output_text.delta","delta":{"text":"hello"}}`,
+		},
+		{
+			name:     "responses null delta",
+			protocol: ProtocolResponses,
+			data:     `{"type":"response.output_text.delta","delta":null}`,
+		},
+		{
 			name:     "responses terminal done text is not delta",
 			protocol: ProtocolResponses,
 			data:     `{"type":"response.output_text.done","text":"hello"}`,
@@ -150,6 +165,31 @@ func TestFirstTokenDetector(t *testing.T) {
 			name:     "chat empty delta fields",
 			protocol: ProtocolChatCompletions,
 			data:     `{"choices":[{"delta":{"content":"","reasoning_content":"","function_call":{"arguments":""},"tool_calls":[{"function":{"arguments":""}}]}}]}`,
+		},
+		{
+			name:     "chat choices is not array",
+			protocol: ProtocolChatCompletions,
+			data:     `{"choices":{"delta":{"content":"hello"}}}`,
+		},
+		{
+			name:     "chat choice delta is not object",
+			protocol: ProtocolChatCompletions,
+			data:     `{"choices":[{"delta":"hello"}]}`,
+		},
+		{
+			name:     "chat content is not string",
+			protocol: ProtocolChatCompletions,
+			data:     `{"choices":[{"delta":{"content":1}}]}`,
+		},
+		{
+			name:     "chat tool calls is not array",
+			protocol: ProtocolChatCompletions,
+			data:     `{"choices":[{"delta":{"tool_calls":{"function":{"arguments":"{}"}}}}]}`,
+		},
+		{
+			name:     "chat function arguments is not string",
+			protocol: ProtocolChatCompletions,
+			data:     `{"choices":[{"delta":{"tool_calls":[{"function":{"arguments":1}}]}}]}`,
 		},
 		{
 			name:      "anthropic text",
@@ -235,16 +275,64 @@ func TestFirstTokenDetector(t *testing.T) {
 			data:      `{"type":"message_stop"}`,
 		},
 		{
+			name:      "anthropic content block stop",
+			protocol:  ProtocolAnthropicMessages,
+			eventName: "content_block_stop",
+			data:      `{"type":"content_block_stop","index":0}`,
+		},
+		{
 			name:      "anthropic lifecycle event overrides delta-like payload",
 			protocol:  ProtocolAnthropicMessages,
 			eventName: "message_start",
 			data:      `{"delta":{"type":"text_delta","text":"hello"}}`,
 		},
 		{
+			name:      "anthropic delta event conflicts with lifecycle payload",
+			protocol:  ProtocolAnthropicMessages,
+			eventName: "content_block_delta",
+			data:      `{"type":"message_start","delta":{"type":"text_delta","text":"hello"}}`,
+		},
+		{
+			name:      "anthropic lifecycle event conflicts with delta payload",
+			protocol:  ProtocolAnthropicMessages,
+			eventName: "message_start",
+			data:      `{"type":"content_block_delta","delta":{"type":"text_delta","text":"hello"}}`,
+		},
+		{
 			name:      "anthropic non-string payload type",
 			protocol:  ProtocolAnthropicMessages,
 			eventName: "content_block_delta",
 			data:      `{"type":1,"delta":{"type":"text_delta","text":"hello"}}`,
+		},
+		{
+			name:      "anthropic delta is not object",
+			protocol:  ProtocolAnthropicMessages,
+			eventName: "content_block_delta",
+			data:      `{"type":"content_block_delta","delta":"hello"}`,
+		},
+		{
+			name:      "anthropic delta type is not string",
+			protocol:  ProtocolAnthropicMessages,
+			eventName: "content_block_delta",
+			data:      `{"type":"content_block_delta","delta":{"type":1,"text":"hello"}}`,
+		},
+		{
+			name:      "anthropic text is not string",
+			protocol:  ProtocolAnthropicMessages,
+			eventName: "content_block_delta",
+			data:      `{"type":"content_block_delta","delta":{"type":"text_delta","text":1}}`,
+		},
+		{
+			name:      "anthropic thinking is not string",
+			protocol:  ProtocolAnthropicMessages,
+			eventName: "content_block_delta",
+			data:      `{"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":{"text":"hello"}}}`,
+		},
+		{
+			name:      "anthropic partial json is not string",
+			protocol:  ProtocolAnthropicMessages,
+			eventName: "content_block_delta",
+			data:      `{"type":"content_block_delta","delta":{"type":"input_json_delta","partial_json":null}}`,
 		},
 		{
 			name:     "anthropic lifecycle payload without event name",
