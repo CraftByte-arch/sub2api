@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -34,14 +35,38 @@ type FirstTokenTimeoutPolicyNotifier interface {
 	Subscribe(ctx context.Context) (<-chan struct{}, error)
 }
 
+type firstTokenTimeoutPolicyTicker interface {
+	Chan() <-chan time.Time
+	Stop()
+}
+
+type firstTokenTimeoutRealTicker struct {
+	*time.Ticker
+}
+
+func (t *firstTokenTimeoutRealTicker) Chan() <-chan time.Time {
+	return t.C
+}
+
 type FirstTokenTimeoutPolicy struct {
-	repo     SettingRepository
-	notifier FirstTokenTimeoutPolicyNotifier
-	current  atomic.Value
+	repo          SettingRepository
+	notifier      FirstTokenTimeoutPolicyNotifier
+	writeMu       sync.Mutex
+	startOnce     sync.Once
+	workerDone    chan struct{}
+	tickerFactory func(time.Duration) firstTokenTimeoutPolicyTicker
+	current       atomic.Value
 }
 
 func NewFirstTokenTimeoutPolicy(repo SettingRepository, notifier FirstTokenTimeoutPolicyNotifier) *FirstTokenTimeoutPolicy {
-	policy := &FirstTokenTimeoutPolicy{repo: repo, notifier: notifier}
+	policy := &FirstTokenTimeoutPolicy{
+		repo:       repo,
+		notifier:   notifier,
+		workerDone: make(chan struct{}),
+		tickerFactory: func(interval time.Duration) firstTokenTimeoutPolicyTicker {
+			return &firstTokenTimeoutRealTicker{Ticker: time.NewTicker(interval)}
+		},
+	}
 	policy.current.Store(snapshotFromFirstTokenTimeoutSettings(defaultFirstTokenTimeoutSettings()))
 	return policy
 }
@@ -59,6 +84,8 @@ func (p *FirstTokenTimeoutPolicy) Update(ctx context.Context, in FirstTokenTimeo
 	if err != nil {
 		return fmt.Errorf("encode first token timeout settings: %w", err)
 	}
+	p.writeMu.Lock()
+	defer p.writeMu.Unlock()
 	if err := p.repo.Set(ctx, SettingKeyFirstTokenTimeoutSettings, string(encoded)); err != nil {
 		return fmt.Errorf("save first token timeout settings: %w", err)
 	}
@@ -73,6 +100,9 @@ func (p *FirstTokenTimeoutPolicy) Update(ctx context.Context, in FirstTokenTimeo
 }
 
 func (p *FirstTokenTimeoutPolicy) Reload(ctx context.Context) error {
+	p.writeMu.Lock()
+	defer p.writeMu.Unlock()
+
 	raw, err := p.repo.GetValue(ctx, SettingKeyFirstTokenTimeoutSettings)
 	if err != nil {
 		if errors.Is(err, ErrSettingNotFound) {
@@ -92,14 +122,14 @@ func (p *FirstTokenTimeoutPolicy) Reload(ctx context.Context) error {
 }
 
 func (p *FirstTokenTimeoutPolicy) Start(ctx context.Context) {
-	if err := p.Reload(ctx); err != nil {
-		logger.LegacyPrintf("service.first_token_timeout", "failed to load first token timeout settings; keeping current snapshot: %v", err)
-	}
-	go p.run(ctx)
+	p.startOnce.Do(func() {
+		go p.run(ctx)
+	})
 }
 
 func (p *FirstTokenTimeoutPolicy) run(ctx context.Context) {
-	ticker := time.NewTicker(firstTokenTimeoutReloadInterval)
+	defer close(p.workerDone)
+	ticker := p.tickerFactory(firstTokenTimeoutReloadInterval)
 	defer ticker.Stop()
 
 	var events <-chan struct{}
@@ -115,6 +145,9 @@ func (p *FirstTokenTimeoutPolicy) run(ctx context.Context) {
 		}
 	}
 	subscribe()
+	if err := p.Reload(ctx); err != nil {
+		logger.LegacyPrintf("service.first_token_timeout", "failed to load first token timeout settings; keeping current snapshot: %v", err)
+	}
 
 	for {
 		select {
@@ -128,12 +161,12 @@ func (p *FirstTokenTimeoutPolicy) run(ctx context.Context) {
 			if err := p.Reload(ctx); err != nil {
 				logger.LegacyPrintf("service.first_token_timeout", "failed to reload policy after invalidation: %v", err)
 			}
-		case <-ticker.C:
-			if err := p.Reload(ctx); err != nil {
-				logger.LegacyPrintf("service.first_token_timeout", "periodic policy reload failed: %v", err)
-			}
+		case <-ticker.Chan():
 			if events == nil {
 				subscribe()
+			}
+			if err := p.Reload(ctx); err != nil {
+				logger.LegacyPrintf("service.first_token_timeout", "periodic policy reload failed: %v", err)
 			}
 		}
 	}
