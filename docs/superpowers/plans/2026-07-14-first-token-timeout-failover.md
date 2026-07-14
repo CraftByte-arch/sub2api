@@ -129,7 +129,7 @@ git commit -m "feat: add first token timeout policy"
 - Create: `backend/internal/handler/first_token_response_gate.go`
 - Create: `backend/internal/handler/first_token_response_gate_test.go`
 
-- [ ] **Step 1: 写状态机竞态与 timer 释放失败测试**
+- [x] **Step 1: 写状态机竞态与 timer 释放失败测试**
 
 ```go
 func TestFirstTokenAttemptCommitAndTimeoutHaveSingleWinner(t *testing.T) {
@@ -147,13 +147,13 @@ func TestFirstTokenAttemptCommitAndTimeoutHaveSingleWinner(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: 运行 controller 测试确认失败**
+- [x] **Step 2: 运行 controller 测试确认失败**
 
 Run: `cd backend && go test ./internal/service -run 'FirstTokenAttempt' -count=1`
 
 Expected: FAIL，提示 controller 构造器未定义。
 
-- [ ] **Step 3: 实现 controller 最小状态机**
+- [x] **Step 3: 实现 controller 最小状态机**
 
 ```go
 type FirstTokenAttemptState uint32
@@ -178,7 +178,7 @@ type FirstTokenAttempt struct {
 
 实现 `Context`、`MarkFirstToken`、`Cancel`、`State`、`Elapsed`、`Close`；所有终态 CAS 后停止 timer，父 context 取消映射为 canceled。
 
-- [ ] **Step 4: 写 gate header/body/Flush/overflow 失败测试**
+- [x] **Step 4: 写 gate header/body/Flush/overflow 失败测试**
 
 ```go
 func TestFirstTokenResponseGateRollbackLeaksNothing(t *testing.T) {
@@ -195,23 +195,23 @@ func TestFirstTokenResponseGateRollbackLeaksNothing(t *testing.T) {
 }
 ```
 
-- [ ] **Step 5: 运行 gate 测试确认失败**
+- [x] **Step 5: 运行 gate 测试确认失败**
 
 Run: `cd backend && go test ./internal/handler -run 'FirstTokenResponseGate' -count=1`
 
 Expected: FAIL，提示 gate 未定义。
 
-- [ ] **Step 6: 实现完整 writer 契约与 256 KiB 上限**
+- [x] **Step 6: 实现完整 writer 契约与 256 KiB 上限**
 
 实现 `Header`、`Write`、`WriteString`、`WriteHeader`、`Status`、`Size`、`Written`、`WriteHeaderNow`、`Flush`、`CloseNotify`、`Hijack`、`Pusher`、`Commit`、`Rollback`。pending 下只写本地副本；Commit 按 header/status/body 顺序写出并切直写；溢出 cancel cause 为 `ErrFirstTokenPreludeTooLarge`。
 
-- [ ] **Step 7: 运行 race 与接口测试**
+- [x] **Step 7: 运行 race 与接口测试**
 
 Run: `cd backend && go test -race ./internal/service ./internal/handler -run 'FirstToken(Attempt|ResponseGate)' -count=1`
 
 Expected: PASS，commit/timeout 竞态中无双写、无 race。
 
-- [ ] **Step 8: 提交**
+- [x] **Step 8: 提交**
 
 ```bash
 git add backend/internal/service/first_token_timeout_attempt.go backend/internal/service/first_token_timeout_attempt_test.go backend/internal/handler/first_token_response_gate.go backend/internal/handler/first_token_response_gate_test.go

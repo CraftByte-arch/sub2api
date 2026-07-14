@@ -6,10 +6,10 @@
 
 ## 2. Attempt 控制器与事务化响应门
 
-- [ ] 2.1 为 pending、committed、timed_out、canceled 状态编写并发与竞态测试，明确只有一个终态转换能成功
-- [ ] 2.2 实现基于 `context.WithCancelCause` 的 attempt controller、timer 生命周期和 context helper，确保 commit、正常结束及客户端取消均释放资源
-- [ ] 2.3 实现完整 `gin.ResponseWriter` 契约的事务化 writer，支持本地 headers、Write/WriteString、抑制 Flush、Commit 和 Rollback
-- [ ] 2.4 实现 256 KiB prelude 缓冲上限及溢出 failover，并覆盖 header 不泄漏、事件顺序、接口兼容和缓冲回收测试
+- [x] 2.1 为 pending、committed、timed_out、canceled 状态编写并发与竞态测试，明确只有一个终态转换能成功
+- [x] 2.2 实现基于 `context.WithCancelCause` 的 attempt controller、timer 生命周期和 context helper，确保 commit、正常结束及客户端取消均释放资源
+- [x] 2.3 实现完整 `gin.ResponseWriter` 契约的事务化 writer，支持本地 headers、Write/WriteString、抑制 Flush、Commit 和 Rollback
+- [x] 2.4 实现 256 KiB prelude 缓冲上限及溢出 failover，并覆盖 header 不泄漏、事件顺序、接口兼容和缓冲回收测试
 
 ## 3. 协议语义 token 判定与接入
 
