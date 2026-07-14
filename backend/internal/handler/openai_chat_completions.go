@@ -203,7 +203,18 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 					accountReleaseFunc()
 				}
 			}()
-			return h.gatewayService.ForwardAsChatCompletions(c.Request.Context(), c, account, forwardBody, promptCacheKey, "")
+			return runEligibleFirstTokenAttempt(
+				c,
+				h.firstTokenTimeoutPolicy,
+				service.ProtocolChatCompletions,
+				reqStream,
+				reqModel,
+				body,
+				FirstTokenAttemptMetadata{AccountID: account.ID, Platform: account.Platform, Model: reqModel, AttemptIndex: switchCount + 1, SwitchCount: switchCount},
+				func(attemptCtx context.Context) (*service.OpenAIForwardResult, error) {
+					return h.gatewayService.ForwardAsChatCompletions(attemptCtx, c, account, forwardBody, promptCacheKey, "")
+				},
+			)
 		}()
 		cyberBlockKeyChat := ""
 		if service.GetOpsCyberPolicy(c) != nil {

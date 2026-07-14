@@ -38,6 +38,7 @@ type OpenAIGatewayHandler struct {
 	imageLimiter             *imageConcurrencyLimiter
 	maxAccountSwitches       int
 	cfg                      *config.Config
+	firstTokenTimeoutPolicy  *service.FirstTokenTimeoutPolicy
 }
 
 func resolveOpenAIMessagesDispatchMappedModel(apiKey *service.APIKey, requestedModel string) string {
@@ -124,6 +125,7 @@ func NewOpenAIGatewayHandler(
 	contentModerationService *service.ContentModerationService,
 	opsService *service.OpsService,
 	cfg *config.Config,
+	firstTokenTimeoutPolicy *service.FirstTokenTimeoutPolicy,
 ) *OpenAIGatewayHandler {
 	pingInterval := time.Duration(0)
 	maxAccountSwitches := 3
@@ -145,6 +147,7 @@ func NewOpenAIGatewayHandler(
 		imageLimiter:             &imageConcurrencyLimiter{},
 		maxAccountSwitches:       maxAccountSwitches,
 		cfg:                      cfg,
+		firstTokenTimeoutPolicy:  firstTokenTimeoutPolicy,
 	}
 }
 
@@ -205,12 +208,6 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	if !ok {
 		return
 	}
-	// body-signal compact：上游 unary 等待期间向下游发 SSE 注释行心跳，防止
-	// 反向代理空闲超时掐断长压缩连接（#3887）。首拍延迟一个心跳间隔，快速
-	// 失败仍走 JSON+状态码链路；未标记客户端流式或间隔为 0 时是 no-op。
-	stopCompactKeepalive := service.StartOpenAICompactSSEKeepalive(c, h.openAICompactKeepaliveInterval())
-	defer stopCompactKeepalive()
-
 	// 校验请求体 JSON 合法性
 	if !gjson.ValidBytes(body) {
 		logRequestBodyParseFailure(reqLog, body, nil)
@@ -416,7 +413,22 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 					accountReleaseFunc()
 				}
 			}()
-			return h.gatewayService.Forward(c.Request.Context(), c, account, forwardBody)
+			return runEligibleFirstTokenAttempt(
+				c,
+				h.firstTokenTimeoutPolicy,
+				service.ProtocolResponses,
+				reqStream,
+				reqModel,
+				body,
+				FirstTokenAttemptMetadata{AccountID: account.ID, Platform: account.Platform, Model: reqModel, AttemptIndex: switchCount + 1, SwitchCount: switchCount},
+				func(attemptCtx context.Context) (*service.OpenAIForwardResult, error) {
+					// Start after the attempt gate is installed so compact keepalives are
+					// committed or rolled back with the selected account.
+					stopCompactKeepalive := service.StartOpenAICompactSSEKeepalive(c, h.openAICompactKeepaliveInterval())
+					defer stopCompactKeepalive()
+					return h.gatewayService.Forward(attemptCtx, c, account, forwardBody)
+				},
+			)
 		}()
 		cyberBlockKeyHTTP := ""
 		if service.GetOpsCyberPolicy(c) != nil {
@@ -908,7 +920,18 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 					accountReleaseFunc()
 				}
 			}()
-			return h.gatewayService.ForwardAsAnthropic(c.Request.Context(), c, account, forwardBody, promptCacheKey, defaultMappedModel)
+			return runEligibleFirstTokenAttempt(
+				c,
+				h.firstTokenTimeoutPolicy,
+				service.ProtocolAnthropicMessages,
+				reqStream,
+				reqModel,
+				body,
+				FirstTokenAttemptMetadata{AccountID: account.ID, Platform: account.Platform, Model: reqModel, AttemptIndex: switchCount + 1, SwitchCount: switchCount},
+				func(attemptCtx context.Context) (*service.OpenAIForwardResult, error) {
+					return h.gatewayService.ForwardAsAnthropic(attemptCtx, c, account, forwardBody, promptCacheKey, defaultMappedModel)
+				},
+			)
 		}()
 		cyberBlockKeyMsg := ""
 		if service.GetOpsCyberPolicy(c) != nil {

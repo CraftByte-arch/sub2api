@@ -1022,6 +1022,9 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 					}
 					return nil, err
 				}
+				if err := CommitFirstTokenEventFromContext(ctx, ProtocolAnthropicMessages, "", []byte(data)); err != nil {
+					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, err
+				}
 
 				for _, block := range outputBlocks {
 					if !clientDisconnected {

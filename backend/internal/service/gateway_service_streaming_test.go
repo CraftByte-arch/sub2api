@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -184,4 +185,39 @@ func TestDetachUpstreamContextIgnoresClientCancel(t *testing.T) {
 
 	require.NoError(t, upstreamCtx.Err())
 	require.Equal(t, "test-value", upstreamCtx.Value(upstreamContextTestKey("test-key")))
+}
+
+func TestDetachUpstreamContextPreservesControlledAttemptTimeout(t *testing.T) {
+	attempt := NewFirstTokenAttempt(context.Background(), time.Millisecond)
+	t.Cleanup(attempt.Close)
+	ctx := WithFirstTokenAttempt(attempt.Context(), attempt, func() error { return nil })
+
+	upstreamCtx, release := detachUpstreamContext(ctx)
+	defer release()
+
+	select {
+	case <-upstreamCtx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("controlled upstream context did not observe first-token timeout")
+	}
+	require.ErrorIs(t, context.Cause(upstreamCtx), ErrFirstTokenTimeout)
+}
+
+func TestDetachStreamUpstreamContextPreservesControlledClientCancel(t *testing.T) {
+	parent, cancelParent := context.WithCancelCause(context.Background())
+	attempt := NewFirstTokenAttempt(parent, time.Hour)
+	t.Cleanup(attempt.Close)
+	ctx := WithFirstTokenAttempt(attempt.Context(), attempt, func() error { return nil })
+
+	upstreamCtx, release := detachStreamUpstreamContext(ctx, true)
+	defer release()
+	clientCause := errors.New("client disconnected")
+	cancelParent(clientCause)
+
+	select {
+	case <-upstreamCtx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("controlled stream context did not observe client cancellation")
+	}
+	require.ErrorIs(t, context.Cause(upstreamCtx), clientCause)
 }

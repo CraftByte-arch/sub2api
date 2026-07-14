@@ -318,6 +318,13 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 			// Fast path: most events do not contain model field values.
 			if needModelReplace && mappedModel != "" && strings.Contains(line, mappedModel) {
 				line = s.replaceModelInSSELine(line, mappedModel, originalModel)
+				if replacedData, ok := extractOpenAISSEDataLine(line); ok {
+					dataBytes = []byte(replacedData)
+				}
+			}
+			if err := CommitFirstTokenEventFromContext(ctx, ProtocolResponses, "", dataBytes); err != nil {
+				streamEarlyErr = err
+				return
 			}
 			startsClientOutput := forceFlushFailedEvent || openAIStreamDataStartsClientOutput(data, eventType)
 

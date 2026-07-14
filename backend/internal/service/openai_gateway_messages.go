@@ -867,6 +867,10 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 					)
 					continue
 				}
+				if err := CommitFirstTokenSSEFromContext(firstTokenContextFromGin(c), ProtocolAnthropicMessages, []byte(sse)); err != nil {
+					streamNonFailoverErr = err
+					return true
+				}
 				writeStreamHeaders()
 				if _, err := fmt.Fprint(c.Writer, sse); err != nil {
 					clientDisconnected = true
@@ -897,6 +901,9 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 				sse, err := apicompat.ResponsesAnthropicEventToSSE(evt)
 				if err != nil {
 					continue
+				}
+				if err := CommitFirstTokenSSEFromContext(firstTokenContextFromGin(c), ProtocolAnthropicMessages, []byte(sse)); err != nil {
+					return resultWithUsage(), err
 				}
 				writeStreamHeaders()
 				if _, err := fmt.Fprint(c.Writer, sse); err != nil {

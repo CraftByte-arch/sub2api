@@ -413,6 +413,40 @@ func TestFirstTokenAttemptPreservesParentValueAndDeadlineCause(t *testing.T) {
 	require.ErrorIs(t, context.Cause(a.Context()), context.DeadlineExceeded)
 }
 
+func TestCommitFirstTokenFromContextWithoutBindingIsNoop(t *testing.T) {
+	require.NoError(t, CommitFirstTokenFromContext(context.Background()))
+	require.False(t, isFirstTokenAttemptContext(context.Background()))
+}
+
+func TestCommitFirstTokenFromContextInvokesBindingAndPropagatesWinnerCause(t *testing.T) {
+	attempt := NewFirstTokenAttempt(context.Background(), time.Hour)
+	t.Cleanup(attempt.Close)
+	winner := ErrFirstTokenTimeout
+	called := 0
+
+	ctx := WithFirstTokenAttempt(context.Background(), attempt, func() error {
+		called++
+		return winner
+	})
+
+	require.True(t, isFirstTokenAttemptContext(ctx))
+	require.ErrorIs(t, CommitFirstTokenFromContext(ctx), winner)
+	require.Equal(t, 1, called)
+}
+
+func TestWithFirstTokenAttemptRejectsIncompleteBinding(t *testing.T) {
+	attempt := NewFirstTokenAttempt(context.Background(), time.Hour)
+	t.Cleanup(attempt.Close)
+
+	withoutAttempt := WithFirstTokenAttempt(context.Background(), nil, func() error { return nil })
+	withoutCommit := WithFirstTokenAttempt(context.Background(), attempt, nil)
+
+	require.False(t, isFirstTokenAttemptContext(withoutAttempt))
+	require.False(t, isFirstTokenAttemptContext(withoutCommit))
+	require.NoError(t, CommitFirstTokenFromContext(withoutAttempt))
+	require.NoError(t, CommitFirstTokenFromContext(withoutCommit))
+}
+
 func newFirstTokenAttemptWithUnpublishedParentCancellation(parentCause error) *FirstTokenAttempt {
 	parent, cancelParent := context.WithCancelCause(context.Background())
 	ctx, cancelAttempt := context.WithCancelCause(context.WithoutCancel(parent))

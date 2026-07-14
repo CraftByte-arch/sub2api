@@ -219,7 +219,19 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 		if channelMapping.Mapped {
 			forwardBody = h.gatewayService.ReplaceModelInBody(body, channelMapping.MappedModel)
 		}
-		result, err := h.gatewayService.ForwardAsResponses(requestCtx, c, account, forwardBody, parsedReq)
+		result, err := runEligibleFirstTokenAttemptFromContext(
+			c,
+			requestCtx,
+			h.firstTokenTimeoutPolicy,
+			service.ProtocolResponses,
+			reqStream,
+			reqModel,
+			body,
+			FirstTokenAttemptMetadata{AccountID: account.ID, Platform: account.Platform, Model: reqModel, AttemptIndex: fs.SwitchCount + 1, SwitchCount: fs.SwitchCount},
+			func(attemptCtx context.Context) (*service.ForwardResult, error) {
+				return h.gatewayService.ForwardAsResponses(attemptCtx, c, account, forwardBody, parsedReq)
+			},
+		)
 
 		if accountReleaseFunc != nil {
 			accountReleaseFunc()

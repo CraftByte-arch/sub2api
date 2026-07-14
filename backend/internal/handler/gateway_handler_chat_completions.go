@@ -230,18 +230,28 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 			forwardBody = h.gatewayService.ReplaceModelInBody(body, channelMapping.MappedModel)
 		}
 		var result *service.ForwardResult
-		if account.Platform == service.PlatformGemini {
-			if h.geminiCompatService == nil {
-				h.chatCompletionsErrorResponse(c, http.StatusBadGateway, "upstream_error", "Gemini compatibility service is not configured")
-				if accountReleaseFunc != nil {
-					accountReleaseFunc()
-				}
-				return
+		if account.Platform == service.PlatformGemini && h.geminiCompatService == nil {
+			h.chatCompletionsErrorResponse(c, http.StatusBadGateway, "upstream_error", "Gemini compatibility service is not configured")
+			if accountReleaseFunc != nil {
+				accountReleaseFunc()
 			}
-			result, err = h.geminiCompatService.ForwardAsChatCompletions(c.Request.Context(), c, account, forwardBody)
-		} else {
-			result, err = h.gatewayService.ForwardAsChatCompletions(c.Request.Context(), c, account, forwardBody, parsedReq)
+			return
 		}
+		result, err = runEligibleFirstTokenAttempt(
+			c,
+			h.firstTokenTimeoutPolicy,
+			service.ProtocolChatCompletions,
+			reqStream,
+			reqModel,
+			body,
+			FirstTokenAttemptMetadata{AccountID: account.ID, Platform: account.Platform, Model: reqModel, AttemptIndex: fs.SwitchCount + 1, SwitchCount: fs.SwitchCount},
+			func(attemptCtx context.Context) (*service.ForwardResult, error) {
+				if account.Platform == service.PlatformGemini {
+					return h.geminiCompatService.ForwardAsChatCompletions(attemptCtx, c, account, forwardBody)
+				}
+				return h.gatewayService.ForwardAsChatCompletions(attemptCtx, c, account, forwardBody, parsedReq)
+			},
+		)
 
 		if accountReleaseFunc != nil {
 			accountReleaseFunc()

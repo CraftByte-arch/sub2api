@@ -508,6 +508,16 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 	refusalDetector := newOpenAIChatSilentRefusalDetector(requestBodyLen)
 	var streamFailoverErr *UpstreamFailoverError
 	var streamNonFailoverErr error
+	commitChatSSE := func(sse string) error {
+		for _, line := range strings.Split(sse, "\n") {
+			if payload, ok := extractOpenAISSEDataLine(line); ok {
+				if err := CommitFirstTokenEventFromContext(firstTokenContextFromGin(c), ProtocolChatCompletions, "", []byte(payload)); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
 
 	scanner := s.newUpstreamSSEScanner(resp.Body)
 
@@ -658,6 +668,10 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 				if !clientOutputStarted {
 					writeStreamHeaders()
 					for _, pending := range pendingSSE {
+						if err := commitChatSSE(pending); err != nil {
+							streamNonFailoverErr = err
+							return true
+						}
 						if _, err := fmt.Fprint(c.Writer, pending); err != nil {
 							clientDisconnected = true
 							logger.L().Info("openai chat_completions stream: client disconnected while flushing pending chunks",
@@ -671,6 +685,10 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 					if clientDisconnected {
 						break
 					}
+				}
+				if err := commitChatSSE(sse); err != nil {
+					streamNonFailoverErr = err
+					return true
 				}
 				if _, err := fmt.Fprint(c.Writer, sse); err != nil {
 					clientDisconnected = true

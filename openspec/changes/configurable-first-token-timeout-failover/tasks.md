@@ -14,15 +14,15 @@
 ## 3. 协议语义 token 判定与接入
 
 - [x] 3.1 为 OpenAI Responses、Chat Completions 和 Anthropic Messages 建立纯函数 token detector 测试，覆盖文本、reasoning、工具调用、metadata、role-only、usage、ping 和空 delta
-- [ ] 3.2 接入 OpenAI Responses HTTP 流式路径，在首个语义 token 前门控输出，并保持 compact keepalive、silent refusal 和既有错误分类行为
-- [ ] 3.3 接入 OpenAI Chat Completions HTTP 流式路径，确保 role-only chunk 不提交、内容或工具 delta 正确提交
-- [ ] 3.4 接入 Anthropic Messages HTTP 流式路径，确保 lifecycle/keepalive 不提交、内容或工具输入增量正确提交
-- [ ] 3.5 验证首 token 提交后关闭 TTFT 控制，后续停流仍由现有 stream data interval timeout 处理
+- [x] 3.2 接入 OpenAI Responses HTTP 流式路径，在首个语义 token 前门控输出，并保持 compact keepalive、silent refusal 和既有错误分类行为
+- [x] 3.3 接入 OpenAI Chat Completions HTTP 流式路径，确保 role-only chunk 不提交、内容或工具 delta 正确提交
+- [x] 3.4 接入 Anthropic Messages HTTP 流式路径，确保 lifecycle/keepalive 不提交、内容或工具输入增量正确提交
+- [x] 3.5 验证首 token 提交后关闭 TTFT 控制，后续停流仍由现有 stream data interval timeout 处理
 
 ## 4. Failover、调度与计费
 
 - [ ] 4.1 将 attempt timeout 和 prelude overflow 转换为稳定的 typed `UpstreamFailoverError`，TTFT 超时使用 504、`first_token_timeout` 且禁止同账号重试
-- [ ] 4.2 在目标 handler failover 循环中按 attempt 安装/回收门控，正确释放账号槽、排除超时账号并受现有 `maxAccountSwitches` 限制
+- [x] 4.2 在目标 handler failover 循环中按 attempt 安装/回收门控，正确释放账号槽、排除超时账号并受现有 `maxAccountSwitches` 限制
 - [ ] 4.3 记录安全的 TTFT timeout 结构化事件、Ops 指标和账号调度失败结果，不记录正文、凭据或内部地址
 - [ ] 4.4 确保超时 attempt 不写正常 usage log、不扣除 Sub2API 用户余额，最终成功 attempt 继续正常计费
 

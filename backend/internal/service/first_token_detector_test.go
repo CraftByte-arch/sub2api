@@ -1,6 +1,11 @@
 package service
 
-import "testing"
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+)
 
 func TestFirstTokenDetector(t *testing.T) {
 	t.Parallel()
@@ -358,5 +363,58 @@ func TestFirstTokenDetector(t *testing.T) {
 				t.Fatalf("IsFirstSemanticToken(%q, %q, %s) = %v, want %v", tt.protocol, tt.eventName, tt.data, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestCommitFirstTokenEventFromContextUsesDetectorAndPropagatesCommitError(t *testing.T) {
+	attempt := NewFirstTokenAttempt(context.Background(), time.Hour)
+	t.Cleanup(attempt.Close)
+	winner := errors.New("timeout won")
+	commits := 0
+	ctx := WithFirstTokenAttempt(attempt.Context(), attempt, func() error {
+		commits++
+		return winner
+	})
+
+	if err := CommitFirstTokenEventFromContext(ctx, ProtocolChatCompletions, "", []byte(`{"choices":[{"delta":{"role":"assistant"}}]}`)); err != nil {
+		t.Fatalf("role-only event returned error: %v", err)
+	}
+	if commits != 0 {
+		t.Fatalf("role-only event committed %d times", commits)
+	}
+
+	err := CommitFirstTokenEventFromContext(ctx, ProtocolChatCompletions, "", []byte(`{"choices":[{"delta":{"content":"hello"}}]}`))
+	if !errors.Is(err, winner) {
+		t.Fatalf("semantic event error = %v, want %v", err, winner)
+	}
+	if commits != 1 {
+		t.Fatalf("semantic event committed %d times, want 1", commits)
+	}
+}
+
+func TestCommitFirstTokenEventFromContextWithoutBindingIsNoop(t *testing.T) {
+	err := CommitFirstTokenEventFromContext(context.Background(), ProtocolResponses, "", []byte(`{"type":"response.output_text.delta","delta":"hello"}`))
+	if err != nil {
+		t.Fatalf("unbound semantic event returned error: %v", err)
+	}
+}
+
+func TestCommitFirstTokenSSEFromContextCommitsConvertedSemanticEvent(t *testing.T) {
+	attempt := NewFirstTokenAttempt(context.Background(), time.Hour)
+	t.Cleanup(attempt.Close)
+	winner := errors.New("commit lost race")
+	commits := 0
+	ctx := WithFirstTokenAttempt(attempt.Context(), attempt, func() error {
+		commits++
+		return winner
+	})
+	sse := []byte("event: ping\ndata: {\"type\":\"ping\"}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}\n\n")
+
+	err := CommitFirstTokenSSEFromContext(ctx, ProtocolAnthropicMessages, sse)
+	if !errors.Is(err, winner) {
+		t.Fatalf("CommitFirstTokenSSEFromContext error = %v, want %v", err, winner)
+	}
+	if commits != 1 {
+		t.Fatalf("commit count = %d, want 1", commits)
 	}
 }

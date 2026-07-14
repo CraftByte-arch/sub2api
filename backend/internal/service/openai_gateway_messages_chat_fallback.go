@@ -179,6 +179,7 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsAnthropic(
 	anthropicState := apicompat.NewResponsesEventToAnthropicState()
 	anthropicState.Model = originalModel
 	clientDisconnected := false
+	var firstTokenCommitErr error
 
 	// 与 responses 兄弟不同：客户端断开后仍继续做事件转换（喂 anthropicState），
 	// 仅跳过写出，保证 finalize 阶段的 usage 汇总不受断开影响。
@@ -187,13 +188,17 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsAnthropic(
 		responsesEvents := apicompat.ChatCompletionsChunkToResponsesEvents(chunk, ccState)
 		for _, rEvent := range responsesEvents {
 			anthropicEvents := apicompat.ResponsesEventToAnthropicEvents(&rEvent, anthropicState)
-			if clientDisconnected {
+			if clientDisconnected || firstTokenCommitErr != nil {
 				continue
 			}
 			for _, aEvt := range anthropicEvents {
 				sse, err := apicompat.ResponsesAnthropicEventToSSE(aEvt)
 				if err != nil {
 					continue
+				}
+				if err := CommitFirstTokenSSEFromContext(firstTokenContextFromGin(c), ProtocolAnthropicMessages, []byte(sse)); err != nil {
+					firstTokenCommitErr = err
+					break
 				}
 				writeStreamHeaders()
 				if _, err := fmt.Fprint(c.Writer, sse); err != nil {
@@ -209,6 +214,9 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsAnthropic(
 
 	scan := s.scanCCStream(resp, "openai messages chat fallback", requestID, startTime, emitChunk)
 	usage := scan.Usage
+	if firstTokenCommitErr != nil {
+		return &OpenAIForwardResult{RequestID: requestID, Usage: usage, Model: originalModel, Stream: true, Duration: time.Since(startTime)}, firstTokenCommitErr
+	}
 
 	if scan.Err != nil {
 		// Broken upstream read: skip finalization so no synthetic message_stop
@@ -243,6 +251,9 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsAnthropic(
 			sse, err := apicompat.ResponsesAnthropicEventToSSE(aEvt)
 			if err != nil {
 				continue
+			}
+			if err := CommitFirstTokenSSEFromContext(firstTokenContextFromGin(c), ProtocolAnthropicMessages, []byte(sse)); err != nil {
+				return &OpenAIForwardResult{RequestID: requestID, Usage: usage, Model: originalModel, Stream: true, Duration: time.Since(startTime)}, err
 			}
 			writeStreamHeaders()
 			if _, err := fmt.Fprint(c.Writer, sse); err != nil {

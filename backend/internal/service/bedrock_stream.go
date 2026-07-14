@@ -143,6 +143,9 @@ func (s *GatewayService) handleBedrockStreamingResponse(
 
 			// 确定 SSE event type
 			eventType := gjson.GetBytes(sseData, "type").String()
+			if err := CommitFirstTokenEventFromContext(ctx, ProtocolAnthropicMessages, eventType, sseData); err != nil {
+				return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, err
+			}
 
 			// 写入标准 SSE 格式
 			if !clientDisconnected {

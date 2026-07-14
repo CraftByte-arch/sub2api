@@ -259,6 +259,18 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 	clientOutputStarted := false
 	pendingLines := make([]string, 0, 8)
 	refusalDetector := newOpenAIChatSilentRefusalDetector(requestBodyLen)
+	var firstTokenCommitErr error
+	commitLine := func(line string) bool {
+		payload, ok := extractOpenAISSEDataLine(line)
+		if !ok {
+			return true
+		}
+		if err := CommitFirstTokenEventFromContext(firstTokenContextFromGin(c), ProtocolChatCompletions, "", []byte(payload)); err != nil {
+			firstTokenCommitErr = err
+			return false
+		}
+		return true
+	}
 
 	writeLine := func(line string) {
 		if clientDisconnected {
@@ -271,6 +283,9 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 		if !clientOutputStarted {
 			writeStreamHeaders()
 			for _, pending := range pendingLines {
+				if !commitLine(pending) {
+					return
+				}
 				if _, werr := c.Writer.WriteString(pending + "\n"); werr != nil {
 					clientDisconnected = true
 					logger.L().Debug("openai chat_completions raw: client disconnected, continuing to drain upstream for billing",
@@ -282,6 +297,9 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 			}
 			pendingLines = pendingLines[:0]
 			clientOutputStarted = true
+		}
+		if !commitLine(line) {
+			return
 		}
 		if _, werr := c.Writer.WriteString(line + "\n"); werr != nil {
 			clientDisconnected = true
@@ -310,6 +328,9 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 		}
 
 		writeLine(line)
+		if firstTokenCommitErr != nil {
+			return nil, firstTokenCommitErr
+		}
 		if line == "" {
 			if !clientDisconnected && clientOutputStarted {
 				c.Writer.Flush()
@@ -335,6 +356,9 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 		if len(pendingLines) > 0 {
 			writeStreamHeaders()
 			for _, pending := range pendingLines {
+				if !commitLine(pending) {
+					return nil, firstTokenCommitErr
+				}
 				if _, werr := c.Writer.WriteString(pending + "\n"); werr != nil {
 					clientDisconnected = true
 					logger.L().Debug("openai chat_completions raw: client disconnected during final flush",

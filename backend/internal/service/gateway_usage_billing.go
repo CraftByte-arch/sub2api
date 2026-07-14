@@ -510,12 +510,18 @@ func detachStreamUpstreamContext(ctx context.Context, stream bool) (context.Cont
 	if !stream {
 		return ctx, func() {}
 	}
+	if isFirstTokenAttemptContext(ctx) {
+		return ctx, func() {}
+	}
 	return context.WithoutCancel(ctx), func() {}
 }
 
 func detachUpstreamContext(ctx context.Context) (context.Context, context.CancelFunc) {
 	if ctx == nil {
 		return context.Background(), func() {}
+	}
+	if isFirstTokenAttemptContext(ctx) {
+		return ctx, func() {}
 	}
 	return context.WithoutCancel(ctx), func() {}
 }

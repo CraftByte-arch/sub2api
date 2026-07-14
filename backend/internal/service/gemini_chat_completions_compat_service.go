@@ -496,7 +496,7 @@ func (s *GeminiMessagesCompatService) handleChatCompletionsStreamingResponseFrom
 	originalModel string,
 	isOAuth bool,
 	includeUsage bool,
-) (*geminiStreamResult, error) {
+) (result *geminiStreamResult, err error) {
 	if s.responseHeaderFilter != nil {
 		responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 	}
@@ -520,8 +520,21 @@ func (s *GeminiMessagesCompatService) handleChatCompletionsStreamingResponseFrom
 	var usage ClaudeUsage
 	var firstTokenMs *int
 	firstChunk := true
+	var firstTokenCommitErr error
+	defer func() {
+		if err == nil && firstTokenCommitErr != nil {
+			err = firstTokenCommitErr
+		}
+	}()
 
 	writeChatChunk := func(chunk apicompat.ChatCompletionsChunk) bool {
+		payload, err := json.Marshal(chunk)
+		if err == nil {
+			if err := CommitFirstTokenEventFromContext(firstTokenContextFromGin(c), ProtocolChatCompletions, "", payload); err != nil {
+				firstTokenCommitErr = err
+				return true
+			}
+		}
 		sse, err := apicompat.ChatChunkToSSE(chunk)
 		if err != nil {
 			return false

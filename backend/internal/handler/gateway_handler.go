@@ -54,6 +54,7 @@ type GatewayHandler struct {
 	maxAccountSwitchesGemini  int
 	cfg                       *config.Config
 	settingService            *service.SettingService
+	firstTokenTimeoutPolicy   *service.FirstTokenTimeoutPolicy
 }
 
 // NewGatewayHandler creates a new GatewayHandler
@@ -72,6 +73,7 @@ func NewGatewayHandler(
 	userMsgQueueService *service.UserMessageQueueService,
 	cfg *config.Config,
 	settingService *service.SettingService,
+	firstTokenTimeoutPolicy *service.FirstTokenTimeoutPolicy,
 ) *GatewayHandler {
 	pingInterval := time.Duration(0)
 	maxAccountSwitches := 10
@@ -109,6 +111,7 @@ func NewGatewayHandler(
 		maxAccountSwitchesGemini:  maxAccountSwitchesGemini,
 		cfg:                       cfg,
 		settingService:            settingService,
+		firstTokenTimeoutPolicy:   firstTokenTimeoutPolicy,
 	}
 }
 
@@ -416,27 +419,36 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 
 			// 转发请求 - 根据账号平台分流
 			var result *service.ForwardResult
-			requestCtx := c.Request.Context()
-			if fs.SwitchCount > 0 {
-				requestCtx = service.WithAccountSwitchCount(requestCtx, fs.SwitchCount, h.metadataBridgeEnabled())
-			}
 			// 记录 Forward 前已写入字节数，Forward 后若增加则说明 SSE 内容已发，禁止 failover
 			writerSizeBeforeForward := c.Writer.Size()
-			if account.Platform == service.PlatformAntigravity {
-				result, err = h.antigravityGatewayService.ForwardGemini(
-					requestCtx,
-					c,
-					account,
-					reqModel,
-					"generateContent",
-					reqStream,
-					body,
-					hasBoundSession,
-					service.WithForwardGeminiSession(derefGroupID(apiKey.GroupID), sessionKey),
-				)
-			} else {
-				result, err = h.geminiCompatService.Forward(requestCtx, c, account, body)
-			}
+			result, err = runEligibleFirstTokenAttempt(
+				c,
+				h.firstTokenTimeoutPolicy,
+				service.ProtocolAnthropicMessages,
+				reqStream,
+				reqModel,
+				body,
+				FirstTokenAttemptMetadata{AccountID: account.ID, Platform: account.Platform, Model: reqModel, AttemptIndex: fs.SwitchCount + 1, SwitchCount: fs.SwitchCount},
+				func(attemptCtx context.Context) (*service.ForwardResult, error) {
+					if fs.SwitchCount > 0 {
+						attemptCtx = service.WithAccountSwitchCount(attemptCtx, fs.SwitchCount, h.metadataBridgeEnabled())
+					}
+					if account.Platform == service.PlatformAntigravity {
+						return h.antigravityGatewayService.ForwardGemini(
+							attemptCtx,
+							c,
+							account,
+							reqModel,
+							"generateContent",
+							reqStream,
+							body,
+							hasBoundSession,
+							service.WithForwardGeminiSession(derefGroupID(apiKey.GroupID), sessionKey),
+						)
+					}
+					return h.geminiCompatService.Forward(attemptCtx, c, account, body)
+				},
+			)
 			if accountReleaseFunc != nil {
 				accountReleaseFunc()
 			}
@@ -784,17 +796,26 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			// 转发请求 - 根据账号平台分流
 			c.Set("parsed_request", attemptParsedReq)
 			var result *service.ForwardResult
-			requestCtx := c.Request.Context()
-			if fs.SwitchCount > 0 {
-				requestCtx = service.WithAccountSwitchCount(requestCtx, fs.SwitchCount, h.metadataBridgeEnabled())
-			}
 			// 记录 Forward 前已写入字节数，Forward 后若增加则说明 SSE 内容已发，禁止 failover
 			writerSizeBeforeForward := c.Writer.Size()
-			if account.Platform == service.PlatformAntigravity && account.Type != service.AccountTypeAPIKey {
-				result, err = h.antigravityGatewayService.Forward(requestCtx, c, account, attemptBody, hasBoundSession)
-			} else {
-				result, err = h.gatewayService.Forward(requestCtx, c, account, attemptParsedReq)
-			}
+			result, err = runEligibleFirstTokenAttempt(
+				c,
+				h.firstTokenTimeoutPolicy,
+				service.ProtocolAnthropicMessages,
+				reqStream,
+				reqModel,
+				body,
+				FirstTokenAttemptMetadata{AccountID: account.ID, Platform: account.Platform, Model: reqModel, AttemptIndex: fs.SwitchCount + 1, SwitchCount: fs.SwitchCount},
+				func(attemptCtx context.Context) (*service.ForwardResult, error) {
+					if fs.SwitchCount > 0 {
+						attemptCtx = service.WithAccountSwitchCount(attemptCtx, fs.SwitchCount, h.metadataBridgeEnabled())
+					}
+					if account.Platform == service.PlatformAntigravity && account.Type != service.AccountTypeAPIKey {
+						return h.antigravityGatewayService.Forward(attemptCtx, c, account, attemptBody, hasBoundSession)
+					}
+					return h.gatewayService.Forward(attemptCtx, c, account, attemptParsedReq)
+				},
+			)
 
 			// 兜底释放串行锁（正常情况已通过回调提前释放）
 			if queueRelease != nil {

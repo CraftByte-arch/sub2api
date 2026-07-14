@@ -342,6 +342,24 @@ func TestFirstTokenResponseGateEligibilityRejectsWebSocket(t *testing.T) {
 	require.False(t, firstTokenResponseGateEligible(ctx))
 }
 
+func TestFirstTokenResponseGateCommitTerminalFlushesWithoutSemanticCommit(t *testing.T) {
+	base, raw := newFirstTokenResponseGateTestWriter()
+	attempt := service.NewFirstTokenAttempt(context.Background(), time.Hour)
+	t.Cleanup(attempt.Close)
+	gate := NewFirstTokenResponseGate(base, attempt)
+
+	gate.Header().Set("Content-Type", "application/json")
+	gate.WriteHeader(http.StatusBadRequest)
+	_, err := gate.WriteString(`{"error":"rejected"}`)
+	require.NoError(t, err)
+
+	require.NoError(t, gate.CommitTerminal())
+	require.Equal(t, service.FirstTokenCanceled, attempt.State())
+	require.Equal(t, http.StatusBadRequest, raw.status)
+	require.Equal(t, "application/json", raw.header.Get("Content-Type"))
+	require.JSONEq(t, `{"error":"rejected"}`, raw.body.String())
+}
+
 type firstTokenResponseGateTestWriter struct {
 	mu          sync.Mutex
 	header      http.Header

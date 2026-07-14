@@ -104,8 +104,17 @@ func provideCleanup(
 	channelMonitorRunner *service.ChannelMonitorRunner,
 	imageStudioJobService *service.ImageStudioJobService,
 	quotaFlusher *service.UserPlatformQuotaUsageFlusher,
+	firstTokenTimeoutPolicy *service.FirstTokenTimeoutPolicy,
 ) func() {
+	stopFirstTokenPolicy := func() {}
+	if firstTokenTimeoutPolicy != nil {
+		firstTokenPolicyCtx, cancelFirstTokenPolicy := context.WithCancel(context.Background())
+		stopFirstTokenPolicy = cancelFirstTokenPolicy
+		firstTokenTimeoutPolicy.Start(firstTokenPolicyCtx)
+	}
+
 	return func() {
+		stopFirstTokenPolicy()
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 

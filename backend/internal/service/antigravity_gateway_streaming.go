@@ -1049,6 +1049,9 @@ func (s *AntigravityGatewayService) handleClaudeStreamingResponse(c *gin.Context
 				// 上游完成，发送结束事件
 				finalEvents, agUsage := processor.Finish()
 				if len(finalEvents) > 0 {
+					if err := CommitFirstTokenSSEFromContext(firstTokenContextFromGin(c), ProtocolAnthropicMessages, finalEvents); err != nil {
+						return &antigravityStreamResult{usage: convertUsage(agUsage), firstTokenMs: firstTokenMs, clientDisconnect: cw.Disconnected()}, err
+					}
 					cw.Write(finalEvents)
 				} else if !processor.MessageStartSent() && !cw.Disconnected() {
 					// 整个流未收到任何可解析的上游数据（全部 SSE 行均无法被 JSON 解析），
@@ -1080,6 +1083,9 @@ func (s *AntigravityGatewayService) handleClaudeStreamingResponse(c *gin.Context
 			// 处理 SSE 行，转换为 Claude 格式
 			claudeEvents := processor.ProcessLine(strings.TrimRight(ev.line, "\r\n"))
 			if len(claudeEvents) > 0 {
+				if err := CommitFirstTokenSSEFromContext(firstTokenContextFromGin(c), ProtocolAnthropicMessages, claudeEvents); err != nil {
+					return &antigravityStreamResult{usage: finishUsage(), firstTokenMs: firstTokenMs, clientDisconnect: cw.Disconnected()}, err
+				}
 				if firstTokenMs == nil {
 					ms := int(time.Since(startTime).Milliseconds())
 					firstTokenMs = &ms

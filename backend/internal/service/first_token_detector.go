@@ -1,6 +1,14 @@
 package service
 
-import "github.com/tidwall/gjson"
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"strings"
+
+	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
+)
 
 type FirstTokenProtocol string
 
@@ -27,6 +35,59 @@ func IsFirstSemanticToken(protocol FirstTokenProtocol, eventName string, data []
 	default:
 		return false
 	}
+}
+
+func CommitFirstTokenEventFromContext(ctx context.Context, protocol FirstTokenProtocol, eventName string, data []byte) error {
+	if !IsFirstSemanticToken(protocol, eventName, data) {
+		return nil
+	}
+	return CommitFirstTokenFromContext(ctx)
+}
+
+func firstTokenContextFromGin(c *gin.Context) context.Context {
+	if c == nil || c.Request == nil {
+		return context.Background()
+	}
+	return c.Request.Context()
+}
+
+func CommitFirstTokenSSEFromContext(ctx context.Context, protocol FirstTokenProtocol, sse []byte) error {
+	scanner := bufio.NewScanner(bytes.NewReader(sse))
+	scanner.Buffer(make([]byte, 0, 4096), 2<<20)
+	eventName := ""
+	dataLines := make([]string, 0, 1)
+	commitFrame := func() error {
+		if len(dataLines) == 0 {
+			eventName = ""
+			return nil
+		}
+		data := []byte(strings.Join(dataLines, "\n"))
+		dataLines = dataLines[:0]
+		err := CommitFirstTokenEventFromContext(ctx, protocol, eventName, data)
+		eventName = ""
+		return err
+	}
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			if err := commitFrame(); err != nil {
+				return err
+			}
+			continue
+		}
+		if strings.HasPrefix(line, "event:") {
+			eventName = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+			continue
+		}
+		if strings.HasPrefix(line, "data:") {
+			dataLines = append(dataLines, strings.TrimSpace(strings.TrimPrefix(line, "data:")))
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+	return commitFrame()
 }
 
 func isResponsesSemanticDelta(data []byte) bool {

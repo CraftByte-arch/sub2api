@@ -380,6 +380,7 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 	var usage ClaudeUsage
 	var firstTokenMs *int
 	firstChunk := true
+	var firstTokenCommitErr error
 
 	scanner := bufio.NewScanner(resp.Body)
 	maxLineSize := defaultMaxLineSize
@@ -402,6 +403,13 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 	}
 
 	writeChunk := func(chunk apicompat.ChatCompletionsChunk) bool {
+		payload, err := json.Marshal(chunk)
+		if err == nil {
+			if err := CommitFirstTokenEventFromContext(firstTokenContextFromGin(c), ProtocolChatCompletions, "", payload); err != nil {
+				firstTokenCommitErr = err
+				return true
+			}
+		}
 		sse, err := apicompat.ChatChunkToSSE(chunk)
 		if err != nil {
 			return false
@@ -466,7 +474,7 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 		}
 
 		if processAnthropicEvent(&event) {
-			return resultWithUsage(), nil
+			return resultWithUsage(), firstTokenCommitErr
 		}
 	}
 
@@ -490,6 +498,9 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 	finalCCChunks := apicompat.FinalizeResponsesChatStream(ccState)
 	for _, chunk := range finalCCChunks {
 		writeChunk(chunk) //nolint:errcheck
+	}
+	if firstTokenCommitErr != nil {
+		return resultWithUsage(), firstTokenCommitErr
 	}
 
 	// Write [DONE] marker

@@ -84,6 +84,7 @@ func TestProvideCleanup_WithMinimalDependencies_NoPanic(t *testing.T) {
 		nil, // channelMonitorRunner
 		nil, // imageStudioJobService
 		nil, // quotaFlusher
+		nil, // firstTokenTimeoutPolicy
 	)
 
 	require.NotPanics(t, func() {

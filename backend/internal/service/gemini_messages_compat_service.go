@@ -2095,14 +2095,20 @@ func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, re
 					ms := int(time.Since(startTime).Milliseconds())
 					firstTokenMs = &ms
 				}
-				writeSSE(c.Writer, "content_block_delta", map[string]any{
+				deltaEvent := map[string]any{
 					"type":  "content_block_delta",
 					"index": openBlockIndex,
 					"delta": map[string]any{
 						"type": "text_delta",
 						"text": delta,
 					},
-				})
+				}
+				if payload, err := json.Marshal(deltaEvent); err == nil {
+					if err := CommitFirstTokenEventFromContext(firstTokenContextFromGin(c), ProtocolAnthropicMessages, "content_block_delta", payload); err != nil {
+						return nil, err
+					}
+				}
+				writeSSE(c.Writer, "content_block_delta", deltaEvent)
 				flusher.Flush()
 				continue
 			}
@@ -2171,14 +2177,20 @@ func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, re
 				delta, newSeen := computeGeminiTextDelta(seenToolJSON, argsJSONText)
 				seenToolJSON = newSeen
 				if delta != "" {
-					writeSSE(c.Writer, "content_block_delta", map[string]any{
+					deltaEvent := map[string]any{
 						"type":  "content_block_delta",
 						"index": openToolIndex,
 						"delta": map[string]any{
 							"type":         "input_json_delta",
 							"partial_json": delta,
 						},
-					})
+					}
+					if payload, err := json.Marshal(deltaEvent); err == nil {
+						if err := CommitFirstTokenEventFromContext(firstTokenContextFromGin(c), ProtocolAnthropicMessages, "content_block_delta", payload); err != nil {
+							return nil, err
+						}
+					}
+					writeSSE(c.Writer, "content_block_delta", deltaEvent)
 				}
 				flusher.Flush()
 			}

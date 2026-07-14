@@ -300,17 +300,17 @@ git commit -m "feat: detect semantic first token events"
 - Modify: `backend/internal/service/openai_gateway_responses_chat_fallback.go`
 - Test: `backend/internal/handler/first_token_timeout_integration_test.go`
 
-- [ ] **Step 1: 写入口级失败测试，证明 metadata 不提交且 timeout 可换号**
+- [x] **Step 1: 写入口级失败测试，证明 metadata 不提交且 timeout 可换号**
 
 为 Responses、Chat Completions、Messages 各建立两个 `httptest.Server` 账号：第一个立即发 headers/metadata/ping 后阻塞，第二个发送语义 delta。断言客户端只看到第二账号 header/body，且第一个 request context 被取消。
 
-- [ ] **Step 2: 运行三入口测试并确认旧实现失败**
+- [x] **Step 2: 运行三入口测试并确认旧实现失败**
 
 Run: `cd backend && go test ./internal/handler -run 'TestFirstTokenTimeout_(Responses|ChatCompletions|Messages)_Failover' -count=1`
 
 Expected: FAIL，旧实现会提前写 metadata/header 或不会按阈值取消。
 
-- [ ] **Step 3: 实现 attempt runner helper**
+- [x] **Step 3: 实现 attempt runner helper**
 
 ```go
 type FirstTokenAttemptMetadata struct {
@@ -332,11 +332,11 @@ func runFirstTokenAttempt(
 
 helper 在 disabled 时直接调用 forward；enabled 时替换 `c.Writer`，defer 恢复原 writer，使用 attempt context 调用 forward，并把 timeout/overflow 转换为 typed failover error。不要把账号释放、选号或 billing 移入 helper。
 
-- [ ] **Step 4: 在两套 handler 的 failover 循环加最小 hook**
+- [x] **Step 4: 在两套 handler 的 failover 循环加最小 hook**
 
 在 `GatewayHandler` 与 `OpenAIGatewayHandler` 的 Responses/Chat/Messages 流式分支中，在 account slot 后调用 helper；非流式、WebSocket 和 image generation intent 保持原调用。writer size 比较必须针对恢复后的底层 writer。
 
-- [ ] **Step 5: 在所有客户端协议写出点调用 detector**
+- [x] **Step 5: 在所有客户端协议写出点调用 detector**
 
 在已经完成入站协议转换、准备写 SSE data 的位置执行：
 
@@ -350,13 +350,13 @@ if service.IsFirstSemanticToken(protocol, eventName, payload) {
 
 调用必须先于该语义事件写出；保留现有 keepalive、silent refusal、usage 与 `first_token_ms` 代码原样。
 
-- [ ] **Step 6: 运行入口和现有流回归测试**
+- [x] **Step 6: 运行入口和现有流回归测试**
 
 Run: `cd backend && go test ./internal/handler ./internal/service -run 'FirstTokenTimeout|Stream|Compact|SilentRefusal|ChatCompletions|Messages' -count=1`
 
 Expected: PASS；关闭策略时现有快照/流测试无变化。
 
-- [ ] **Step 7: 提交**
+- [x] **Step 7: 提交**
 
 ```bash
 git add backend/internal/handler/first_token_attempt_runner.go backend/internal/handler/first_token_attempt_runner_test.go backend/internal/handler/first_token_timeout_integration_test.go backend/internal/handler/gateway_handler_responses.go backend/internal/handler/gateway_handler_chat_completions.go backend/internal/handler/gateway_handler.go backend/internal/handler/openai_gateway_handler.go backend/internal/handler/openai_chat_completions.go backend/internal/service/gateway_forward_as_responses.go backend/internal/service/gateway_forward_as_chat_completions.go backend/internal/service/gateway_anthropic_passthrough.go backend/internal/service/gemini_chat_completions_compat_service.go backend/internal/service/gemini_messages_compat_service.go backend/internal/service/antigravity_gateway_streaming.go backend/internal/service/bedrock_stream.go backend/internal/service/openai_gateway_forward.go backend/internal/service/openai_gateway_passthrough.go backend/internal/service/openai_gateway_response_handling.go backend/internal/service/openai_gateway_cc_pipeline.go backend/internal/service/openai_gateway_chat_completions.go backend/internal/service/openai_gateway_chat_completions_raw.go backend/internal/service/openai_gateway_messages.go backend/internal/service/openai_gateway_messages_chat_fallback.go backend/internal/service/openai_gateway_responses_chat_fallback.go

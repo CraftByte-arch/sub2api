@@ -176,13 +176,21 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 	state.ToolSearchDeclared = toolSearch
 	state.NamespaceTools = namespaceTools
 	clientDisconnected := false
+	var firstTokenCommitErr error
 
 	writeEvents := func(events []apicompat.ResponsesStreamEvent) {
-		if clientDisconnected || len(events) == 0 {
+		if clientDisconnected || firstTokenCommitErr != nil || len(events) == 0 {
 			return
 		}
 		writeStreamHeaders()
 		for _, event := range events {
+			payload, marshalErr := json.Marshal(event)
+			if marshalErr == nil {
+				if err := CommitFirstTokenEventFromContext(firstTokenContextFromGin(c), ProtocolResponses, "", payload); err != nil {
+					firstTokenCommitErr = err
+					return
+				}
+			}
 			sse, err := apicompat.ResponsesEventToSSE(event)
 			if err != nil {
 				logger.L().Warn("openai responses chat fallback: failed to marshal stream event",
@@ -206,6 +214,15 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 	scan := s.scanCCStream(resp, "openai responses chat fallback", requestID, startTime, func(chunk *apicompat.ChatCompletionsChunk) {
 		writeEvents(apicompat.ChatCompletionsChunkToResponsesEvents(chunk, state))
 	})
+	if firstTokenCommitErr != nil {
+		return &OpenAIForwardResult{
+			RequestID: requestID,
+			Usage:     scan.Usage,
+			Model:     originalModel,
+			Stream:    true,
+			Duration:  time.Since(startTime),
+		}, firstTokenCommitErr
+	}
 
 	if scan.Err != nil {
 		return &OpenAIForwardResult{

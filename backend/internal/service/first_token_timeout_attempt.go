@@ -20,6 +20,47 @@ const (
 var ErrFirstTokenTimeout = errors.New("first token timeout")
 var ErrFirstTokenPreludeTooLarge = errors.New("first token prelude too large")
 
+type firstTokenAttemptContextKey struct{}
+
+type firstTokenAttemptContextBinding struct {
+	attempt *FirstTokenAttempt
+	commit  func() error
+}
+
+func WithFirstTokenAttempt(ctx context.Context, attempt *FirstTokenAttempt, commit func() error) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if attempt == nil || commit == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, firstTokenAttemptContextKey{}, firstTokenAttemptContextBinding{
+		attempt: attempt,
+		commit:  commit,
+	})
+}
+
+func CommitFirstTokenFromContext(ctx context.Context) error {
+	binding, ok := firstTokenAttemptBindingFromContext(ctx)
+	if !ok {
+		return nil
+	}
+	return binding.commit()
+}
+
+func isFirstTokenAttemptContext(ctx context.Context) bool {
+	_, ok := firstTokenAttemptBindingFromContext(ctx)
+	return ok
+}
+
+func firstTokenAttemptBindingFromContext(ctx context.Context) (firstTokenAttemptContextBinding, bool) {
+	if ctx == nil {
+		return firstTokenAttemptContextBinding{}, false
+	}
+	binding, ok := ctx.Value(firstTokenAttemptContextKey{}).(firstTokenAttemptContextBinding)
+	return binding, ok && binding.attempt != nil && binding.commit != nil
+}
+
 type FirstTokenAttempt struct {
 	ctx           context.Context
 	cancel        context.CancelCauseFunc

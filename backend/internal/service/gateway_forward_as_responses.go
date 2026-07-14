@@ -389,6 +389,7 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 	var usage ClaudeUsage
 	var firstTokenMs *int
 	firstChunk := true
+	var firstTokenCommitErr error
 
 	scanner := bufio.NewScanner(resp.Body)
 	maxLineSize := defaultMaxLineSize
@@ -430,6 +431,13 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 		// Convert to Responses events
 		events := apicompat.AnthropicEventToResponsesEvents(event, state)
 		for _, evt := range events {
+			payload, marshalErr := json.Marshal(evt)
+			if marshalErr == nil {
+				if err := CommitFirstTokenEventFromContext(firstTokenContextFromGin(c), ProtocolResponses, "", payload); err != nil {
+					firstTokenCommitErr = err
+					return true
+				}
+			}
 			sse, err := apicompat.ResponsesEventToSSE(evt)
 			if err != nil {
 				logger.L().Warn("forward_as_responses stream: failed to marshal event",
@@ -455,6 +463,12 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 	finalizeStream := func() (*ForwardResult, error) {
 		if finalEvents := apicompat.FinalizeAnthropicResponsesStream(state); len(finalEvents) > 0 {
 			for _, evt := range finalEvents {
+				payload, marshalErr := json.Marshal(evt)
+				if marshalErr == nil {
+					if err := CommitFirstTokenEventFromContext(firstTokenContextFromGin(c), ProtocolResponses, "", payload); err != nil {
+						return resultWithUsage(), err
+					}
+				}
 				sse, err := apicompat.ResponsesEventToSSE(evt)
 				if err != nil {
 					continue
@@ -496,6 +510,9 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 		}
 
 		if processEvent(&event) {
+			if firstTokenCommitErr != nil {
+				return resultWithUsage(), firstTokenCommitErr
+			}
 			return resultWithUsage(), nil
 		}
 	}

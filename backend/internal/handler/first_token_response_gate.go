@@ -182,6 +182,31 @@ func (w *FirstTokenResponseGate) Commit() error {
 
 	w.state = firstTokenResponseGateCommitted
 	w.stopAttemptCallback()
+	return w.commitBufferedLocked()
+}
+
+func (w *FirstTokenResponseGate) CommitTerminal() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	switch w.state {
+	case firstTokenResponseGateCommitted:
+		return w.terminalErr
+	case firstTokenResponseGateRolledBack:
+		return w.terminalCause()
+	}
+
+	w.stopAttemptCallback()
+	if !w.attempt.Cancel(context.Canceled) {
+		cause := w.attemptCause()
+		w.rollbackLocked(cause)
+		return cause
+	}
+	w.state = firstTokenResponseGateCommitted
+	return w.commitBufferedLocked()
+}
+
+func (w *FirstTokenResponseGate) commitBufferedLocked() error {
 	destinationHeader := w.base.Header()
 	clear(destinationHeader)
 	for key, values := range w.header {
