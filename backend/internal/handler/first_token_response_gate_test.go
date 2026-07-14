@@ -194,6 +194,45 @@ func TestFirstTokenResponseGatePreludeLimitCancelsWithoutGrowing(t *testing.T) {
 	require.ErrorIs(t, gate.Commit(), service.ErrFirstTokenPreludeTooLarge)
 }
 
+func TestFirstTokenResponseGateOverflowUsesAttemptWinningCause(t *testing.T) {
+	base, raw := newFirstTokenResponseGateTestWriter()
+	realAttempt := service.NewFirstTokenAttempt(context.Background(), time.Hour)
+	t.Cleanup(realAttempt.Close)
+	gate := NewFirstTokenResponseGate(base, realAttempt)
+	winner := service.ErrFirstTokenTimeout
+	controlled := newFirstTokenResponseGateControlledAttempt(winner)
+	gate.attempt = controlled
+
+	n, err := gate.Write(bytes.Repeat([]byte("x"), firstTokenResponseGatePreludeLimit+1))
+	require.Zero(t, n)
+	require.ErrorIs(t, err, winner)
+	require.ErrorIs(t, controlled.requestedCause, service.ErrFirstTokenPreludeTooLarge)
+	require.ErrorIs(t, gate.Commit(), winner)
+	require.Empty(t, raw.body.String())
+	require.Empty(t, raw.calls)
+}
+
+func TestFirstTokenResponseGateRollbackUsesAttemptWinningCause(t *testing.T) {
+	parentCause := errors.New("client disconnected")
+	for _, winner := range []error{service.ErrFirstTokenTimeout, parentCause} {
+		t.Run(winner.Error(), func(t *testing.T) {
+			base, raw := newFirstTokenResponseGateTestWriter()
+			realAttempt := service.NewFirstTokenAttempt(context.Background(), time.Hour)
+			t.Cleanup(realAttempt.Close)
+			gate := NewFirstTokenResponseGate(base, realAttempt)
+			controlled := newFirstTokenResponseGateControlledAttempt(winner)
+			gate.attempt = controlled
+
+			gate.Rollback()
+
+			require.ErrorIs(t, controlled.requestedCause, context.Canceled)
+			require.ErrorIs(t, gate.Commit(), winner)
+			require.Empty(t, raw.body.String())
+			require.Empty(t, raw.calls)
+		})
+	}
+}
+
 func TestFirstTokenResponseGateCommitAndTimeoutCannotBothWin(t *testing.T) {
 	for i := 0; i < 500; i++ {
 		base, raw := newFirstTokenResponseGateTestWriter()
@@ -316,6 +355,45 @@ type firstTokenResponseGateTestWriter struct {
 	hijacks     int
 	pushes      int
 	closeNotify chan bool
+}
+
+type firstTokenResponseGateControlledAttempt struct {
+	ctx            context.Context
+	winner         error
+	cancelCalled   bool
+	requestedCause error
+}
+
+func newFirstTokenResponseGateControlledAttempt(winner error) *firstTokenResponseGateControlledAttempt {
+	return &firstTokenResponseGateControlledAttempt{
+		ctx:    context.Background(),
+		winner: winner,
+	}
+}
+
+func (a *firstTokenResponseGateControlledAttempt) Context() context.Context {
+	return a.ctx
+}
+
+func (a *firstTokenResponseGateControlledAttempt) MarkFirstToken() bool {
+	return false
+}
+
+func (a *firstTokenResponseGateControlledAttempt) Cancel(cause error) bool {
+	a.cancelCalled = true
+	a.requestedCause = cause
+	return false
+}
+
+func (a *firstTokenResponseGateControlledAttempt) State() service.FirstTokenAttemptState {
+	return service.FirstTokenPending
+}
+
+func (a *firstTokenResponseGateControlledAttempt) Cause() error {
+	if !a.cancelCalled {
+		return nil
+	}
+	return a.winner
 }
 
 func newFirstTokenResponseGateTestWriter() (gin.ResponseWriter, *firstTokenResponseGateTestWriter) {

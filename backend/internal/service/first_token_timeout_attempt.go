@@ -29,13 +29,15 @@ type FirstTokenAttempt struct {
 	causeReady    chan struct{}
 	terminalCause error
 
-	resourcesMu sync.Mutex
-	timer       *time.Timer
-	stopParent  func() bool
+	timerMu sync.Mutex
+	timer   *time.Timer
+
+	parentMu   sync.Mutex
+	stopParent func() bool
 }
 
 func NewFirstTokenAttempt(parent context.Context, timeout time.Duration) *FirstTokenAttempt {
-	ctx, cancel := context.WithCancelCause(parent)
+	ctx, cancel := context.WithCancelCause(context.WithoutCancel(parent))
 	a := &FirstTokenAttempt{
 		ctx:        ctx,
 		cancel:     cancel,
@@ -44,15 +46,23 @@ func NewFirstTokenAttempt(parent context.Context, timeout time.Duration) *FirstT
 		causeReady: make(chan struct{}),
 	}
 
+	a.parentMu.Lock()
+	a.stopParent = context.AfterFunc(parent, a.cancelFromParent)
+	a.parentMu.Unlock()
 	if parent.Err() != nil {
-		a.transition(FirstTokenCanceled, context.Cause(parent))
+		a.cancelFromParent()
+		return a
+	}
+	if timeout <= 0 {
+		a.timeout()
 		return a
 	}
 
-	a.resourcesMu.Lock()
-	a.stopParent = context.AfterFunc(parent, a.cancelFromParent)
-	a.timer = time.AfterFunc(timeout, a.timeout)
-	a.resourcesMu.Unlock()
+	a.timerMu.Lock()
+	if a.State() == FirstTokenPending {
+		a.timer = time.AfterFunc(timeout, a.timeout)
+	}
+	a.timerMu.Unlock()
 	return a
 }
 
@@ -65,16 +75,23 @@ func (a *FirstTokenAttempt) MarkFirstToken() bool {
 		a.cancelFromParent()
 		return false
 	}
-	return a.transition(FirstTokenCommitted, nil)
+	if !a.transition(FirstTokenCommitted, nil) {
+		return false
+	}
+	a.stopTimer()
+	return true
 }
 
 func (a *FirstTokenAttempt) Cancel(cause error) bool {
-	if a.parent.Err() != nil {
-		cause = context.Cause(a.parent)
-	} else if cause == nil {
+	if cause == nil {
 		cause = context.Canceled
 	}
-	return a.transition(FirstTokenCanceled, cause)
+	if !a.transition(FirstTokenCanceled, cause) {
+		return false
+	}
+	a.stopTimer()
+	a.stopParentWatcher()
+	return true
 }
 
 func (a *FirstTokenAttempt) State() FirstTokenAttemptState {
@@ -106,22 +123,35 @@ func (a *FirstTokenAttempt) Close() {
 	} else {
 		a.waitForTerminalCause()
 	}
-	a.stopResources()
+	a.stopTimer()
+	a.stopParentWatcher()
 	if a.State() == FirstTokenCommitted {
 		a.cancel(context.Canceled)
 	}
 }
 
 func (a *FirstTokenAttempt) timeout() {
-	if a.parent.Err() != nil {
-		a.cancelFromParent()
+	if !a.transition(FirstTokenTimedOut, ErrFirstTokenTimeout) {
 		return
 	}
-	a.transition(FirstTokenTimedOut, ErrFirstTokenTimeout)
+	a.stopTimer()
+	a.stopParentWatcher()
 }
 
 func (a *FirstTokenAttempt) cancelFromParent() {
-	a.transition(FirstTokenCanceled, context.Cause(a.parent))
+	cause := context.Cause(a.parent)
+	if cause == nil {
+		cause = context.Canceled
+	}
+	if a.transition(FirstTokenCanceled, cause) {
+		a.stopTimer()
+		a.clearParentWatcher()
+		return
+	}
+	if a.State() == FirstTokenCommitted {
+		a.cancel(cause)
+	}
+	a.clearParentWatcher()
 }
 
 func (a *FirstTokenAttempt) transition(state FirstTokenAttemptState, cause error) bool {
@@ -134,7 +164,6 @@ func (a *FirstTokenAttempt) transition(state FirstTokenAttemptState, cause error
 	}
 	a.terminalCause = cause
 	close(a.causeReady)
-	a.stopResources()
 	return true
 }
 
@@ -142,15 +171,28 @@ func (a *FirstTokenAttempt) waitForTerminalCause() {
 	<-a.causeReady
 }
 
-func (a *FirstTokenAttempt) stopResources() {
-	a.resourcesMu.Lock()
-	defer a.resourcesMu.Unlock()
-	if a.timer != nil {
-		a.timer.Stop()
-		a.timer = nil
+func (a *FirstTokenAttempt) stopTimer() {
+	a.timerMu.Lock()
+	timer := a.timer
+	a.timer = nil
+	a.timerMu.Unlock()
+	if timer != nil {
+		timer.Stop()
 	}
-	if a.stopParent != nil {
-		a.stopParent()
-		a.stopParent = nil
+}
+
+func (a *FirstTokenAttempt) stopParentWatcher() {
+	a.parentMu.Lock()
+	stop := a.stopParent
+	a.stopParent = nil
+	a.parentMu.Unlock()
+	if stop != nil {
+		stop()
 	}
+}
+
+func (a *FirstTokenAttempt) clearParentWatcher() {
+	a.parentMu.Lock()
+	a.stopParent = nil
+	a.parentMu.Unlock()
 }

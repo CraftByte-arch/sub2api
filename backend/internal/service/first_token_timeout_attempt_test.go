@@ -272,3 +272,102 @@ func TestFirstTokenAttemptCloseWaitsForWinningCausePublication(t *testing.T) {
 	a.cancel = originalCancel
 	a.Close()
 }
+
+func TestFirstTokenAttemptTimeoutWinnerOwnsContextCauseAgainstParent(t *testing.T) {
+	parent, cancelParent := context.WithCancelCause(context.Background())
+	a := NewFirstTokenAttempt(parent, time.Hour)
+	originalCancel := a.cancel
+	timeoutCancelEntered := make(chan struct{})
+	releaseTimeoutCancel := make(chan struct{})
+	a.cancel = func(cause error) {
+		if errors.Is(cause, ErrFirstTokenTimeout) {
+			close(timeoutCancelEntered)
+			<-releaseTimeoutCancel
+		}
+		originalCancel(cause)
+	}
+	timeoutDone := make(chan struct{})
+	parentCause := errors.New("client disconnected")
+
+	go func() {
+		a.timeout()
+		close(timeoutDone)
+	}()
+	<-timeoutCancelEntered
+	cancelParent(parentCause)
+	close(releaseTimeoutCancel)
+	select {
+	case <-timeoutDone:
+	case <-time.After(time.Second):
+		t.Fatal("timeout transition did not finish after release")
+	}
+
+	require.Equal(t, FirstTokenTimedOut, a.State())
+	require.ErrorIs(t, a.Cause(), ErrFirstTokenTimeout)
+	require.ErrorIs(t, context.Cause(a.Context()), ErrFirstTokenTimeout)
+	a.cancel = originalCancel
+	a.Close()
+}
+
+func TestFirstTokenAttemptCustomWinnerOwnsContextCauseAgainstParent(t *testing.T) {
+	parent, cancelParent := context.WithCancelCause(context.Background())
+	a := NewFirstTokenAttempt(parent, time.Hour)
+	originalCancel := a.cancel
+	customCancelEntered := make(chan struct{})
+	releaseCustomCancel := make(chan struct{})
+	customCause := errors.New("prelude overflow")
+	a.cancel = func(cause error) {
+		if errors.Is(cause, customCause) {
+			close(customCancelEntered)
+			<-releaseCustomCancel
+		}
+		originalCancel(cause)
+	}
+	cancelDone := make(chan bool, 1)
+
+	go func() { cancelDone <- a.Cancel(customCause) }()
+	<-customCancelEntered
+	cancelParent(errors.New("client disconnected"))
+	close(releaseCustomCancel)
+	select {
+	case won := <-cancelDone:
+		require.True(t, won)
+	case <-time.After(time.Second):
+		t.Fatal("custom cancellation did not finish after release")
+	}
+
+	require.Equal(t, FirstTokenCanceled, a.State())
+	require.ErrorIs(t, a.Cause(), customCause)
+	require.ErrorIs(t, context.Cause(a.Context()), customCause)
+	a.cancel = originalCancel
+	a.Close()
+}
+
+func TestFirstTokenAttemptCommittedParentCancellationStillCancelsStream(t *testing.T) {
+	parent, cancelParent := context.WithCancelCause(context.Background())
+	a := NewFirstTokenAttempt(parent, time.Hour)
+	t.Cleanup(a.Close)
+	parentCause := errors.New("client disconnected")
+	require.True(t, a.MarkFirstToken())
+
+	cancelParent(parentCause)
+	select {
+	case <-a.Context().Done():
+	case <-time.After(time.Second):
+		t.Fatal("committed attempt did not propagate parent cancellation")
+	}
+
+	require.Equal(t, FirstTokenCommitted, a.State())
+	require.NoError(t, a.Cause())
+	require.ErrorIs(t, context.Cause(a.Context()), parentCause)
+}
+
+func TestFirstTokenAttemptNonPositiveTimeoutIsSynchronous(t *testing.T) {
+	for _, timeout := range []time.Duration{0, -time.Second} {
+		a := NewFirstTokenAttempt(context.Background(), timeout)
+		require.Equal(t, FirstTokenTimedOut, a.State())
+		require.ErrorIs(t, a.Cause(), ErrFirstTokenTimeout)
+		require.ErrorIs(t, context.Cause(a.Context()), ErrFirstTokenTimeout)
+		a.Close()
+	}
+}

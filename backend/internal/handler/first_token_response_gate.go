@@ -28,7 +28,7 @@ const (
 
 type FirstTokenResponseGate struct {
 	base    gin.ResponseWriter
-	attempt *service.FirstTokenAttempt
+	attempt firstTokenAttemptController
 
 	mu          sync.Mutex
 	state       firstTokenResponseGateState
@@ -40,6 +40,14 @@ type FirstTokenResponseGate struct {
 }
 
 var _ gin.ResponseWriter = (*FirstTokenResponseGate)(nil)
+
+type firstTokenAttemptController interface {
+	Context() context.Context
+	MarkFirstToken() bool
+	Cancel(error) bool
+	State() service.FirstTokenAttemptState
+	Cause() error
+}
 
 func NewFirstTokenResponseGate(base gin.ResponseWriter, attempt *service.FirstTokenAttempt) *FirstTokenResponseGate {
 	w := &FirstTokenResponseGate{
@@ -167,7 +175,7 @@ func (w *FirstTokenResponseGate) Commit() error {
 
 	if !w.attempt.MarkFirstToken() {
 		cause := w.attemptCause()
-		w.rollbackLocked(cause, false)
+		w.rollbackLocked(cause)
 		w.stopAttemptCallback()
 		return cause
 	}
@@ -198,11 +206,8 @@ func (w *FirstTokenResponseGate) Rollback() {
 	if w.state != firstTokenResponseGatePending {
 		return
 	}
-	cause := w.attemptCause()
-	if w.attempt.State() == service.FirstTokenPending {
-		cause = context.Canceled
-	}
-	w.rollbackLocked(cause, true)
+	cause := w.cancelAttempt(context.Canceled)
+	w.rollbackLocked(cause)
 	w.stopAttemptCallback()
 }
 
@@ -219,24 +224,21 @@ func (w *FirstTokenResponseGate) writePendingOrPassthrough(p []byte, asString bo
 
 	if w.attempt.State() != service.FirstTokenPending {
 		cause := w.attemptCause()
-		w.rollbackLocked(cause, false)
+		w.rollbackLocked(cause)
 		w.stopAttemptCallback()
 		return 0, cause
 	}
 	if len(p) > firstTokenResponseGatePreludeLimit-len(w.prelude) {
-		w.attempt.Cancel(service.ErrFirstTokenPreludeTooLarge)
-		w.rollbackLocked(service.ErrFirstTokenPreludeTooLarge, false)
+		cause := w.cancelAttempt(service.ErrFirstTokenPreludeTooLarge)
+		w.rollbackLocked(cause)
 		w.stopAttemptCallback()
-		return 0, service.ErrFirstTokenPreludeTooLarge
+		return 0, cause
 	}
 	w.prelude = append(w.prelude, p...)
 	return len(p), nil
 }
 
-func (w *FirstTokenResponseGate) rollbackLocked(cause error, cancelPending bool) {
-	if cancelPending && w.attempt.State() == service.FirstTokenPending {
-		w.attempt.Cancel(cause)
-	}
+func (w *FirstTokenResponseGate) rollbackLocked(cause error) {
 	w.state = firstTokenResponseGateRolledBack
 	w.terminalErr = cause
 	w.clearLocalState()
@@ -252,7 +254,7 @@ func (w *FirstTokenResponseGate) rollbackFromAttempt() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.state == firstTokenResponseGatePending {
-		w.rollbackLocked(w.attemptCause(), false)
+		w.rollbackLocked(w.attemptCause())
 	}
 	w.stopAttempt = nil
 }
@@ -269,6 +271,13 @@ func (w *FirstTokenResponseGate) attemptCause() error {
 		return cause
 	}
 	return context.Canceled
+}
+
+func (w *FirstTokenResponseGate) cancelAttempt(cause error) error {
+	if w.attempt.Cancel(cause) {
+		return cause
+	}
+	return w.attemptCause()
 }
 
 func (w *FirstTokenResponseGate) terminalCause() error {
