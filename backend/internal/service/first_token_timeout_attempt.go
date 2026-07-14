@@ -32,8 +32,6 @@ type FirstTokenAttempt struct {
 	resourcesMu sync.Mutex
 	timer       *time.Timer
 	stopParent  func() bool
-
-	beforeTerminalCauseWait func()
 }
 
 func NewFirstTokenAttempt(parent context.Context, timeout time.Duration) *FirstTokenAttempt {
@@ -141,9 +139,6 @@ func (a *FirstTokenAttempt) transition(state FirstTokenAttemptState, cause error
 }
 
 func (a *FirstTokenAttempt) waitForTerminalCause() {
-	if a.beforeTerminalCauseWait != nil {
-		a.beforeTerminalCauseWait()
-	}
 	<-a.causeReady
 }
 

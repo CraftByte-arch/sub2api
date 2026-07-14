@@ -169,29 +169,45 @@ func TestFirstTokenAttemptLosingTransitionWaitsForWinningCause(t *testing.T) {
 		<-releaseCancel
 		originalCancel(cause)
 	}
-	loserWaiting := make(chan struct{})
-	a.beforeTerminalCauseWait = func() { close(loserWaiting) }
 	customCause := errors.New("custom cancellation")
 	cancelResult := make(chan bool, 1)
+	markStarted := make(chan struct{})
 	markResult := make(chan bool, 1)
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseCancel) }) }
+	defer release()
 
 	go func() { cancelResult <- a.Cancel(customCause) }()
 	<-cancelEntered
-	go func() { markResult <- a.MarkFirstToken() }()
-	<-loserWaiting
+	go func() {
+		close(markStarted)
+		markResult <- a.MarkFirstToken()
+	}()
+	<-markStarted
 
+	// The winner is held after CAS; this short bound only checks that the loser
+	// cannot return before cause publication and protects the test from deadlock.
 	select {
 	case <-markResult:
 		t.Fatal("losing transition returned before the winning cause was published")
-	default:
+	case <-time.After(25 * time.Millisecond):
 	}
-	close(releaseCancel)
-	require.True(t, <-cancelResult)
-	require.False(t, <-markResult)
+	release()
+	select {
+	case won := <-cancelResult:
+		require.True(t, won)
+	case <-time.After(time.Second):
+		t.Fatal("winning cancellation did not finish after release")
+	}
+	select {
+	case won := <-markResult:
+		require.False(t, won)
+	case <-time.After(time.Second):
+		t.Fatal("losing transition did not finish after cause publication")
+	}
 	require.ErrorIs(t, a.Cause(), customCause)
 
 	a.cancel = originalCancel
-	a.beforeTerminalCauseWait = nil
 	a.Close()
 }
 
@@ -211,34 +227,48 @@ func TestFirstTokenAttemptCloseWaitsForWinningCausePublication(t *testing.T) {
 		<-releaseCancel
 		originalCancel(cause)
 	}
-	closeWaiting := make(chan struct{})
-	a.beforeTerminalCauseWait = func() { close(closeWaiting) }
 	customCause := errors.New("custom cancellation")
 	cancelDone := make(chan bool, 1)
+	closeStarted := make(chan struct{})
 	closeDone := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseCancel) }) }
+	defer release()
 
 	go func() { cancelDone <- a.Cancel(customCause) }()
 	<-cancelEntered
 	go func() {
+		close(closeStarted)
 		a.Close()
 		close(closeDone)
 	}()
+	<-closeStarted
 
-	premature := false
+	// The winner is held after CAS; this short bound only checks that Close
+	// waits for cause publication and protects the test from deadlock.
 	select {
 	case <-prematureCancel:
-		premature = true
-	case <-closeWaiting:
-	}
-	close(releaseCancel)
-	require.True(t, <-cancelDone)
-	<-closeDone
-	if premature {
+		release()
 		t.Fatal("Close canceled the context before the winning cause was published")
+	case <-closeDone:
+		release()
+		t.Fatal("Close returned before the winning cause was published")
+	case <-time.After(25 * time.Millisecond):
+	}
+	release()
+	select {
+	case won := <-cancelDone:
+		require.True(t, won)
+	case <-time.After(time.Second):
+		t.Fatal("winning cancellation did not finish after release")
+	}
+	select {
+	case <-closeDone:
+	case <-time.After(time.Second):
+		t.Fatal("Close did not finish after cause publication")
 	}
 	require.ErrorIs(t, a.Cause(), customCause)
 
 	a.cancel = originalCancel
-	a.beforeTerminalCauseWait = nil
 	a.Close()
 }
