@@ -371,3 +371,59 @@ func TestFirstTokenAttemptNonPositiveTimeoutIsSynchronous(t *testing.T) {
 		a.Close()
 	}
 }
+
+func TestFirstTokenAttemptCancelDefersToAlreadyCanceledParent(t *testing.T) {
+	parentCause := errors.New("client disconnected")
+	a := newFirstTokenAttemptWithUnpublishedParentCancellation(parentCause)
+
+	won := a.Cancel(ErrFirstTokenPreludeTooLarge)
+
+	require.False(t, won)
+	require.Equal(t, FirstTokenCanceled, a.State())
+	require.ErrorIs(t, a.Cause(), parentCause)
+	require.ErrorIs(t, context.Cause(a.Context()), parentCause)
+	a.Close()
+}
+
+func TestFirstTokenAttemptTimeoutDefersToAlreadyCanceledParent(t *testing.T) {
+	parentCause := errors.New("client disconnected")
+	a := newFirstTokenAttemptWithUnpublishedParentCancellation(parentCause)
+
+	a.timeout()
+
+	require.Equal(t, FirstTokenCanceled, a.State())
+	require.ErrorIs(t, a.Cause(), parentCause)
+	require.ErrorIs(t, context.Cause(a.Context()), parentCause)
+	a.Close()
+}
+
+func TestFirstTokenAttemptPreservesParentValueAndDeadlineCause(t *testing.T) {
+	type contextKey string
+	const key contextKey = "request-id"
+	parentWithValue := context.WithValue(context.Background(), key, "req-123")
+	parent, cancelParent := context.WithDeadline(parentWithValue, time.Now().Add(-time.Second))
+	defer cancelParent()
+
+	a := NewFirstTokenAttempt(parent, time.Hour)
+	t.Cleanup(a.Close)
+
+	require.Equal(t, "req-123", a.Context().Value(key))
+	require.Equal(t, FirstTokenCanceled, a.State())
+	require.ErrorIs(t, a.Cause(), context.DeadlineExceeded)
+	require.ErrorIs(t, context.Cause(a.Context()), context.DeadlineExceeded)
+}
+
+func newFirstTokenAttemptWithUnpublishedParentCancellation(parentCause error) *FirstTokenAttempt {
+	parent, cancelParent := context.WithCancelCause(context.Background())
+	ctx, cancelAttempt := context.WithCancelCause(context.WithoutCancel(parent))
+	a := &FirstTokenAttempt{
+		ctx:           ctx,
+		cancel:        cancelAttempt,
+		parent:        parent,
+		startedAt:     time.Now(),
+		causeReady:    make(chan struct{}),
+		terminalCause: nil,
+	}
+	cancelParent(parentCause)
+	return a
+}

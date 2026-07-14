@@ -37,6 +37,7 @@ type FirstTokenAttempt struct {
 }
 
 func NewFirstTokenAttempt(parent context.Context, timeout time.Duration) *FirstTokenAttempt {
+	// Parent cancellation is forwarded through the attempt state machine; values remain available.
 	ctx, cancel := context.WithCancelCause(context.WithoutCancel(parent))
 	a := &FirstTokenAttempt{
 		ctx:        ctx,
@@ -83,6 +84,10 @@ func (a *FirstTokenAttempt) MarkFirstToken() bool {
 }
 
 func (a *FirstTokenAttempt) Cancel(cause error) bool {
+	if a.parent.Err() != nil {
+		a.cancelFromParent()
+		return false
+	}
 	if cause == nil {
 		cause = context.Canceled
 	}
@@ -131,6 +136,10 @@ func (a *FirstTokenAttempt) Close() {
 }
 
 func (a *FirstTokenAttempt) timeout() {
+	if a.parent.Err() != nil {
+		a.cancelFromParent()
+		return
+	}
 	if !a.transition(FirstTokenTimedOut, ErrFirstTokenTimeout) {
 		return
 	}
