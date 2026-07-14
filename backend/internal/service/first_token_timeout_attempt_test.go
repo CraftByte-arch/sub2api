@@ -158,3 +158,87 @@ func TestFirstTokenAttemptCloseReleasesCommittedContext(t *testing.T) {
 	require.Equal(t, FirstTokenCommitted, a.State())
 	require.ErrorIs(t, context.Cause(a.Context()), context.Canceled)
 }
+
+func TestFirstTokenAttemptLosingTransitionWaitsForWinningCause(t *testing.T) {
+	a := NewFirstTokenAttempt(context.Background(), time.Hour)
+	originalCancel := a.cancel
+	cancelEntered := make(chan struct{})
+	releaseCancel := make(chan struct{})
+	a.cancel = func(cause error) {
+		close(cancelEntered)
+		<-releaseCancel
+		originalCancel(cause)
+	}
+	loserWaiting := make(chan struct{})
+	a.beforeTerminalCauseWait = func() { close(loserWaiting) }
+	customCause := errors.New("custom cancellation")
+	cancelResult := make(chan bool, 1)
+	markResult := make(chan bool, 1)
+
+	go func() { cancelResult <- a.Cancel(customCause) }()
+	<-cancelEntered
+	go func() { markResult <- a.MarkFirstToken() }()
+	<-loserWaiting
+
+	select {
+	case <-markResult:
+		t.Fatal("losing transition returned before the winning cause was published")
+	default:
+	}
+	close(releaseCancel)
+	require.True(t, <-cancelResult)
+	require.False(t, <-markResult)
+	require.ErrorIs(t, a.Cause(), customCause)
+
+	a.cancel = originalCancel
+	a.beforeTerminalCauseWait = nil
+	a.Close()
+}
+
+func TestFirstTokenAttemptCloseWaitsForWinningCausePublication(t *testing.T) {
+	a := NewFirstTokenAttempt(context.Background(), time.Hour)
+	originalCancel := a.cancel
+	cancelEntered := make(chan struct{})
+	prematureCancel := make(chan struct{})
+	releaseCancel := make(chan struct{})
+	var cancelCalls atomic.Int32
+	a.cancel = func(cause error) {
+		if cancelCalls.Add(1) == 1 {
+			close(cancelEntered)
+		} else {
+			close(prematureCancel)
+		}
+		<-releaseCancel
+		originalCancel(cause)
+	}
+	closeWaiting := make(chan struct{})
+	a.beforeTerminalCauseWait = func() { close(closeWaiting) }
+	customCause := errors.New("custom cancellation")
+	cancelDone := make(chan bool, 1)
+	closeDone := make(chan struct{})
+
+	go func() { cancelDone <- a.Cancel(customCause) }()
+	<-cancelEntered
+	go func() {
+		a.Close()
+		close(closeDone)
+	}()
+
+	premature := false
+	select {
+	case <-prematureCancel:
+		premature = true
+	case <-closeWaiting:
+	}
+	close(releaseCancel)
+	require.True(t, <-cancelDone)
+	<-closeDone
+	if premature {
+		t.Fatal("Close canceled the context before the winning cause was published")
+	}
+	require.ErrorIs(t, a.Cause(), customCause)
+
+	a.cancel = originalCancel
+	a.beforeTerminalCauseWait = nil
+	a.Close()
+}

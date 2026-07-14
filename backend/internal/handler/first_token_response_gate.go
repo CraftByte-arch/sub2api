@@ -265,10 +265,7 @@ func (w *FirstTokenResponseGate) stopAttemptCallback() {
 }
 
 func (w *FirstTokenResponseGate) attemptCause() error {
-	if w.attempt.State() == service.FirstTokenTimedOut {
-		return service.ErrFirstTokenTimeout
-	}
-	if cause := context.Cause(w.attempt.Context()); cause != nil {
+	if cause := w.attempt.Cause(); cause != nil {
 		return cause
 	}
 	return context.Canceled

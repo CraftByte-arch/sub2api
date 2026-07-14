@@ -21,24 +21,29 @@ var ErrFirstTokenTimeout = errors.New("first token timeout")
 var ErrFirstTokenPreludeTooLarge = errors.New("first token prelude too large")
 
 type FirstTokenAttempt struct {
-	ctx       context.Context
-	cancel    context.CancelCauseFunc
-	parent    context.Context
-	state     atomic.Uint32
-	startedAt time.Time
+	ctx           context.Context
+	cancel        context.CancelCauseFunc
+	parent        context.Context
+	state         atomic.Uint32
+	startedAt     time.Time
+	causeReady    chan struct{}
+	terminalCause error
 
 	resourcesMu sync.Mutex
 	timer       *time.Timer
 	stopParent  func() bool
+
+	beforeTerminalCauseWait func()
 }
 
 func NewFirstTokenAttempt(parent context.Context, timeout time.Duration) *FirstTokenAttempt {
 	ctx, cancel := context.WithCancelCause(parent)
 	a := &FirstTokenAttempt{
-		ctx:       ctx,
-		cancel:    cancel,
-		parent:    parent,
-		startedAt: time.Now(),
+		ctx:        ctx,
+		cancel:     cancel,
+		parent:     parent,
+		startedAt:  time.Now(),
+		causeReady: make(chan struct{}),
 	}
 
 	if parent.Err() != nil {
@@ -78,16 +83,35 @@ func (a *FirstTokenAttempt) State() FirstTokenAttemptState {
 	return FirstTokenAttemptState(a.state.Load())
 }
 
+func (a *FirstTokenAttempt) Cause() error {
+	state := a.State()
+	if state == FirstTokenPending {
+		if cause := context.Cause(a.ctx); cause != nil {
+			return cause
+		}
+		if a.State() == FirstTokenPending {
+			return nil
+		}
+	}
+	<-a.causeReady
+	return a.terminalCause
+}
+
 func (a *FirstTokenAttempt) Elapsed() time.Duration {
 	return time.Since(a.startedAt)
 }
 
 func (a *FirstTokenAttempt) Close() {
-	if a.State() == FirstTokenPending {
+	state := a.State()
+	if state == FirstTokenPending {
 		a.Cancel(context.Canceled)
+	} else {
+		a.waitForTerminalCause()
 	}
 	a.stopResources()
-	a.cancel(context.Canceled)
+	if a.State() == FirstTokenCommitted {
+		a.cancel(context.Canceled)
+	}
 }
 
 func (a *FirstTokenAttempt) timeout() {
@@ -104,13 +128,23 @@ func (a *FirstTokenAttempt) cancelFromParent() {
 
 func (a *FirstTokenAttempt) transition(state FirstTokenAttemptState, cause error) bool {
 	if !a.state.CompareAndSwap(uint32(FirstTokenPending), uint32(state)) {
+		a.waitForTerminalCause()
 		return false
 	}
 	if state != FirstTokenCommitted {
 		a.cancel(cause)
 	}
+	a.terminalCause = cause
+	close(a.causeReady)
 	a.stopResources()
 	return true
+}
+
+func (a *FirstTokenAttempt) waitForTerminalCause() {
+	if a.beforeTerminalCauseWait != nil {
+		a.beforeTerminalCauseWait()
+	}
+	<-a.causeReady
 }
 
 func (a *FirstTokenAttempt) stopResources() {

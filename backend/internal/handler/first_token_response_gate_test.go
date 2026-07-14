@@ -231,13 +231,40 @@ func TestFirstTokenResponseGateCommitWriteFailureRemainsCommitted(t *testing.T) 
 
 	err = gate.Commit()
 	require.ErrorIs(t, err, raw.writeErr)
+	require.Empty(t, raw.body.String())
 	require.Equal(t, service.FirstTokenCommitted, attempt.State())
 	require.True(t, base.Written())
+	require.Zero(t, base.Size())
 	gate.Rollback()
 	require.Equal(t, service.FirstTokenCommitted, attempt.State())
+	require.False(t, attempt.Cancel(service.ErrFirstTokenPreludeTooLarge))
 
 	_, err = gate.WriteString("tail")
 	require.ErrorIs(t, err, raw.writeErr)
+}
+
+func TestFirstTokenResponseGatePartialCommitWriteFailureRemainsCommitted(t *testing.T) {
+	base, raw := newFirstTokenResponseGateTestWriter()
+	raw.writeErr = errors.New("client disconnected mid-write")
+	raw.writeN = 5
+	attempt := service.NewFirstTokenAttempt(context.Background(), time.Hour)
+	t.Cleanup(attempt.Close)
+	gate := NewFirstTokenResponseGate(base, attempt)
+	_, err := gate.WriteString("semantic token")
+	require.NoError(t, err)
+
+	err = gate.Commit()
+	require.ErrorIs(t, err, raw.writeErr)
+	require.Equal(t, "seman", raw.body.String())
+	require.Equal(t, service.FirstTokenCommitted, attempt.State())
+	require.True(t, base.Written())
+	require.Equal(t, 5, base.Size())
+
+	gate.Rollback()
+	require.Equal(t, "seman", raw.body.String())
+	require.Equal(t, service.FirstTokenCommitted, attempt.State())
+	require.False(t, attempt.Cancel(service.ErrFirstTokenPreludeTooLarge))
+	require.ErrorIs(t, gate.Commit(), raw.writeErr)
 }
 
 func TestFirstTokenResponseGatePendingOptionalInterfacesCannotBypassGate(t *testing.T) {
@@ -283,6 +310,7 @@ type firstTokenResponseGateTestWriter struct {
 	status      int
 	calls       []string
 	writeErr    error
+	writeN      int
 	hijackErr   error
 	pushErr     error
 	hijacks     int
@@ -324,7 +352,11 @@ func (w *firstTokenResponseGateTestWriter) Write(p []byte) (int, error) {
 	}
 	w.calls = append(w.calls, "write:"+string(p))
 	if w.writeErr != nil {
-		return 0, w.writeErr
+		n := min(w.writeN, len(p))
+		if n > 0 {
+			_, _ = w.body.Write(p[:n])
+		}
+		return n, w.writeErr
 	}
 	return w.body.Write(p)
 }
