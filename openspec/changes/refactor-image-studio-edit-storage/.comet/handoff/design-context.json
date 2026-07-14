@@ -1,0 +1,14 @@
+{
+  "change": "refactor-image-studio-edit-storage",
+  "phase": "design",
+  "mode": "compact",
+  "canonical_spec": "openspec",
+  "generated_by": "comet-handoff.sh",
+  "context_hash": "e43461c8cf046ac0d81d948b1bfb998c6facba31552de1125a73a9517e63716f",
+  "files": [
+    { "path": "openspec/changes/refactor-image-studio-edit-storage/proposal.md", "sha256": "3782671d8984779cdd6408bb97b18a73aabe2034ab6d54154a93076fdf4fecb9" },
+    { "path": "openspec/changes/refactor-image-studio-edit-storage/design.md", "sha256": "798cbde6ed9d6721012537fa05d5da7ac8d4aebd6c37e5be22dc975d85d162b4" },
+    { "path": "openspec/changes/refactor-image-studio-edit-storage/tasks.md", "sha256": "4c60df13caf216c1e671bdb7941a2573a42d8ae069497bcd2cad25e644e9f55a" },
+    { "path": "openspec/changes/refactor-image-studio-edit-storage/specs/image-studio-edit-jobs/spec.md", "sha256": "f5f6be5df56b3842782262c42a57a36283ea7da76c8ad886ce787ff24c51b9bc" }
+  ]
+}
