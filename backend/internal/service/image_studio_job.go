@@ -38,6 +38,10 @@ type ImageStudioJob struct {
 	Status                 string
 	RequestPayload         json.RawMessage
 	SettlementPayload      json.RawMessage
+	InputImagePaths        []string
+	InputMaskPath          *string
+	InputExpiresAt         *time.Time
+	InputDeletedAt         *time.Time
 	Prompt                 string
 	Model                  string
 	Size                   string
@@ -90,6 +94,10 @@ type ImageStudioJobCreateInput struct {
 	EstimatedCostUSD float64
 	BillingPriority  string
 	RequestPayload   json.RawMessage
+	InputImagePaths  []string
+	InputMaskPath    *string
+	InputExpiresAt   *time.Time
+	InputDeletedAt   *time.Time
 }
 
 type ImageStudioJobRepository interface {

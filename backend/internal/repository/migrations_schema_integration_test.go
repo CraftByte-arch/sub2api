@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/migrations"
 	"github.com/stretchr/testify/require"
 )
 
@@ -33,6 +34,14 @@ func TestMigrationsRunner_IsIdempotent_AndSchemaIsUpToDate(t *testing.T) {
 	requireColumn(t, tx, "accounts", "overload_until", "timestamp with time zone", 0, true)
 	requireColumn(t, tx, "accounts", "session_window_status", "character varying", 20, true)
 	requireIndex(t, tx, "accounts", "idx_accounts_autopause_expiry_due")
+
+	// image_studio_jobs: server-managed edit input metadata (migration 175)
+	requireColumn(t, tx, "image_studio_jobs", "input_image_paths", "jsonb", 0, false)
+	requireColumnDefaultContains(t, tx, "image_studio_jobs", "input_image_paths", "'[]'::jsonb")
+	requireColumn(t, tx, "image_studio_jobs", "input_mask_path", "text", 0, true)
+	requireColumn(t, tx, "image_studio_jobs", "input_expires_at", "timestamp with time zone", 0, true)
+	requireColumn(t, tx, "image_studio_jobs", "input_deleted_at", "timestamp with time zone", 0, true)
+	requireIndex(t, tx, "image_studio_jobs", "idx_image_studio_jobs_input_cleanup")
 
 	// api_keys: key length should be 128
 	requireColumn(t, tx, "api_keys", "key", "character varying", 128, false)
@@ -158,6 +167,48 @@ func TestMigrationsRunner_AuthIdentityAndPaymentSchemaStayAligned(t *testing.T) 
 	requireIndex(t, tx, "payment_orders", "paymentorder_out_trade_no")
 	requirePartialUniqueIndexDefinition(t, tx, "payment_orders", "paymentorder_out_trade_no", "out_trade_no", "WHERE")
 	requireIndexAbsent(t, tx, "payment_orders", "paymentorder_out_trade_no_unique")
+}
+
+func TestImageStudioMigrationRedactsTerminalEditPayloadsAndKeepsActiveLegacyPayloads(t *testing.T) {
+	tx := testTx(t)
+	ctx := context.Background()
+
+	insert := func(status string) int64 {
+		t.Helper()
+		var id int64
+		err := tx.QueryRowContext(ctx, `
+INSERT INTO image_studio_jobs (user_id, api_key_id, mode, status, request_payload)
+VALUES (900001, 900001, 'edit', $1, '{"model":"gpt-image-2","images":[{"image_url":"data:image/png;base64,aW1hZ2U="}],"mask":{"image_url":"data:image/png;base64,bWFzaw=="}}'::jsonb)
+RETURNING id
+`, status).Scan(&id)
+		require.NoError(t, err)
+		return id
+	}
+
+	succeededID := insert("succeeded")
+	failedID := insert("failed")
+	queuedID := insert("queued")
+
+	migrationSQL, err := migrations.FS.ReadFile("175_image_studio_edit_input_storage.sql")
+	require.NoError(t, err)
+	_, err = tx.ExecContext(ctx, string(migrationSQL))
+	require.NoError(t, err)
+
+	assertBinaryFields := func(id int64, wantPresent bool) {
+		t.Helper()
+		var present bool
+		err := tx.QueryRowContext(ctx, `
+SELECT request_payload ? 'images' OR request_payload ? 'mask'
+FROM image_studio_jobs
+WHERE id = $1
+`, id).Scan(&present)
+		require.NoError(t, err)
+		require.Equal(t, wantPresent, present)
+	}
+
+	assertBinaryFields(succeededID, false)
+	assertBinaryFields(failedID, false)
+	assertBinaryFields(queuedID, true)
 }
 
 func requireIndex(t *testing.T, tx *sql.Tx, table, index string) {

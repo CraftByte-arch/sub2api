@@ -18,6 +18,7 @@ type imageStudioJobRepository struct {
 
 const imageStudioJobColumns = `
 	id, user_id, api_key_id, mode, status, request_payload, settlement_payload, prompt, model, size, output_format,
+	input_image_paths, input_mask_path, input_expires_at, input_deleted_at,
 	estimated_cost_usd, charged_amount_usd, billing_priority, attempt_count, max_attempts,
 	next_attempt_at, hold_balance_amount_usd, hold_usage_card_amount_usd, hold_usage_card_id,
 	original_path, thumbnail_path, mime_type, file_size_bytes, width, height, error_code,
@@ -45,13 +46,18 @@ func (r *imageStudioJobRepository) Create(ctx context.Context, input service.Ima
 	if r == nil || r.db == nil {
 		return nil, errors.New("image studio job repository db is nil")
 	}
+	inputImagePaths, err := encodeImageStudioInputPaths(input.InputImagePaths)
+	if err != nil {
+		return nil, err
+	}
 	row := r.db.QueryRowContext(ctx, `
 		INSERT INTO image_studio_jobs (
 			user_id, api_key_id, mode, status, request_payload, prompt, model, size, output_format,
-			estimated_cost_usd, billing_priority, attempt_count, max_attempts, queued_at, created_at, updated_at
+			estimated_cost_usd, billing_priority, input_image_paths, input_mask_path, input_expires_at,
+			input_deleted_at, attempt_count, max_attempts, queued_at, created_at, updated_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 0, 3, NOW(), NOW(), NOW())
-		RETURNING `+imageStudioJobColumns, input.UserID, input.APIKeyID, input.Mode, service.ImageStudioJobStatusQueued, []byte(input.RequestPayload), input.Prompt, input.Model, input.Size, input.OutputFormat, input.EstimatedCostUSD, input.BillingPriority)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 0, 3, NOW(), NOW(), NOW())
+		RETURNING `+imageStudioJobColumns, input.UserID, input.APIKeyID, input.Mode, service.ImageStudioJobStatusQueued, []byte(input.RequestPayload), input.Prompt, input.Model, input.Size, input.OutputFormat, input.EstimatedCostUSD, input.BillingPriority, inputImagePaths, nullableImageStudioString(input.InputMaskPath), nullableTime(input.InputExpiresAt), nullableTime(input.InputDeletedAt))
 	return scanImageStudioJob(row)
 }
 
@@ -392,6 +398,10 @@ func scanImageStudioJob(scanner imageStudioJobScanner) (*service.ImageStudioJob,
 		job             service.ImageStudioJob
 		payload         []byte
 		settlement      []byte
+		inputImagePaths []byte
+		inputMaskPath   sql.NullString
+		inputExpiresAt  sql.NullTime
+		inputDeletedAt  sql.NullTime
 		holdUsageCardID sql.NullInt64
 		startedAt       sql.NullTime
 		heartbeatAt     sql.NullTime
@@ -411,6 +421,10 @@ func scanImageStudioJob(scanner imageStudioJobScanner) (*service.ImageStudioJob,
 		&job.Model,
 		&job.Size,
 		&job.OutputFormat,
+		&inputImagePaths,
+		&inputMaskPath,
+		&inputExpiresAt,
+		&inputDeletedAt,
 		&job.EstimatedCostUSD,
 		&job.ChargedAmountUSD,
 		&job.BillingPriority,
@@ -442,6 +456,22 @@ func scanImageStudioJob(scanner imageStudioJobScanner) (*service.ImageStudioJob,
 	}
 	job.RequestPayload = json.RawMessage(payload)
 	job.SettlementPayload = json.RawMessage(settlement)
+	job.InputImagePaths, err = decodeImageStudioInputPaths(inputImagePaths)
+	if err != nil {
+		return nil, err
+	}
+	if inputMaskPath.Valid {
+		value := inputMaskPath.String
+		job.InputMaskPath = &value
+	}
+	if inputExpiresAt.Valid {
+		value := inputExpiresAt.Time
+		job.InputExpiresAt = &value
+	}
+	if inputDeletedAt.Valid {
+		value := inputDeletedAt.Time
+		job.InputDeletedAt = &value
+	}
 	if holdUsageCardID.Valid {
 		job.HoldUsageCardID = &holdUsageCardID.Int64
 	}
@@ -474,7 +504,46 @@ func scanImageStudioJob(scanner imageStudioJobScanner) (*service.ImageStudioJob,
 	return &job, nil
 }
 
+func encodeImageStudioInputPaths(paths []string) ([]byte, error) {
+	if len(paths) > 4 {
+		return nil, errors.New("image studio input paths must contain at most four items")
+	}
+	if paths == nil {
+		paths = []string{}
+	}
+	return json.Marshal(paths)
+}
+
+func decodeImageStudioInputPaths(raw []byte) ([]string, error) {
+	var values []any
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, errors.New("image studio input paths must be a JSON string array")
+	}
+	if err := json.Unmarshal(raw, &values); err != nil {
+		return nil, errors.New("image studio input paths must be a JSON string array")
+	}
+	if len(values) > 4 {
+		return nil, errors.New("image studio input paths must contain at most four items")
+	}
+	paths := make([]string, len(values))
+	for i, value := range values {
+		path, ok := value.(string)
+		if !ok {
+			return nil, errors.New("image studio input paths must be a JSON string array")
+		}
+		paths[i] = path
+	}
+	return paths, nil
+}
+
 func nullableTime(value *time.Time) any {
+	if value == nil {
+		return nil
+	}
+	return *value
+}
+
+func nullableImageStudioString(value *string) any {
 	if value == nil {
 		return nil
 	}

@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"database/sql/driver"
 	"encoding/json"
 	"regexp"
 	"strings"
@@ -32,6 +33,10 @@ func TestImageStudioJobRepositoryGetByIDForUserUsesStableColumnOrder(t *testing.
 			"gpt-image-2",
 			"1024x1024",
 			"jpeg",
+			json.RawMessage(`["inputs/upload-1/image-01.webp","inputs/upload-1/image-02.webp"]`),
+			"inputs/upload-1/mask.png",
+			now.Add(24*time.Hour),
+			nil,
 			1.0,
 			1.0,
 			"",
@@ -68,9 +73,106 @@ func TestImageStudioJobRepositoryGetByIDForUserUsesStableColumnOrder(t *testing.
 	require.Equal(t, "/app/data/image-studio/39/original.png", job.OriginalPath)
 	require.Equal(t, "/app/data/image-studio/39/thumbnail.jpg", job.ThumbnailPath)
 	require.JSONEq(t, `{"account_id":77}`, string(job.SettlementPayload))
+	require.Equal(t, []string{"inputs/upload-1/image-01.webp", "inputs/upload-1/image-02.webp"}, job.InputImagePaths)
+	require.NotNil(t, job.InputMaskPath)
+	require.Equal(t, "inputs/upload-1/mask.png", *job.InputMaskPath)
+	require.NotNil(t, job.InputExpiresAt)
+	require.Nil(t, job.InputDeletedAt)
 	require.Equal(t, 0, job.AttemptCount)
 	require.Equal(t, 3, job.MaxAttempts)
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestImageStudioJobRepositoryCreateWritesOrderedInputMetadata(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	now := time.Now()
+	maskPath := "inputs/upload-1/mask.png"
+	expiresAt := now.Add(24 * time.Hour)
+	deletedAt := now.Add(time.Hour)
+	paths := []string{"inputs/upload-1/image-01.webp", "inputs/upload-1/image-02.webp"}
+
+	mock.ExpectQuery("INSERT INTO image_studio_jobs[\\s\\S]*input_image_paths, input_mask_path, input_expires_at, input_deleted_at[\\s\\S]*RETURNING").
+		WithArgs(
+			int64(7), int64(9), service.ImageStudioJobModeEdit, service.ImageStudioJobStatusQueued,
+			[]byte(`{"model":"gpt-image-2"}`), "prompt", "gpt-image-2", "1024x1024", "png", 0.25, "balance_first",
+			[]byte(`["inputs/upload-1/image-01.webp","inputs/upload-1/image-02.webp"]`), maskPath, expiresAt, deletedAt,
+		).
+		WillReturnRows(sqlmock.NewRows(imageStudioJobColumnNames()).AddRow(imageStudioJobRowValues(now, paths, &maskPath, &expiresAt, &deletedAt)...))
+
+	repo := NewImageStudioJobRepository(nil, db)
+	job, err := repo.Create(context.Background(), service.ImageStudioJobCreateInput{
+		UserID: 7, APIKeyID: 9, Mode: service.ImageStudioJobModeEdit, Prompt: "prompt", Model: "gpt-image-2",
+		Size: "1024x1024", OutputFormat: "png", EstimatedCostUSD: 0.25, BillingPriority: "balance_first",
+		RequestPayload: json.RawMessage(`{"model":"gpt-image-2"}`), InputImagePaths: paths,
+		InputMaskPath: &maskPath, InputExpiresAt: &expiresAt, InputDeletedAt: &deletedAt,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, paths, job.InputImagePaths)
+	require.NotNil(t, job.InputDeletedAt)
+	require.Equal(t, deletedAt, *job.InputDeletedAt)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestImageStudioJobRepositoryCreateRejectsMoreThanFourInputPaths(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	repo := NewImageStudioJobRepository(nil, db)
+	_, err = repo.Create(context.Background(), service.ImageStudioJobCreateInput{
+		InputImagePaths: []string{"1", "2", "3", "4", "5"},
+	})
+
+	require.ErrorContains(t, err, "at most four")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestScanImageStudioJobRejectsInvalidInputImagePathArrays(t *testing.T) {
+	tests := []struct {
+		name  string
+		paths json.RawMessage
+	}{
+		{name: "non-string item", paths: json.RawMessage(`["inputs/1.webp",42]`)},
+		{name: "too many items", paths: json.RawMessage(`["1","2","3","4","5"]`)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+			require.NoError(t, err)
+			defer func() { _ = db.Close() }()
+
+			now := time.Now()
+			mock.ExpectQuery(regexp.QuoteMeta("SELECT " + imageStudioJobColumns + " FROM image_studio_jobs WHERE id = $1")).
+				WithArgs(int64(39)).
+				WillReturnRows(sqlmock.NewRows(imageStudioJobColumnNames()).AddRow(imageStudioJobRowValues(now, tt.paths, nil, nil, nil)...))
+
+			repo := NewImageStudioJobRepository(nil, db)
+			_, err = repo.GetByID(context.Background(), 39)
+			require.Error(t, err)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
+func imageStudioJobRowValues(now time.Time, paths any, maskPath *string, inputExpiresAt, inputDeletedAt *time.Time) []driver.Value {
+	if stringPaths, ok := paths.([]string); ok {
+		encoded, err := json.Marshal(stringPaths)
+		if err != nil {
+			panic(err)
+		}
+		paths = encoded
+	}
+	return []driver.Value{
+		int64(39), int64(7), int64(9), service.ImageStudioJobModeEdit, service.ImageStudioJobStatusQueued,
+		json.RawMessage(`{"model":"gpt-image-2"}`), json.RawMessage(`{}`), "prompt", "gpt-image-2", "1024x1024", "png",
+		paths, maskPath, inputExpiresAt, inputDeletedAt, 0.25, 0.0, "balance_first", 0, 3, nil,
+		0.0, 0.0, nil, "", "", "", int64(0), 0, 0, "", "", now, nil, nil, nil, nil, nil, now, now,
+	}
 }
 
 func TestImageStudioJobRepositoryDeleteByIDForUser(t *testing.T) {

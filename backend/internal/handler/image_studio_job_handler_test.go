@@ -44,6 +44,28 @@ func TestBuildImageStudioJobPayload_UsesImagesGenerationFormat(t *testing.T) {
 	require.False(t, gjson.GetBytes(payload, "tool_choice").Exists())
 }
 
+func TestImageStudioJobResponseDoesNotExposeInputPaths(t *testing.T) {
+	maskPath := "inputs/private-upload/mask.png"
+	expiresAt := time.Now().Add(24 * time.Hour)
+	deletedAt := time.Now()
+	handler := &ImageStudioJobHandler{}
+
+	raw, err := json.Marshal(handler.toJobResponse(&service.ImageStudioJob{
+		ID:              39,
+		InputImagePaths: []string{"inputs/private-upload/image-01.webp"},
+		InputMaskPath:   &maskPath,
+		InputExpiresAt:  &expiresAt,
+		InputDeletedAt:  &deletedAt,
+	}))
+
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), "input_image_paths")
+	require.NotContains(t, string(raw), "input_mask_path")
+	require.NotContains(t, string(raw), "input_expires_at")
+	require.NotContains(t, string(raw), "input_deleted_at")
+	require.NotContains(t, string(raw), "private-upload")
+}
+
 func TestBuildImageStudioJobPayload_UsesImagesEditFormat(t *testing.T) {
 	payload, err := buildImageStudioJobPayload(imageStudioCreateJobRequest{
 		Prompt:        "replace the sky",

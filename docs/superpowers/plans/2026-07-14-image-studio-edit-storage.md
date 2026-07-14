@@ -39,7 +39,7 @@ base-ref: e15265205a50addfeba66f935b7e256ea2a51f20
 - Modify: `backend/internal/repository/image_studio_job_repo_test.go`
 - Modify: Image Studio repository stubs under `backend/internal/service/*_test.go` and `backend/internal/handler/image_studio_job_handler_test.go`
 
-- [ ] **Step 1: 写 RED 测试**
+- [x] **Step 1: 写 RED 测试**
 
 增加测试验证四个新列、`input_image_paths` 顺序、终态 edit payload 删除 `images`/`mask`、活动遗留 payload 保留，以及响应 DTO 不暴露路径。
 
@@ -52,7 +52,7 @@ go test ./migrations ./internal/repository ./internal/handler -run 'ImageStudio.
 
 预期：FAIL，列和模型字段尚不存在。
 
-- [ ] **Step 2: 实现迁移**
+- [x] **Step 2: 实现迁移**
 
 迁移增加：
 
@@ -65,11 +65,11 @@ input_deleted_at TIMESTAMPTZ NULL
 
 对 `mode='edit'` 且 `status IN ('succeeded','failed')` 的 row 执行 `request_payload - 'images' - 'mask'`，并创建 `(input_expires_at, input_deleted_at, status, id)` 清理索引。
 
-- [ ] **Step 3: 扩展模型和稳定扫描**
+- [x] **Step 3: 扩展模型和稳定扫描**
 
 给 `ImageStudioJob`/`ImageStudioJobCreateInput` 增加 `InputImagePaths []string`、`InputMaskPath *string`、`InputExpiresAt *time.Time`、`InputDeletedAt *time.Time`。仓库扫描 JSONB 后拒绝非字符串数组和超过四项，Create 写入路径和 TTL。
 
-- [ ] **Step 4: GREEN 并提交**
+- [x] **Step 4: GREEN 并提交**
 
 ```bash
 cd backend
