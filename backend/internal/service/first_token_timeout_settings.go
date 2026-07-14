@@ -123,6 +123,9 @@ func (p *FirstTokenTimeoutPolicy) Reload(ctx context.Context) error {
 
 func (p *FirstTokenTimeoutPolicy) Start(ctx context.Context) {
 	p.startOnce.Do(func() {
+		if err := p.Reload(ctx); err != nil {
+			logger.LegacyPrintf("service.first_token_timeout", "failed to load first token timeout settings before worker start; keeping current snapshot: %v", err)
+		}
 		go p.run(ctx)
 	})
 }

@@ -198,21 +198,21 @@ func TestFirstTokenTimeoutPolicyInvalidationReloadsAnotherInstance(t *testing.T)
 	}, time.Second, 10*time.Millisecond)
 }
 
-func TestFirstTokenTimeoutPolicyStartSubscribesBeforeInitialReload(t *testing.T) {
+func TestFirstTokenTimeoutPolicyWorkerSubscribesBeforeReload(t *testing.T) {
 	base := &firstTokenTimeoutMemorySettingRepo{values: map[string]string{
 		SettingKeyFirstTokenTimeoutSettings: `{"enabled":true,"timeout_seconds":11}`,
 	}}
 	getEntered := make(chan struct{})
 	releaseGet := make(chan struct{})
-	var getOnce sync.Once
+	var getCalls atomic.Int32
 	repo := &firstTokenTimeoutBlockingSettingRepo{
 		firstTokenTimeoutMemorySettingRepo: base,
 		getValue: func(ctx context.Context, key string) (string, error) {
 			value, err := base.GetValue(ctx, key)
-			getOnce.Do(func() {
+			if getCalls.Add(1) == 2 {
 				close(getEntered)
 				<-releaseGet
-			})
+			}
 			return value, err
 		},
 	}
@@ -227,14 +227,35 @@ func TestFirstTokenTimeoutPolicyStartSubscribesBeforeInitialReload(t *testing.T)
 			close(releaseGet)
 		}
 	})
-	go policy.Start(ctx)
+	policy.Start(ctx)
 	<-getEntered
 
 	select {
 	case <-notifier.subscribed:
 	default:
-		t.Fatal("policy started its initial reload before subscribing")
+		t.Fatal("policy worker reloaded before subscribing")
 	}
+}
+
+func TestFirstTokenTimeoutPolicyStartLoadsSnapshotBeforeBlockedSubscribe(t *testing.T) {
+	base := &firstTokenTimeoutMemorySettingRepo{values: map[string]string{
+		SettingKeyFirstTokenTimeoutSettings: `{"enabled":true,"timeout_seconds":17}`,
+	}}
+	releaseSubscribe := make(chan struct{})
+	notifier := newFirstTokenTimeoutLifecycleNotifier(firstTokenTimeoutSubscriptionResult{
+		events: make(chan struct{}),
+		block:  releaseSubscribe,
+	})
+	policy := NewFirstTokenTimeoutPolicy(base, notifier)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	t.Cleanup(func() { close(releaseSubscribe) })
+
+	policy.Start(ctx)
+
+	snapshot := policy.Snapshot()
+	require.True(t, snapshot.Enabled)
+	require.Equal(t, 17*time.Second, snapshot.Timeout)
 }
 
 func TestFirstTokenTimeoutPolicyStartDoesNotLoseInvalidationDuringInitialReload(t *testing.T) {
@@ -320,9 +341,10 @@ func TestFirstTokenTimeoutPolicyRetriesSubscriptionAndReloadsAfterReconnect(t *t
 	policy.Start(ctx)
 	require.Equal(t, 1, waitForFirstTokenTimeoutSubscribeCall(t, notifier))
 	require.Equal(t, 1, waitForFirstTokenTimeoutReload(t, repo))
+	require.Equal(t, 2, waitForFirstTokenTimeoutReload(t, repo))
 	ticker.Tick()
 	require.Equal(t, 2, waitForFirstTokenTimeoutSubscribeCall(t, notifier))
-	require.Equal(t, 2, waitForFirstTokenTimeoutReload(t, repo))
+	require.Equal(t, 3, waitForFirstTokenTimeoutReload(t, repo))
 
 	close(firstEvents)
 	reconnected := false
@@ -362,13 +384,14 @@ func TestFirstTokenTimeoutPolicyPeriodicReloadConvergesWithoutInvalidation(t *te
 	policy.Start(ctx)
 	require.Equal(t, 1, waitForFirstTokenTimeoutSubscribeCall(t, notifier))
 	require.Equal(t, 1, waitForFirstTokenTimeoutReload(t, repo))
+	require.Equal(t, 2, waitForFirstTokenTimeoutReload(t, repo))
 	require.Eventually(t, func() bool {
 		return policy.Snapshot().Timeout == 11*time.Second
 	}, time.Second, time.Millisecond)
 	require.NoError(t, base.Set(context.Background(), SettingKeyFirstTokenTimeoutSettings, `{"enabled":true,"timeout_seconds":22}`))
 
 	ticker.Tick()
-	require.Equal(t, 2, waitForFirstTokenTimeoutReload(t, repo))
+	require.Equal(t, 3, waitForFirstTokenTimeoutReload(t, repo))
 	require.Eventually(t, func() bool {
 		return policy.Snapshot().Timeout == 22*time.Second
 	}, time.Second, time.Millisecond)
@@ -388,6 +411,7 @@ func TestFirstTokenTimeoutPolicyWorkerStopsOnContextCancellation(t *testing.T) {
 	policy.Start(ctx)
 	require.Equal(t, 1, waitForFirstTokenTimeoutSubscribeCall(t, notifier))
 	require.Equal(t, 1, waitForFirstTokenTimeoutReload(t, repo))
+	require.Equal(t, 2, waitForFirstTokenTimeoutReload(t, repo))
 	cancel()
 	waitForFirstTokenTimeoutWorkerExit(t, policy)
 	select {
@@ -395,7 +419,7 @@ func TestFirstTokenTimeoutPolicyWorkerStopsOnContextCancellation(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("policy ticker was not stopped")
 	}
-	require.Equal(t, int32(1), repo.reloadCount())
+	require.Equal(t, int32(2), repo.reloadCount())
 }
 
 func TestFirstTokenTimeoutPolicySnapshotSupportsConcurrentReadsAndUpdates(t *testing.T) {
