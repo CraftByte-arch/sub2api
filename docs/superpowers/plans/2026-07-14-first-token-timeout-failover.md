@@ -225,7 +225,7 @@ git commit -m "feat: gate streaming output until first token"
 - Create: `backend/internal/service/first_token_detector_test.go`
 - Create: `backend/internal/service/testdata/first_token_events/` fixtures
 
-- [ ] **Step 1: 用真实 SSE data 写表驱动失败测试**
+- [x] **Step 1: 用真实 SSE data 写表驱动失败测试**
 
 ```go
 tests := []struct{ protocol FirstTokenProtocol; event, data string; want bool }{
@@ -238,13 +238,13 @@ tests := []struct{ protocol FirstTokenProtocol; event, data string; want bool }{
 }
 ```
 
-- [ ] **Step 2: 运行并确认失败**
+- [x] **Step 2: 运行并确认失败**
 
 Run: `cd backend && go test ./internal/service -run 'FirstTokenDetector' -count=1`
 
 Expected: FAIL，提示 detector 类型或函数未定义。
 
-- [ ] **Step 3: 实现无副作用 detector**
+- [x] **Step 3: 实现无副作用 detector**
 
 ```go
 func IsFirstSemanticToken(protocol FirstTokenProtocol, eventName string, data []byte) bool {
@@ -259,13 +259,13 @@ func IsFirstSemanticToken(protocol FirstTokenProtocol, eventName string, data []
 
 仅检查非空 payload，不 `TrimSpace` 删除真实空白输出；字段缺失、空字符串、role-only、usage、ping、生命周期和终止事件返回 false。
 
-- [ ] **Step 4: 补齐 reasoning/summary/function/tool/input-json/空 delta fixtures 并运行测试**
+- [x] **Step 4: 补齐 reasoning/summary/function/tool/input-json/空 delta fixtures 并运行测试**
 
 Run: `cd backend && go test ./internal/service -run 'FirstTokenDetector' -count=1`
 
 Expected: PASS，三个协议所有正反例通过。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add backend/internal/service/first_token_detector.go backend/internal/service/first_token_detector_test.go backend/internal/service/testdata/first_token_events

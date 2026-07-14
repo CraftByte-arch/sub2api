@@ -13,7 +13,7 @@
 
 ## 3. 协议语义 token 判定与接入
 
-- [ ] 3.1 为 OpenAI Responses、Chat Completions 和 Anthropic Messages 建立纯函数 token detector 测试，覆盖文本、reasoning、工具调用、metadata、role-only、usage、ping 和空 delta
+- [x] 3.1 为 OpenAI Responses、Chat Completions 和 Anthropic Messages 建立纯函数 token detector 测试，覆盖文本、reasoning、工具调用、metadata、role-only、usage、ping 和空 delta
 - [ ] 3.2 接入 OpenAI Responses HTTP 流式路径，在首个语义 token 前门控输出，并保持 compact keepalive、silent refusal 和既有错误分类行为
 - [ ] 3.3 接入 OpenAI Chat Completions HTTP 流式路径，确保 role-only chunk 不提交、内容或工具 delta 正确提交
 - [ ] 3.4 接入 Anthropic Messages HTTP 流式路径，确保 lifecycle/keepalive 不提交、内容或工具输入增量正确提交
