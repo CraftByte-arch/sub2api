@@ -34,7 +34,7 @@ base-ref: e15265205a50addfeba66f935b7e256ea2a51f20
 
 现有大型文件只做追加式接入：gateway handler/failover loop、目标流写出点、Wire provider、admin routes、前端 router/sidebar/locale index。
 
-### Task 1: 设置、策略快照与热更新（OpenSpec 1.1-1.3）
+### Task 1: 设置、策略快照与热更新（OpenSpec 1.1、1.3）
 
 **Files:**
 - Create: `backend/internal/service/first_token_timeout_settings.go`
@@ -46,7 +46,7 @@ base-ref: e15265205a50addfeba66f935b7e256ea2a51f20
 - Modify: `backend/internal/repository/wire.go`
 - Modify: `backend/cmd/server/wire_gen.go`
 
-- [ ] **Step 1: 写设置解析和策略并发读取的失败测试**
+- [x] **Step 1: 写设置解析和策略并发读取的失败测试**
 
 ```go
 func TestParseFirstTokenTimeoutSettingsFallbackAndValidation(t *testing.T) {
@@ -64,13 +64,13 @@ func TestFirstTokenTimeoutPolicyUpdatePublishesImmutableSnapshot(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: 运行测试并确认失败**
+- [x] **Step 2: 运行测试并确认失败**
 
 Run: `cd backend && go test ./internal/service -run 'Test(ParseFirstTokenTimeoutSettings|FirstTokenTimeoutPolicy)' -count=1`
 
 Expected: FAIL，提示 `FirstTokenTimeoutSettings` 或 `FirstTokenTimeoutPolicy` 未定义。
 
-- [ ] **Step 3: 实现设置与原子策略最小接口**
+- [x] **Step 3: 实现设置与原子策略最小接口**
 
 ```go
 const SettingKeyFirstTokenTimeoutSettings = "first_token_timeout_settings"
@@ -100,17 +100,17 @@ func (p *FirstTokenTimeoutPolicy) Start(ctx context.Context)
 
 默认关闭且默认阈值 30 秒；Update 先校验并持久化，再替换本实例快照并发布 invalidation。notifier 使用现有 Redis client 的独立 channel；无 Redis 时 Start 用低频 DB reload ticker 兜底。所有 goroutine 由传入 context 停止。
 
-- [ ] **Step 4: 覆盖跨实例 invalidation 与损坏配置回退**
+- [x] **Step 4: 覆盖跨实例 invalidation 与损坏配置回退**
 
 在 notifier 测试中用项目 Redis 测试替身验证 publish/subscribe；在 service 测试中让 repo 返回损坏 JSON，断言 snapshot 回退关闭而 Update 非法值不覆盖旧 snapshot。
 
-- [ ] **Step 5: 运行目标测试和 race 测试**
+- [x] **Step 5: 运行目标测试和 race 测试**
 
 Run: `cd backend && go test -race ./internal/service ./internal/repository -run 'FirstTokenTimeout' -count=1`
 
 Expected: PASS，无 data race。
 
-- [ ] **Step 6: 生成 Wire 并提交**
+- [x] **Step 6: 生成 Wire 并提交**
 
 Run: `cd backend && go generate ./cmd/server`
 
