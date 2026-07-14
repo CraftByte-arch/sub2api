@@ -1,0 +1,14 @@
+{
+  "change": "configurable-first-token-timeout-failover",
+  "phase": "design",
+  "mode": "compact",
+  "canonical_spec": "openspec",
+  "generated_by": "comet-handoff.sh",
+  "context_hash": "dac2efaeb60dc5e004000fcb9affc2806e5b442086f2adc0dbfbb0a31a7185fe",
+  "files": [
+    { "path": "openspec/changes/configurable-first-token-timeout-failover/proposal.md", "sha256": "9201df56126dd756f8bbc84ae0864992ce5b098f245409d32fe5d582e84c01cb" },
+    { "path": "openspec/changes/configurable-first-token-timeout-failover/design.md", "sha256": "57b6bb652d8b2afca902736351b4a17b508f085fc3d41f665a889995b7a14330" },
+    { "path": "openspec/changes/configurable-first-token-timeout-failover/tasks.md", "sha256": "fd5153b1c0c34cfae26732575dd6b039b3fb447b2fd9f4e46af0b5531ec470c0" },
+    { "path": "openspec/changes/configurable-first-token-timeout-failover/specs/first-token-timeout-failover/spec.md", "sha256": "6b8d4ae25b9a810e41824221899ba002c953d0c5eb25dc4490fa1a87ea3db46c" }
+  ]
+}
