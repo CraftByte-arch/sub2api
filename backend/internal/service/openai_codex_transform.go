@@ -911,6 +911,9 @@ func ensureOpenAIResponsesImageGenerationTool(reqBody map[string]any) bool {
 		return false
 	}
 	modified := stripOpenAIImageGenNamespaceTools(reqBody)
+	if hasOpenAIImageGenerationTool(reqBody) {
+		return modified
+	}
 
 	tool := map[string]any{
 		"type":          "image_generation",

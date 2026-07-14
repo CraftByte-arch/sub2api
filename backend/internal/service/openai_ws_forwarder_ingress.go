@@ -238,7 +238,6 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		if isCodexCLI {
 			codexImageGenerationExplicitToolPolicy = account.CodexImageGenerationExplicitToolPolicy()
 		}
-		codexBridgeEnabled := isCodexCLI && imageGenerationAllowed && codexImageGenerationExplicitToolPolicy != codexImageGenerationExplicitToolPolicyStrip && s.isCodexImageGenerationBridgeEnabled(ctx, account, apiKey)
 		declarationPolicy := ImageGenerationToolDeclarationPolicyStrip
 		if HasPassiveImageGenerationToolDeclaration(openAIResponsesEndpoint, originalModel, normalized) {
 			declarationPolicy = s.imageGenerationToolDeclarationPolicy(ctx)
@@ -263,6 +262,11 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			}
 			normalized = next
 		}
+		codexBridgeEnabled := isCodexCLI &&
+			!isOpenAIResponsesLiteWebSocketPayload(normalized) &&
+			imageGenerationAllowed &&
+			codexImageGenerationExplicitToolPolicy != codexImageGenerationExplicitToolPolicyStrip &&
+			s.isCodexImageGenerationBridgeEnabled(ctx, account, apiKey)
 		if codexBridgeEnabled {
 			payloadMap := make(map[string]any)
 			if err := json.Unmarshal(normalized, &payloadMap); err != nil {

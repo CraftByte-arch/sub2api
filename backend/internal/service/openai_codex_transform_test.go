@@ -617,6 +617,84 @@ func TestEnsureOpenAIResponsesImageGenerationTool_PreservesExistingImageTool(t *
 	require.Equal(t, "webp", tool["output_format"])
 }
 
+func TestEnsureOpenAIResponsesImageGenerationTool_ReplacesImageGenNamespace(t *testing.T) {
+	tests := []struct {
+		name    string
+		reqBody map[string]any
+	}{
+		{
+			name: "top-level tools",
+			reqBody: map[string]any{
+				"model": "gpt-5.5",
+				"tools": []any{
+					map[string]any{
+						"type": "namespace",
+						"name": "image_gen",
+						"tools": []any{
+							map[string]any{"type": "function", "name": "imagegen"},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "responses lite additional_tools",
+			reqBody: map[string]any{
+				"model": "gpt-5.5",
+				"input": []any{
+					map[string]any{
+						"type": "additional_tools",
+						"tools": []any{
+							map[string]any{
+								"type": "namespace",
+								"name": "image_gen",
+								"tools": []any{
+									map[string]any{"type": "function", "name": "imagegen"},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.True(t, hasOpenAIImageGenerationTool(tt.reqBody))
+
+			modified := ensureOpenAIResponsesImageGenerationTool(tt.reqBody)
+
+			require.True(t, modified)
+			tools, _ := tt.reqBody["tools"].([]any)
+			require.NotEmpty(t, tools)
+			hasHostedTool := false
+			for _, rawTool := range tools {
+				tool, ok := rawTool.(map[string]any)
+				require.True(t, ok)
+				require.False(t, isImageGenNamespaceToolMap(tool))
+				if firstNonEmptyString(tool["type"]) == "image_generation" {
+					hasHostedTool = true
+				}
+			}
+			require.True(t, hasHostedTool)
+			if input, ok := tt.reqBody["input"].([]any); ok {
+				for _, rawItem := range input {
+					item, ok := rawItem.(map[string]any)
+					require.True(t, ok)
+					if itemTools, ok := item["tools"].([]any); ok {
+						for _, rawTool := range itemTools {
+							tool, ok := rawTool.(map[string]any)
+							require.True(t, ok)
+							require.False(t, isImageGenNamespaceToolMap(tool))
+						}
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestApplyCodexImageGenerationBridgeInstructions_AppendsBridgeOnce(t *testing.T) {
 	reqBody := map[string]any{
 		"model":        "gpt-5.4",
