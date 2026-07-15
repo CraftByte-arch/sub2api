@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useDebounceFn } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import AppLayout from '@/components/layout/AppLayout.vue'
@@ -43,6 +42,7 @@ const accountPageSize = ref<10 | 20 | 50 | 100>(20)
 let overviewGeneration = 0
 let accountsGeneration = 0
 let syncingRouteQuery = false
+let accountSearchTimer: ReturnType<typeof setTimeout> | undefined
 
 const globalParams = computed(() => ({ range: range.value, protocol: protocol.value, model: model.value.trim() || undefined }))
 const accountID = computed<number | undefined>(() => {
@@ -124,7 +124,14 @@ async function changeGlobalFilters() {
   await refreshAll()
 }
 
-const searchAccounts = useDebounceFn(async () => { accountPage.value = 1; await loadAccounts() }, 300)
+function searchAccounts() {
+  if (accountSearchTimer) clearTimeout(accountSearchTimer)
+  accountSearchTimer = setTimeout(() => {
+    accountSearchTimer = undefined
+    accountPage.value = 1
+    void loadAccounts()
+  }, 300)
+}
 
 function changeAccountSort(sort: string) {
   if (accountSort.value === sort) accountOrder.value = accountOrder.value === 'asc' ? 'desc' : 'asc'
@@ -150,7 +157,11 @@ watch(
 )
 
 onMounted(async () => { readQuery(); await syncQuery(); await Promise.all([loadSettings(), refreshAll()]) })
-onUnmounted(() => { overviewGeneration++; accountsGeneration++ })
+onUnmounted(() => {
+  if (accountSearchTimer) clearTimeout(accountSearchTimer)
+  overviewGeneration++
+  accountsGeneration++
+})
 </script>
 
 <template>

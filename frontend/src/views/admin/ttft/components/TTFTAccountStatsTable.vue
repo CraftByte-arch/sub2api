@@ -25,9 +25,11 @@ function ariaSort(column: string) {
       <span v-if="page" class="text-xs tabular-nums text-gray-500 dark:text-gray-400">{{ page.total }}</span>
     </div>
     <div v-if="loading && !page" class="mt-4 space-y-2" aria-label="Loading account statistics"><div v-for="index in 5" :key="index" class="h-10 animate-pulse bg-gray-100 dark:bg-dark-700" /></div>
-    <div v-else-if="error" class="mt-4 flex items-center gap-3 text-sm text-red-600 dark:text-red-400"><span>{{ error }}</span><button type="button" class="rounded-lg border border-current px-3 py-1.5" @click="emit('retry')">{{ $t('common.refresh') }}</button></div>
-    <div v-else-if="!page?.items.length" class="py-10 text-center text-sm text-gray-500 dark:text-gray-400">{{ $t('admin.ttft.empty') }}</div>
-    <div v-else class="ttft-account-table mt-4 overflow-x-auto">
+    <div v-else-if="error && !page" class="mt-4 flex items-center gap-3 text-sm text-red-600 dark:text-red-400"><span>{{ error }}</span><button data-testid="ttft-accounts-retry" type="button" class="rounded-lg border border-current px-3 py-1.5" @click="emit('retry')">{{ $t('common.refresh') }}</button></div>
+    <template v-else>
+      <div v-if="error" class="mt-4 flex items-center gap-3 text-sm text-red-600 dark:text-red-400"><span>{{ error }}</span><button data-testid="ttft-accounts-retry" type="button" class="rounded-lg border border-current px-3 py-1.5" @click="emit('retry')">{{ $t('common.refresh') }}</button></div>
+      <div v-if="!page?.items.length" class="py-10 text-center text-sm text-gray-500 dark:text-gray-400">{{ $t('admin.ttft.empty') }}</div>
+      <div v-else class="ttft-account-table mt-4 overflow-x-auto">
       <table class="w-full min-w-[900px] border-collapse text-left text-sm">
         <thead class="border-y border-gray-200 text-xs text-gray-500 dark:border-dark-700 dark:text-gray-400">
           <tr>
@@ -46,7 +48,8 @@ function ariaSort(column: string) {
           </tr>
         </tbody>
       </table>
-    </div>
+      </div>
+    </template>
     <div v-if="page && page.pages > 1" class="mt-4 flex items-center justify-end gap-2 text-sm"><button type="button" :disabled="page.page <= 1" class="rounded-lg border border-gray-300 px-3 py-1.5 disabled:opacity-50 dark:border-dark-600" @click="emit('page', page.page - 1)">{{ $t('admin.ttft.accounts.previous') }}</button><span class="tabular-nums text-gray-500 dark:text-gray-400">{{ page.page }} / {{ page.pages }}</span><button type="button" :disabled="page.page >= page.pages" class="rounded-lg border border-gray-300 px-3 py-1.5 disabled:opacity-50 dark:border-dark-600" @click="emit('page', page.page + 1)">{{ $t('admin.ttft.accounts.next') }}</button></div>
   </section>
 </template>

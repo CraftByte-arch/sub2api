@@ -119,6 +119,21 @@ describe('FirstTokenTimeoutView', () => {
     wrapper.unmount()
   })
 
+  it('refreshes each data region once for a local range change', async () => {
+    const wrapper = await mountView()
+    getOverview.mockClear()
+    getAccounts.mockClear()
+    replace.mockClear()
+    const rangeButton = wrapper.findAll('button').find((button) => button.text() === '7d')
+
+    await rangeButton!.trigger('click')
+    await flushPromises()
+
+    expect(replace).toHaveBeenCalledTimes(1)
+    expect(getOverview).toHaveBeenCalledTimes(1)
+    expect(getAccounts).toHaveBeenCalledTimes(1)
+  })
+
   it('saves settings without clearing loaded statistics', async () => {
     updateSettings.mockResolvedValue({ ...settings, effective: { enabled: false, timeout_seconds: 20 } })
     const wrapper = await mountView()
@@ -151,6 +166,16 @@ describe('FirstTokenTimeoutView', () => {
 
     expect(getOverview).not.toHaveBeenCalled()
     expect(getAccounts).toHaveBeenCalledWith(expect.objectContaining({ search: 'alpha' }))
+  })
+
+  it('cancels a pending account search debounce when the page unmounts', async () => {
+    const wrapper = await mountView()
+    getAccounts.mockClear()
+    await wrapper.get('[data-testid="ttft-account-search"]').setValue('alpha')
+    wrapper.unmount()
+    await new Promise((resolve) => setTimeout(resolve, 320))
+
+    expect(getAccounts).not.toHaveBeenCalled()
   })
 
   it('ignores an older overview response that settles after a newer global filter response', async () => {
