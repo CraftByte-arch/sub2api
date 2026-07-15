@@ -435,17 +435,17 @@ git commit -m "feat: map first token timeout failover errors"
 - Create: `backend/internal/repository/first_token_timeout_stats_repo_test.go`
 - Modify: `backend/internal/repository/wire.go`
 
-- [ ] **Step 1: 写 migration 结构与 UPSERT 累加失败测试**
+- [x] **Step 1: 写 migration 结构与 UPSERT 累加失败测试**
 
 测试 migration 包含复合主键、scope/outcome/check、`ttft_affected_count`、两个查询索引；repository 测试把两个增量写入同 key，断言 count/sum 相加、max 取较大值。
 
-- [ ] **Step 2: 运行并确认失败**
+- [x] **Step 2: 运行并确认失败**
 
 Run: `cd backend && go test ./migrations ./internal/repository -run 'FirstTokenTimeoutStats' -count=1`
 
 Expected: FAIL，migration/repository 不存在。
 
-- [ ] **Step 3: 创建 migration 与统计 port**
+- [x] **Step 3: 创建 migration 与统计 port**
 
 按 Design Doc 第 9 节创建表。request 统一 `account_id=0/platform=''`，无 account 外键。定义：
 
@@ -467,15 +467,15 @@ type FirstTokenTimeoutStatsRepository interface {
 }
 ```
 
-- [ ] **Step 4: 实现批量 UPSERT 与查询**
+- [x] **Step 4: 实现批量 UPSERT 与查询**
 
 使用参数化 SQL；计数加法、max `GREATEST`。overview 一次返回 summary、hourly trend、other failure distribution；account query left join accounts，支持白名单排序和分页。rate 在 service/query mapper 计算，零分母返回 0。
 
-- [ ] **Step 5: 覆盖阈值快照、client canceled 排除、TTFT 后其他失败分母和 90 天清理**
+- [x] **Step 5: 覆盖阈值快照、client canceled 排除、TTFT 后其他失败分母和 90 天清理**
 
 构造固定 UTC 小时数据，断言 request recovery denominator 使用 `ttft_affected_count`，account failure denominator 不含 canceled，阈值不同形成两个 key，DeleteBefore 只删 cutoff 前桶。
 
-- [ ] **Step 6: 运行测试并提交**
+- [x] **Step 6: 运行测试并提交**
 
 Run: `cd backend && go test ./migrations ./internal/repository -run 'FirstTokenTimeoutStats' -count=1`
 
