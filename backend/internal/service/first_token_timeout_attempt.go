@@ -53,6 +53,11 @@ func isFirstTokenAttemptContext(ctx context.Context) bool {
 	return ok
 }
 
+func isFirstTokenAttemptCommitted(ctx context.Context) bool {
+	binding, ok := firstTokenAttemptBindingFromContext(ctx)
+	return ok && binding.attempt.State() == FirstTokenCommitted
+}
+
 func firstTokenAttemptBindingFromContext(ctx context.Context) (firstTokenAttemptContextBinding, bool) {
 	if ctx == nil {
 		return firstTokenAttemptContextBinding{}, false
@@ -121,6 +126,7 @@ func (a *FirstTokenAttempt) MarkFirstToken() bool {
 		return false
 	}
 	a.stopTimer()
+	a.stopParentWatcher()
 	return true
 }
 
@@ -197,9 +203,6 @@ func (a *FirstTokenAttempt) cancelFromParent() {
 		a.stopTimer()
 		a.clearParentWatcher()
 		return
-	}
-	if a.State() == FirstTokenCommitted {
-		a.cancel(cause)
 	}
 	a.clearParentWatcher()
 }

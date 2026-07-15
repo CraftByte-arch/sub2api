@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -52,6 +53,22 @@ func TestFirstTokenDetector(t *testing.T) {
 			protocol: ProtocolResponses,
 			data:     `{"type":"response.output_text.delta","delta":" "}`,
 			want:     true,
+		},
+		{
+			name:     "responses refusal delta",
+			protocol: ProtocolResponses,
+			data:     `{"type":"response.refusal.delta","delta":"I cannot help with that"}`,
+			want:     true,
+		},
+		{
+			name:     "responses empty refusal delta",
+			protocol: ProtocolResponses,
+			data:     `{"type":"response.refusal.delta","delta":""}`,
+		},
+		{
+			name:     "responses refusal delta wrong type",
+			protocol: ProtocolResponses,
+			data:     `{"type":"response.refusal.delta","delta":{"text":"no"}}`,
 		},
 		{
 			name:     "responses lifecycle metadata",
@@ -133,6 +150,22 @@ func TestFirstTokenDetector(t *testing.T) {
 			protocol: ProtocolChatCompletions,
 			data:     `{"choices":[{"index":0,"delta":{"content":" "}}]}`,
 			want:     true,
+		},
+		{
+			name:     "chat refusal delta",
+			protocol: ProtocolChatCompletions,
+			data:     `{"choices":[{"index":0,"delta":{"refusal":"I cannot help with that"}}]}`,
+			want:     true,
+		},
+		{
+			name:     "chat empty refusal delta",
+			protocol: ProtocolChatCompletions,
+			data:     `{"choices":[{"index":0,"delta":{"refusal":""}}]}`,
+		},
+		{
+			name:     "chat refusal delta wrong type",
+			protocol: ProtocolChatCompletions,
+			data:     `{"choices":[{"index":0,"delta":{"refusal":true}}]}`,
 		},
 		{
 			name:     "chat later choice has content",
@@ -399,6 +432,38 @@ func TestCommitFirstTokenEventFromContextWithoutBindingIsNoop(t *testing.T) {
 	}
 }
 
+func TestCommitFirstTokenEventFromContextCommitsRefusalDeltas(t *testing.T) {
+	tests := []struct {
+		name     string
+		protocol FirstTokenProtocol
+		data     string
+	}{
+		{name: "responses", protocol: ProtocolResponses, data: `{"type":"response.refusal.delta","delta":"no"}`},
+		{name: "chat", protocol: ProtocolChatCompletions, data: `{"choices":[{"delta":{"refusal":"no"}}]}`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			attempt := NewFirstTokenAttempt(context.Background(), time.Hour)
+			t.Cleanup(attempt.Close)
+			commits := 0
+			ctx := WithFirstTokenAttempt(attempt.Context(), attempt, func() error {
+				commits++
+				return nil
+			})
+
+			err := CommitFirstTokenEventFromContext(ctx, tt.protocol, "", []byte(tt.data))
+
+			if err != nil {
+				t.Fatalf("refusal commit returned error: %v", err)
+			}
+			if commits != 1 {
+				t.Fatalf("refusal commit count = %d, want 1", commits)
+			}
+		})
+	}
+}
+
 func TestCommitFirstTokenSSEFromContextCommitsConvertedSemanticEvent(t *testing.T) {
 	attempt := NewFirstTokenAttempt(context.Background(), time.Hour)
 	t.Cleanup(attempt.Close)
@@ -416,5 +481,28 @@ func TestCommitFirstTokenSSEFromContextCommitsConvertedSemanticEvent(t *testing.
 	}
 	if commits != 1 {
 		t.Fatalf("commit count = %d, want 1", commits)
+	}
+}
+
+func TestCommitFirstTokenSSEFromContextSkipsLargeEventAfterCommit(t *testing.T) {
+	attempt := NewFirstTokenAttempt(context.Background(), time.Hour)
+	t.Cleanup(attempt.Close)
+	if !attempt.MarkFirstToken() {
+		t.Fatal("failed to commit attempt")
+	}
+	commits := 0
+	ctx := WithFirstTokenAttempt(attempt.Context(), attempt, func() error {
+		commits++
+		return nil
+	})
+	sse := []byte("data: " + strings.Repeat("x", (2<<20)+1) + "\n\n")
+
+	err := CommitFirstTokenSSEFromContext(ctx, ProtocolAnthropicMessages, sse)
+
+	if err != nil {
+		t.Fatalf("committed large event returned error: %v", err)
+	}
+	if commits != 0 {
+		t.Fatalf("committed large event invoked committer %d times", commits)
 	}
 }

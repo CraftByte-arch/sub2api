@@ -38,6 +38,9 @@ func IsFirstSemanticToken(protocol FirstTokenProtocol, eventName string, data []
 }
 
 func CommitFirstTokenEventFromContext(ctx context.Context, protocol FirstTokenProtocol, eventName string, data []byte) error {
+	if isFirstTokenAttemptCommitted(ctx) {
+		return nil
+	}
 	if !IsFirstSemanticToken(protocol, eventName, data) {
 		return nil
 	}
@@ -52,6 +55,9 @@ func firstTokenContextFromGin(c *gin.Context) context.Context {
 }
 
 func CommitFirstTokenSSEFromContext(ctx context.Context, protocol FirstTokenProtocol, sse []byte) error {
+	if isFirstTokenAttemptCommitted(ctx) {
+		return nil
+	}
 	scanner := bufio.NewScanner(bytes.NewReader(sse))
 	scanner.Buffer(make([]byte, 0, 4096), 2<<20)
 	eventName := ""
@@ -98,6 +104,7 @@ func isResponsesSemanticDelta(data []byte) bool {
 
 	switch eventType {
 	case "response.output_text.delta",
+		"response.refusal.delta",
 		"response.reasoning_summary_text.delta",
 		"response.reasoning_text.delta",
 		"response.function_call_arguments.delta",
@@ -120,6 +127,7 @@ func isChatCompletionsSemanticDelta(data []byte) bool {
 			continue
 		}
 		if isNonEmptyString(delta.Get("content")) ||
+			isNonEmptyString(delta.Get("refusal")) ||
 			isNonEmptyString(delta.Get("reasoning_content")) ||
 			isNonEmptyString(delta.Get("reasoning")) ||
 			isNonEmptyString(delta.Get("function_call.arguments")) {

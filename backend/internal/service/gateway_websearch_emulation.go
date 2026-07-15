@@ -179,7 +179,7 @@ func (s *GatewayService) handleWebSearchEmulation(
 	}
 
 	if parsed.Stream {
-		return writeWebSearchStreamResponse(c, query, resp, model, startTime)
+		return writeWebSearchStreamResponse(ctx, c, query, resp, model, startTime)
 	}
 	return writeWebSearchNonStreamResponse(c, query, resp, model, startTime)
 }
@@ -210,7 +210,7 @@ func resolveAccountProxyURL(account *Account) string {
 // --- SSE streaming response ---
 
 func writeWebSearchStreamResponse(
-	c *gin.Context, query string, resp *websearch.SearchResponse, model string, startTime time.Time,
+	ctx context.Context, c *gin.Context, query string, resp *websearch.SearchResponse, model string, startTime time.Time,
 ) (*ForwardResult, error) {
 	msgID := webSearchMsgIDPrefix + uuid.New().String()
 	toolUseID := webSearchToolUseIDPrefix + uuid.New().String()[:16]
@@ -222,7 +222,7 @@ func writeWebSearchStreamResponse(
 		func() error { return writeSSEMessageStart(w, msgID, model) },
 		func() error { return writeSSEServerToolUse(w, toolUseID, query, 0) },
 		func() error { return writeSSEToolResult(w, toolUseID, resp.Results, 1) },
-		func() error { return writeSSETextBlock(w, textSummary, 2) },
+		func() error { return writeSSETextBlock(ctx, w, textSummary, 2) },
 		func() error { return writeSSEMessageEnd(w, len(textSummary)/tokenEstimateDivisor) },
 	} {
 		if err := fn(); err != nil {
@@ -283,17 +283,25 @@ func writeSSEToolResult(w http.ResponseWriter, toolUseID string, results []webse
 	return flushSSEJSON(w, "content_block_stop", map[string]any{"type": "content_block_stop", "index": index})
 }
 
-func writeSSETextBlock(w http.ResponseWriter, text string, index int) error {
+func writeSSETextBlock(ctx context.Context, w http.ResponseWriter, text string, index int) error {
 	if err := flushSSEJSON(w, "content_block_start", map[string]any{
 		"type": "content_block_start", "index": index,
 		"content_block": map[string]any{"type": "text", "text": ""},
 	}); err != nil {
 		return err
 	}
-	if err := flushSSEJSON(w, "content_block_delta", map[string]any{
+	delta := map[string]any{
 		"type": "content_block_delta", "index": index,
 		"delta": map[string]string{"type": "text_delta", "text": text},
-	}); err != nil {
+	}
+	payload, err := json.Marshal(delta)
+	if err != nil {
+		return fmt.Errorf("marshal: %w", err)
+	}
+	if err := CommitFirstTokenEventFromContext(ctx, ProtocolAnthropicMessages, "content_block_delta", payload); err != nil {
+		return err
+	}
+	if err := flushSSEJSON(w, "content_block_delta", delta); err != nil {
 		return err
 	}
 	return flushSSEJSON(w, "content_block_stop", map[string]any{"type": "content_block_stop", "index": index})

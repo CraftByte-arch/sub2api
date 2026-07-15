@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"io"
@@ -220,4 +221,48 @@ func TestDetachStreamUpstreamContextPreservesControlledClientCancel(t *testing.T
 		t.Fatal("controlled stream context did not observe client cancellation")
 	}
 	require.ErrorIs(t, context.Cause(upstreamCtx), clientCause)
+}
+
+func TestDetachStreamUpstreamContextKeepsCommittedRequestForUsageTrailer(t *testing.T) {
+	releaseUsage := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"hello\"}}\n\n")
+		w.(http.Flusher).Flush()
+		<-releaseUsage
+		_, _ = io.WriteString(w, "event: message_delta\ndata: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":7}}\n\n")
+		w.(http.Flusher).Flush()
+	}))
+	t.Cleanup(server.Close)
+
+	parent, cancelParent := context.WithCancelCause(context.Background())
+	attempt := NewFirstTokenAttempt(parent, time.Hour)
+	t.Cleanup(attempt.Close)
+	ctx := WithFirstTokenAttempt(attempt.Context(), attempt, func() error {
+		attempt.MarkFirstToken()
+		return nil
+	})
+	upstreamCtx, release := detachStreamUpstreamContext(ctx, true)
+	defer release()
+	req, err := http.NewRequestWithContext(upstreamCtx, http.MethodGet, server.URL, nil)
+	require.NoError(t, err)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	reader := bufio.NewReader(resp.Body)
+	_, err = reader.ReadString('\n')
+	require.NoError(t, err)
+	_, err = reader.ReadString('\n')
+	require.NoError(t, err)
+
+	require.NoError(t, CommitFirstTokenFromContext(ctx))
+	require.Equal(t, FirstTokenCommitted, attempt.State())
+	clientCause := errors.New("client disconnected")
+	cancelParent(clientCause)
+	require.ErrorIs(t, context.Cause(parent), clientCause)
+	close(releaseUsage)
+
+	trailer, err := io.ReadAll(reader)
+	require.NoError(t, err)
+	require.Contains(t, string(trailer), `"output_tokens":7`)
 }

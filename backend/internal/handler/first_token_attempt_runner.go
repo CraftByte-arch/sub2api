@@ -38,6 +38,10 @@ func firstTokenAttemptEligible(c *gin.Context, protocol service.FirstTokenProtoc
 	return !gjson.GetBytes(body, "background").Bool()
 }
 
+func openAIResponsesFirstTokenStream(c *gin.Context, stream bool) bool {
+	return stream || service.OpenAICompactClientWantsStream(c)
+}
+
 func runEligibleFirstTokenAttempt[T any](
 	c *gin.Context,
 	policy firstTokenTimeoutPolicySnapshotter,

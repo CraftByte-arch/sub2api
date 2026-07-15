@@ -2,9 +2,12 @@ package handler
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
@@ -153,6 +156,41 @@ func TestNormalizeOpenAIResponsesCompactRequest_NonRemoteV2BodySignalPromoted(t 
 			}
 		})
 	}
+}
+
+func TestBodySignalCompactFirstTokenEligibilityGatesKeepalive(t *testing.T) {
+	h := &OpenAIGatewayHandler{}
+	body := []byte(`{"model":"gpt-5.5","stream":true,"input":[{"type":"compaction_trigger"}]}`)
+	c := newCompactBodySignalTestContext(t, "/v1/responses", body)
+
+	normalized, ok := h.normalizeOpenAIResponsesCompactRequest(c, zap.NewNop(), body)
+	require.True(t, ok)
+	reqStream, streamOK := parseOpenAICompatibleStream(normalized)
+	require.True(t, streamOK)
+	require.False(t, reqStream)
+
+	policy := firstTokenRunnerPolicyStub{snapshot: service.FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 15 * time.Millisecond}}
+	_, err := runEligibleFirstTokenAttempt(
+		c,
+		policy,
+		service.ProtocolResponses,
+		openAIResponsesFirstTokenStream(c, reqStream),
+		"gpt-5.5",
+		normalized,
+		FirstTokenAttemptMetadata{},
+		func(ctx context.Context) (*service.OpenAIForwardResult, error) {
+			stop := service.StartOpenAICompactSSEKeepalive(c, time.Millisecond)
+			defer stop()
+			<-ctx.Done()
+			return nil, context.Cause(ctx)
+		},
+	)
+
+	var failoverErr *service.UpstreamFailoverError
+	require.True(t, errors.As(err, &failoverErr))
+	require.Equal(t, http.StatusGatewayTimeout, failoverErr.StatusCode)
+	require.Equal(t, -1, c.Writer.Size())
+	require.Empty(t, c.Writer.Header())
 }
 
 func TestNormalizeOpenAIResponsesCompactRequest_NoTriggerUntouched(t *testing.T) {

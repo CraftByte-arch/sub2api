@@ -417,7 +417,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 				c,
 				h.firstTokenTimeoutPolicy,
 				service.ProtocolResponses,
-				reqStream,
+				openAIResponsesFirstTokenStream(c, reqStream),
 				reqModel,
 				body,
 				FirstTokenAttemptMetadata{AccountID: account.ID, Platform: account.Platform, Model: reqModel, AttemptIndex: switchCount + 1, SwitchCount: switchCount},

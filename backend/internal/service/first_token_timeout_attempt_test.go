@@ -343,7 +343,7 @@ func TestFirstTokenAttemptCustomWinnerOwnsContextCauseAgainstParent(t *testing.T
 	a.Close()
 }
 
-func TestFirstTokenAttemptCommittedParentCancellationStillCancelsStream(t *testing.T) {
+func TestFirstTokenAttemptCommittedParentCancellationWaitsForClose(t *testing.T) {
 	parent, cancelParent := context.WithCancelCause(context.Background())
 	a := NewFirstTokenAttempt(parent, time.Hour)
 	t.Cleanup(a.Close)
@@ -353,13 +353,17 @@ func TestFirstTokenAttemptCommittedParentCancellationStillCancelsStream(t *testi
 	cancelParent(parentCause)
 	select {
 	case <-a.Context().Done():
-	case <-time.After(time.Second):
-		t.Fatal("committed attempt did not propagate parent cancellation")
+		t.Fatal("committed attempt propagated parent cancellation before usage drain completed")
+	case <-time.After(25 * time.Millisecond):
 	}
 
 	require.Equal(t, FirstTokenCommitted, a.State())
 	require.NoError(t, a.Cause())
-	require.ErrorIs(t, context.Cause(a.Context()), parentCause)
+	require.NoError(t, a.Context().Err())
+	require.ErrorIs(t, context.Cause(parent), parentCause)
+
+	a.Close()
+	require.ErrorIs(t, context.Cause(a.Context()), context.Canceled)
 }
 
 func TestFirstTokenAttemptNonPositiveTimeoutIsSynchronous(t *testing.T) {
