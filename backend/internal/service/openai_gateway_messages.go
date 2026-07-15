@@ -703,7 +703,7 @@ func (s *OpenAIGatewayService) readOpenAICompatBufferedTerminal(
 				zap.String("request_id", requestID),
 				zap.Duration("interval", streamInterval),
 			)
-			return nil, usage, acc, fmt.Errorf("stream data interval timeout")
+			return nil, usage, acc, ErrStreamDataIntervalTimeout
 		}
 	}
 }
@@ -1076,7 +1076,7 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 				zap.String("model", originalModel),
 				zap.Duration("interval", streamInterval),
 			)
-			return resultWithUsage(), fmt.Errorf("stream data interval timeout")
+			return resultWithUsage(), ErrStreamDataIntervalTimeout
 
 		case <-keepaliveCh:
 			if clientDisconnected {

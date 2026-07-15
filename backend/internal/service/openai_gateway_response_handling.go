@@ -456,7 +456,7 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 				s.rateLimitService.HandleStreamTimeout(ctx, account, originalModel)
 			}
 			sendErrorEvent("stream_timeout")
-			return resultWithUsage(), fmt.Errorf("stream data interval timeout")
+			return resultWithUsage(), ErrStreamDataIntervalTimeout
 
 		case <-keepaliveCh:
 			if clientDisconnected {

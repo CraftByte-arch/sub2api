@@ -931,7 +931,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 				zap.String("model", originalModel),
 				zap.Duration("interval", streamInterval),
 			)
-			return resultWithUsage(), fmt.Errorf("stream data interval timeout")
+			return resultWithUsage(), ErrStreamDataIntervalTimeout
 
 		case <-keepaliveCh:
 			if clientDisconnected {
