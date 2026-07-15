@@ -867,7 +867,11 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 		}
 	}
 
-	if !writeOpenAICompactSSEBridge(c, resp.StatusCode, body) {
+	bridgeHandled, bridgeErr := writeOpenAICompactSSEBridge(c, resp.StatusCode, body)
+	if bridgeErr != nil {
+		return nil, bridgeErr
+	}
+	if !bridgeHandled {
 		c.Data(resp.StatusCode, contentType, body)
 	}
 
@@ -952,7 +956,11 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 			contentType = "text/event-stream"
 		}
 	}
-	if !writeOpenAICompactSSEBridge(c, resp.StatusCode, body) {
+	bridgeHandled, bridgeErr := writeOpenAICompactSSEBridge(c, resp.StatusCode, body)
+	if bridgeErr != nil {
+		return nil, bridgeErr
+	}
+	if !bridgeHandled {
 		c.Data(resp.StatusCode, contentType, body)
 	}
 

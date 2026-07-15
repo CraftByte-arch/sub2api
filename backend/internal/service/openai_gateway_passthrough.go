@@ -1086,7 +1086,11 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 	if originalModel != "" && mappedModel != "" && originalModel != mappedModel {
 		body = s.replaceModelInResponseBody(body, mappedModel, originalModel)
 	}
-	if !writeOpenAICompactSSEBridge(c, resp.StatusCode, body) {
+	bridgeHandled, bridgeErr := writeOpenAICompactSSEBridge(c, resp.StatusCode, body)
+	if bridgeErr != nil {
+		return nil, bridgeErr
+	}
+	if !bridgeHandled {
 		c.Data(resp.StatusCode, contentType, body)
 	}
 	return &openaiNonStreamingResultPassthrough{
@@ -1152,7 +1156,11 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 			contentType = "text/event-stream"
 		}
 	}
-	if !writeOpenAICompactSSEBridge(c, resp.StatusCode, body) {
+	bridgeHandled, bridgeErr := writeOpenAICompactSSEBridge(c, resp.StatusCode, body)
+	if bridgeErr != nil {
+		return nil, bridgeErr
+	}
+	if !bridgeHandled {
 		c.Data(resp.StatusCode, contentType, body)
 	}
 

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/gin-gonic/gin"
@@ -151,20 +152,65 @@ func TestWriteOpenAICompactSSEBridge_RequiresMarkAndSuccessStatus(t *testing.T) 
 
 	// 未标记 client stream：不写出，走原 JSON 路径。
 	c, rec := newCompactBridgeTestContext(t, false)
-	require.False(t, writeOpenAICompactSSEBridge(c, http.StatusOK, finalResponse))
+	handled, err := writeOpenAICompactSSEBridge(c, http.StatusOK, finalResponse)
+	require.NoError(t, err)
+	require.False(t, handled)
 	require.Zero(t, rec.Body.Len())
 
 	// 标记但上游非 2xx：错误响应保持 JSON 原样（Codex 依赖 HTTP 状态码走重试）。
 	c, rec = newCompactBridgeTestContext(t, true)
-	require.False(t, writeOpenAICompactSSEBridge(c, http.StatusBadGateway, finalResponse))
+	handled, err = writeOpenAICompactSSEBridge(c, http.StatusBadGateway, finalResponse)
+	require.NoError(t, err)
+	require.False(t, handled)
 	require.Zero(t, rec.Body.Len())
 
 	// 标记且 2xx：合成 SSE。
 	c, rec = newCompactBridgeTestContext(t, true)
-	require.True(t, writeOpenAICompactSSEBridge(c, http.StatusOK, finalResponse))
+	handled, err = writeOpenAICompactSSEBridge(c, http.StatusOK, finalResponse)
+	require.NoError(t, err)
+	require.True(t, handled)
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "text/event-stream", rec.Header().Get("Content-Type"))
 	require.Contains(t, rec.Body.String(), "event: response.completed")
+}
+
+func TestWriteOpenAICompactSSEBridge_CommitsSynthesizedSuccess(t *testing.T) {
+	c, rec := newCompactBridgeTestContext(t, true)
+	attempt := NewFirstTokenAttempt(context.Background(), time.Hour)
+	t.Cleanup(attempt.Close)
+	commits := 0
+	ctx := WithFirstTokenAttempt(attempt.Context(), attempt, func() error {
+		commits++
+		attempt.MarkFirstToken()
+		return nil
+	})
+	c.Request = c.Request.WithContext(ctx)
+	finalResponse := []byte(`{"id":"resp_1","output":[{"type":"compaction","encrypted_content":"x"}]}`)
+
+	handled, err := writeOpenAICompactSSEBridge(c, http.StatusOK, finalResponse)
+
+	require.NoError(t, err)
+	require.True(t, handled)
+	require.Equal(t, 1, commits)
+	require.Equal(t, FirstTokenCommitted, attempt.State())
+	require.Contains(t, rec.Body.String(), "event: response.output_item.done")
+}
+
+func TestWriteOpenAICompactSSEBridge_PropagatesCommitErrorBeforeWriting(t *testing.T) {
+	c, rec := newCompactBridgeTestContext(t, true)
+	attempt := NewFirstTokenAttempt(context.Background(), 0)
+	t.Cleanup(attempt.Close)
+	ctx := WithFirstTokenAttempt(attempt.Context(), attempt, func() error {
+		return context.Cause(attempt.Context())
+	})
+	c.Request = c.Request.WithContext(ctx)
+	finalResponse := []byte(`{"id":"resp_1","output":[{"type":"compaction","encrypted_content":"x"}]}`)
+
+	handled, err := writeOpenAICompactSSEBridge(c, http.StatusOK, finalResponse)
+
+	require.True(t, handled)
+	require.ErrorIs(t, err, ErrFirstTokenTimeout)
+	require.Empty(t, rec.Body.String())
 }
 
 // 回归 #3875：body-signal 提升后的 compact 请求，上游返回 unary JSON，
@@ -173,6 +219,13 @@ func TestWriteOpenAICompactSSEBridge_RequiresMarkAndSuccessStatus(t *testing.T) 
 func TestHandleNonStreamingResponse_CompactClientStreamBridgesToSSE(t *testing.T) {
 	svc := newCompactBridgeTestService()
 	c, rec := newCompactBridgeTestContext(t, true)
+	attempt := NewFirstTokenAttempt(context.Background(), time.Hour)
+	t.Cleanup(attempt.Close)
+	ctx := WithFirstTokenAttempt(attempt.Context(), attempt, func() error {
+		attempt.MarkFirstToken()
+		return nil
+	})
+	c.Request = c.Request.WithContext(ctx)
 	resp := &http.Response{
 		StatusCode: http.StatusOK,
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
@@ -186,9 +239,10 @@ func TestHandleNonStreamingResponse_CompactClientStreamBridgesToSSE(t *testing.T
 		}`)),
 	}
 
-	result, err := svc.handleNonStreamingResponse(context.Background(), resp, c, &Account{ID: 1, Type: AccountTypeOAuth}, "gpt-5.5", "gpt-5.5")
+	result, err := svc.handleNonStreamingResponse(ctx, resp, c, &Account{ID: 1, Type: AccountTypeOAuth}, "gpt-5.5", "gpt-5.5")
 	require.NoError(t, err)
 	require.NotNil(t, result)
+	require.Equal(t, FirstTokenCommitted, attempt.State())
 
 	require.Equal(t, "text/event-stream", rec.Header().Get("Content-Type"))
 	events := parseCompactBridgeSSE(t, rec.Body.String())
