@@ -1,6 +1,7 @@
 package service
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -106,116 +107,73 @@ func TestIsImageGenerationIntent(t *testing.T) {
 	}
 }
 
-func TestImageGenerationIntentSplitsPassiveDeclarationFromActualIntent(t *testing.T) {
-	passiveBody := []byte(`{"model":"gpt-5.4","input":"hello","tools":[{"type":"image_generation","output_format":"png"}],"tool_choice":"auto"}`)
-	require.True(t, HasPassiveImageGenerationToolDeclaration(openAIResponsesEndpoint, "gpt-5.4", passiveBody))
-	require.False(t, IsActualImageGenerationIntent(openAIResponsesEndpoint, "gpt-5.4", passiveBody))
-	require.True(t, IsImageGenerationIntent(openAIResponsesEndpoint, "gpt-5.4", passiveBody))
-
-	actualCases := []struct {
+func TestIsImageGenerationIntentJSONSemantics(t *testing.T) {
+	largeInput := strings.Repeat("x", 1<<20)
+	tests := []struct {
 		name     string
 		endpoint string
-		model    string
 		body     []byte
+		want     bool
 	}{
 		{
-			name:     "dedicated images endpoint",
-			endpoint: "/v1/images/generations",
-			body:     []byte(`{"model":"gpt-5.4","input":"hello"}`),
+			name:     "chat body image model",
+			endpoint: "/v1/chat/completions",
+			body:     []byte(`{"model":"gpt-image-2"}`),
+			want:     true,
 		},
 		{
-			name:     "requested image model",
-			endpoint: openAIResponsesEndpoint,
-			model:    "gpt-image-2",
-			body:     []byte(`{"model":"gpt-5.4","input":"hello"}`),
+			name:     "large responses input with trailing namespace tool choice",
+			endpoint: "/v1/responses",
+			body:     []byte(`{"model":"gpt-5.5","input":"` + largeInput + `","tool_choice":{"type":"namespace","name":"image_gen"}}`),
+			want:     true,
 		},
 		{
-			name:     "body image model",
-			endpoint: openAIResponsesEndpoint,
-			model:    "gpt-5.4",
-			body:     []byte(`{"model":"gpt-image-2","input":"hello"}`),
+			name:     "invalid json with image tool",
+			endpoint: "/v1/responses",
+			body:     []byte(`{"tools":[{"type":"image_generation"}]`),
+			want:     false,
 		},
 		{
-			name:     "object tool choice",
-			endpoint: openAIResponsesEndpoint,
-			model:    "gpt-5.4",
-			body:     []byte(`{"model":"gpt-5.4","tool_choice":{"type":"image_generation"}}`),
+			name:     "duplicate model uses first value",
+			endpoint: "/v1/responses",
+			body:     []byte(`{"model":"gpt-5.5","model":"gpt-image-2"}`),
+			want:     false,
 		},
 		{
-			name:     "string tool choice",
-			endpoint: openAIResponsesEndpoint,
-			model:    "gpt-5.4",
-			body:     []byte(`{"model":"gpt-5.4","tool_choice":"image_generation"}`),
+			name:     "duplicate null model still uses first value",
+			endpoint: "/v1/responses",
+			body:     []byte(`{"model":null,"model":"gpt-image-2"}`),
+			want:     false,
 		},
 		{
-			name:     "codex namespace image_gen",
-			endpoint: openAIResponsesEndpoint,
-			model:    "gpt-5.5",
-			body:     []byte(`{"model":"gpt-5.5","tools":[{"type":"namespace","name":"image_gen"}]}`),
+			name:     "duplicate tools uses first value",
+			endpoint: "/v1/responses",
+			body:     []byte(`{"tools":[],"tools":[{"type":"image_generation"}]}`),
+			want:     false,
 		},
 		{
-			name:     "responses lite additional_tools image_gen",
-			endpoint: openAIResponsesEndpoint,
-			model:    "gpt-5.5",
-			body:     []byte(`{"model":"gpt-5.5","input":[{"type":"additional_tools","tools":[{"type":"namespace","name":"image_gen"}]}]}`),
+			name:     "duplicate input uses first value",
+			endpoint: "/v1/responses",
+			body:     []byte(`{"input":[],"input":[{"type":"additional_tools","tools":[{"type":"namespace","name":"image_gen"}]}]}`),
+			want:     false,
 		},
 		{
-			name:     "namespace intent wins over native flat declaration",
-			endpoint: openAIResponsesEndpoint,
-			model:    "gpt-5.5",
-			body:     []byte(`{"model":"gpt-5.5","tools":[{"type":"image_generation"},{"type":"namespace","name":"image_gen"}],"tool_choice":"auto"}`),
-		},
-	}
-
-	for _, tt := range actualCases {
-		t.Run(tt.name, func(t *testing.T) {
-			require.False(t, HasPassiveImageGenerationToolDeclaration(tt.endpoint, tt.model, tt.body))
-			require.True(t, IsActualImageGenerationIntent(tt.endpoint, tt.model, tt.body))
-		})
-	}
-}
-
-func TestIsActualImageGenerationIntentMap_TreatsNamespaceRequestsAsActual(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name    string
-		reqBody map[string]any
-		want    bool
-	}{
-		{
-			name: "top-level namespace",
-			reqBody: map[string]any{
-				"model": "gpt-5.5",
-				"tools": []any{map[string]any{"type": "namespace", "name": "image_gen"}},
-			},
-			want: true,
+			name:     "duplicate tool choice uses first value",
+			endpoint: "/v1/responses",
+			body:     []byte(`{"tool_choice":"required","tool_choice":{"type":"image_generation"}}`),
+			want:     false,
 		},
 		{
-			name: "additional tools namespace",
-			reqBody: map[string]any{
-				"model": "gpt-5.5",
-				"input": []any{map[string]any{
-					"type":  "additional_tools",
-					"tools": []any{map[string]any{"type": "namespace", "name": "image_gen"}},
-				}},
-			},
-			want: true,
-		},
-		{
-			name: "native flat declaration remains passive",
-			reqBody: map[string]any{
-				"model": "gpt-5.5",
-				"tools": []any{map[string]any{"type": "image_generation"}},
-			},
-			want: false,
+			name:     "escaped top level key",
+			endpoint: "/v1/responses",
+			body:     []byte(`{"tool_\u0063hoice":{"type":"image_generation"}}`),
+			want:     true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			require.Equal(t, tt.want, IsActualImageGenerationIntentMap(openAIResponsesEndpoint, "gpt-5.5", tt.reqBody))
+			require.Equal(t, tt.want, IsImageGenerationIntent(tt.endpoint, "gpt-5.5", tt.body))
 		})
 	}
 }

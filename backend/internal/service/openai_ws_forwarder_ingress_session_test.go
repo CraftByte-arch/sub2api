@@ -403,163 +403,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_FollowupCreateCa
 	require.Equal(t, "resp_omit_model_1", gjson.Get(requestToJSONString(captureConn.writes[1]), "previous_response_id").String())
 }
 
-func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_RejectsDisabledNamespaceImageRequests(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	tests := []struct {
-		name    string
-		payload []byte
-	}{
-		{
-			name:    "top-level namespace",
-			payload: []byte(`{"type":"response.create","model":"gpt-5.5","tools":[{"type":"namespace","name":"image_gen"}],"input":"draw"}`),
-		},
-		{
-			name:    "additional tools namespace",
-			payload: []byte(`{"type":"response.create","model":"gpt-5.5","input":[{"type":"additional_tools","tools":[{"type":"namespace","name":"image_gen"}]}]}`),
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := &config.Config{}
-			cfg.Gateway.OpenAIWS.Enabled = true
-			cfg.Gateway.OpenAIWS.OAuthEnabled = true
-			cfg.Gateway.OpenAIWS.APIKeyEnabled = true
-			cfg.Gateway.OpenAIWS.ResponsesWebsocketsV2 = true
-			svc := &OpenAIGatewayService{
-				cfg:              cfg,
-				openaiWSResolver: NewOpenAIWSProtocolResolver(cfg),
-			}
-			groupID := int64(44)
-			apiKey := &APIKey{
-				GroupID: &groupID,
-				Group:   &Group{ID: groupID, AllowImageGeneration: false},
-			}
-			account := &Account{
-				ID:          45,
-				Platform:    PlatformOpenAI,
-				Type:        AccountTypeOAuth,
-				Status:      StatusActive,
-				Schedulable: true,
-				Credentials: map[string]any{"access_token": "test-token"},
-				Extra: map[string]any{
-					"openai_oauth_responses_websockets_v2_enabled": true,
-				},
-			}
-
-			serverErrCh := make(chan error, 1)
-			wsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				conn, err := coderws.Accept(w, r, nil)
-				if err != nil {
-					serverErrCh <- err
-					return
-				}
-				defer func() { _ = conn.CloseNow() }()
-				rec := httptest.NewRecorder()
-				ginCtx, _ := gin.CreateTestContext(rec)
-				ginCtx.Request = r
-				ginCtx.Set("api_key", apiKey)
-				serverErrCh <- svc.ProxyResponsesWebSocketFromClient(r.Context(), ginCtx, conn, account, "test-token", tt.payload, nil)
-			}))
-			defer wsServer.Close()
-
-			dialCtx, cancelDial := context.WithTimeout(context.Background(), 3*time.Second)
-			clientConn, _, err := coderws.Dial(dialCtx, "ws"+strings.TrimPrefix(wsServer.URL, "http"), nil)
-			cancelDial()
-			require.NoError(t, err)
-			defer func() { _ = clientConn.CloseNow() }()
-
-			select {
-			case proxyErr := <-serverErrCh:
-				require.Error(t, proxyErr)
-				require.ErrorContains(t, proxyErr, ImageGenerationPermissionMessage())
-			case <-time.After(5 * time.Second):
-				t.Fatal("等待 namespace 图片权限校验超时")
-			}
-		})
-	}
-}
-
-func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_AppliesDeclarationPolicyBeforeModelMapping(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	cfg := &config.Config{}
-	cfg.Gateway.OpenAIWS.Enabled = true
-	cfg.Gateway.OpenAIWS.OAuthEnabled = true
-	cfg.Gateway.OpenAIWS.APIKeyEnabled = true
-	cfg.Gateway.OpenAIWS.ResponsesWebsocketsV2 = true
-	cfg.Gateway.OpenAIWS.MaxConnsPerAccount = 1
-	cfg.Gateway.OpenAIWS.QueueLimitPerConn = 1
-
-	dialer := &openAIWSFailDialer{}
-	pool := newOpenAIWSConnPool(cfg)
-	pool.setClientDialerForTest(dialer)
-	svc := &OpenAIGatewayService{
-		cfg:              cfg,
-		openaiWSResolver: NewOpenAIWSProtocolResolver(cfg),
-		openaiWSPool:     pool,
-		settingService: NewSettingService(
-			&imageGenerationToolPolicyRepo{policy: ImageGenerationToolDeclarationPolicyReject},
-			cfg,
-		),
-	}
-	groupID := int64(44)
-	apiKey := &APIKey{
-		GroupID: &groupID,
-		Group:   &Group{ID: groupID, AllowImageGeneration: true},
-	}
-	account := &Account{
-		ID:          45,
-		Platform:    PlatformOpenAI,
-		Type:        AccountTypeOAuth,
-		Status:      StatusActive,
-		Schedulable: true,
-		Credentials: map[string]any{
-			"access_token": "test-token",
-			"model_mapping": map[string]any{
-				"client-text-model": "gpt-image-2",
-			},
-		},
-		Extra: map[string]any{
-			"openai_oauth_responses_websockets_v2_enabled": true,
-		},
-	}
-	payload := []byte(`{"type":"response.create","model":"client-text-model","tools":[{"type":"image_generation"}],"tool_choice":"auto","input":"hello"}`)
-
-	serverErrCh := make(chan error, 1)
-	wsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		conn, err := coderws.Accept(w, r, nil)
-		if err != nil {
-			serverErrCh <- err
-			return
-		}
-		defer func() { _ = conn.CloseNow() }()
-		rec := httptest.NewRecorder()
-		ginCtx, _ := gin.CreateTestContext(rec)
-		ginCtx.Request = r
-		ginCtx.Set("api_key", apiKey)
-		serverErrCh <- svc.ProxyResponsesWebSocketFromClient(r.Context(), ginCtx, conn, account, "test-token", payload, nil)
-	}))
-	defer wsServer.Close()
-
-	dialCtx, cancelDial := context.WithTimeout(context.Background(), 3*time.Second)
-	clientConn, _, err := coderws.Dial(dialCtx, "ws"+strings.TrimPrefix(wsServer.URL, "http"), nil)
-	cancelDial()
-	require.NoError(t, err)
-	defer func() { _ = clientConn.CloseNow() }()
-
-	select {
-	case proxyErr := <-serverErrCh:
-		require.Error(t, proxyErr)
-		require.ErrorContains(t, proxyErr, "image_generation tool declaration is disabled")
-		require.Zero(t, dialer.calls)
-	case <-time.After(5 * time.Second):
-		t.Fatal("等待被动图片工具声明策略校验超时")
-	}
-}
-
-func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_InjectsCodexImageBridge(t *testing.T) {
+func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_CodexImageBridgeRespectsResponsesLite(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	cfg := &config.Config{}
@@ -580,6 +424,8 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_InjectsCodexImag
 	captureConn := &openAIWSCaptureConn{
 		events: [][]byte{
 			[]byte(`{"type":"response.completed","response":{"id":"resp_codex_image_bridge","model":"gpt-5.5","usage":{"input_tokens":1,"output_tokens":1}}}`),
+			[]byte(`{"type":"response.completed","response":{"id":"resp_codex_image_lite","model":"gpt-5.5","usage":{"input_tokens":1,"output_tokens":1}}}`),
+			[]byte(`{"type":"response.completed","response":{"id":"resp_codex_image_function","model":"gpt-5.5","usage":{"input_tokens":1,"output_tokens":1}}}`),
 		},
 	}
 	captureDialer := &openAIWSCaptureDialer{conn: captureConn}
@@ -679,6 +525,49 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_InjectsCodexImag
 	require.Equal(t, coderws.MessageText, msgType)
 	require.Equal(t, "resp_codex_image_bridge", gjson.GetBytes(message, "response.id").String())
 
+	writeCtx, cancelWrite = context.WithTimeout(context.Background(), 3*time.Second)
+	err = clientConn.Write(writeCtx, coderws.MessageText, []byte(`{
+		"type":"response.create",
+		"model":"gpt-5.5",
+		"stream":false,
+		"previous_response_id":"resp_codex_image_bridge",
+		"client_metadata":{"ws_request_header_x_openai_internal_codex_responses_lite":"true"},
+		"tools":[{"type":"namespace","name":"collaboration","tools":[{"type":"function","name":"spawn_agent"}]}],
+		"input":[
+			{"type":"additional_tools","role":"developer","tools":[{"type":"custom","name":"exec","description":"Execute code-mode tools, including image_gen.imagegen."}]},
+			{"type":"message","role":"user","content":[{"type":"input_text","text":"draw a cat"}]}
+		],
+		"tool_choice":{"type":"namespace","name":"collaboration"}
+	}`))
+	cancelWrite()
+	require.NoError(t, err)
+
+	readCtx, cancelRead = context.WithTimeout(context.Background(), 3*time.Second)
+	msgType, message, err = clientConn.Read(readCtx)
+	cancelRead()
+	require.NoError(t, err)
+	require.Equal(t, coderws.MessageText, msgType)
+	require.Equal(t, "resp_codex_image_lite", gjson.GetBytes(message, "response.id").String())
+
+	writeCtx, cancelWrite = context.WithTimeout(context.Background(), 3*time.Second)
+	err = clientConn.Write(writeCtx, coderws.MessageText, []byte(`{
+		"type":"response.create",
+		"model":"gpt-5.5",
+		"stream":false,
+		"previous_response_id":"resp_codex_image_lite",
+		"input":"draw a cat",
+		"tools":[{"type":"function","name":"image_gen.imagegen","parameters":{"type":"object"}}]
+	}`))
+	cancelWrite()
+	require.NoError(t, err)
+
+	readCtx, cancelRead = context.WithTimeout(context.Background(), 3*time.Second)
+	msgType, message, err = clientConn.Read(readCtx)
+	cancelRead()
+	require.NoError(t, err)
+	require.Equal(t, coderws.MessageText, msgType)
+	require.Equal(t, "resp_codex_image_function", gjson.GetBytes(message, "response.id").String())
+
 	_ = clientConn.Close(coderws.StatusNormalClosure, "done")
 
 	select {
@@ -688,21 +577,28 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_InjectsCodexImag
 		t.Fatal("等待 ingress websocket 结束超时")
 	}
 
-	require.Len(t, captureConn.writes, 1)
-	upstreamPayload := requestToJSONString(captureConn.writes[0])
-	require.True(t, gjson.Get(upstreamPayload, `tools.#(type=="image_generation")`).Exists())
-	require.Equal(t, "png", gjson.Get(upstreamPayload, `tools.#(type=="image_generation").output_format`).String())
-	require.Equal(t, "auto", gjson.Get(upstreamPayload, "tool_choice").String())
-	require.Contains(t, gjson.Get(upstreamPayload, "instructions").String(), "image_generation")
-}
+	require.Len(t, captureConn.writes, 3)
+	nonLitePayload := requestToJSONString(captureConn.writes[0])
+	require.True(t, gjson.Get(nonLitePayload, `tools.#(type=="image_generation")`).Exists())
+	require.Equal(t, "png", gjson.Get(nonLitePayload, `tools.#(type=="image_generation").output_format`).String())
+	require.Equal(t, "auto", gjson.Get(nonLitePayload, "tool_choice").String())
+	require.Contains(t, gjson.Get(nonLitePayload, "instructions").String(), "image_generation")
 
-type openAIWSFailDialer struct {
-	calls int
-}
+	litePayload := requestToJSONString(captureConn.writes[1])
+	require.False(t, gjson.Get(litePayload, `tools.#(type=="image_generation")`).Exists())
+	require.NotContains(t, gjson.Get(litePayload, "instructions").String(), "image_generation")
+	require.Equal(t, "exec", gjson.Get(litePayload, `input.#(type=="additional_tools").tools.0.name`).String())
+	require.Contains(t, gjson.Get(litePayload, `input.#(type=="additional_tools").tools.0.description`).String(), "image_gen.imagegen")
+	require.False(t, gjson.Get(litePayload, `tools.#(type=="namespace")`).Exists())
+	require.Equal(t, "collaboration", gjson.Get(litePayload, `input.#(type=="additional_tools").tools.1.name`).String())
+	require.Equal(t, "namespace", gjson.Get(litePayload, "tool_choice.type").String())
+	require.Equal(t, "collaboration", gjson.Get(litePayload, "tool_choice.name").String())
 
-func (d *openAIWSFailDialer) Dial(context.Context, string, http.Header, string) (openAIWSClientConn, int, http.Header, error) {
-	d.calls++
-	return nil, 0, nil, errors.New("unexpected upstream websocket dial")
+	functionPayload := requestToJSONString(captureConn.writes[2])
+	require.True(t, gjson.Get(functionPayload, `tools.#(name=="image_gen.imagegen")`).Exists())
+	require.False(t, gjson.Get(functionPayload, `tools.#(type=="image_generation")`).Exists())
+	require.False(t, gjson.Get(functionPayload, "tool_choice").Exists())
+	require.NotContains(t, gjson.Get(functionPayload, "instructions").String(), codexImageGenerationBridgeMarker)
 }
 
 func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_DedicatedModeDoesNotReuseConnAcrossSessions(t *testing.T) {
@@ -1075,7 +971,16 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PassthroughHeade
 	}()
 
 	writeCtx, cancelWrite := context.WithTimeout(context.Background(), 3*time.Second)
-	err = clientConn.Write(writeCtx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","stream":false,"prompt_cache_key":"pcache_passthrough"}`))
+	err = clientConn.Write(writeCtx, coderws.MessageText, []byte(`{
+		"type":"response.create",
+		"model":"gpt-5.1",
+		"stream":false,
+		"prompt_cache_key":"pcache_passthrough",
+		"client_metadata":{"ws_request_header_x_openai_internal_codex_responses_lite":"true"},
+		"tools":[{"type":"namespace","name":"collaboration","tools":[{"type":"function","name":"spawn_agent"}]}],
+		"input":[{"type":"message","role":"user","content":"hello"}],
+		"tool_choice":{"type":"namespace","name":"collaboration"}
+	}`))
 	cancelWrite()
 	require.NoError(t, err)
 
@@ -1098,6 +1003,12 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PassthroughHeade
 	require.Equal(t, isolateOpenAISessionID(0, "pcache_passthrough"), captureDialer.lastHeaders.Get("session_id"))
 	require.Equal(t, "turn-state-1", captureDialer.lastHeaders.Get(openAIWSTurnStateHeader))
 	require.Equal(t, "turn-meta-1", captureDialer.lastHeaders.Get(openAIWSTurnMetadataHeader))
+	require.Len(t, upstreamConn.writes, 1)
+	forwarded := requestToJSONString(upstreamConn.writes[0])
+	require.False(t, gjson.Get(forwarded, `tools.#(type=="namespace")`).Exists())
+	require.Equal(t, "collaboration", gjson.Get(forwarded, `input.#(type=="additional_tools").tools.0.name`).String())
+	require.Equal(t, "namespace", gjson.Get(forwarded, "tool_choice.type").String())
+	require.Equal(t, "collaboration", gjson.Get(forwarded, "tool_choice.name").String())
 }
 
 func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_HTTPBridgeModeRelaysHTTPStream(t *testing.T) {
