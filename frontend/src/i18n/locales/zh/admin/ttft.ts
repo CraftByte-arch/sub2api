@@ -21,7 +21,7 @@ export default {
       finalTTFTFailure: '最终 TTFT 失败率',
       otherFinalFailure: '其他最终失败率'
     },
-    charts: { failureTrend: '每小时失败率', failureDistribution: '其他失败分布' },
+    charts: { failureTrend: '每小时失败率', failureDistribution: '其他失败分布', count: '失败数' },
     completeness: { degraded: '统计数据不完整：已丢弃 {dropped} 个样本，待处理 {pending} 个样本。', lastSuccessfulFlush: '最近一次成功写入：{time}。', noSuccessfulFlush: '尚未完成过成功写入。' },
     accounts: {
       title: '账号统计', account: '账号 / 平台', accountId: '账号 ID', accountIdError: '请输入正整数账号 ID。', platform: '平台', pageSize: '每页数量',

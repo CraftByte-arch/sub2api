@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { Chart as ChartJS, CategoryScale, Legend, LineElement, LinearScale, PointElement, Tooltip, type ChartData, type ChartOptions } from 'chart.js'
 import { Line } from 'vue-chartjs'
 import { useI18n } from 'vue-i18n'
@@ -8,7 +8,12 @@ import type { RateMetric, TTFTTrendPoint } from '@/api/admin/ttft'
 ChartJS.register(CategoryScale, Legend, LineElement, LinearScale, PointElement, Tooltip)
 const props = defineProps<{ points: TTFTTrendPoint[] }>()
 const { t } = useI18n()
-const dark = computed(() => document.documentElement.classList.contains('dark'))
+const themeVersion = ref(0)
+let themeObserver: MutationObserver | undefined
+const dark = computed(() => {
+  themeVersion.value
+  return document.documentElement.classList.contains('dark')
+})
 type TrendRateKey = 'attempt_ttft_timeout_rate' | 'recovery_rate' | 'final_ttft_failure_rate' | 'other_final_failure_rate'
 const definitions: Array<{ key: TrendRateKey; label: string; color: string; dash: number[] }> = [
   { key: 'attempt_ttft_timeout_rate', label: 'admin.ttft.metrics.attemptTimeout', color: '#dc2626', dash: [] },
@@ -32,6 +37,12 @@ const options = computed<ChartOptions<'line'>>(() => ({ responsive: true, mainta
   return `${context.dataset.label ?? ''}: ${formatMetric(metric)}`
 } } } }, scales: { x: { ticks: { color: dark.value ? '#9ca3af' : '#6b7280', maxTicksLimit: 6 }, grid: { display: false } }, y: { beginAtZero: true, ticks: { color: dark.value ? '#9ca3af' : '#6b7280', callback: (value) => `${value}%` }, grid: { color: dark.value ? '#374151' : '#e5e7eb' } } } }))
 const summary = computed(() => props.points.length ? definitions.map(({ key, label }) => `${t(label)}: ${formatMetric(props.points.at(-1)?.[key])}`).join(', ') : '')
+
+onMounted(() => {
+  themeObserver = new MutationObserver(() => { themeVersion.value++ })
+  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
+})
+onUnmounted(() => themeObserver?.disconnect())
 </script>
 
 <template>

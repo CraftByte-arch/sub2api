@@ -199,7 +199,7 @@ func TestFirstTokenTimeoutOverviewValidatesAndForwardsFilters(t *testing.T) {
 		{rangeValue: "90d", wantRange: service.FirstTokenStatsRange90Days, protocol: service.ProtocolResponses},
 	}
 	for _, testCase := range allowed {
-		path := "/overview?range=" + testCase.rangeValue + "&protocol=" + string(testCase.protocol) + "&model=gpt-5"
+		path := "/overview?range=" + testCase.rangeValue + "&protocol=" + string(testCase.protocol) + "&model=gpt-5&timezone=Asia%2FShanghai"
 		response := firstTokenTimeoutHandlerRequest(t, router, http.MethodGet, path, "")
 		require.Equal(t, http.StatusOK, response.Code)
 		filter := statsRepo.lastOverviewFilter()
@@ -217,6 +217,7 @@ func TestFirstTokenTimeoutOverviewValidatesAndForwardsFilters(t *testing.T) {
 		"/overview?account_id=42",
 		"/overview?platform=openai",
 		"/overview?platfrom=openai",
+		"/overview?timezone=Asia%2FShanghai&timezone=UTC",
 	}
 	for _, path := range invalid {
 		response := firstTokenTimeoutHandlerRequest(t, router, http.MethodGet, path, "")
@@ -334,7 +335,7 @@ func TestFirstTokenTimeoutAccountsAPI(t *testing.T) {
 		service.NewFirstTokenTimeoutPolicy(newFirstTokenTimeoutHandlerSettingRepo(), nil), statsRepo, nil,
 	))
 
-	path := "/accounts?range=7d&protocol=chat_completions&model=gpt-5&platform=openai&account_id=42&search=alice&sort=ttft_timeout_rate&order=asc&page=2&page_size=50"
+	path := "/accounts?range=7d&protocol=chat_completions&model=gpt-5&platform=openai&account_id=42&search=alice&sort=ttft_timeout_rate&order=asc&page=2&page_size=50&timezone=Asia%2FShanghai"
 	response := firstTokenTimeoutHandlerRequest(t, router, http.MethodGet, path, "")
 	require.Equal(t, http.StatusOK, response.Code)
 	filter := statsRepo.lastAccountFilter()
@@ -388,6 +389,7 @@ func TestFirstTokenTimeoutAccountsDefaultsAndValidation(t *testing.T) {
 		"/accounts?page_size=101",
 		"/accounts?account_id=0",
 		"/accounts?account_id=-1",
+		"/accounts?timezone=Asia%2FShanghai&timezone=UTC",
 		"/accounts?account_id=abc",
 		"/accounts?account=42",
 		"/accounts?serach=alice",

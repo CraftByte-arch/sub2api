@@ -7,7 +7,7 @@ const emit = defineEmits<{ save: [payload: { enabled: boolean; timeout_seconds: 
 
 const enabled = ref(false)
 const timeoutSeconds = ref(30)
-const validationError = computed(() => timeoutSeconds.value < 1 || timeoutSeconds.value > 300)
+const validationError = computed(() => !Number.isInteger(timeoutSeconds.value) || timeoutSeconds.value < 1 || timeoutSeconds.value > 300)
 
 watch(
   () => props.settings,

@@ -21,7 +21,7 @@ export default {
       finalTTFTFailure: 'Final TTFT failure rate',
       otherFinalFailure: 'Other final failure rate'
     },
-    charts: { failureTrend: 'Hourly failure rates', failureDistribution: 'Other failure distribution' },
+    charts: { failureTrend: 'Hourly failure rates', failureDistribution: 'Other failure distribution', count: 'Failure count' },
     completeness: { degraded: 'Statistics are degraded: {dropped} dropped samples, {pending} pending samples.', lastSuccessfulFlush: 'Last successful flush: {time}.', noSuccessfulFlush: 'No successful flush has completed yet.' },
     accounts: {
       title: 'Account statistics', account: 'Account / platform', accountId: 'Account ID', accountIdError: 'Enter a positive whole account ID.', platform: 'Platform', pageSize: 'Page size',

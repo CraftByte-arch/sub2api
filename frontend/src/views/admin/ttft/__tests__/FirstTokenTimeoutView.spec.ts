@@ -6,7 +6,7 @@ const { getSettings, updateSettings, getOverview, getAccounts } = vi.hoisted(() 
   getSettings: vi.fn(), updateSettings: vi.fn(), getOverview: vi.fn(), getAccounts: vi.fn()
 }))
 const route = ref({ query: {} as Record<string, string> })
-const replace = vi.fn(async ({ query }) => { route.value = { query } })
+const replace = vi.fn(async ({ query }) => { route.value.query = query })
 
 vi.mock('vue-router', () => ({
   useRoute: () => route.value,
@@ -45,6 +45,13 @@ const overview = {
 }
 
 const accounts = { items: [], total: 0, page: 1, page_size: 20, pages: 0 }
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => { resolve = resolvePromise; reject = rejectPromise })
+  return { promise, resolve, reject }
+}
 
 function mockSuccess() {
   getSettings.mockResolvedValue(settings)
@@ -96,6 +103,22 @@ describe('FirstTokenTimeoutView', () => {
     expect(replace).toHaveBeenCalledWith({ query: { range: '7d', protocol: 'responses', model: 'gpt-5' } })
   })
 
+  it('applies an external route query change without a second URL replacement', async () => {
+    const wrapper = await mountView()
+    getOverview.mockClear()
+    getAccounts.mockClear()
+    replace.mockClear()
+
+    route.value.query = { range: '30d', protocol: 'anthropic_messages', model: 'claude' }
+    await nextTick()
+    await flushPromises()
+
+    expect(getOverview).toHaveBeenCalledWith({ range: '30d', protocol: 'anthropic_messages', model: 'claude' })
+    expect(getAccounts).toHaveBeenCalledWith(expect.objectContaining({ range: '30d', protocol: 'anthropic_messages', model: 'claude' }))
+    expect(replace).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
   it('saves settings without clearing loaded statistics', async () => {
     updateSettings.mockResolvedValue({ ...settings, effective: { enabled: false, timeout_seconds: 20 } })
     const wrapper = await mountView()
@@ -105,6 +128,17 @@ describe('FirstTokenTimeoutView', () => {
 
     expect(updateSettings).toHaveBeenCalledWith({ enabled: false, timeout_seconds: 20 })
     expect(wrapper.text()).toContain('3 / 10')
+  })
+
+  it('rejects fractional timeout settings locally without sending a PUT', async () => {
+    const wrapper = await mountView()
+    const timeoutInput = wrapper.findAll('input[type="number"]')[0]
+    await timeoutInput.setValue(1.5)
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('admin.ttft.settings.timeoutError')
+    expect(updateSettings).not.toHaveBeenCalled()
   })
 
   it('keeps overview requests independent from account-local filters', async () => {
@@ -117,6 +151,24 @@ describe('FirstTokenTimeoutView', () => {
 
     expect(getOverview).not.toHaveBeenCalled()
     expect(getAccounts).toHaveBeenCalledWith(expect.objectContaining({ search: 'alpha' }))
+  })
+
+  it('ignores an older overview response that settles after a newer global filter response', async () => {
+    const oldOverview = deferred<typeof overview>()
+    const newerOverview = { ...overview, summary: { ...overview.summary, controlled_requests: 99 } }
+    getOverview.mockReset()
+    getOverview.mockImplementationOnce(() => oldOverview.promise).mockResolvedValueOnce(newerOverview)
+    const wrapper = await mountView()
+    const rangeButton = wrapper.findAll('button').find((button) => button.text() === '7d')
+    expect(rangeButton).toBeDefined()
+
+    await rangeButton!.trigger('click')
+    await flushPromises()
+    oldOverview.resolve(overview)
+    await flushPromises()
+
+    expect(wrapper.findAll('article')[0].text()).toContain('99')
+    expect(wrapper.findAll('article')[0].text()).not.toContain('12')
   })
 
   it('clears account_id from account requests without reloading the overview', async () => {
@@ -161,6 +213,20 @@ describe('FirstTokenTimeoutView', () => {
     await wrapper.get('[data-testid="ttft-overview-retry"]').trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('admin.ttft.completeness.degraded')
+  })
+
+  it('keeps loaded overview metrics visible when a later refresh fails', async () => {
+    const wrapper = await mountView()
+    getOverview.mockRejectedValueOnce(new Error('network'))
+    const refreshButton = wrapper.findAll('button').find((button) => button.text() === 'common.refresh')
+    expect(refreshButton).toBeDefined()
+
+    await refreshButton!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.findAll('article')[0].text()).toContain('12')
+    expect(wrapper.text()).toContain('admin.ttft.errors.overview')
+    expect(wrapper.get('[data-testid="ttft-overview-retry"]').exists()).toBe(true)
   })
 
   it('renders the last successful statistics flush in the degraded warning', async () => {

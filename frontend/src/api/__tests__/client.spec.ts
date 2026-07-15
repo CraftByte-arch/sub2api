@@ -89,6 +89,24 @@ describe('API Client', () => {
       expect(config.params).toHaveProperty('timezone')
     })
 
+    it('TTFT overview keeps the shared timezone parameter injected by the real client', async () => {
+      const adapter = vi.fn().mockResolvedValue({
+        status: 200,
+        data: { code: 0, data: {} },
+        headers: {},
+        config: {},
+        statusText: 'OK',
+      })
+      apiClient.defaults.adapter = adapter
+      const ttftAPI = (await import('@/api/admin/ttft')).default
+
+      await ttftAPI.getOverview({ range: '24h' })
+
+      const config = adapter.mock.calls[0][0]
+      expect(config.url).toBe('/admin/ttft/overview')
+      expect(config.params).toEqual(expect.objectContaining({ range: '24h', timezone: expect.any(String) }))
+    })
+
     it('POST 请求不附加 timezone 参数', async () => {
       const adapter = vi.fn().mockResolvedValue({
         status: 200,

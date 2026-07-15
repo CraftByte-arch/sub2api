@@ -254,7 +254,7 @@ func parseFirstTokenStatsOverviewFilter(c *gin.Context) (service.FirstTokenStats
 		response.BadRequest(c, "account and platform filters are only supported by the accounts endpoint")
 		return service.FirstTokenStatsOverviewFilter{}, false
 	}
-	if !validateFirstTokenStatsQueryParams(c, "range", "protocol", "model") {
+	if !validateFirstTokenStatsQueryParams(c, "range", "protocol", "model", "timezone") {
 		return service.FirstTokenStatsOverviewFilter{}, false
 	}
 	statsRange, ok := parseFirstTokenStatsRange(c.Query("range"))
@@ -370,6 +370,7 @@ func parseFirstTokenStatsAccountFilter(c *gin.Context) (service.FirstTokenStatsA
 		"order",
 		"page",
 		"page_size",
+		"timezone",
 	) {
 		return service.FirstTokenStatsAccountFilter{}, false
 	}

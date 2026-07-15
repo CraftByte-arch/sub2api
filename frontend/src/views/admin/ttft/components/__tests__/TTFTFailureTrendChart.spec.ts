@@ -1,5 +1,6 @@
 import { mount } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
+import { nextTick } from 'vue'
 
 vi.mock('vue-chartjs', () => ({
   Line: {
@@ -40,5 +41,19 @@ describe('TTFTFailureTrendChart', () => {
     expect(wrapper.get('.sr-only').text()).toContain('2 / 10')
     expect(wrapper.get('.sr-only').text()).toContain('3 / 4')
     expect(wrapper.get('.sr-only').text()).toContain('1 / 10')
+  })
+
+  it('recomputes chart options when the document theme class changes', async () => {
+    document.documentElement.classList.remove('dark')
+    const wrapper = mount(TTFTFailureTrendChart, { props: { points }, global: { mocks: { $t: (key: string) => key } } })
+    const chart = wrapper.getComponent({ name: 'LineChart' })
+    const before = (chart.props('options') as { plugins: { legend: { labels: { color: string } } } }).plugins.legend.labels.color
+
+    document.documentElement.classList.add('dark')
+    await nextTick()
+    const after = (chart.props('options') as { plugins: { legend: { labels: { color: string } } } }).plugins.legend.labels.color
+
+    expect(before).not.toBe(after)
+    document.documentElement.classList.remove('dark')
   })
 })
