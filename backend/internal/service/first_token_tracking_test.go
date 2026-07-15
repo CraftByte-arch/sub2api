@@ -5,6 +5,9 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"errors"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io"
 	"net"
 	"net/http"
@@ -352,6 +355,21 @@ func TestFirstTokenTrackingTimeoutClassificationWinsOverOtherFailure(t *testing.
 	require.Equal(t, FirstTokenStatsRequestTTFTExhausted, deltas[1].Outcome)
 }
 
+func TestFirstTokenTrackingTimedOutAttemptDiscardsObservedFirstToken(t *testing.T) {
+	recorder := &firstTokenStatsRecorderSpy{}
+	request := NewFirstTokenRequestTracker(recorder, context.Background(), ProtocolResponses, "gpt-5", FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 30 * time.Second})
+	attempt := request.BeginAttempt(FirstTokenStatsAttemptMetadata{AccountID: 1, Platform: PlatformOpenAI}, FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 30 * time.Second})
+	attempt.MarkFirstToken(275 * time.Millisecond)
+	attempt.Finish(NewFirstTokenTimeoutFailoverError(), FirstTokenTimedOut, context.Background())
+	request.Finish()
+
+	deltas := recorder.snapshot(t)
+	require.Equal(t, FirstTokenStatsAttemptTTFTTimeout, deltas[0].Outcome)
+	require.Zero(t, deltas[0].TTFTSampleCount)
+	require.Zero(t, deltas[0].TTFTSumMS)
+	require.Zero(t, deltas[0].TTFTMaxMS)
+}
+
 func TestFirstTokenFailureKindPriority(t *testing.T) {
 	tests := []struct {
 		name string
@@ -373,7 +391,7 @@ func TestFirstTokenFailureKindPriority(t *testing.T) {
 		{name: "context canceled without canceled parent", err: context.Canceled, want: FirstTokenStatsFailureTransport},
 		{name: "context deadline", err: context.DeadlineExceeded, want: FirstTokenStatsFailureTransport},
 		{name: "idle", err: ErrStreamDataIntervalTimeout, want: FirstTokenStatsFailureStreamIdleTimeout},
-		{name: "idle sentinel wins over joined transport", err: errors.Join(context.DeadlineExceeded, ErrStreamDataIntervalTimeout), want: FirstTokenStatsFailureStreamIdleTimeout},
+		{name: "transport wins over joined idle sentinel", err: errors.Join(context.DeadlineExceeded, ErrStreamDataIntervalTimeout), want: FirstTokenStatsFailureTransport},
 		{name: "json", err: &json.SyntaxError{}, want: FirstTokenStatsFailureProtocol},
 		{name: "json type", err: &json.UnmarshalTypeError{}, want: FirstTokenStatsFailureProtocol},
 		{name: "sse event", err: &sseStreamErrorEventError{}, want: FirstTokenStatsFailureProtocol},
@@ -397,20 +415,48 @@ func TestFirstTokenFailureKindPriority(t *testing.T) {
 }
 
 func TestFirstTokenFailureKindEligibleStreamsUseIdleTimeoutSentinel(t *testing.T) {
-	files := []string{
-		"bedrock_stream.go",
-		"antigravity_gateway_streaming.go",
-		"gateway_anthropic_passthrough.go",
-		"gateway_upstream_response.go",
-		"openai_gateway_chat_completions.go",
-		"openai_gateway_messages.go",
-		"openai_gateway_response_handling.go",
+	tests := []struct {
+		file         string
+		function     string
+		wantSentinel bool
+	}{
+		{file: "bedrock_stream.go", function: "handleBedrockStreamingResponse", wantSentinel: true},
+		{file: "antigravity_gateway_streaming.go", function: "handleGeminiStreamingResponse", wantSentinel: true},
+		{file: "antigravity_gateway_streaming.go", function: "handleGeminiStreamToNonStreaming", wantSentinel: false},
+		{file: "antigravity_gateway_streaming.go", function: "handleClaudeStreamToNonStreaming", wantSentinel: false},
+		{file: "antigravity_gateway_streaming.go", function: "handleClaudeStreamingResponse", wantSentinel: true},
+		{file: "gateway_anthropic_passthrough.go", function: "handleStreamingResponseAnthropicAPIKeyPassthrough", wantSentinel: true},
+		{file: "gateway_upstream_response.go", function: "handleStreamingResponse", wantSentinel: true},
+		{file: "openai_gateway_chat_completions.go", function: "handleChatStreamingResponse", wantSentinel: true},
+		{file: "openai_gateway_messages.go", function: "readOpenAICompatBufferedTerminal", wantSentinel: false},
+		{file: "openai_gateway_messages.go", function: "handleAnthropicStreamingResponse", wantSentinel: true},
+		{file: "openai_gateway_response_handling.go", function: "handleStreamingResponse", wantSentinel: true},
 	}
-	for _, file := range files {
-		t.Run(file, func(t *testing.T) {
-			source, err := os.ReadFile(file)
-			require.NoError(t, err)
-			require.Zero(t, strings.Count(string(source), `fmt.Errorf("stream data interval timeout")`), "eligible stream idle timeout must use ErrStreamDataIntervalTimeout")
+	for _, tt := range tests {
+		t.Run(tt.file+"/"+tt.function, func(t *testing.T) {
+			body := firstTokenFunctionSource(t, tt.file, tt.function)
+			require.Equal(t, tt.wantSentinel, strings.Contains(body, "ErrStreamDataIntervalTimeout"), "sentinel ownership mismatch")
+			require.Equal(t, !tt.wantSentinel, strings.Contains(body, `fmt.Errorf("stream data interval timeout")`), "literal error ownership mismatch")
 		})
 	}
+}
+
+func firstTokenFunctionSource(t *testing.T, filename, function string) string {
+	t.Helper()
+	source, err := os.ReadFile(filename)
+	require.NoError(t, err)
+	fset := token.NewFileSet()
+	parsed, err := parser.ParseFile(fset, filename, source, 0)
+	require.NoError(t, err)
+	for _, declaration := range parsed.Decls {
+		functionDeclaration, ok := declaration.(*ast.FuncDecl)
+		if !ok || functionDeclaration.Name.Name != function {
+			continue
+		}
+		start := fset.Position(functionDeclaration.Pos()).Offset
+		end := fset.Position(functionDeclaration.End()).Offset
+		return string(source[start:end])
+	}
+	require.FailNow(t, "function not found", "%s in %s", function, filename)
+	return ""
 }

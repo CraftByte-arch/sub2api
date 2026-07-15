@@ -703,7 +703,7 @@ func (s *OpenAIGatewayService) readOpenAICompatBufferedTerminal(
 				zap.String("request_id", requestID),
 				zap.Duration("interval", streamInterval),
 			)
-			return nil, usage, acc, ErrStreamDataIntervalTimeout
+			return nil, usage, acc, fmt.Errorf("stream data interval timeout")
 		}
 	}
 }

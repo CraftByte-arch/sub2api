@@ -435,7 +435,7 @@ func (s *AntigravityGatewayService) handleGeminiStreamToNonStreaming(c *gin.Cont
 				continue
 			}
 			logger.LegacyPrintf("service.antigravity_gateway", "Stream data interval timeout (antigravity non-stream)")
-			return nil, ErrStreamDataIntervalTimeout
+			return nil, fmt.Errorf("stream data interval timeout")
 		}
 	}
 
@@ -875,7 +875,7 @@ func (s *AntigravityGatewayService) handleClaudeStreamToNonStreaming(c *gin.Cont
 				continue
 			}
 			logger.LegacyPrintf("service.antigravity_gateway", "Stream data interval timeout (antigravity claude non-stream)")
-			return nil, ErrStreamDataIntervalTimeout
+			return nil, fmt.Errorf("stream data interval timeout")
 		}
 	}
 

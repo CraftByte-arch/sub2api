@@ -220,7 +220,7 @@ func (t *FirstTokenAttemptTracker) Finish(err error, state FirstTokenAttemptStat
 			FailureKind:    failureKind,
 			SampleCount:    1,
 		}
-		if ttftMS := t.ttftMS.Load(); ttftMS >= 0 {
+		if ttftMS := t.ttftMS.Load(); outcome != FirstTokenStatsAttemptTTFTTimeout && ttftMS >= 0 {
 			delta.TTFTSampleCount = 1
 			delta.TTFTSumMS = ttftMS
 			delta.TTFTMaxMS = ttftMS
@@ -271,6 +271,7 @@ func classifyFirstTokenFailureKind(err error) string {
 			return FirstTokenStatsFailureAuth
 		}
 		if errorType == UpstreamErrorTypeFirstTokenPreludeOverflow {
+			// Prelude overflow is a typed protocol failure despite its generic 502 status.
 			return FirstTokenStatsFailureProtocol
 		}
 		if failoverErr.StatusCode >= 400 && failoverErr.StatusCode < 500 {
@@ -281,11 +282,11 @@ func classifyFirstTokenFailureKind(err error) string {
 		}
 	}
 
-	if errors.Is(err, ErrStreamDataIntervalTimeout) {
-		return FirstTokenStatsFailureStreamIdleTimeout
-	}
 	if isFirstTokenTransportError(err) {
 		return FirstTokenStatsFailureTransport
+	}
+	if errors.Is(err, ErrStreamDataIntervalTimeout) {
+		return FirstTokenStatsFailureStreamIdleTimeout
 	}
 	if isFirstTokenProtocolError(err, failoverErr) {
 		return FirstTokenStatsFailureProtocol
