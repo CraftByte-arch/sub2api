@@ -11,10 +11,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestGatewayMessagesAbandonsBothLocalInterceptResponses(t *testing.T) {
+// This is a structural guard for both duplicated scheduling branches; local
+// success outcome semantics are covered by executable intercept tests.
+func TestGatewayMessagesObservesBothLocalInterceptResponses(t *testing.T) {
 	content, err := os.ReadFile("gateway_handler.go")
 	require.NoError(t, err)
-	require.Equal(t, 2, strings.Count(string(content), "firstTokenTracker.Abandon()"))
+	require.Equal(t, 2, strings.Count(string(content), "firstTokenTracker.ObserveLocalSuccess()"))
 }
 
 func TestFirstTokenRequestTrackingHooksPrecedeAccountSelection(t *testing.T) {

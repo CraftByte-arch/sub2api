@@ -352,7 +352,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			if account.IsInterceptWarmupEnabled() {
 				interceptType := detectInterceptType(body, reqModel, parsedReq.MaxTokens, isClaudeCodeClient)
 				if interceptType != InterceptTypeNone {
-					firstTokenTracker.Abandon()
+					firstTokenTracker.ObserveLocalSuccess()
 					if selection.Acquired && selection.ReleaseFunc != nil {
 						selection.ReleaseFunc()
 					}
@@ -658,7 +658,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			if account.IsInterceptWarmupEnabled() {
 				interceptType := detectInterceptType(body, reqModel, parsedReq.MaxTokens, isClaudeCodeClient)
 				if interceptType != InterceptTypeNone {
-					firstTokenTracker.Abandon()
+					firstTokenTracker.ObserveLocalSuccess()
 					if selection.Acquired && selection.ReleaseFunc != nil {
 						selection.ReleaseFunc()
 					}

@@ -97,7 +97,7 @@
 - **THEN** 日志 SHALL 不包含请求正文、访问凭据或上游内部网络地址
 
 ### Requirement: 统计只覆盖实际受控流量
-系统 SHALL 只在首 token 超时开关开启且 eligible 请求实际进入 TTFT controller 时记录新统计样本。关闭期间和非目标请求 SHALL 不产生样本；已有历史数据 SHALL 继续可查询，且系统 SHALL 不使用现有 usage/Ops 日志回填缺少 attempt 分母的历史区间。
+系统 SHALL 只为首 token 超时开关开启且 eligible、并已通过解析、校验、权限、内容审核、用户并发和计费 preflight 进入账号选择阶段的请求记录 request 样本；attempt 样本 SHALL 只在实际进入 TTFT controller 后记录。关闭期间、非目标请求和上述 preflight 失败 SHALL 不产生样本；已有历史数据 SHALL 继续可查询，且系统 SHALL 不使用现有 usage/Ops 日志回填缺少 attempt 分母的历史区间。
 
 #### Scenario: 开关关闭后查看历史
 - **WHEN** 管理员关闭策略后查看过去 7 天
@@ -106,6 +106,14 @@
 #### Scenario: 非目标请求不进入统计
 - **WHEN** WebSocket、非流式、媒体或批处理请求完成或失败
 - **THEN** 系统不把该请求计入 TTFT attempt 或 request 分母
+
+#### Scenario: 选号或账号并发在上游前失败
+- **WHEN** enabled eligible 请求通过本地 preflight，但首次账号选择失败，或选中账号后在发起上游前无法取得账号并发槽
+- **THEN** 系统只增加一个 `request/other_failure` 样本，不增加 attempt 样本
+
+#### Scenario: 本地 preflight 失败
+- **WHEN** 请求在解析、校验、权限、内容审核、用户并发或计费 preflight 阶段失败
+- **THEN** 系统不增加 request 或 attempt 样本
 
 ### Requirement: Attempt 与最终请求必须分别聚合
 系统 SHALL 分别记录受控 attempt 和最终 request 的小时聚合结果。Attempt outcome SHALL 为 `success`、`ttft_timeout`、`other_failure` 或 `client_canceled`；request outcome SHALL 为 `success`、`recovered_after_ttft`、`ttft_exhausted`、`other_failure` 或 `client_canceled`。每个 request SHALL 恰好记录一个最终 outcome，每个实际发起的受控上游 attempt SHALL 恰好记录一个 attempt outcome。

@@ -178,6 +178,26 @@ func (t *FirstTokenRequestTracker) Abandon() {
 	t.abandoned = true
 }
 
+func (t *FirstTokenRequestTracker) ObserveLocalSuccess() {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.finishing || t.abandoned || t.succeeded || t.active != 0 {
+		return
+	}
+	if len(t.attempts) == 0 {
+		t.abandoned = true
+		return
+	}
+	t.uncontrolled = &firstTokenTrackedAttemptResult{
+		outcome:        FirstTokenStatsAttemptSuccess,
+		timeoutSeconds: t.attempts[len(t.attempts)-1].timeoutSeconds,
+	}
+	t.succeeded = true
+}
+
 func (t *FirstTokenRequestTracker) ObserveUncontrolledAttempt(err error, snapshot FirstTokenTimeoutSnapshot) {
 	if t == nil {
 		return

@@ -174,6 +174,40 @@ func TestRunFirstTokenAttemptPanicStillFinishesTrackedAttempt(t *testing.T) {
 	require.Equal(t, service.FirstTokenStatsRequestOtherFailure, deltas[1].Outcome)
 }
 
+func TestRunFirstTokenAttemptCommittedPanicIsOtherFailure(t *testing.T) {
+	c, _ := newFirstTokenRunnerContext()
+	recorder := &firstTokenRunnerStatsRecorderSpy{}
+	snapshot := service.FirstTokenTimeoutSnapshot{Enabled: true, Timeout: time.Second}
+	tracker := bindFirstTokenRunnerRequestTracker(c, recorder, snapshot)
+	timedOut := tracker.BeginAttempt(service.FirstTokenStatsAttemptMetadata{AccountID: 1, Platform: service.PlatformOpenAI}, service.FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 20 * time.Second})
+	timedOut.Finish(service.NewFirstTokenTimeoutFailoverError(), service.FirstTokenTimedOut)
+	panicValue := &firstTokenRunnerPanicStringer{}
+
+	var recovered any
+	func() {
+		defer func() { recovered = recover() }()
+		_, _ = runFirstTokenAttempt(c, firstTokenRunnerPolicyStub{snapshot: snapshot}, FirstTokenAttemptMetadata{
+			Protocol: service.ProtocolResponses, AccountID: 2, Platform: service.PlatformOpenAI, Model: "gpt-5",
+		}, func(ctx context.Context) (*service.ForwardResult, error) {
+			time.Sleep(10 * time.Millisecond)
+			require.NoError(t, service.CommitFirstTokenEventFromContext(ctx, service.ProtocolResponses, "", []byte(`{"type":"response.output_text.delta","delta":"ok"}`)))
+			panic(panicValue)
+		})
+	}()
+	require.Same(t, panicValue, recovered)
+	require.False(t, panicValue.formatted)
+	tracker.Finish()
+
+	deltas := recorder.snapshot()
+	require.Len(t, deltas, 3)
+	require.Equal(t, service.FirstTokenStatsAttemptTTFTTimeout, deltas[0].Outcome)
+	require.Equal(t, service.FirstTokenStatsAttemptOtherFailure, deltas[1].Outcome)
+	require.Equal(t, int64(1), deltas[1].TTFTSampleCount)
+	require.Positive(t, deltas[1].TTFTSumMS)
+	require.Equal(t, service.FirstTokenStatsRequestOtherFailure, deltas[2].Outcome)
+	require.Equal(t, int64(1), deltas[2].TTFTAffectedCount)
+}
+
 func TestRunFirstTokenAttemptTrackingFailureOutcomes(t *testing.T) {
 	t.Run("timeout then other failure", func(t *testing.T) {
 		c, response := newFirstTokenRunnerContext()

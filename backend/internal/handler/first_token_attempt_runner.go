@@ -25,6 +25,7 @@ type FirstTokenAttemptMetadata struct {
 const firstTokenTimeoutClientMessage = "Upstream timed out before first token"
 
 var errFirstTokenUncontrolledForwardTerminated = errors.New("uncontrolled first token forward terminated")
+var errFirstTokenControlledForwardTerminated = errors.New("controlled first token forward terminated")
 
 type firstTokenTimeoutPolicySnapshotter interface {
 	Snapshot() service.FirstTokenTimeoutSnapshot
@@ -158,6 +159,14 @@ func runFirstTokenAttempt[T any](
 	if attemptTracker != nil {
 		defer func() { attemptTracker.Finish(finalErr, attempt.State()) }()
 	}
+	forwardReturned := false
+	if attemptTracker != nil {
+		defer func() {
+			if !forwardReturned {
+				finalErr = errFirstTokenControlledForwardTerminated
+			}
+		}()
+	}
 	finishResponseCommitAttempt := service.BeginResponseCommitAttempt(c)
 	commitFirstToken := func() error {
 		elapsed := attempt.Elapsed()
@@ -180,6 +189,7 @@ func runFirstTokenAttempt[T any](
 	defer gate.Rollback()
 
 	result, forwardErr := forward(attemptCtx)
+	forwardReturned = true
 	finalErr = finishFirstTokenAttempt(c, snapshot, meta, attempt, originalRequest.Context(), gate, forwardErr)
 	return result, finalErr
 }

@@ -1,12 +1,15 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -62,4 +65,42 @@ func TestSendMockInterceptResponse_MaxTokensOneHaiku(t *testing.T) {
 	usage, ok := response["usage"].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, float64(1), usage["output_tokens"])
+}
+
+func TestSendMockInterceptResponseFirstTokenTracking(t *testing.T) {
+	t.Run("without prior attempt records nothing", func(t *testing.T) {
+		recorder := &firstTokenRunnerStatsRecorderSpy{}
+		tracker := service.NewFirstTokenRequestTracker(recorder, context.Background(), service.ProtocolAnthropicMessages, "claude-sonnet-4-5", service.FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 30 * time.Second})
+		rec := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(rec)
+
+		tracker.ObserveLocalSuccess()
+		sendMockInterceptResponse(ctx, "claude-sonnet-4-5", InterceptTypeWarmup)
+		tracker.Finish()
+
+		require.Equal(t, http.StatusOK, rec.Code)
+		require.Empty(t, recorder.snapshot())
+	})
+
+	t.Run("after timeout records recovered request without local attempt", func(t *testing.T) {
+		recorder := &firstTokenRunnerStatsRecorderSpy{}
+		tracker := service.NewFirstTokenRequestTracker(recorder, context.Background(), service.ProtocolAnthropicMessages, "claude-sonnet-4-5", service.FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 30 * time.Second})
+		attempt := tracker.BeginAttempt(service.FirstTokenStatsAttemptMetadata{AccountID: 1, Platform: service.PlatformAnthropic}, service.FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 20 * time.Second})
+		attempt.Finish(service.NewFirstTokenTimeoutFailoverError(), service.FirstTokenTimedOut)
+		rec := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(rec)
+
+		tracker.ObserveLocalSuccess()
+		sendMockInterceptResponse(ctx, "claude-sonnet-4-5", InterceptTypeWarmup)
+		tracker.Finish()
+
+		require.Equal(t, http.StatusOK, rec.Code)
+		deltas := recorder.snapshot()
+		require.Len(t, deltas, 2)
+		require.Equal(t, service.FirstTokenStatsAttemptTTFTTimeout, deltas[0].Outcome)
+		require.Equal(t, service.FirstTokenStatsScopeRequest, deltas[1].Scope)
+		require.Equal(t, service.FirstTokenStatsRequestRecoveredAfterTTFT, deltas[1].Outcome)
+		require.Equal(t, int64(1), deltas[1].TTFTAffectedCount)
+		require.Equal(t, 20, deltas[1].TimeoutSeconds)
+	})
 }
