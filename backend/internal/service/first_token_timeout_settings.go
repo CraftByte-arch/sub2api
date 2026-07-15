@@ -111,8 +111,8 @@ func (p *FirstTokenTimeoutPolicy) Reload(ctx context.Context) error {
 
 	raw, err := p.repo.GetValue(ctx, SettingKeyFirstTokenTimeoutSettings)
 	if err != nil {
+		p.current.Store(snapshotFromFirstTokenTimeoutSettings(defaultFirstTokenTimeoutSettings()))
 		if errors.Is(err, ErrSettingNotFound) {
-			p.current.Store(snapshotFromFirstTokenTimeoutSettings(defaultFirstTokenTimeoutSettings()))
 			return nil
 		}
 		return fmt.Errorf("load first token timeout settings: %w", err)
@@ -130,7 +130,7 @@ func (p *FirstTokenTimeoutPolicy) Reload(ctx context.Context) error {
 func (p *FirstTokenTimeoutPolicy) Start(ctx context.Context) {
 	p.startOnce.Do(func() {
 		if err := p.Reload(ctx); err != nil {
-			logger.LegacyPrintf("service.first_token_timeout", "failed to load first token timeout settings before worker start; keeping current snapshot: %v", err)
+			logger.LegacyPrintf("service.first_token_timeout", "failed to load first token timeout settings before worker start; using disabled snapshot: %v", err)
 		}
 		go p.run(ctx)
 	})
@@ -155,7 +155,7 @@ func (p *FirstTokenTimeoutPolicy) run(ctx context.Context) {
 	}
 	subscribe()
 	if err := p.Reload(ctx); err != nil {
-		logger.LegacyPrintf("service.first_token_timeout", "failed to load first token timeout settings; keeping current snapshot: %v", err)
+		logger.LegacyPrintf("service.first_token_timeout", "failed to load first token timeout settings; using disabled snapshot: %v", err)
 	}
 
 	for {

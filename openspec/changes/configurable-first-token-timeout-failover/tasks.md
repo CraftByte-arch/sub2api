@@ -53,4 +53,4 @@
 - 7.1：`first_token_timeout_integration_test`、`first_token_timeout_billing_integration_test` 和 `first_token_timeout_failover_test` 覆盖慢账号换号成功、实际候选耗尽 504、客户端取消停止选择、失败输出不提交、attempt/request outcome，以及首 token 后 idle 错误不换号。
 - 7.2：`TestRunEligibleFirstTokenAttemptBypassesExcludedRequestsWithoutStats` 覆盖默认关闭、非流式、WebSocket、图片、视频、batch 和 background 的原路径直通与零 TTFT samples。
 - 7.3：后端 race/全量/migration/vet 与 PostgreSQL Testcontainers stats integration 通过；前端 lint、Vitest（165 files / 1140 tests）、typecheck 和 production build 通过。
-- 发布保护：设置默认关闭；1 秒阈值在 handler 集成测试中启用；recorder degraded 与前端提示均有覆盖；持久化失败保持旧策略快照且不发布失效通知。API 客户端 timezone 参数和服务端白名单契约均有测试。
+- 发布保护：设置默认关闭；1 秒阈值在 handler 集成测试中启用；recorder degraded 与前端提示均有覆盖；Reload 读取失败 fail-closed，Update 持久化失败保持旧策略快照且不发布失效通知。API 客户端 timezone 参数和服务端白名单契约均有测试。

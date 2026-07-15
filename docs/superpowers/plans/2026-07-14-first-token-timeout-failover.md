@@ -745,7 +745,7 @@ git commit -m "test: verify first token timeout release safety"
 - 排除范围：disabled、non-stream、WebSocket、image、video、batch 和 background 均保持原 forward 路径且 recorder 为零。
 - 后端：目标 race 测试、`go test ./migrations`、`go test ./...`、`go vet`、真实 PostgreSQL/Redis Testcontainers stats integration 均通过。Colima 需要显式 `DOCKER_HOST=unix://$HOME/.colima/default/docker.sock` 和 `TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock`。
 - 前端：`pnpm lint:check`（0 errors，已有 3 warnings）、`pnpm test:run`（165 files / 1140 tests）、`pnpm typecheck` 和 `pnpm build` 均通过。
-- 发布保护：默认关闭；1 秒短阈值启用；degraded completeness 前后端可见；设置持久化失败保持旧 snapshot；timezone 客户端注入与服务端参数契约受测试保护。
+- 发布保护：默认关闭；1 秒短阈值启用；degraded completeness 前后端可见；Reload 读取失败 fail-closed，设置持久化失败保持旧 snapshot；timezone 客户端注入与服务端参数契约受测试保护。
 
 ## Spec Coverage 自审
 

@@ -69,6 +69,48 @@ func TestFirstTokenTimeoutPolicyReloadFallsBackForMissingAndCorruptSettings(t *t
 	require.False(t, policy.Snapshot().Enabled)
 }
 
+func TestFirstTokenTimeoutPolicyReloadErrorFailsClosed(t *testing.T) {
+	repo := &firstTokenTimeoutFailingGetRepo{
+		firstTokenTimeoutMemorySettingRepo: &firstTokenTimeoutMemorySettingRepo{values: make(map[string]string)},
+		getErr:                             errors.New("database unavailable"),
+	}
+	policy := NewFirstTokenTimeoutPolicy(repo, nil)
+	require.NoError(t, policy.Update(context.Background(), FirstTokenTimeoutSettings{Enabled: true, TimeoutSeconds: 12}))
+	before := policy.Snapshot()
+
+	err := policy.Reload(context.Background())
+
+	require.ErrorIs(t, err, repo.getErr)
+	snapshot := policy.Snapshot()
+	require.False(t, snapshot.Enabled)
+	require.Equal(t, 30*time.Second, snapshot.Timeout)
+	require.True(t, snapshot.LoadedAt.After(before.LoadedAt))
+}
+
+func TestFirstTokenTimeoutPolicyStartAndWorkerReloadErrorsFailClosed(t *testing.T) {
+	repo := &firstTokenTimeoutFailingGetRepo{
+		firstTokenTimeoutMemorySettingRepo: &firstTokenTimeoutMemorySettingRepo{values: make(map[string]string)},
+		getErr:                             errors.New("network unavailable"),
+	}
+	policy := NewFirstTokenTimeoutPolicy(repo, nil)
+	require.NoError(t, policy.Update(context.Background(), FirstTokenTimeoutSettings{Enabled: true, TimeoutSeconds: 12}))
+	ticker := newFirstTokenTimeoutManualTicker()
+	policy.tickerFactory = func(time.Duration) firstTokenTimeoutPolicyTicker { return ticker }
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	policy.Start(ctx)
+	require.Eventually(t, func() bool { return repo.getCalls.Load() >= 2 }, time.Second, time.Millisecond)
+	require.False(t, policy.Snapshot().Enabled)
+	require.Equal(t, 30*time.Second, policy.Snapshot().Timeout)
+
+	ticker.Tick()
+	require.Eventually(t, func() bool { return repo.getCalls.Load() >= 3 }, time.Second, time.Millisecond)
+	require.False(t, policy.Snapshot().Enabled)
+	cancel()
+	waitForFirstTokenTimeoutWorkerExit(t, policy)
+}
+
 func TestFirstTokenTimeoutPolicyInvalidUpdateKeepsPreviousSnapshot(t *testing.T) {
 	policy, repo, notifier := newFirstTokenTimeoutPolicyForTest()
 	require.NoError(t, policy.Update(context.Background(), FirstTokenTimeoutSettings{Enabled: true, TimeoutSeconds: 12}))
@@ -518,6 +560,17 @@ type firstTokenTimeoutMemorySettingRepo struct {
 	mu     sync.RWMutex
 	values map[string]string
 	setErr error
+}
+
+type firstTokenTimeoutFailingGetRepo struct {
+	*firstTokenTimeoutMemorySettingRepo
+	getErr   error
+	getCalls atomic.Int32
+}
+
+func (r *firstTokenTimeoutFailingGetRepo) GetValue(context.Context, string) (string, error) {
+	r.getCalls.Add(1)
+	return "", r.getErr
 }
 
 func (r *firstTokenTimeoutMemorySettingRepo) Get(_ context.Context, key string) (*Setting, error) {
