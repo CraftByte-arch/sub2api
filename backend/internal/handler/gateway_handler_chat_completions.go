@@ -338,6 +338,10 @@ func (h *GatewayHandler) handleCCFailoverExhausted(c *gin.Context, lastErr *serv
 	if streamStarted {
 		return
 	}
+	if lastErr != nil && lastErr.ErrorType == service.UpstreamErrorTypeFirstTokenTimeout {
+		h.chatCompletionsErrorResponse(c, http.StatusGatewayTimeout, lastErr.ErrorType, firstTokenTimeoutClientMessage)
+		return
+	}
 	statusCode := http.StatusBadGateway
 	if lastErr != nil && lastErr.StatusCode > 0 {
 		statusCode = lastErr.StatusCode

@@ -1582,6 +1582,10 @@ func (h *GatewayHandler) handleConcurrencyError(c *gin.Context, err error, slotT
 }
 
 func (h *GatewayHandler) handleFailoverExhausted(c *gin.Context, failoverErr *service.UpstreamFailoverError, platform string, streamStarted bool) {
+	if !streamStarted && failoverErr.ErrorType == service.UpstreamErrorTypeFirstTokenTimeout {
+		h.handleStreamingAwareError(c, http.StatusGatewayTimeout, failoverErr.ErrorType, firstTokenTimeoutClientMessage, false)
+		return
+	}
 	statusCode := failoverErr.StatusCode
 	responseBody := failoverErr.ResponseBody
 	if service.IsOpenAISilentRefusalErrorBody(responseBody) {

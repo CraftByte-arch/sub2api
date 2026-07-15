@@ -319,6 +319,10 @@ func (h *GatewayHandler) handleResponsesFailoverExhausted(c *gin.Context, lastEr
 	if streamStarted {
 		return // Can't write error after stream started
 	}
+	if lastErr != nil && lastErr.ErrorType == service.UpstreamErrorTypeFirstTokenTimeout {
+		h.responsesErrorResponse(c, http.StatusGatewayTimeout, lastErr.ErrorType, firstTokenTimeoutClientMessage)
+		return
+	}
 	statusCode := http.StatusBadGateway
 	if lastErr != nil && lastErr.StatusCode > 0 {
 		statusCode = lastErr.StatusCode

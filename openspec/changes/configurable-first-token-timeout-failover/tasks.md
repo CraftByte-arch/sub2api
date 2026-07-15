@@ -21,10 +21,10 @@
 
 ## 4. Failover、调度与计费
 
-- [ ] 4.1 将 attempt timeout 和 prelude overflow 转换为稳定的 typed `UpstreamFailoverError`，TTFT 超时使用 504、`first_token_timeout` 且禁止同账号重试
+- [x] 4.1 将 attempt timeout 和 prelude overflow 转换为稳定的 typed `UpstreamFailoverError`，TTFT 超时使用 504、`first_token_timeout` 且禁止同账号重试
 - [x] 4.2 在目标 handler failover 循环中按 attempt 安装/回收门控，正确释放账号槽、排除超时账号并受现有 `maxAccountSwitches` 限制
-- [ ] 4.3 记录安全的 TTFT timeout 结构化事件、Ops 指标和账号调度失败结果，不记录正文、凭据或内部地址
-- [ ] 4.4 确保超时 attempt 不写正常 usage log、不扣除 Sub2API 用户余额，最终成功 attempt 继续正常计费
+- [x] 4.3 记录安全的 TTFT timeout 结构化事件、Ops 指标和账号调度失败结果，不记录正文、凭据或内部地址
+- [x] 4.4 确保超时 attempt 不写正常 usage log、不扣除 Sub2API 用户余额，最终成功 attempt 继续正常计费
 
 ## 5. 独立统计存储与查询
 

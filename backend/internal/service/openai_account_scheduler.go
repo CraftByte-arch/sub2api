@@ -1903,6 +1903,12 @@ func (s *OpenAIGatewayService) ReportOpenAIAccountScheduleResult(accountID int64
 	scheduler.ReportResult(accountID, success, firstTokenMs)
 }
 
+// ReportOpenAIAccountFirstTokenTimeout updates only the scheduler's in-memory
+// runtime failure statistics. It intentionally does not mutate account state.
+func (s *OpenAIGatewayService) ReportOpenAIAccountFirstTokenTimeout(accountID int64) {
+	s.ReportOpenAIAccountScheduleResult(accountID, false, nil)
+}
+
 func (s *OpenAIGatewayService) RecordOpenAIAccountSwitch() {
 	scheduler := s.getOpenAIAccountScheduler(context.Background())
 	if scheduler == nil {

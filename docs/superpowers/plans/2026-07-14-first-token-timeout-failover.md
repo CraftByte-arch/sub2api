@@ -377,7 +377,7 @@ git commit -m "feat: enforce first token timeout across http streams"
 - Test: `backend/internal/handler/first_token_timeout_failover_test.go`
 - Test: `backend/internal/service/first_token_timeout_billing_test.go`
 
-- [ ] **Step 1: 写耗尽、禁止同账号 retry 和零计费失败测试**
+- [x] **Step 1: 写耗尽、禁止同账号 retry 和零计费失败测试**
 
 ```go
 func TestFirstTokenTimeoutFailoverError(t *testing.T) {
@@ -390,13 +390,13 @@ func TestFirstTokenTimeoutFailoverError(t *testing.T) {
 
 分别断言三入口耗尽 envelope 的 HTTP status/type；pool mode retry count 非零时仍换号；timeout attempt 的 usage/balance 未变化，后续成功 attempt 只计费一次。
 
-- [ ] **Step 2: 运行并确认失败**
+- [x] **Step 2: 运行并确认失败**
 
 Run: `cd backend && go test ./internal/handler ./internal/service -run 'FirstTokenTimeout.*(Exhausted|Retry|Billing|FailoverError)' -count=1`
 
 Expected: FAIL，缺少稳定 error type 或耗尽分支仍返回 `server_error`。
 
-- [ ] **Step 3: 最小扩展 `UpstreamFailoverError` 与 exhaustion mapping**
+- [x] **Step 3: 最小扩展 `UpstreamFailoverError` 与 exhaustion mapping**
 
 ```go
 type UpstreamFailoverError struct {
@@ -408,17 +408,17 @@ type UpstreamFailoverError struct {
 
 空 `ErrorType` 保持原行为；`first_token_timeout` 专用 helper 返回 504。三种 handler exhaustion 只 special-case 此 type，其他 silent refusal/passthrough 映射不动。
 
-- [ ] **Step 4: 记录安全结构化事件与 scheduler failure**
+- [x] **Step 4: 记录安全结构化事件与 scheduler failure**
 
 日志只写 protocol/platform/account/model/threshold/attempt/switch/elapsed；不写 body、credential、URL。调用现有 scheduler runtime failure 上报，但跳过 temp unschedule 和持久账号状态修改。
 
-- [ ] **Step 5: 运行 failover、usage 与 billing 回归**
+- [x] **Step 5: 运行 failover、usage 与 billing 回归**
 
 Run: `cd backend && go test ./internal/handler ./internal/service -run 'Failover|FirstTokenTimeout|RecordUsage|Billing' -count=1`
 
 Expected: PASS；既有非 TTFT failover 行为不变。
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 git add backend/internal/service/gateway_service.go backend/internal/handler/failover_loop.go backend/internal/handler/gateway_handler_responses.go backend/internal/handler/gateway_handler_chat_completions.go backend/internal/handler/openai_gateway_handler.go backend/internal/handler/openai_chat_completions.go backend/internal/handler/first_token_timeout_failover_test.go backend/internal/service/first_token_timeout_billing_test.go

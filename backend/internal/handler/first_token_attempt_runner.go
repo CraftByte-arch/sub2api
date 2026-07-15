@@ -5,9 +5,11 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
+	"go.uber.org/zap"
 )
 
 type FirstTokenAttemptMetadata struct {
@@ -18,6 +20,8 @@ type FirstTokenAttemptMetadata struct {
 	AttemptIndex int
 	SwitchCount  int
 }
+
+const firstTokenTimeoutClientMessage = "Upstream timed out before first token"
 
 type firstTokenTimeoutPolicySnapshotter interface {
 	Snapshot() service.FirstTokenTimeoutSnapshot
@@ -79,7 +83,6 @@ func runFirstTokenAttempt[T any](
 	meta FirstTokenAttemptMetadata,
 	forward func(context.Context) (T, error),
 ) (T, error) {
-	_ = meta
 	if c == nil || c.Request == nil || c.Writer == nil || firstTokenPolicyDisabled(policy) {
 		var ctx context.Context
 		if c != nil && c.Request != nil {
@@ -110,6 +113,19 @@ func runFirstTokenAttempt[T any](
 
 	result, forwardErr := forward(attemptCtx)
 	if failoverErr := firstTokenAttemptTerminalFailover(attempt, originalRequest.Context()); failoverErr != nil {
+		var typedFailover *service.UpstreamFailoverError
+		if errors.As(failoverErr, &typedFailover) && typedFailover.ErrorType == service.UpstreamErrorTypeFirstTokenTimeout {
+			logger.FromContext(originalRequest.Context()).Warn("gateway.first_token_timeout",
+				zap.String("protocol", string(meta.Protocol)),
+				zap.String("platform", meta.Platform),
+				zap.Int64("account", meta.AccountID),
+				zap.String("model", meta.Model),
+				zap.Duration("threshold", snapshot.Timeout),
+				zap.Int("attempt", meta.AttemptIndex),
+				zap.Int("switch", meta.SwitchCount),
+				zap.Duration("elapsed", attempt.Elapsed()),
+			)
+		}
 		return result, failoverErr
 	}
 
@@ -158,15 +174,9 @@ func firstTokenAttemptTerminalFailover(attempt *service.FirstTokenAttempt, paren
 
 	switch {
 	case errors.Is(attempt.Cause(), service.ErrFirstTokenTimeout):
-		return &service.UpstreamFailoverError{
-			StatusCode:             http.StatusGatewayTimeout,
-			RetryableOnSameAccount: false,
-		}
+		return service.NewFirstTokenTimeoutFailoverError()
 	case errors.Is(attempt.Cause(), service.ErrFirstTokenPreludeTooLarge):
-		return &service.UpstreamFailoverError{
-			StatusCode:             http.StatusBadGateway,
-			RetryableOnSameAccount: false,
-		}
+		return service.NewFirstTokenPreludeOverflowFailoverError()
 	default:
 		return nil
 	}
