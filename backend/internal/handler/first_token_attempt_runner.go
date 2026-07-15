@@ -24,6 +24,8 @@ type FirstTokenAttemptMetadata struct {
 
 const firstTokenTimeoutClientMessage = "Upstream timed out before first token"
 
+var errFirstTokenUncontrolledForwardTerminated = errors.New("uncontrolled first token forward terminated")
+
 type firstTokenTimeoutPolicySnapshotter interface {
 	Snapshot() service.FirstTokenTimeoutSnapshot
 }
@@ -128,10 +130,19 @@ func runFirstTokenAttempt[T any](
 
 	snapshot := policy.Snapshot()
 	if !snapshot.Enabled {
-		result, finalErr = forward(c.Request.Context())
-		if tracker := service.FirstTokenRequestTrackerFromContext(c.Request.Context()); tracker != nil {
-			tracker.ObserveUncontrolledAttempt(finalErr, snapshot)
+		tracker := service.FirstTokenRequestTrackerFromContext(c.Request.Context())
+		returned := false
+		if tracker != nil {
+			defer func() {
+				if returned {
+					tracker.ObserveUncontrolledAttempt(finalErr, snapshot)
+					return
+				}
+				tracker.ObserveUncontrolledAttempt(errFirstTokenUncontrolledForwardTerminated, snapshot)
+			}()
 		}
+		result, finalErr = forward(c.Request.Context())
+		returned = true
 		return result, finalErr
 	}
 
@@ -150,11 +161,11 @@ func runFirstTokenAttempt[T any](
 	finishResponseCommitAttempt := service.BeginResponseCommitAttempt(c)
 	commitFirstToken := func() error {
 		elapsed := attempt.Elapsed()
-		if err := gate.Commit(); err != nil {
-			return err
+		commitErr := gate.Commit()
+		if gate.Committed() {
+			attemptTracker.MarkFirstToken(elapsed)
 		}
-		attemptTracker.MarkFirstToken(elapsed)
-		return nil
+		return commitErr
 	}
 	attemptCtx := service.WithFirstTokenAttempt(attempt.Context(), attempt, commitFirstToken)
 	c.Writer = gate

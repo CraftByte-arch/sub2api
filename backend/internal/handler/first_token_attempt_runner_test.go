@@ -86,6 +86,38 @@ func TestRunFirstTokenAttemptTracksCommitElapsedAndFinalOutcome(t *testing.T) {
 	require.Equal(t, service.FirstTokenStatsRequestSuccess, deltas[1].Outcome)
 }
 
+func TestRunFirstTokenAttemptTracksTTFTWhenCommittedPreludeWriteFails(t *testing.T) {
+	base, raw := newFirstTokenResponseGateTestWriter()
+	raw.writeErr = errors.New("client write failed")
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Writer = base
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	recorder := &firstTokenRunnerStatsRecorderSpy{}
+	snapshot := service.FirstTokenTimeoutSnapshot{Enabled: true, Timeout: time.Second}
+	tracker := bindFirstTokenRunnerRequestTracker(c, recorder, snapshot)
+
+	_, err := runFirstTokenAttempt(c, firstTokenRunnerPolicyStub{snapshot: snapshot}, FirstTokenAttemptMetadata{
+		Protocol: service.ProtocolResponses, AccountID: 42, Platform: service.PlatformOpenAI, Model: "gpt-5",
+	}, func(ctx context.Context) (*service.ForwardResult, error) {
+		_, writeErr := c.Writer.WriteString("data: {\"type\":\"response.created\"}\n\n")
+		require.NoError(t, writeErr)
+		time.Sleep(20 * time.Millisecond)
+		commitErr := service.CommitFirstTokenEventFromContext(ctx, service.ProtocolResponses, "", []byte(`{"type":"response.output_text.delta","delta":"ok"}`))
+		return nil, commitErr
+	})
+	require.ErrorIs(t, err, raw.writeErr)
+	tracker.Finish()
+
+	deltas := recorder.snapshot()
+	require.Len(t, deltas, 2)
+	require.Equal(t, service.FirstTokenStatsAttemptOtherFailure, deltas[0].Outcome)
+	require.Equal(t, int64(1), deltas[0].TTFTSampleCount)
+	require.GreaterOrEqual(t, deltas[0].TTFTSumMS, int64(15))
+	require.Equal(t, deltas[0].TTFTSumMS, deltas[0].TTFTMaxMS)
+	require.Equal(t, service.FirstTokenStatsRequestOtherFailure, deltas[1].Outcome)
+}
+
 func TestRunFirstTokenAttemptDisabledObservesDirectForwardWithoutAttemptDelta(t *testing.T) {
 	c, _ := newFirstTokenRunnerContext()
 	recorder := &firstTokenRunnerStatsRecorderSpy{}
@@ -249,6 +281,55 @@ func TestRunFirstTokenAttemptOnlyDisabledDirectForwardAbandonsTracking(t *testin
 	require.NoError(t, err)
 	tracker.Finish()
 	require.Empty(t, recorder.snapshot())
+}
+
+func TestRunFirstTokenAttemptDisabledPanicTracksUncontrolledTermination(t *testing.T) {
+	t.Run("only uncontrolled panic abandons request", func(t *testing.T) {
+		c, _ := newFirstTokenRunnerContext()
+		recorder := &firstTokenRunnerStatsRecorderSpy{}
+		tracker := bindFirstTokenRunnerRequestTracker(c, recorder, service.FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 30 * time.Second})
+		panicValue := &firstTokenRunnerPanicStringer{}
+
+		var recovered any
+		func() {
+			defer func() { recovered = recover() }()
+			_, _ = runFirstTokenAttempt(c, firstTokenRunnerPolicyStub{snapshot: service.FirstTokenTimeoutSnapshot{Enabled: false, Timeout: 7 * time.Second}}, FirstTokenAttemptMetadata{}, func(context.Context) (*service.ForwardResult, error) {
+				panic(panicValue)
+			})
+		}()
+		require.Same(t, panicValue, recovered)
+		require.False(t, panicValue.formatted)
+		tracker.Finish()
+		require.Empty(t, recorder.snapshot())
+	})
+
+	t.Run("prior timeout plus uncontrolled panic is affected other failure", func(t *testing.T) {
+		c, _ := newFirstTokenRunnerContext()
+		recorder := &firstTokenRunnerStatsRecorderSpy{}
+		tracker := bindFirstTokenRunnerRequestTracker(c, recorder, service.FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 30 * time.Second})
+		timedOut := tracker.BeginAttempt(service.FirstTokenStatsAttemptMetadata{AccountID: 1, Platform: service.PlatformOpenAI}, service.FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 20 * time.Second})
+		timedOut.Finish(service.NewFirstTokenTimeoutFailoverError(), service.FirstTokenTimedOut)
+		panicValue := &firstTokenRunnerPanicStringer{}
+
+		var recovered any
+		func() {
+			defer func() { recovered = recover() }()
+			_, _ = runFirstTokenAttempt(c, firstTokenRunnerPolicyStub{snapshot: service.FirstTokenTimeoutSnapshot{Enabled: false, Timeout: 9 * time.Second}}, FirstTokenAttemptMetadata{}, func(context.Context) (*service.ForwardResult, error) {
+				panic(panicValue)
+			})
+		}()
+		require.Same(t, panicValue, recovered)
+		require.False(t, panicValue.formatted)
+		tracker.Finish()
+
+		deltas := recorder.snapshot()
+		require.Len(t, deltas, 2)
+		require.Equal(t, service.FirstTokenStatsAttemptTTFTTimeout, deltas[0].Outcome)
+		require.Equal(t, service.FirstTokenStatsRequestOtherFailure, deltas[1].Outcome)
+		require.Equal(t, service.FirstTokenStatsFailureOther, deltas[1].FailureKind)
+		require.Equal(t, int64(1), deltas[1].TTFTAffectedCount)
+		require.Equal(t, 9, deltas[1].TimeoutSeconds)
+	})
 }
 
 func TestRunFirstTokenAttemptDisabledPreservesWriterAndContext(t *testing.T) {
