@@ -353,6 +353,7 @@ func TestFirstTokenTimeoutStatsQueryOverviewCalculatesStableRates(t *testing.T) 
 		WithArgs(args...).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"controlled_requests",
+			"client_canceled_requests",
 			"attempt_ttft_timeout_count",
 			"attempt_denominator",
 			"recovered_count",
@@ -360,7 +361,7 @@ func TestFirstTokenTimeoutStatsQueryOverviewCalculatesStableRates(t *testing.T) 
 			"final_ttft_count",
 			"request_denominator",
 			"other_final_count",
-		}).AddRow(int64(14), int64(2), int64(10), int64(3), int64(5), int64(1), int64(12), int64(2)))
+		}).AddRow(int64(14), int64(2), int64(2), int64(10), int64(3), int64(5), int64(1), int64(12), int64(2)))
 
 	mock.ExpectQuery("generate_series").
 		WithArgs(args...).
@@ -392,6 +393,7 @@ func TestFirstTokenTimeoutStatsQueryOverviewCalculatesStableRates(t *testing.T) 
 	})
 	require.NoError(t, err)
 	require.Equal(t, int64(14), overview.Summary.ControlledRequests)
+	require.Equal(t, int64(2), overview.Summary.ClientCanceledRequests)
 	require.Equal(t, service.FirstTokenStatsRatio{Numerator: 2, Denominator: 10, Rate: 0.2}, overview.Summary.AttemptTTFTTimeoutRate)
 	require.Equal(t, service.FirstTokenStatsRatio{Numerator: 3, Denominator: 5, Rate: 0.6}, overview.Summary.RecoveryRate)
 	require.Equal(t, service.FirstTokenStatsRatio{Numerator: 1, Denominator: 12, Rate: 1.0 / 12.0}, overview.Summary.FinalTTFTFailureRate)
@@ -532,6 +534,7 @@ func TestFirstTokenTimeoutStatsQueryOverviewReturnsCommitError(t *testing.T) {
 	mock.ExpectQuery("FROM first_token_timeout_stats_hourly").
 		WillReturnRows(sqlmock.NewRows([]string{
 			"controlled_requests",
+			"client_canceled_requests",
 			"attempt_ttft_timeout_count",
 			"attempt_denominator",
 			"recovered_count",
@@ -539,7 +542,7 @@ func TestFirstTokenTimeoutStatsQueryOverviewReturnsCommitError(t *testing.T) {
 			"final_ttft_count",
 			"request_denominator",
 			"other_final_count",
-		}).AddRow(int64(0), int64(0), int64(0), int64(0), int64(0), int64(0), int64(0), int64(0)))
+		}).AddRow(int64(0), int64(0), int64(0), int64(0), int64(0), int64(0), int64(0), int64(0), int64(0)))
 	mock.ExpectQuery("generate_series").
 		WillReturnRows(sqlmock.NewRows([]string{
 			"bucket_start",

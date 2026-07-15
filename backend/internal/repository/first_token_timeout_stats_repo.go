@@ -331,6 +331,7 @@ func (r *firstTokenTimeoutStatsRepository) QueryOverview(ctx context.Context, fi
 	const summaryQuery = `
 SELECT
     COALESCE(SUM(sample_count) FILTER (WHERE scope = 'request'), 0) AS controlled_requests,
+    COALESCE(SUM(sample_count) FILTER (WHERE scope = 'request' AND outcome = 'client_canceled'), 0) AS client_canceled_requests,
     COALESCE(SUM(sample_count) FILTER (WHERE scope = 'attempt' AND outcome = 'ttft_timeout'), 0) AS attempt_ttft_timeout_count,
     COALESCE(SUM(sample_count) FILTER (WHERE scope = 'attempt' AND outcome IN ('success', 'ttft_timeout', 'other_failure')), 0) AS attempt_denominator,
     COALESCE(SUM(sample_count) FILTER (WHERE scope = 'request' AND outcome = 'recovered_after_ttft'), 0) AS recovered_count,
@@ -346,6 +347,7 @@ WHERE bucket_start >= $1 AND bucket_start < $2
 	var summaryValues firstTokenStatsRateValues
 	if err := scanSingleRow(ctx, tx, summaryQuery, args,
 		&summaryValues.controlledRequests,
+		&summaryValues.clientCanceledRequests,
 		&summaryValues.attemptTTFTTimeoutCount,
 		&summaryValues.attemptDenominator,
 		&summaryValues.recoveredCount,
@@ -469,6 +471,7 @@ ORDER BY sample_count DESC, failure_kind ASC`
 
 type firstTokenStatsRateValues struct {
 	controlledRequests      int64
+	clientCanceledRequests  int64
 	attemptTTFTTimeoutCount int64
 	attemptDenominator      int64
 	recoveredCount          int64
@@ -481,6 +484,7 @@ type firstTokenStatsRateValues struct {
 func (v firstTokenStatsRateValues) summary() service.FirstTokenStatsSummary {
 	return service.FirstTokenStatsSummary{
 		ControlledRequests:     v.controlledRequests,
+		ClientCanceledRequests: v.clientCanceledRequests,
 		AttemptTTFTTimeoutRate: firstTokenStatsRatio(v.attemptTTFTTimeoutCount, v.attemptDenominator),
 		RecoveryRate:           firstTokenStatsRatio(v.recoveredCount, v.affectedCount),
 		FinalTTFTFailureRate:   firstTokenStatsRatio(v.finalTTFTCount, v.requestDenominator),

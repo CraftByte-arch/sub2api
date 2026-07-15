@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -94,8 +95,53 @@ func (h *FirstTokenTimeoutHandler) UpdateSettings(c *gin.Context) {
 func decodeFirstTokenTimeoutSettingsUpdate(c *gin.Context) (firstTokenTimeoutSettingsUpdateRequest, bool) {
 	var request firstTokenTimeoutSettingsUpdateRequest
 	decoder := json.NewDecoder(c.Request.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil {
+	opening, err := decoder.Token()
+	if err != nil || opening != json.Delim('{') {
+		response.BadRequest(c, "Invalid first token timeout settings")
+		return firstTokenTimeoutSettingsUpdateRequest{}, false
+	}
+	seen := make(map[string]struct{}, 2)
+	for decoder.More() {
+		keyToken, err := decoder.Token()
+		if err != nil {
+			response.BadRequest(c, "Invalid first token timeout settings")
+			return firstTokenTimeoutSettingsUpdateRequest{}, false
+		}
+		key, ok := keyToken.(string)
+		if !ok || (key != "enabled" && key != "timeout_seconds") {
+			response.BadRequest(c, "Invalid first token timeout settings")
+			return firstTokenTimeoutSettingsUpdateRequest{}, false
+		}
+		if _, duplicate := seen[key]; duplicate {
+			response.BadRequest(c, "Invalid first token timeout settings")
+			return firstTokenTimeoutSettingsUpdateRequest{}, false
+		}
+		seen[key] = struct{}{}
+
+		var raw json.RawMessage
+		if err := decoder.Decode(&raw); err != nil || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+			response.BadRequest(c, "Invalid first token timeout settings")
+			return firstTokenTimeoutSettingsUpdateRequest{}, false
+		}
+		switch key {
+		case "enabled":
+			var enabled bool
+			if err := json.Unmarshal(raw, &enabled); err != nil {
+				response.BadRequest(c, "Invalid first token timeout settings")
+				return firstTokenTimeoutSettingsUpdateRequest{}, false
+			}
+			request.Enabled = &enabled
+		case "timeout_seconds":
+			var timeoutSeconds int
+			if err := json.Unmarshal(raw, &timeoutSeconds); err != nil {
+				response.BadRequest(c, "Invalid first token timeout settings")
+				return firstTokenTimeoutSettingsUpdateRequest{}, false
+			}
+			request.TimeoutSeconds = &timeoutSeconds
+		}
+	}
+	closing, err := decoder.Token()
+	if err != nil || closing != json.Delim('}') {
 		response.BadRequest(c, "Invalid first token timeout settings")
 		return firstTokenTimeoutSettingsUpdateRequest{}, false
 	}
@@ -146,6 +192,7 @@ type firstTokenStatsRatioResponse struct {
 
 type firstTokenStatsSummaryResponse struct {
 	ControlledRequests     int64                        `json:"controlled_requests"`
+	ClientCanceledRequests int64                        `json:"client_canceled_requests"`
 	AttemptTTFTTimeoutRate firstTokenStatsRatioResponse `json:"attempt_ttft_timeout_rate"`
 	RecoveryRate           firstTokenStatsRatioResponse `json:"recovery_rate"`
 	FinalTTFTFailureRate   firstTokenStatsRatioResponse `json:"final_ttft_failure_rate"`
@@ -243,6 +290,7 @@ func firstTokenStatsOverviewResponseFromService(
 	return firstTokenStatsOverviewResponse{
 		Summary: firstTokenStatsSummaryResponse{
 			ControlledRequests:     overview.Summary.ControlledRequests,
+			ClientCanceledRequests: overview.Summary.ClientCanceledRequests,
 			AttemptTTFTTimeoutRate: firstTokenStatsRatioResponseFromService(overview.Summary.AttemptTTFTTimeoutRate),
 			RecoveryRate:           firstTokenStatsRatioResponseFromService(overview.Summary.RecoveryRate),
 			FinalTTFTFailureRate:   firstTokenStatsRatioResponseFromService(overview.Summary.FinalTTFTFailureRate),

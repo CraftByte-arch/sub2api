@@ -54,21 +54,35 @@ func TestFirstTokenTimeoutSettingsAPI(t *testing.T) {
 	})
 
 	t.Run("invalid payloads are rejected", func(t *testing.T) {
-		tests := []string{
-			`{"enabled":true,"timeout_seconds":0}`,
-			`{"enabled":true,"timeout_seconds":301}`,
-			`{"enabled":true,"timeout_seconds":1.5}`,
-			`{"enabled":"true","timeout_seconds":12}`,
-			`{"enabled":true}`,
-			`{"enabled":true,"timeout_seconds":12,"internal":true}`,
-			`{"enabled":true,"timeout_seconds":12} {}`,
+		tests := []struct {
+			name string
+			body string
+		}{
+			{name: "zero timeout", body: `{"enabled":true,"timeout_seconds":0}`},
+			{name: "timeout above maximum", body: `{"enabled":true,"timeout_seconds":301}`},
+			{name: "non integer timeout", body: `{"enabled":true,"timeout_seconds":1.5}`},
+			{name: "non bool enabled", body: `{"enabled":"true","timeout_seconds":12}`},
+			{name: "numeric enabled", body: `{"enabled":1,"timeout_seconds":12}`},
+			{name: "bool timeout", body: `{"enabled":true,"timeout_seconds":true}`},
+			{name: "null enabled", body: `{"enabled":null,"timeout_seconds":12}`},
+			{name: "null timeout", body: `{"enabled":true,"timeout_seconds":null}`},
+			{name: "missing enabled", body: `{"timeout_seconds":12}`},
+			{name: "missing timeout", body: `{"enabled":true}`},
+			{name: "unknown field", body: `{"enabled":true,"timeout_seconds":12,"internal":true}`},
+			{name: "trailing json", body: `{"enabled":true,"timeout_seconds":12} {}`},
+			{name: "enabled case variant", body: `{"Enabled":true,"timeout_seconds":12}`},
+			{name: "timeout case variant", body: `{"enabled":true,"Timeout_Seconds":12}`},
+			{name: "duplicate enabled", body: `{"enabled":true,"enabled":false,"timeout_seconds":12}`},
+			{name: "duplicate timeout", body: `{"enabled":true,"timeout_seconds":12,"timeout_seconds":13}`},
 		}
-		for _, body := range tests {
-			response := firstTokenTimeoutHandlerRequest(t, router, http.MethodPut, "/settings", body)
-			require.Equal(t, http.StatusBadRequest, response.Code, "body=%s response=%s", body, response.Body.Body.String())
-			require.NotContains(t, response.Body.Body.String(), "database")
-			require.NotContains(t, response.Body.Body.String(), "redis")
-			require.NotContains(t, response.Body.Body.String(), "sql")
+		for _, testCase := range tests {
+			t.Run(testCase.name, func(t *testing.T) {
+				response := firstTokenTimeoutHandlerRequest(t, router, http.MethodPut, "/settings", testCase.body)
+				require.Equal(t, http.StatusBadRequest, response.Code, "body=%s response=%s", testCase.body, response.Body.Body.String())
+				require.NotContains(t, response.Body.Body.String(), "database")
+				require.NotContains(t, response.Body.Body.String(), "redis")
+				require.NotContains(t, response.Body.Body.String(), "sql")
+			})
 		}
 	})
 }
@@ -93,7 +107,8 @@ func TestFirstTokenTimeoutOverviewAPI(t *testing.T) {
 	statsRepo := &firstTokenTimeoutHandlerStatsRepo{
 		overview: &service.FirstTokenStatsOverview{
 			Summary: service.FirstTokenStatsSummary{
-				ControlledRequests: 9,
+				ControlledRequests:     9,
+				ClientCanceledRequests: 2,
 				AttemptTTFTTimeoutRate: service.FirstTokenStatsRatio{
 					Numerator: 2, Denominator: 8, Rate: 0.25,
 				},
@@ -140,6 +155,7 @@ func TestFirstTokenTimeoutOverviewAPI(t *testing.T) {
 	data := firstTokenTimeoutHandlerData(t, response)
 	summary := data["summary"].(map[string]any)
 	require.Equal(t, float64(9), summary["controlled_requests"])
+	require.Equal(t, float64(2), summary["client_canceled_requests"])
 	require.Equal(t, map[string]any{"numerator": float64(2), "denominator": float64(8), "rate": 0.25}, summary["attempt_ttft_timeout_rate"])
 	require.Equal(t, map[string]any{"numerator": float64(0), "denominator": float64(0), "rate": float64(0)}, summary["final_ttft_failure_rate"])
 	trend := data["trend"].([]any)

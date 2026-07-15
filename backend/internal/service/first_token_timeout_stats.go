@@ -71,6 +71,7 @@ type FirstTokenStatsRatio struct {
 
 type FirstTokenStatsSummary struct {
 	ControlledRequests     int64
+	ClientCanceledRequests int64
 	AttemptTTFTTimeoutRate FirstTokenStatsRatio
 	RecoveryRate           FirstTokenStatsRatio
 	FinalTTFTFailureRate   FirstTokenStatsRatio

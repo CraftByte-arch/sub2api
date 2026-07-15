@@ -176,6 +176,7 @@ RETURNING id
 	})
 	require.NoError(t, err)
 	require.Equal(t, int64(15), overview.Summary.ControlledRequests)
+	require.Equal(t, int64(4), overview.Summary.ClientCanceledRequests)
 	require.Equal(t, service.FirstTokenStatsRatio{Numerator: 3, Denominator: 9, Rate: 1.0 / 3.0}, overview.Summary.AttemptTTFTTimeoutRate)
 	require.Equal(t, service.FirstTokenStatsRatio{Numerator: 3, Denominator: 5, Rate: 0.6}, overview.Summary.RecoveryRate)
 	require.Equal(t, service.FirstTokenStatsRatio{Numerator: 1, Denominator: 11, Rate: 1.0 / 11.0}, overview.Summary.FinalTTFTFailureRate)
