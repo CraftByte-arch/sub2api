@@ -257,7 +257,7 @@ SELECT
     COALESCE(SUM(sample_count) FILTER (WHERE scope = 'attempt' AND outcome = 'ttft_timeout'), 0) AS attempt_ttft_timeout_count,
     COALESCE(SUM(sample_count) FILTER (WHERE scope = 'attempt' AND outcome IN ('success', 'ttft_timeout', 'other_failure')), 0) AS attempt_denominator,
     COALESCE(SUM(sample_count) FILTER (WHERE scope = 'request' AND outcome = 'recovered_after_ttft'), 0) AS recovered_count,
-    COALESCE(SUM(ttft_affected_count) FILTER (WHERE scope = 'request'), 0) AS affected_count,
+    COALESCE(SUM(ttft_affected_count) FILTER (WHERE scope = 'request' AND outcome <> 'client_canceled'), 0) AS affected_count,
     COALESCE(SUM(sample_count) FILTER (WHERE scope = 'request' AND outcome = 'ttft_exhausted'), 0) AS final_ttft_count,
     COALESCE(SUM(sample_count) FILTER (WHERE scope = 'request' AND outcome IN ('success', 'recovered_after_ttft', 'ttft_exhausted', 'other_failure')), 0) AS request_denominator,
     COALESCE(SUM(sample_count) FILTER (WHERE scope = 'request' AND outcome = 'other_failure'), 0) AS other_final_count
@@ -293,7 +293,7 @@ WITH buckets AS (
         COALESCE(SUM(sample_count) FILTER (WHERE scope = 'attempt' AND outcome = 'ttft_timeout'), 0) AS attempt_ttft_timeout_count,
         COALESCE(SUM(sample_count) FILTER (WHERE scope = 'attempt' AND outcome IN ('success', 'ttft_timeout', 'other_failure')), 0) AS attempt_denominator,
         COALESCE(SUM(sample_count) FILTER (WHERE scope = 'request' AND outcome = 'recovered_after_ttft'), 0) AS recovered_count,
-        COALESCE(SUM(ttft_affected_count) FILTER (WHERE scope = 'request'), 0) AS affected_count,
+        COALESCE(SUM(ttft_affected_count) FILTER (WHERE scope = 'request' AND outcome <> 'client_canceled'), 0) AS affected_count,
         COALESCE(SUM(sample_count) FILTER (WHERE scope = 'request' AND outcome = 'ttft_exhausted'), 0) AS final_ttft_count,
         COALESCE(SUM(sample_count) FILTER (WHERE scope = 'request' AND outcome IN ('success', 'recovered_after_ttft', 'ttft_exhausted', 'other_failure')), 0) AS request_denominator,
         COALESCE(SUM(sample_count) FILTER (WHERE scope = 'request' AND outcome = 'other_failure'), 0) AS other_final_count

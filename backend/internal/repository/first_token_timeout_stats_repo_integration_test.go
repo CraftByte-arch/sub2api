@@ -139,12 +139,13 @@ RETURNING id
 	require.NoError(t, err)
 	require.Equal(t, int64(15), overview.Summary.ControlledRequests)
 	require.Equal(t, service.FirstTokenStatsRatio{Numerator: 3, Denominator: 9, Rate: 1.0 / 3.0}, overview.Summary.AttemptTTFTTimeoutRate)
-	require.Equal(t, service.FirstTokenStatsRatio{Numerator: 3, Denominator: 6, Rate: 0.5}, overview.Summary.RecoveryRate)
+	require.Equal(t, service.FirstTokenStatsRatio{Numerator: 3, Denominator: 5, Rate: 0.6}, overview.Summary.RecoveryRate)
 	require.Equal(t, service.FirstTokenStatsRatio{Numerator: 1, Denominator: 11, Rate: 1.0 / 11.0}, overview.Summary.FinalTTFTFailureRate)
 	require.Equal(t, service.FirstTokenStatsRatio{Numerator: 2, Denominator: 11, Rate: 2.0 / 11.0}, overview.Summary.OtherFinalFailureRate)
 	require.Len(t, overview.Trend, 24)
 	require.Equal(t, bucket, overview.Trend[23].BucketStart)
 	require.Equal(t, overview.Summary.AttemptTTFTTimeoutRate, overview.Trend[23].AttemptTTFTTimeoutRate)
+	require.Equal(t, service.FirstTokenStatsRatio{Numerator: 3, Denominator: 5, Rate: 0.6}, overview.Trend[23].RecoveryRate)
 	require.Equal(t, service.FirstTokenStatsRatio{}, overview.Trend[0].AttemptTTFTTimeoutRate)
 	require.Equal(t, []service.FirstTokenStatsFailureDistribution{{
 		FailureKind: service.FirstTokenStatsFailureTransport,
