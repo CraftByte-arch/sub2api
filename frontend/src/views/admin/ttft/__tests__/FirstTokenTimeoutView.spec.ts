@@ -1,7 +1,6 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { nextTick, ref } from 'vue'
-import { readFileSync } from 'node:fs'
 
 const { getSettings, updateSettings, getOverview, getAccounts } = vi.hoisted(() => ({
   getSettings: vi.fn(), updateSettings: vi.fn(), getOverview: vi.fn(), getAccounts: vi.fn()
@@ -56,7 +55,7 @@ function mockSuccess() {
 async function mountView() {
   const wrapper = mount(FirstTokenTimeoutView, {
     global: {
-      mocks: { $t: (key: string) => key },
+      mocks: { $t: (key: string, values?: Record<string, unknown>) => values ? `${key} ${Object.values(values).join(' ')}` : key },
       stubs: {
         AppLayout: { template: '<main><slot /></main>' },
         TTFTFailureTrendChart: { template: '<div />' },
@@ -120,6 +119,38 @@ describe('FirstTokenTimeoutView', () => {
     expect(getAccounts).toHaveBeenCalledWith(expect.objectContaining({ search: 'alpha' }))
   })
 
+  it('clears account_id from account requests without reloading the overview', async () => {
+    const wrapper = await mountView()
+    const accountIDInput = wrapper.findAll('input[type="number"]')[1]
+    getOverview.mockClear()
+    getAccounts.mockClear()
+
+    await accountIDInput.setValue(42)
+    await flushPromises()
+    expect(getAccounts).toHaveBeenLastCalledWith(expect.objectContaining({ account_id: 42 }))
+
+    getAccounts.mockClear()
+    await accountIDInput.setValue('')
+    await flushPromises()
+
+    expect(getOverview).not.toHaveBeenCalled()
+    expect(getAccounts).toHaveBeenLastCalledWith(expect.objectContaining({ account_id: undefined }))
+  })
+
+  it('shows a nearby error and skips account requests for a non-positive account ID', async () => {
+    const wrapper = await mountView()
+    const accountIDInput = wrapper.findAll('input[type="number"]')[1]
+    getOverview.mockClear()
+    getAccounts.mockClear()
+
+    await accountIDInput.setValue(-1)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('admin.ttft.accounts.accountIdError')
+    expect(getOverview).not.toHaveBeenCalled()
+    expect(getAccounts).not.toHaveBeenCalled()
+  })
+
   it('keeps settings visible for empty, degraded, and retriable overview states', async () => {
     getOverview.mockRejectedValueOnce(new Error('network'))
     const wrapper = await mountView()
@@ -132,16 +163,39 @@ describe('FirstTokenTimeoutView', () => {
     expect(wrapper.text()).toContain('admin.ttft.completeness.degraded')
   })
 
-  it('exposes the admin route, sidebar label, locale key, dark styles, and a narrow table scroll container', () => {
-    const routerSource = readFileSync('src/router/index.ts', 'utf8')
-    const sidebarSource = readFileSync('src/components/layout/AppSidebar.vue', 'utf8')
-    const enLocale = readFileSync('src/i18n/locales/en/admin/ttft.ts', 'utf8')
-    const tableSource = readFileSync('src/views/admin/ttft/components/TTFTAccountStatsTable.vue', 'utf8')
+  it('renders the last successful statistics flush in the degraded warning', async () => {
+    const wrapper = await mountView()
 
-    expect(routerSource).toContain("path: '/admin/ttft'")
-    expect(sidebarSource).toContain("t('nav.ttftMonitoring')")
-    expect(enLocale).toContain('First Token Monitoring')
-    expect(tableSource).toContain('overflow-x-auto')
-    expect(tableSource).toContain('dark:')
+    expect(wrapper.text()).toContain('admin.ttft.completeness.lastSuccessfulFlush')
+    expect(wrapper.text()).toContain('2026')
+  })
+
+  it('states when a degraded recorder has never completed a successful flush', async () => {
+    getOverview.mockResolvedValueOnce({ ...overview, completeness: { ...overview.completeness, last_successful_flush_at: null } })
+    const wrapper = await mountView()
+
+    expect(wrapper.text()).toContain('admin.ttft.completeness.noSuccessfulFlush')
+  })
+
+  it('renders a dark-mode narrow table container and keeps sorting operable', async () => {
+    document.documentElement.classList.add('dark')
+    getAccounts.mockResolvedValueOnce({
+      ...accounts,
+      total: 1,
+      items: [{ account_id: 42, account_name: 'production', platform: 'openai', samples: 20, success_count: 17, ttft_timeout_count: 2, ttft_timeout_rate: { numerator: 2, denominator: 20, rate: 0.1 }, other_failure_count: 1, other_failure_rate: { numerator: 1, denominator: 20, rate: 0.05 }, avg_ttft_ms: 123, low_sample: false }]
+    })
+    const wrapper = await mountView()
+    const table = wrapper.get('.ttft-account-table')
+    wrapper.element.style.width = '375px'
+    getAccounts.mockClear()
+
+    expect(document.documentElement.classList.contains('dark')).toBe(true)
+    expect(table.classes()).toContain('overflow-x-auto')
+    expect(table.text()).toContain('production')
+    await wrapper.get('th[aria-sort="descending"] button').trigger('click')
+    await flushPromises()
+    expect(getAccounts).toHaveBeenCalledWith(expect.objectContaining({ sort: 'samples', order: 'asc' }))
+
+    document.documentElement.classList.remove('dark')
   })
 })

@@ -22,9 +22,9 @@ export default {
       otherFinalFailure: '其他最终失败率'
     },
     charts: { failureTrend: '每小时失败率', failureDistribution: '其他失败分布' },
-    completeness: { degraded: '统计数据不完整：已丢弃 {dropped} 个样本，待处理 {pending} 个样本。' },
+    completeness: { degraded: '统计数据不完整：已丢弃 {dropped} 个样本，待处理 {pending} 个样本。', lastSuccessfulFlush: '最近一次成功写入：{time}。', noSuccessfulFlush: '尚未完成过成功写入。' },
     accounts: {
-      title: '账号统计', account: '账号 / 平台', accountId: '账号 ID', platform: '平台', pageSize: '每页数量',
+      title: '账号统计', account: '账号 / 平台', accountId: '账号 ID', accountIdError: '请输入正整数账号 ID。', platform: '平台', pageSize: '每页数量',
       samples: '非取消 Attempt 样本', success: '成功', ttft: 'TTFT 超时', other: '其他失败', avgTTFT: '平均 TTFT',
       lowSample: '低样本（<20）', previous: '上一页', next: '下一页'
     },

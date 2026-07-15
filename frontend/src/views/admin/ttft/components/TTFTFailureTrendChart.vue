@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import { Chart as ChartJS, CategoryScale, Legend, LineElement, LinearScale, PointElement, Tooltip, type ChartData, type ChartOptions } from 'chart.js'
 import { Line } from 'vue-chartjs'
 import { useI18n } from 'vue-i18n'
-import type { TTFTTrendPoint } from '@/api/admin/ttft'
+import type { RateMetric, TTFTTrendPoint } from '@/api/admin/ttft'
 
 ChartJS.register(CategoryScale, Legend, LineElement, LinearScale, PointElement, Tooltip)
 const props = defineProps<{ points: TTFTTrendPoint[] }>()
@@ -20,8 +20,18 @@ const data = computed<ChartData<'line', number[], string>>(() => ({
   labels: props.points.map((point) => new Date(point.bucket_start).toLocaleString()),
   datasets: definitions.map(({ key, label, color, dash }) => ({ label: t(label), data: props.points.map((point) => Number(point[key].rate ?? 0) * 100), borderColor: color, borderDash: dash, tension: 0.25, pointRadius: 1, pointHitRadius: 8 }))
 }))
-const options = computed<ChartOptions<'line'>>(() => ({ responsive: true, maintainAspectRatio: false, interaction: { intersect: false, mode: 'index' }, plugins: { legend: { labels: { color: dark.value ? '#d1d5db' : '#4b5563' } }, tooltip: { callbacks: { label: (context) => `${context.dataset.label ?? ''}: ${Number(context.parsed.y ?? 0).toFixed(1)}%` } } }, scales: { x: { ticks: { color: dark.value ? '#9ca3af' : '#6b7280', maxTicksLimit: 6 }, grid: { display: false } }, y: { beginAtZero: true, ticks: { color: dark.value ? '#9ca3af' : '#6b7280', callback: (value) => `${value}%` }, grid: { color: dark.value ? '#374151' : '#e5e7eb' } } } }))
-const summary = computed(() => props.points.length ? definitions.map(({ key, label }) => `${t(label)}: ${((props.points.at(-1)?.[key].rate ?? 0) * 100).toFixed(1)}%`).join(', ') : '')
+
+function formatMetric(metric: RateMetric | undefined) {
+  if (!metric) return '0.0% (0 / 0)'
+  return `${(Number(metric.rate ?? 0) * 100).toFixed(1)}% (${metric.numerator} / ${metric.denominator})`
+}
+
+const options = computed<ChartOptions<'line'>>(() => ({ responsive: true, maintainAspectRatio: false, interaction: { intersect: false, mode: 'index' }, plugins: { legend: { labels: { color: dark.value ? '#d1d5db' : '#4b5563' } }, tooltip: { callbacks: { label: (context) => {
+  const definition = definitions[context.datasetIndex]
+  const metric = definition ? props.points[context.dataIndex]?.[definition.key] : undefined
+  return `${context.dataset.label ?? ''}: ${formatMetric(metric)}`
+} } } }, scales: { x: { ticks: { color: dark.value ? '#9ca3af' : '#6b7280', maxTicksLimit: 6 }, grid: { display: false } }, y: { beginAtZero: true, ticks: { color: dark.value ? '#9ca3af' : '#6b7280', callback: (value) => `${value}%` }, grid: { color: dark.value ? '#374151' : '#e5e7eb' } } } }))
+const summary = computed(() => props.points.length ? definitions.map(({ key, label }) => `${t(label)}: ${formatMetric(props.points.at(-1)?.[key])}`).join(', ') : '')
 </script>
 
 <template>

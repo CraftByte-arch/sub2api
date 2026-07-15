@@ -22,9 +22,9 @@ export default {
       otherFinalFailure: 'Other final failure rate'
     },
     charts: { failureTrend: 'Hourly failure rates', failureDistribution: 'Other failure distribution' },
-    completeness: { degraded: 'Statistics are degraded: {dropped} dropped samples, {pending} pending samples.' },
+    completeness: { degraded: 'Statistics are degraded: {dropped} dropped samples, {pending} pending samples.', lastSuccessfulFlush: 'Last successful flush: {time}.', noSuccessfulFlush: 'No successful flush has completed yet.' },
     accounts: {
-      title: 'Account statistics', account: 'Account / platform', accountId: 'Account ID', platform: 'Platform', pageSize: 'Page size',
+      title: 'Account statistics', account: 'Account / platform', accountId: 'Account ID', accountIdError: 'Enter a positive whole account ID.', platform: 'Platform', pageSize: 'Page size',
       samples: 'Non-canceled attempt samples', success: 'Success', ttft: 'TTFT timeout', other: 'Other failure', avgTTFT: 'Average TTFT',
       lowSample: 'Low sample (<20)', previous: 'Previous', next: 'Next'
     },
