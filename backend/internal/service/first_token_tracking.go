@@ -16,11 +16,18 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+	"unicode/utf8"
 )
 
 var ErrStreamDataIntervalTimeout = errors.New("stream data interval timeout")
 
+const (
+	firstTokenStatsModelMaxRunes    = 255
+	firstTokenStatsPlatformMaxRunes = 32
+)
+
 type FirstTokenStatsRecorder interface {
+	// Record must be non-blocking; tracker finalization runs on request goroutines.
 	Record(delta FirstTokenStatsDelta)
 }
 
@@ -44,8 +51,11 @@ type FirstTokenRequestTracker struct {
 
 	requestTimeoutSeconds int
 	finishOnce            sync.Once
+	finalizeOnce          sync.Once
 	mu                    sync.Mutex
 	finishing             bool
+	succeeded             bool
+	active                int
 	attempts              []*FirstTokenAttemptTracker
 }
 
@@ -55,7 +65,6 @@ type FirstTokenAttemptTracker struct {
 	timeoutSeconds int
 	finishOnce     sync.Once
 	ttftMS         atomic.Int64
-	done           chan struct{}
 	result         firstTokenTrackedAttemptResult
 }
 
@@ -77,6 +86,20 @@ func newFirstTokenRequestTrackerWithClock(
 	snapshot FirstTokenTimeoutSnapshot,
 	now func() time.Time,
 ) *FirstTokenRequestTracker {
+	if !isFirstTokenStatsProtocol(protocol) {
+		return nil
+	}
+	if !utf8.ValidString(model) {
+		return nil
+	}
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return nil
+	}
+	modelRunes := []rune(model)
+	if len(modelRunes) > firstTokenStatsModelMaxRunes {
+		model = string(modelRunes[:firstTokenStatsModelMaxRunes])
+	}
 	if parent == nil {
 		parent = context.Background()
 	}
@@ -94,22 +117,29 @@ func newFirstTokenRequestTrackerWithClock(
 }
 
 func (t *FirstTokenRequestTracker) BeginAttempt(meta FirstTokenStatsAttemptMetadata, snapshot FirstTokenTimeoutSnapshot) *FirstTokenAttemptTracker {
-	if t == nil {
+	if t == nil || meta.AccountID <= 0 {
+		return nil
+	}
+	if !utf8.ValidString(meta.Platform) {
+		return nil
+	}
+	meta.Platform = strings.TrimSpace(meta.Platform)
+	if meta.Platform == "" || len([]rune(meta.Platform)) > firstTokenStatsPlatformMaxRunes {
 		return nil
 	}
 	attempt := &FirstTokenAttemptTracker{
 		request:        t,
 		metadata:       meta,
 		timeoutSeconds: firstTokenTimeoutSeconds(snapshot.Timeout),
-		done:           make(chan struct{}),
 	}
 	attempt.ttftMS.Store(-1)
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.finishing {
+	if t.finishing || t.succeeded {
 		return nil
 	}
 	t.attempts = append(t.attempts, attempt)
+	t.active++
 	return attempt
 }
 
@@ -120,13 +150,26 @@ func (t *FirstTokenRequestTracker) Finish() {
 	t.finishOnce.Do(func() {
 		t.mu.Lock()
 		t.finishing = true
-		trackedAttempts := append([]*FirstTokenAttemptTracker(nil), t.attempts...)
+		shouldFinalize := t.active == 0
 		t.mu.Unlock()
+		if shouldFinalize {
+			t.finalize()
+		}
+	})
+}
+
+func (t *FirstTokenRequestTracker) finalize() {
+	if t == nil {
+		return
+	}
+	t.finalizeOnce.Do(func() {
+		t.mu.Lock()
+		trackedAttempts := append([]*FirstTokenAttemptTracker(nil), t.attempts...)
 		attempts := make([]firstTokenTrackedAttemptResult, 0, len(trackedAttempts))
 		for _, attempt := range trackedAttempts {
-			<-attempt.done
 			attempts = append(attempts, attempt.result)
 		}
+		t.mu.Unlock()
 
 		outcome := FirstTokenStatsRequestOtherFailure
 		failureKind := FirstTokenStatsFailureOther
@@ -146,7 +189,7 @@ func (t *FirstTokenRequestTracker) Finish() {
 		case t.parent.Err() != nil:
 			outcome = FirstTokenStatsRequestClientCanceled
 			failureKind = ""
-		case hasFirstTokenAttemptOutcome(attempts, FirstTokenStatsAttemptSuccess):
+		case len(attempts) > 0 && attempts[len(attempts)-1].outcome == FirstTokenStatsAttemptSuccess:
 			failureKind = ""
 			if hadTimeout {
 				outcome = FirstTokenStatsRequestRecoveredAfterTTFT
@@ -199,15 +242,12 @@ func (t *FirstTokenAttemptTracker) MarkFirstToken(elapsed time.Duration) {
 	t.ttftMS.CompareAndSwap(-1, ms)
 }
 
-func (t *FirstTokenAttemptTracker) Finish(err error, state FirstTokenAttemptState, parent context.Context) {
+func (t *FirstTokenAttemptTracker) Finish(err error, state FirstTokenAttemptState) {
 	if t == nil || t.request == nil {
 		return
 	}
 	t.finishOnce.Do(func() {
-		if parent == nil {
-			parent = t.request.parent
-		}
-		outcome, failureKind := firstTokenAttemptStatsOutcome(err, state, parent)
+		outcome, failureKind := firstTokenAttemptStatsOutcome(err, state, t.request.parent)
 		delta := FirstTokenStatsDelta{
 			BucketStart:    t.request.now().UTC().Truncate(time.Hour),
 			Scope:          FirstTokenStatsScopeAttempt,
@@ -225,13 +265,23 @@ func (t *FirstTokenAttemptTracker) Finish(err error, state FirstTokenAttemptStat
 			delta.TTFTSumMS = ttftMS
 			delta.TTFTMaxMS = ttftMS
 		}
-		t.result = firstTokenTrackedAttemptResult{
+		result := firstTokenTrackedAttemptResult{
 			outcome:        outcome,
 			failureKind:    failureKind,
 			timeoutSeconds: t.timeoutSeconds,
 		}
-		defer close(t.done)
 		t.request.record(delta)
+		t.request.mu.Lock()
+		t.result = result
+		if outcome == FirstTokenStatsAttemptSuccess {
+			t.request.succeeded = true
+		}
+		t.request.active--
+		shouldFinalize := t.request.finishing && t.request.active == 0
+		t.request.mu.Unlock()
+		if shouldFinalize {
+			t.request.finalize()
+		}
 	})
 }
 
@@ -331,12 +381,20 @@ func isFirstTokenTransportError(err error) bool {
 	if errors.As(err, &tlsErr) {
 		return true
 	}
+	var tlsErrPtr *tls.RecordHeaderError
+	if errors.As(err, &tlsErrPtr) {
+		return true
+	}
 	var unknownAuthority x509.UnknownAuthorityError
 	if errors.As(err, &unknownAuthority) {
 		return true
 	}
 	var certificateInvalid x509.CertificateInvalidError
-	return errors.As(err, &certificateInvalid)
+	if errors.As(err, &certificateInvalid) {
+		return true
+	}
+	var hostnameError x509.HostnameError
+	return errors.As(err, &hostnameError)
 }
 
 func isFirstTokenProtocolError(err error, failoverErr *UpstreamFailoverError) bool {
@@ -365,21 +423,24 @@ func isFirstTokenProtocolError(err error, failoverErr *UpstreamFailoverError) bo
 }
 
 func firstTokenTimeoutSeconds(timeout time.Duration) int {
-	seconds := int((timeout + time.Second - 1) / time.Second)
-	if seconds < firstTokenTimeoutMinSeconds {
+	seconds := int64(timeout / time.Second)
+	if timeout > 0 && timeout%time.Second != 0 {
+		seconds++
+	}
+	if seconds < int64(firstTokenTimeoutMinSeconds) {
 		return firstTokenTimeoutMinSeconds
 	}
-	if seconds > firstTokenTimeoutMaxSeconds {
+	if seconds > int64(firstTokenTimeoutMaxSeconds) {
 		return firstTokenTimeoutMaxSeconds
 	}
-	return seconds
+	return int(seconds)
 }
 
-func hasFirstTokenAttemptOutcome(attempts []firstTokenTrackedAttemptResult, outcome string) bool {
-	for _, attempt := range attempts {
-		if attempt.outcome == outcome {
-			return true
-		}
+func isFirstTokenStatsProtocol(protocol FirstTokenProtocol) bool {
+	switch protocol {
+	case ProtocolResponses, ProtocolChatCompletions, ProtocolAnthropicMessages:
+		return true
+	default:
+		return false
 	}
-	return false
 }

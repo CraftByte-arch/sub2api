@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"go/ast"
@@ -48,6 +49,7 @@ type blockingFirstTokenStatsRecorder struct {
 	attemptOnce          sync.Once
 }
 
+// This test recorder intentionally violates the production non-blocking contract.
 func newBlockingFirstTokenStatsRecorder() *blockingFirstTokenStatsRecorder {
 	return &blockingFirstTokenStatsRecorder{
 		attemptRecordStarted: make(chan struct{}),
@@ -77,6 +79,9 @@ func requireFirstTokenStatsDeltasValid(t *testing.T, deltas []FirstTokenStatsDel
 	}
 	for _, delta := range deltas {
 		require.Equal(t, int64(1), delta.SampleCount)
+		require.Contains(t, []string{string(ProtocolResponses), string(ProtocolChatCompletions), string(ProtocolAnthropicMessages)}, delta.Protocol)
+		require.NotEmpty(t, delta.Model)
+		require.LessOrEqual(t, len([]rune(delta.Model)), 255)
 		require.GreaterOrEqual(t, delta.TimeoutSeconds, firstTokenTimeoutMinSeconds)
 		require.LessOrEqual(t, delta.TimeoutSeconds, firstTokenTimeoutMaxSeconds)
 		require.GreaterOrEqual(t, delta.TTFTSampleCount, int64(0))
@@ -101,6 +106,7 @@ func requireFirstTokenStatsDeltasValid(t *testing.T, deltas []FirstTokenStatsDel
 			require.Equal(t, FirstTokenStatsScopeAttempt, delta.Scope)
 			require.Positive(t, delta.AccountID)
 			require.NotEmpty(t, delta.Platform)
+			require.LessOrEqual(t, len([]rune(delta.Platform)), 32)
 			require.Zero(t, delta.TTFTAffectedCount)
 		}
 		if delta.Outcome == FirstTokenStatsAttemptTTFTTimeout {
@@ -122,8 +128,8 @@ func TestFirstTokenTrackingRecordsAttemptAndRequestExactlyOnce(t *testing.T) {
 
 	attempt.MarkFirstToken(1250 * time.Millisecond)
 	attempt.MarkFirstToken(9 * time.Second)
-	attempt.Finish(nil, FirstTokenCommitted, context.Background())
-	attempt.Finish(errors.New("duplicate"), FirstTokenCommitted, context.Background())
+	attempt.Finish(nil, FirstTokenCommitted)
+	attempt.Finish(errors.New("duplicate"), FirstTokenCommitted)
 	request.Finish()
 	request.Finish()
 
@@ -152,10 +158,10 @@ func TestFirstTokenTrackingDerivesRecoveredAfterTimeout(t *testing.T) {
 	recorder := &firstTokenStatsRecorderSpy{}
 	request := NewFirstTokenRequestTracker(recorder, context.Background(), ProtocolChatCompletions, "gpt-5", FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 30 * time.Second})
 	first := request.BeginAttempt(FirstTokenStatsAttemptMetadata{AccountID: 1, Platform: PlatformOpenAI}, FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 30 * time.Second})
-	first.Finish(NewFirstTokenTimeoutFailoverError(), FirstTokenTimedOut, context.Background())
+	first.Finish(NewFirstTokenTimeoutFailoverError(), FirstTokenTimedOut)
 	second := request.BeginAttempt(FirstTokenStatsAttemptMetadata{AccountID: 2, Platform: PlatformOpenAI}, FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 20 * time.Second})
 	second.MarkFirstToken(240 * time.Millisecond)
-	second.Finish(nil, FirstTokenCommitted, context.Background())
+	second.Finish(nil, FirstTokenCommitted)
 	request.Finish()
 
 	deltas := recorder.snapshot(t)
@@ -174,9 +180,9 @@ func TestFirstTokenTrackingDerivesOtherFailureAfterTimeout(t *testing.T) {
 	recorder := &firstTokenStatsRecorderSpy{}
 	request := NewFirstTokenRequestTracker(recorder, context.Background(), ProtocolAnthropicMessages, "claude", FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 30 * time.Second})
 	timedOut := request.BeginAttempt(FirstTokenStatsAttemptMetadata{AccountID: 1, Platform: PlatformAnthropic}, FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 30 * time.Second})
-	timedOut.Finish(NewFirstTokenTimeoutFailoverError(), FirstTokenTimedOut, context.Background())
+	timedOut.Finish(NewFirstTokenTimeoutFailoverError(), FirstTokenTimedOut)
 	failed := request.BeginAttempt(FirstTokenStatsAttemptMetadata{AccountID: 2, Platform: PlatformAnthropic}, FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 18 * time.Second})
-	failed.Finish(io.ErrUnexpectedEOF, FirstTokenPending, context.Background())
+	failed.Finish(io.ErrUnexpectedEOF, FirstTokenPending)
 	request.Finish()
 
 	deltas := recorder.snapshot(t)
@@ -194,7 +200,7 @@ func TestFirstTokenTrackingDerivesExhaustedAndSelectionFailure(t *testing.T) {
 		recorder := &firstTokenStatsRecorderSpy{}
 		request := NewFirstTokenRequestTracker(recorder, context.Background(), ProtocolResponses, "gpt-5", FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 30 * time.Second})
 		attempt := request.BeginAttempt(FirstTokenStatsAttemptMetadata{AccountID: 1, Platform: PlatformOpenAI}, FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 11 * time.Second})
-		attempt.Finish(NewFirstTokenTimeoutFailoverError(), FirstTokenTimedOut, context.Background())
+		attempt.Finish(NewFirstTokenTimeoutFailoverError(), FirstTokenTimedOut)
 		request.Finish()
 
 		deltas := recorder.snapshot(t)
@@ -223,7 +229,7 @@ func TestFirstTokenTrackingClientCancelWinsAndKeepsObservedTTFT(t *testing.T) {
 	attempt := request.BeginAttempt(FirstTokenStatsAttemptMetadata{AccountID: 1, Platform: PlatformOpenAI}, FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 30 * time.Second})
 	attempt.MarkFirstToken(333 * time.Millisecond)
 	cancel()
-	attempt.Finish(&UpstreamFailoverError{StatusCode: http.StatusTooManyRequests}, FirstTokenCommitted, parent)
+	attempt.Finish(&UpstreamFailoverError{StatusCode: http.StatusTooManyRequests}, FirstTokenCommitted)
 	request.Finish()
 
 	deltas := recorder.snapshot(t)
@@ -239,7 +245,7 @@ func TestFirstTokenTrackingCommitThenFailureKeepsTTFTSample(t *testing.T) {
 	request := NewFirstTokenRequestTracker(recorder, context.Background(), ProtocolResponses, "gpt-5", FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 30 * time.Second})
 	attempt := request.BeginAttempt(FirstTokenStatsAttemptMetadata{AccountID: 1, Platform: PlatformOpenAI}, FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 30 * time.Second})
 	attempt.MarkFirstToken(410 * time.Millisecond)
-	attempt.Finish(ErrStreamDataIntervalTimeout, FirstTokenCommitted, context.Background())
+	attempt.Finish(ErrStreamDataIntervalTimeout, FirstTokenCommitted)
 	request.Finish()
 
 	deltas := recorder.snapshot(t)
@@ -256,7 +262,7 @@ func TestFirstTokenTrackingZeroMillisecondSampleIsObservedExactlyOnce(t *testing
 
 	attempt.MarkFirstToken(0)
 	attempt.MarkFirstToken(1500 * time.Millisecond)
-	attempt.Finish(nil, FirstTokenCommitted, context.Background())
+	attempt.Finish(nil, FirstTokenCommitted)
 	request.Finish()
 
 	deltas := recorder.snapshot(t)
@@ -266,7 +272,7 @@ func TestFirstTokenTrackingZeroMillisecondSampleIsObservedExactlyOnce(t *testing
 	require.Zero(t, deltas[0].TTFTMaxMS)
 }
 
-func TestFirstTokenTrackingConcurrentFinishWaitsForAttempt(t *testing.T) {
+func TestFirstTokenTrackingRequestFinishReturnsBeforeActiveAttempt(t *testing.T) {
 	recorder := newBlockingFirstTokenStatsRecorder()
 	request := NewFirstTokenRequestTracker(recorder, context.Background(), ProtocolResponses, "gpt-5", FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 30 * time.Second})
 	attempt := request.BeginAttempt(FirstTokenStatsAttemptMetadata{AccountID: 1, Platform: PlatformOpenAI}, FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 20 * time.Second})
@@ -275,7 +281,7 @@ func TestFirstTokenTrackingConcurrentFinishWaitsForAttempt(t *testing.T) {
 	attemptDone := make(chan struct{})
 	go func() {
 		defer close(attemptDone)
-		attempt.Finish(nil, FirstTokenCommitted, context.Background())
+		attempt.Finish(nil, FirstTokenCommitted)
 	}()
 	<-recorder.attemptRecordStarted
 
@@ -287,11 +293,13 @@ func TestFirstTokenTrackingConcurrentFinishWaitsForAttempt(t *testing.T) {
 
 	select {
 	case <-requestDone:
+	case <-time.After(100 * time.Millisecond):
 		close(recorder.releaseAttemptRecord)
 		<-attemptDone
-		t.Fatal("request Finish returned before the in-flight attempt outcome was recorded")
-	case <-time.After(50 * time.Millisecond):
+		<-requestDone
+		t.Fatal("request Finish blocked on the active attempt")
 	}
+	require.Empty(t, recorder.snapshot(t), "request delta must wait for the active attempt outcome")
 
 	close(recorder.releaseAttemptRecord)
 	<-attemptDone
@@ -304,11 +312,140 @@ func TestFirstTokenTrackingConcurrentFinishWaitsForAttempt(t *testing.T) {
 	require.Equal(t, FirstTokenStatsRequestSuccess, deltas[1].Outcome)
 }
 
-func TestFirstTokenTrackingConcurrentDuplicateFinishAndMarkFirstToken(t *testing.T) {
+func TestFirstTokenTrackingSuccessClosesNewAttempts(t *testing.T) {
+	recorder := &firstTokenStatsRecorderSpy{}
+	request := NewFirstTokenRequestTracker(recorder, context.Background(), ProtocolResponses, "gpt-5", FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 30 * time.Second})
+	attempt := request.BeginAttempt(FirstTokenStatsAttemptMetadata{AccountID: 1, Platform: PlatformOpenAI}, FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 30 * time.Second})
+	attempt.Finish(nil, FirstTokenCommitted)
+
+	require.Nil(t, request.BeginAttempt(FirstTokenStatsAttemptMetadata{AccountID: 2, Platform: PlatformOpenAI}, FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 20 * time.Second}))
+	request.Finish()
+	deltas := recorder.snapshot(t)
+	require.Len(t, deltas, 2)
+	require.Equal(t, FirstTokenStatsRequestSuccess, deltas[1].Outcome)
+}
+
+func TestFirstTokenTrackingFinalAttemptOverridesHistoricalSuccess(t *testing.T) {
+	recorder := &firstTokenStatsRecorderSpy{}
+	request := NewFirstTokenRequestTracker(recorder, context.Background(), ProtocolResponses, "gpt-5", FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 30 * time.Second})
+	succeeded := request.BeginAttempt(FirstTokenStatsAttemptMetadata{AccountID: 1, Platform: PlatformOpenAI}, FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 30 * time.Second})
+	laterFailure := request.BeginAttempt(FirstTokenStatsAttemptMetadata{AccountID: 2, Platform: PlatformOpenAI}, FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 20 * time.Second})
+
+	succeeded.Finish(nil, FirstTokenCommitted)
+	laterFailure.Finish(io.ErrUnexpectedEOF, FirstTokenPending)
+	request.Finish()
+
+	deltas := recorder.snapshot(t)
+	require.Len(t, deltas, 3)
+	require.Equal(t, FirstTokenStatsRequestOtherFailure, deltas[2].Outcome)
+	require.Equal(t, FirstTokenStatsFailureTransport, deltas[2].FailureKind)
+	require.Equal(t, 20, deltas[2].TimeoutSeconds)
+}
+
+func TestFirstTokenTrackingRejectsInvalidRequestDimensions(t *testing.T) {
+	tests := []struct {
+		name     string
+		protocol FirstTokenProtocol
+		model    string
+	}{
+		{name: "empty protocol", protocol: "", model: "gpt-5"},
+		{name: "unknown protocol", protocol: FirstTokenProtocol("completions"), model: "gpt-5"},
+		{name: "empty model", protocol: ProtocolResponses, model: ""},
+		{name: "whitespace model", protocol: ProtocolResponses, model: "   "},
+		{name: "invalid UTF-8 model", protocol: ProtocolResponses, model: string([]byte{0xff})},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			recorder := &firstTokenStatsRecorderSpy{}
+			request := NewFirstTokenRequestTracker(recorder, context.Background(), tt.protocol, tt.model, FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 30 * time.Second})
+			require.Nil(t, request)
+			request.Finish()
+			require.Empty(t, recorder.snapshot(t))
+		})
+	}
+}
+
+func TestFirstTokenTrackingTruncatesUnicodeModelByRunes(t *testing.T) {
+	recorder := &firstTokenStatsRecorderSpy{}
+	request := NewFirstTokenRequestTracker(recorder, context.Background(), ProtocolResponses, strings.Repeat("模", 300), FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 30 * time.Second})
+	require.NotNil(t, request)
+	attempt := request.BeginAttempt(FirstTokenStatsAttemptMetadata{AccountID: 1, Platform: PlatformOpenAI}, FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 30 * time.Second})
+	require.NotNil(t, attempt)
+	attempt.Finish(nil, FirstTokenCommitted)
+	request.Finish()
+
+	deltas := recorder.snapshot(t)
+	require.Len(t, deltas, 2)
+	for _, delta := range deltas {
+		require.Equal(t, strings.Repeat("模", 255), delta.Model)
+		require.Len(t, []rune(delta.Model), 255)
+	}
+}
+
+func TestFirstTokenTrackingRejectsInvalidAttemptDimensions(t *testing.T) {
+	tests := []struct {
+		name string
+		meta FirstTokenStatsAttemptMetadata
+	}{
+		{name: "zero account", meta: FirstTokenStatsAttemptMetadata{AccountID: 0, Platform: PlatformOpenAI}},
+		{name: "negative account", meta: FirstTokenStatsAttemptMetadata{AccountID: -1, Platform: PlatformOpenAI}},
+		{name: "empty platform", meta: FirstTokenStatsAttemptMetadata{AccountID: 1, Platform: ""}},
+		{name: "whitespace platform", meta: FirstTokenStatsAttemptMetadata{AccountID: 1, Platform: "   "}},
+		{name: "platform too long", meta: FirstTokenStatsAttemptMetadata{AccountID: 1, Platform: strings.Repeat("平", 33)}},
+		{name: "invalid UTF-8 platform", meta: FirstTokenStatsAttemptMetadata{AccountID: 1, Platform: string([]byte{0xff})}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			recorder := &firstTokenStatsRecorderSpy{}
+			request := NewFirstTokenRequestTracker(recorder, context.Background(), ProtocolResponses, "gpt-5", FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 30 * time.Second})
+			require.Nil(t, request.BeginAttempt(tt.meta, FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 30 * time.Second}))
+			request.Finish()
+			deltas := recorder.snapshot(t)
+			require.Len(t, deltas, 1)
+			require.Equal(t, FirstTokenStatsScopeRequest, deltas[0].Scope)
+		})
+	}
+}
+
+func TestFirstTokenTrackingAcceptsPlatformAtRuneLimit(t *testing.T) {
+	recorder := &firstTokenStatsRecorderSpy{}
+	request := NewFirstTokenRequestTracker(recorder, context.Background(), ProtocolResponses, "gpt-5", FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 30 * time.Second})
+	platform := strings.Repeat("平", 32)
+	attempt := request.BeginAttempt(FirstTokenStatsAttemptMetadata{AccountID: 1, Platform: platform}, FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 30 * time.Second})
+	require.NotNil(t, attempt)
+	attempt.Finish(nil, FirstTokenCommitted)
+	request.Finish()
+
+	deltas := recorder.snapshot(t)
+	require.Equal(t, platform, deltas[0].Platform)
+}
+
+func TestFirstTokenTrackingTimeoutSecondsCeilsWithoutOverflow(t *testing.T) {
+	tests := []struct {
+		name    string
+		timeout time.Duration
+		want    int
+	}{
+		{name: "zero clamps to minimum", timeout: 0, want: 1},
+		{name: "subsecond rounds up", timeout: time.Nanosecond, want: 1},
+		{name: "whole second stays exact", timeout: time.Second, want: 1},
+		{name: "fraction rounds up", timeout: time.Second + time.Nanosecond, want: 2},
+		{name: "maximum stays exact", timeout: 300 * time.Second, want: 300},
+		{name: "above maximum clamps", timeout: 300*time.Second + time.Nanosecond, want: 300},
+		{name: "duration maximum does not overflow", timeout: time.Duration(1<<63 - 1), want: 300},
+		{name: "duration minimum clamps", timeout: time.Duration(-1 << 63), want: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, firstTokenTimeoutSeconds(tt.timeout))
+		})
+	}
+}
+
+func TestFirstTokenTrackingConcurrentFirstMarkAndFinish(t *testing.T) {
 	recorder := &firstTokenStatsRecorderSpy{}
 	request := NewFirstTokenRequestTracker(recorder, context.Background(), ProtocolResponses, "gpt-5", FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 30 * time.Second})
 	attempt := request.BeginAttempt(FirstTokenStatsAttemptMetadata{AccountID: 1, Platform: PlatformOpenAI}, FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 19 * time.Second})
-	attempt.MarkFirstToken(0)
 
 	start := make(chan struct{})
 	var wg sync.WaitGroup
@@ -322,7 +459,7 @@ func TestFirstTokenTrackingConcurrentDuplicateFinishAndMarkFirstToken(t *testing
 		go func() {
 			defer wg.Done()
 			<-start
-			attempt.Finish(nil, FirstTokenCommitted, context.Background())
+			attempt.Finish(nil, FirstTokenCommitted)
 		}()
 		go func() {
 			defer wg.Done()
@@ -336,8 +473,12 @@ func TestFirstTokenTrackingConcurrentDuplicateFinishAndMarkFirstToken(t *testing
 	deltas := recorder.snapshot(t)
 	require.Len(t, deltas, 2)
 	require.Equal(t, FirstTokenStatsAttemptSuccess, deltas[0].Outcome)
-	require.Equal(t, int64(1), deltas[0].TTFTSampleCount)
-	require.Zero(t, deltas[0].TTFTSumMS)
+	require.Contains(t, []int64{0, 1}, deltas[0].TTFTSampleCount)
+	if deltas[0].TTFTSampleCount == 1 {
+		require.GreaterOrEqual(t, deltas[0].TTFTSumMS, int64(1))
+		require.LessOrEqual(t, deltas[0].TTFTSumMS, int64(32))
+		require.Equal(t, deltas[0].TTFTSumMS, deltas[0].TTFTMaxMS)
+	}
 	require.Equal(t, FirstTokenStatsRequestSuccess, deltas[1].Outcome)
 	require.Equal(t, 19, deltas[1].TimeoutSeconds)
 }
@@ -346,7 +487,7 @@ func TestFirstTokenTrackingTimeoutClassificationWinsOverOtherFailure(t *testing.
 	recorder := &firstTokenStatsRecorderSpy{}
 	request := NewFirstTokenRequestTracker(recorder, context.Background(), ProtocolResponses, "gpt-5", FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 30 * time.Second})
 	attempt := request.BeginAttempt(FirstTokenStatsAttemptMetadata{AccountID: 1, Platform: PlatformOpenAI}, FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 30 * time.Second})
-	attempt.Finish(&UpstreamFailoverError{StatusCode: http.StatusUnauthorized}, FirstTokenTimedOut, context.Background())
+	attempt.Finish(&UpstreamFailoverError{StatusCode: http.StatusUnauthorized}, FirstTokenTimedOut)
 	request.Finish()
 
 	deltas := recorder.snapshot(t)
@@ -355,12 +496,24 @@ func TestFirstTokenTrackingTimeoutClassificationWinsOverOtherFailure(t *testing.
 	require.Equal(t, FirstTokenStatsRequestTTFTExhausted, deltas[1].Outcome)
 }
 
+func TestFirstTokenTrackingTTFTUsesRequestClientContext(t *testing.T) {
+	recorder := &firstTokenStatsRecorderSpy{}
+	request := NewFirstTokenRequestTracker(recorder, context.Background(), ProtocolResponses, "gpt-5", FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 30 * time.Second})
+	attempt := request.BeginAttempt(FirstTokenStatsAttemptMetadata{AccountID: 1, Platform: PlatformOpenAI}, FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 30 * time.Second})
+	attempt.Finish(NewFirstTokenTimeoutFailoverError(), FirstTokenTimedOut)
+	request.Finish()
+
+	deltas := recorder.snapshot(t)
+	require.Equal(t, FirstTokenStatsAttemptTTFTTimeout, deltas[0].Outcome)
+	require.Equal(t, FirstTokenStatsRequestTTFTExhausted, deltas[1].Outcome)
+}
+
 func TestFirstTokenTrackingTimedOutAttemptDiscardsObservedFirstToken(t *testing.T) {
 	recorder := &firstTokenStatsRecorderSpy{}
 	request := NewFirstTokenRequestTracker(recorder, context.Background(), ProtocolResponses, "gpt-5", FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 30 * time.Second})
 	attempt := request.BeginAttempt(FirstTokenStatsAttemptMetadata{AccountID: 1, Platform: PlatformOpenAI}, FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 30 * time.Second})
 	attempt.MarkFirstToken(275 * time.Millisecond)
-	attempt.Finish(NewFirstTokenTimeoutFailoverError(), FirstTokenTimedOut, context.Background())
+	attempt.Finish(NewFirstTokenTimeoutFailoverError(), FirstTokenTimedOut)
 	request.Finish()
 
 	deltas := recorder.snapshot(t)
@@ -388,6 +541,8 @@ func TestFirstTokenFailureKindPriority(t *testing.T) {
 		{name: "wrapped reset", err: &net.OpError{Op: "read", Err: syscall.ECONNRESET}, want: FirstTokenStatsFailureTransport},
 		{name: "eof", err: io.EOF, want: FirstTokenStatsFailureTransport},
 		{name: "tls", err: tls.RecordHeaderError{}, want: FirstTokenStatsFailureTransport},
+		{name: "tls pointer", err: &tls.RecordHeaderError{}, want: FirstTokenStatsFailureTransport},
+		{name: "x509 hostname", err: x509.HostnameError{Certificate: &x509.Certificate{DNSNames: []string{"other.example"}}, Host: "api.example"}, want: FirstTokenStatsFailureTransport},
 		{name: "context canceled without canceled parent", err: context.Canceled, want: FirstTokenStatsFailureTransport},
 		{name: "context deadline", err: context.DeadlineExceeded, want: FirstTokenStatsFailureTransport},
 		{name: "idle", err: ErrStreamDataIntervalTimeout, want: FirstTokenStatsFailureStreamIdleTimeout},
