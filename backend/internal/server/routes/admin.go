@@ -62,6 +62,9 @@ func RegisterAdminRoutes(
 		// 系统设置
 		registerSettingsRoutes(admin, h)
 
+		// 首 Token 超时统计
+		registerFirstTokenTimeoutRoutes(admin, h)
+
 		// 数据管理
 		registerDataManagementRoutes(admin, h)
 
@@ -511,6 +514,16 @@ func registerSettingsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		adminSettings.PUT("/web-search-emulation", h.Admin.Setting.UpdateWebSearchEmulationConfig)
 		adminSettings.POST("/web-search-emulation/test", h.Admin.Setting.TestWebSearchEmulation)
 		adminSettings.POST("/web-search-emulation/reset-usage", h.Admin.Setting.ResetWebSearchUsage)
+		adminSettings.GET("/first-token-timeout", h.Admin.FirstTokenTimeout.GetSettings)
+		adminSettings.PUT("/first-token-timeout", h.Admin.FirstTokenTimeout.UpdateSettings)
+	}
+}
+
+func registerFirstTokenTimeoutRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	ttft := admin.Group("/ttft")
+	{
+		ttft.GET("/overview", h.Admin.FirstTokenTimeout.GetOverview)
+		ttft.GET("/accounts", h.Admin.FirstTokenTimeout.GetAccounts)
 	}
 }
 

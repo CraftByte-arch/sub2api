@@ -22,6 +22,7 @@ type AdminHandlers struct {
 	Redeem                 *admin.RedeemHandler
 	Promo                  *admin.PromoHandler
 	Setting                *admin.SettingHandler
+	FirstTokenTimeout      *admin.FirstTokenTimeoutHandler
 	Ops                    *admin.OpsHandler
 	System                 *admin.SystemHandler
 	Subscription           *admin.SubscriptionHandler

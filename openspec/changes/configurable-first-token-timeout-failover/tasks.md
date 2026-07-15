@@ -1,7 +1,7 @@
 ## 1. 设置与管理 API
 
 - [x] 1.1 新增 `FirstTokenTimeoutSettings`、独立 setting key、默认值、1-300 秒解析校验和保存逻辑，并覆盖缺失/损坏配置回退测试
-- [ ] 1.2 新增管理员读取与更新 API、DTO、路由和设置审计字段，覆盖有效保存、非法阈值和关闭状态测试
+- [x] 1.2 新增管理员读取与更新 API、DTO、路由和设置审计字段，覆盖有效保存、非法阈值和关闭状态测试
 - [x] 1.3 新增只读策略快照供每个 eligible attempt 获取启用状态与阈值，保证保存热更新、并发读取和损坏配置回退不阻塞网关
 
 ## 2. Attempt 控制器与事务化响应门
@@ -32,7 +32,7 @@
 - [x] 5.2 新增独立 stats port/repository，实现批量原子 UPSERT、汇总/趋势/失败分类/账号分页查询和 90 天幂等清理，覆盖多实例累加与阈值快照测试
 - [x] 5.3 新增有界异步 recorder，支持非阻塞 Record、5 秒/批量阈值 flush、2 秒停机 flush、dropped count、last successful flush 和每日清理，覆盖 DB 失败不传播及竞态测试
 - [x] 5.4 在 attempt 与 request 生命周期末端各记录一次 outcome，统一其他失败分类，确保 client_canceled 排除率分母、TTFT 后其他失败仍进入受影响 request 分母
-- [ ] 5.5 新增管理员 TTFT summary/trend/failure-distribution/account-stats API、DTO、参数校验和 completeness 元数据，覆盖 24h/7d/30d/90d、协议/模型与账号局部筛选
+- [x] 5.5 新增管理员 TTFT summary/trend/failure-distribution/account-stats API、DTO、参数校验和 completeness 元数据，覆盖 24h/7d/30d/90d、协议/模型与账号局部筛选
 
 ## 6. 独立管理员页面
 

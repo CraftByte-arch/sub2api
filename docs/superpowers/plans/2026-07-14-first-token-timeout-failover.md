@@ -566,17 +566,17 @@ git commit -m "feat: record first token timeout outcomes"
 - Modify: `backend/cmd/server/wire_gen.go`
 - Modify: `backend/internal/server/api_contract_test.go`
 
-- [ ] **Step 1: 写 API 鉴权后 handler 失败测试**
+- [x] **Step 1: 写 API 鉴权后 handler 失败测试**
 
 覆盖 GET/PUT settings、非法 0/301、overview 默认 24h、非法 range/protocol、accounts search/sort/page、degraded completeness。响应 rate 必须包含 `numerator/denominator/rate`。
 
-- [ ] **Step 2: 运行并确认失败**
+- [x] **Step 2: 运行并确认失败**
 
 Run: `cd backend && go test ./internal/handler/admin ./internal/server -run 'FirstTokenTimeout|TTFT' -count=1`
 
 Expected: FAIL，路由或 handler 不存在。
 
-- [ ] **Step 3: 实现独立 `FirstTokenTimeoutHandler`**
+- [x] **Step 3: 实现独立 `FirstTokenTimeoutHandler`**
 
 ```go
 type FirstTokenTimeoutHandler struct {
@@ -593,7 +593,7 @@ func (h *FirstTokenTimeoutHandler) GetAccounts(*gin.Context)
 
 API DTO 不暴露内部错误或 SQL。Update 成功返回持久值、effective snapshot 与 loaded_at。
 
-- [ ] **Step 4: 注册追加式路由与 Wire**
+- [x] **Step 4: 注册追加式路由与 Wire**
 
 ```go
 settings.GET("/first-token-timeout", h.Admin.FirstTokenTimeout.GetSettings)
@@ -605,13 +605,13 @@ ttft.GET("/accounts", h.Admin.FirstTokenTimeout.GetAccounts)
 
 只给 `AdminHandlers`、`ProvideAdminHandlers`、ProviderSet 追加一个字段/provider。
 
-- [ ] **Step 5: 更新 contract test、生成 Wire 并运行测试**
+- [x] **Step 5: 更新 contract test、生成 Wire 并运行测试**
 
 Run: `cd backend && go generate ./cmd/server && go test ./internal/handler/admin ./internal/server -run 'FirstTokenTimeout|TTFT|APIContract' -count=1`
 
 Expected: PASS。
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 git add backend/internal/handler/admin/first_token_timeout_handler.go backend/internal/handler/admin/first_token_timeout_handler_test.go backend/internal/handler/handler.go backend/internal/handler/wire.go backend/internal/server/routes/admin.go backend/cmd/server/wire_gen.go backend/internal/server/api_contract_test.go

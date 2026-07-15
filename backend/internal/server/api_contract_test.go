@@ -5,6 +5,7 @@ package server_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"math"
@@ -20,6 +21,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
+	serverroutes "github.com/Wei-Shaw/sub2api/internal/server/routes"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -1344,6 +1346,86 @@ func TestAPIContracts(t *testing.T) {
 			require.JSONEq(t, tt.wantJSON, body)
 		})
 	}
+}
+
+func TestFirstTokenTimeoutAdminRouteContract(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	newRouter := func(t *testing.T, acknowledged bool) *gin.Engine {
+		t.Helper()
+		settingRepo := newStubSettingRepo()
+		if acknowledged {
+			ack, err := json.Marshal(service.AdminComplianceAcknowledgement{
+				Version:     service.AdminComplianceVersion,
+				AdminUserID: 1,
+				AcceptedAt:  time.Date(2026, 7, 15, 1, 2, 3, 0, time.UTC),
+			})
+			require.NoError(t, err)
+			settingRepo.all["admin_compliance_acknowledgement:1"] = string(ack)
+		}
+		settingService := service.NewSettingService(settingRepo, &config.Config{})
+		firstTokenTimeoutHandler := adminhandler.NewFirstTokenTimeoutHandler(
+			service.NewFirstTokenTimeoutPolicy(settingRepo, nil),
+			nil,
+			nil,
+		)
+		handlers := &handler.Handlers{Admin: &handler.AdminHandlers{FirstTokenTimeout: firstTokenTimeoutHandler}}
+		adminAuth := middleware.AdminAuthMiddleware(func(c *gin.Context) {
+			if c.GetHeader("Authorization") != "Bearer admin" {
+				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"message": "unauthorized"})
+				return
+			}
+			c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: 1})
+			c.Set(string(middleware.ContextKeyUserRole), service.RoleAdmin)
+			c.Next()
+		})
+		router := gin.New()
+		serverroutes.RegisterAdminRoutes(router.Group("/api/v1"), handlers, adminAuth, settingService)
+		return router
+	}
+
+	requests := []struct {
+		method string
+		path   string
+		body   string
+	}{
+		{method: http.MethodGet, path: "/api/v1/admin/settings/first-token-timeout"},
+		{method: http.MethodPut, path: "/api/v1/admin/settings/first-token-timeout", body: `{"enabled":false,"timeout_seconds":30}`},
+		{method: http.MethodGet, path: "/api/v1/admin/ttft/overview"},
+		{method: http.MethodGet, path: "/api/v1/admin/ttft/accounts"},
+	}
+
+	t.Run("admin auth protects every appended route", func(t *testing.T) {
+		router := newRouter(t, true)
+		for _, request := range requests {
+			status, body := doRequest(t, router, request.method, request.path, request.body, nil)
+			require.Equal(t, http.StatusUnauthorized, status, "%s %s: %s", request.method, request.path, body)
+			require.Contains(t, body, "unauthorized")
+		}
+	})
+
+	t.Run("admin compliance protects every appended route", func(t *testing.T) {
+		router := newRouter(t, false)
+		for _, request := range requests {
+			status, body := doRequest(t, router, request.method, request.path, request.body, map[string]string{
+				"Authorization": "Bearer admin",
+				"Content-Type":  "application/json",
+			})
+			require.Equal(t, http.StatusLocked, status, "%s %s: %s", request.method, request.path, body)
+			require.Contains(t, body, "ADMIN_COMPLIANCE_ACK_REQUIRED")
+		}
+	})
+
+	t.Run("all first token timeout routes are registered for an acknowledged admin", func(t *testing.T) {
+		router := newRouter(t, true)
+		for _, request := range requests {
+			status, body := doRequest(t, router, request.method, request.path, request.body, map[string]string{
+				"Authorization": "Bearer admin",
+				"Content-Type":  "application/json",
+			})
+			require.NotEqual(t, http.StatusNotFound, status, "%s %s: %s", request.method, request.path, body)
+		}
+	})
 }
 
 type contractDeps struct {
