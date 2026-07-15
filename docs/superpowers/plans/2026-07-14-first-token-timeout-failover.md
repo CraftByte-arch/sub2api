@@ -639,17 +639,17 @@ git commit -m "feat: expose first token timeout admin APIs"
 - Modify: `frontend/src/i18n/locales/zh/common.ts`
 - Modify: `frontend/src/i18n/locales/en/common.ts`
 
-- [ ] **Step 1: 写 API types 和页面行为失败测试**
+- [x] **Step 1: 写 API types 和页面行为失败测试**
 
 mock `/settings/first-token-timeout`、`/ttft/overview`、`/ttft/accounts`；断言默认 query `range=24h`，设置保存保留统计，所有 rate 显示 `numerator / denominator`，账号筛选只重载 accounts，degraded 显示警告。
 
-- [ ] **Step 2: 运行并确认失败**
+- [x] **Step 2: 运行并确认失败**
 
 Run: `cd frontend && pnpm test:run src/views/admin/ttft/__tests__/FirstTokenTimeoutView.spec.ts`
 
 Expected: FAIL，页面/API 模块不存在。
 
-- [ ] **Step 3: 实现 API 类型**
+- [x] **Step 3: 实现 API 类型**
 
 ```ts
 export interface RateMetric { numerator: number; denominator: number; rate: number }
@@ -664,25 +664,25 @@ export interface TTFTCompleteness {
 
 提供 `get/updateSettings`、`getOverview`、`getAccounts`，不把类型并入大型 `settings.ts` 或 `ops.ts`。
 
-- [ ] **Step 4: 实现页面设置带、筛选和独立加载状态**
+- [x] **Step 4: 实现页面设置带、筛选和独立加载状态**
 
 使用现有 AppLayout/Base 组件。URL query 同步 range/protocol/model；overview/accounts 分开 loading/error/retry。账号 search/platform/account/sort/page 只传 accounts API。
 
-- [ ] **Step 5: 实现五指标、折线、横条和账号表**
+- [x] **Step 5: 实现五指标、折线、横条和账号表**
 
 图表使用现有 Chart.js/vue-chartjs；线型与颜色同时区分。表展示账号/平台、非取消 samples、success、TTFT count/rate、other count/rate、avg TTFT、`samples < 20` 低样本标记。
 
-- [ ] **Step 6: 增加 route/sidebar/双语 locale 与完整状态测试**
+- [x] **Step 6: 增加 route/sidebar/双语 locale 与完整状态测试**
 
 路由 `/admin/ttft` 位于 Ops 后；sidebar label 为 `nav.ttftMonitoring`。覆盖 skeleton、empty、overview error、accounts error、degraded、dark class 与窄屏横向滚动容器。
 
-- [ ] **Step 7: 运行前端测试、类型检查和生产构建**
+- [x] **Step 7: 运行前端测试、类型检查和生产构建**
 
 Run: `cd frontend && pnpm test:run src/views/admin/ttft/__tests__/FirstTokenTimeoutView.spec.ts && pnpm typecheck && pnpm build`
 
 Expected: 全部 PASS，Vite build 成功。
 
-- [ ] **Step 8: 提交**
+- [x] **Step 8: 提交**
 
 ```bash
 git add frontend/src/api/admin/ttft.ts frontend/src/api/admin/index.ts frontend/src/views/admin/ttft frontend/src/router/index.ts frontend/src/components/layout/AppSidebar.vue frontend/src/i18n/locales
