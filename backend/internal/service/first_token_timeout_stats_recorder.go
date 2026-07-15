@@ -86,6 +86,8 @@ type FirstTokenTimeoutStatsRecorder struct {
 	stopCh         chan struct{}
 	producersDone  chan struct{}
 	workerDone     chan struct{}
+	repoCallGate   chan struct{}
+	logInFlight    atomic.Bool
 
 	health atomic.Pointer[firstTokenTimeoutStatsRecorderHealthState]
 }
@@ -106,7 +108,9 @@ func newFirstTokenTimeoutStatsRecorderWithConfig(
 		stopCh:        make(chan struct{}),
 		producersDone: make(chan struct{}),
 		workerDone:    make(chan struct{}),
+		repoCallGate:  make(chan struct{}, 1),
 	}
+	recorder.repoCallGate <- struct{}{}
 	recorder.health.Store(&firstTokenTimeoutStatsRecorderHealthState{closed: true})
 	return recorder
 }
@@ -299,28 +303,47 @@ func (r *FirstTokenTimeoutStatsRecorder) run(flushC, cleanupC <-chan time.Time) 
 
 	aggregates := make(map[firstTokenStatsRecorderKey]FirstTokenStatsDelta, r.config.flushUniqueKeys)
 	for {
-		select {
-		case <-r.stopCh:
+		if r.shutdownRequested() {
 			r.shutdown(&aggregates)
 			return
-		default:
 		}
 		select {
 		case delta := <-r.queue:
 			if !r.mergeDelta(aggregates, delta) {
 				r.transitionFlushFailure(delta.SampleCount)
 			}
+			if r.shutdownRequested() {
+				r.shutdown(&aggregates)
+				return
+			}
 			if len(aggregates) >= r.config.flushUniqueKeys {
 				r.flush(&aggregates)
 			}
 		case <-flushC:
+			if r.shutdownRequested() {
+				r.shutdown(&aggregates)
+				return
+			}
 			r.flush(&aggregates)
 		case <-cleanupC:
+			if r.shutdownRequested() {
+				r.shutdown(&aggregates)
+				return
+			}
 			r.cleanup()
 		case <-r.stopCh:
 			r.shutdown(&aggregates)
 			return
 		}
+	}
+}
+
+func (r *FirstTokenTimeoutStatsRecorder) shutdownRequested() bool {
+	select {
+	case <-r.stopCh:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -376,11 +399,7 @@ func (r *FirstTokenTimeoutStatsRecorder) cleanup() {
 	if r.repo == nil {
 		return
 	}
-	baseCtx := r.appCtx
-	if baseCtx == nil {
-		baseCtx = context.Background()
-	}
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(baseCtx), r.config.operationTimeout)
+	ctx, cancel := r.operationContext()
 	defer cancel()
 	cutoff := r.config.now().UTC().Add(-90 * 24 * time.Hour).Truncate(time.Hour)
 	if _, err := r.deleteBefore(ctx, cutoff); err != nil {
@@ -439,13 +458,22 @@ func (r *FirstTokenTimeoutStatsRecorder) mergeDelta(
 }
 
 func (r *FirstTokenTimeoutStatsRecorder) flush(aggregates *map[firstTokenStatsRecorderKey]FirstTokenStatsDelta) {
+	ctx, cancel := r.operationContext()
+	defer cancel()
+	r.flushWithContext(aggregates, ctx)
+}
+
+func (r *FirstTokenTimeoutStatsRecorder) operationContext() (context.Context, context.CancelFunc) {
+	r.lifecycleMu.Lock()
+	defer r.lifecycleMu.Unlock()
+	if r.shutdownCtx != nil {
+		return r.shutdownCtx, func() {}
+	}
 	baseCtx := r.appCtx
 	if baseCtx == nil {
 		baseCtx = context.Background()
 	}
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(baseCtx), r.config.operationTimeout)
-	defer cancel()
-	r.flushWithContext(aggregates, ctx)
+	return context.WithTimeout(context.WithoutCancel(baseCtx), r.config.operationTimeout)
 }
 
 func (r *FirstTokenTimeoutStatsRecorder) flushWithContext(
@@ -480,10 +508,13 @@ func (r *FirstTokenTimeoutStatsRecorder) flushWithContext(
 
 func (r *FirstTokenTimeoutStatsRecorder) logRepositoryFailure(attrs ...any) {
 	logger := r.config.logger
-	if logger == nil {
+	if logger == nil || !r.logInFlight.CompareAndSwap(false, true) {
 		return
 	}
-	go logger.Warn("first token stats recorder repository operation failed", attrs...)
+	go func() {
+		defer r.logInFlight.Store(false)
+		logger.Warn("first token stats recorder repository operation failed", attrs...)
+	}()
 }
 
 func (r *FirstTokenTimeoutStatsRecorder) upsertBatch(ctx context.Context, batch []FirstTokenStatsDelta) error {
@@ -493,9 +524,14 @@ func (r *FirstTokenTimeoutStatsRecorder) upsertBatch(ctx context.Context, batch 
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if !r.acquireRepositoryCall(ctx) {
+		return ctx.Err()
+	}
 	result := make(chan error, 1)
 	go func() {
-		result <- r.repo.UpsertBatch(ctx, batch)
+		err := r.repo.UpsertBatch(ctx, batch)
+		r.releaseRepositoryCall()
+		result <- err
 	}()
 	select {
 	case err := <-result:
@@ -515,6 +551,9 @@ func (r *FirstTokenTimeoutStatsRecorder) deleteBefore(ctx context.Context, cutof
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
+	if !r.acquireRepositoryCall(ctx) {
+		return 0, ctx.Err()
+	}
 	type result struct {
 		deleted int64
 		err     error
@@ -522,6 +561,7 @@ func (r *FirstTokenTimeoutStatsRecorder) deleteBefore(ctx context.Context, cutof
 	results := make(chan result, 1)
 	go func() {
 		deleted, err := r.repo.DeleteBefore(ctx, cutoff)
+		r.releaseRepositoryCall()
 		results <- result{deleted: deleted, err: err}
 	}()
 	select {
@@ -536,6 +576,23 @@ func (r *FirstTokenTimeoutStatsRecorder) deleteBefore(ctx context.Context, cutof
 	case <-ctx.Done():
 		return 0, ctx.Err()
 	}
+}
+
+func (r *FirstTokenTimeoutStatsRecorder) acquireRepositoryCall(ctx context.Context) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case <-r.repoCallGate:
+		if ctx.Err() != nil {
+			r.releaseRepositoryCall()
+			return false
+		}
+		return true
+	}
+}
+
+func (r *FirstTokenTimeoutStatsRecorder) releaseRepositoryCall() {
+	r.repoCallGate <- struct{}{}
 }
 
 func (r *FirstTokenTimeoutStatsRecorder) dropAllPendingSamples() {

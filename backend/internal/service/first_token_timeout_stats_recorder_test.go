@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"math"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -23,6 +24,13 @@ type firstTokenStatsRecorderLogHandler struct {
 	records chan slog.Record
 }
 
+type firstTokenStatsRecorderBlockingLogHandler struct {
+	started chan struct{}
+	release <-chan struct{}
+	done    chan struct{}
+	calls   atomic.Int64
+}
+
 func (h *firstTokenStatsRecorderLogHandler) Enabled(context.Context, slog.Level) bool { return true }
 
 func (h *firstTokenStatsRecorderLogHandler) Handle(_ context.Context, record slog.Record) error {
@@ -36,6 +44,22 @@ func (h *firstTokenStatsRecorderLogHandler) Handle(_ context.Context, record slo
 func (h *firstTokenStatsRecorderLogHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
 
 func (h *firstTokenStatsRecorderLogHandler) WithGroup(string) slog.Handler { return h }
+
+func (h *firstTokenStatsRecorderBlockingLogHandler) Enabled(context.Context, slog.Level) bool {
+	return true
+}
+
+func (h *firstTokenStatsRecorderBlockingLogHandler) Handle(context.Context, slog.Record) error {
+	h.calls.Add(1)
+	h.started <- struct{}{}
+	<-h.release
+	h.done <- struct{}{}
+	return nil
+}
+
+func (h *firstTokenStatsRecorderBlockingLogHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+
+func (h *firstTokenStatsRecorderBlockingLogHandler) WithGroup(string) slog.Handler { return h }
 
 func (s *firstTokenStatsRecorderRepoStub) UpsertBatch(ctx context.Context, deltas []FirstTokenStatsDelta) error {
 	if s.upsertBatch != nil {
@@ -637,6 +661,82 @@ deadlinesChecked:
 	require.Equal(t, int64(0), health.PendingSamples)
 }
 
+func TestFirstTokenStatsRecorderReadyWorkCannotBypassShutdownDeadline(t *testing.T) {
+	previousProcs := runtime.GOMAXPROCS(1)
+	t.Cleanup(func() { runtime.GOMAXPROCS(previousProcs) })
+
+	for _, mode := range []string{"queue", "flush_tick", "cleanup_tick"} {
+		t.Run(mode, func(t *testing.T) {
+			for iteration := 0; iteration < 100; iteration++ {
+				deadlines := make(chan time.Time, 4)
+				repo := &firstTokenStatsRecorderRepoStub{
+					upsertBatch: func(ctx context.Context, _ []FirstTokenStatsDelta) error {
+						deadline, _ := ctx.Deadline()
+						deadlines <- deadline
+						return nil
+					},
+					deleteBefore: func(ctx context.Context, _ time.Time) (int64, error) {
+						deadline, _ := ctx.Deadline()
+						deadlines <- deadline
+						return 0, nil
+					},
+				}
+				recorder := newFirstTokenTimeoutStatsRecorderWithConfig(repo, firstTokenTimeoutStatsRecorderConfig{
+					queueCapacity:    1,
+					flushUniqueKeys:  map[string]int{"queue": 1, "flush_tick": 1000, "cleanup_tick": 1000}[mode],
+					flushInterval:    time.Hour,
+					cleanupInterval:  time.Hour,
+					operationTimeout: 100 * time.Millisecond,
+					now:              time.Now,
+				})
+				recorder.lifecycleMu.Lock()
+				recorder.started = true
+				recorder.appCtx = context.Background()
+				recorder.lifecycleMu.Unlock()
+				recorder.state.Store(firstTokenStatsRecorderAcceptingBit)
+				recorder.transitionHealthClosed(false)
+				flushTicks := make(chan time.Time, 1)
+				cleanupTicks := make(chan time.Time, 1)
+				go recorder.run(flushTicks, cleanupTicks)
+				runtime.Gosched()
+
+				switch mode {
+				case "queue":
+					require.True(t, recorder.reservePendingSamples(1))
+					recorder.queue <- validFirstTokenStatsRecorderDelta(42)
+				case "flush_tick":
+					require.True(t, recorder.reservePendingSamples(1))
+					recorder.queue <- validFirstTokenStatsRecorderDelta(42)
+					waitForFirstTokenStatsRecorderQueueEmpty(t, recorder)
+					runtime.Gosched()
+					flushTicks <- time.Now()
+				case "cleanup_tick":
+					cleanupTicks <- time.Now()
+				}
+				shutdownCtx := recorder.requestShutdown()
+				runtime.Gosched()
+				select {
+				case <-recorder.workerDone:
+				case <-time.After(time.Second):
+					t.Fatal("recorder worker did not exit")
+				}
+				shutdownDeadline, ok := shutdownCtx.Deadline()
+				require.True(t, ok)
+				for {
+					select {
+					case deadline := <-deadlines:
+						require.False(t, deadline.After(shutdownDeadline),
+							"%s iteration %d bypassed shutdown deadline", mode, iteration)
+					default:
+						goto checked
+					}
+				}
+			checked:
+			}
+		})
+	}
+}
+
 func TestFirstTokenStatsRecorderIgnoringContextDoesNotHoldWorkerPastShutdownBudget(t *testing.T) {
 	releaseRepo := make(chan struct{})
 	repoStarted := make(chan struct{}, 1)
@@ -739,6 +839,76 @@ func TestFirstTokenStatsRecorderIgnoringContextCleanupDoesNotHoldWorker(t *testi
 	case <-cleanupDone:
 	case <-time.After(time.Second):
 		t.Fatal("blocking cleanup goroutine did not exit after release")
+	}
+}
+
+func TestFirstTokenStatsRecorderRepositoryCallsAreSingleFlightWhenContextIsIgnored(t *testing.T) {
+	releaseRepo := make(chan struct{})
+	started := make(chan string, 16)
+	done := make(chan struct{}, 16)
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseRepo) }) }
+	t.Cleanup(release)
+	block := func(operation string) {
+		started <- operation
+		<-releaseRepo
+		done <- struct{}{}
+	}
+	repo := &firstTokenStatsRecorderRepoStub{
+		upsertBatch: func(context.Context, []FirstTokenStatsDelta) error {
+			block("flush")
+			return nil
+		},
+		deleteBefore: func(context.Context, time.Time) (int64, error) {
+			block("cleanup")
+			return 0, nil
+		},
+	}
+	recorder := newFirstTokenTimeoutStatsRecorderWithConfig(repo, firstTokenTimeoutStatsRecorderConfig{
+		queueCapacity:    1,
+		flushUniqueKeys:  1,
+		flushInterval:    time.Millisecond,
+		cleanupInterval:  time.Millisecond,
+		operationTimeout: 5 * time.Millisecond,
+		now:              time.Now,
+	})
+	recorder.Start(context.Background())
+	recorder.Record(validFirstTokenStatsRecorderDelta(42))
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for first repository call")
+	}
+	select {
+	case operation := <-started:
+		t.Fatalf("started overlapping repository operation %q while the first call was blocked", operation)
+	case <-time.After(40 * time.Millisecond):
+	}
+
+	recorder.Stop()
+	select {
+	case <-recorder.workerDone:
+	case <-time.After(time.Second):
+		t.Fatal("recorder worker did not exit with a blocked repository call")
+	}
+	health := recorder.Health()
+	require.Equal(t, int64(1), health.DroppedSamples)
+	require.Equal(t, int64(0), health.PendingSamples)
+
+	release()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("blocked repository call did not exit after release")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_, err := recorder.deleteBefore(ctx, time.Now().UTC().Add(-90*24*time.Hour))
+	require.NoError(t, err)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("repository gate was not reusable after the blocked call exited")
 	}
 }
 
@@ -872,6 +1042,76 @@ func TestFirstTokenStatsRecorderCleanupFailureLogsOnlySafeFields(t *testing.T) {
 		"operation": "cleanup",
 		"error":     "cleanup unavailable",
 	}, firstTokenStatsRecorderLogAttrs(record))
+}
+
+func TestFirstTokenStatsRecorderAsyncLoggingIsSingleFlight(t *testing.T) {
+	releaseLogs := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseLogs) }) }
+	t.Cleanup(release)
+	handler := &firstTokenStatsRecorderBlockingLogHandler{
+		started: make(chan struct{}, 32),
+		release: releaseLogs,
+		done:    make(chan struct{}, 32),
+	}
+	const failures = 20
+	recorder := newFirstTokenTimeoutStatsRecorderWithConfig(&firstTokenStatsRecorderRepoStub{
+		upsertBatch: func(context.Context, []FirstTokenStatsDelta) error {
+			return errors.New("db unavailable")
+		},
+	}, firstTokenTimeoutStatsRecorderConfig{
+		queueCapacity:    failures,
+		flushUniqueKeys:  1,
+		flushInterval:    time.Hour,
+		cleanupInterval:  time.Hour,
+		operationTimeout: time.Second,
+		now:              time.Now,
+		logger:           slog.New(handler),
+	})
+	recorder.Start(context.Background())
+	for accountID := int64(1); accountID <= failures; accountID++ {
+		recorder.Record(validFirstTokenStatsRecorderDelta(accountID))
+	}
+	select {
+	case <-handler.started:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for first log call")
+	}
+	waitForFirstTokenStatsRecorderHealth(t, recorder, func(health FirstTokenTimeoutStatsRecorderHealth) bool {
+		return health.PendingSamples == 0 && health.DroppedSamples == failures
+	})
+	select {
+	case <-handler.started:
+		t.Fatal("started overlapping asynchronous log call")
+	case <-time.After(40 * time.Millisecond):
+	}
+	recorder.Stop()
+	select {
+	case <-recorder.workerDone:
+	case <-time.After(time.Second):
+		t.Fatal("blocked logger held recorder worker")
+	}
+	require.Equal(t, int64(1), handler.calls.Load())
+
+	release()
+	select {
+	case <-handler.done:
+	case <-time.After(time.Second):
+		t.Fatal("blocking logger did not exit after release")
+	}
+	waitForFirstTokenStatsRecorderLogGate(t, recorder)
+	recorder.logRepositoryFailure("operation", "cleanup", "error", errors.New("later"))
+	select {
+	case <-handler.started:
+	case <-time.After(time.Second):
+		t.Fatal("logger gate was not reusable after release")
+	}
+	select {
+	case <-handler.done:
+	case <-time.After(time.Second):
+		t.Fatal("reused logger call did not finish")
+	}
+	require.Equal(t, int64(2), handler.calls.Load())
 }
 
 func TestFirstTokenStatsRecorderHealthFailureTransitionIsLinear(t *testing.T) {
@@ -1028,6 +1268,28 @@ func waitForFirstTokenStatsRecorderHealth(
 			t.Fatalf("timed out waiting for recorder health condition; last=%+v", health)
 			return health
 		}
+	}
+}
+
+func waitForFirstTokenStatsRecorderQueueEmpty(t *testing.T, recorder *FirstTokenTimeoutStatsRecorder) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for len(recorder.queue) != 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for recorder queue to drain")
+		}
+		runtime.Gosched()
+	}
+}
+
+func waitForFirstTokenStatsRecorderLogGate(t *testing.T, recorder *FirstTokenTimeoutStatsRecorder) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for recorder.logInFlight.Load() {
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for recorder log gate")
+		}
+		runtime.Gosched()
 	}
 }
 
