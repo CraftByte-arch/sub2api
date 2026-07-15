@@ -2,12 +2,83 @@ package service
 
 import (
 	"context"
+	"errors"
 	"net/http/httptest"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+func TestFirstTokenTimeoutCauseRecognizesTimedOutStateBeforeCausePublication(t *testing.T) {
+	attempt, ctx := newFirstTokenTimedOutBeforeCausePublication(t)
+
+	require.Equal(t, FirstTokenTimedOut, attempt.State())
+	require.NoError(t, context.Cause(ctx))
+	require.True(t, isFirstTokenTimeoutCause(ctx, errors.New("ordinary network failure")))
+}
+
+func TestFirstTokenTimeoutLowerStreamRecorderSkipsTimedOutStateBeforeCausePublication(t *testing.T) {
+	_, ctx := newFirstTokenTimedOutBeforeCausePublication(t)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("POST", "/", nil).WithContext(ctx)
+
+	(&OpenAIGatewayService{}).recordOpenAIStreamUpstreamError(
+		c,
+		&Account{ID: 1, Platform: PlatformOpenAI},
+		false,
+		"",
+		"failover",
+		nil,
+		"ordinary network failure",
+	)
+
+	_, hasEvents := c.Get(OpsUpstreamErrorsKey)
+	require.False(t, hasEvents)
+	_, hasStatus := c.Get(OpsUpstreamStatusCodeKey)
+	require.False(t, hasStatus)
+}
+
+func TestFirstTokenTimeoutCauseRejectsOrdinaryPendingAttemptError(t *testing.T) {
+	attempt := NewFirstTokenAttempt(context.Background(), time.Hour)
+	t.Cleanup(attempt.Close)
+	ctx := WithFirstTokenAttempt(attempt.Context(), attempt, func() error { return nil })
+
+	require.Equal(t, FirstTokenPending, attempt.State())
+	require.False(t, isFirstTokenTimeoutCause(ctx, errors.New("ordinary network failure")))
+}
+
+func newFirstTokenTimedOutBeforeCausePublication(t *testing.T) (*FirstTokenAttempt, context.Context) {
+	t.Helper()
+	attempt := NewFirstTokenAttempt(context.Background(), time.Hour)
+	originalCancel := attempt.cancel
+	cancelEntered := make(chan struct{})
+	releaseCancel := make(chan struct{})
+	timeoutDone := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseCancel) }) }
+	attempt.cancel = func(cause error) {
+		close(cancelEntered)
+		<-releaseCancel
+		originalCancel(cause)
+	}
+	go func() {
+		attempt.timeout()
+		close(timeoutDone)
+	}()
+	<-cancelEntered
+	t.Cleanup(func() {
+		release()
+		<-timeoutDone
+		attempt.cancel = originalCancel
+		attempt.Close()
+	})
+
+	ctx := WithFirstTokenAttempt(attempt.Context(), attempt, func() error { return nil })
+	return attempt, ctx
+}
 
 func TestFirstTokenTimeoutLowerStreamRecordersSkipAttemptError(t *testing.T) {
 	tests := []struct {
