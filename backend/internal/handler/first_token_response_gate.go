@@ -124,6 +124,12 @@ func (w *FirstTokenResponseGate) Written() bool {
 	return w.state == firstTokenResponseGateCommitted && w.base.Written()
 }
 
+func (w *FirstTokenResponseGate) Committed() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.state == firstTokenResponseGateCommitted
+}
+
 func (w *FirstTokenResponseGate) WriteHeaderNow() {
 	w.mu.Lock()
 	defer w.mu.Unlock()

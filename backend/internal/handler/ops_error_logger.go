@@ -789,9 +789,10 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 			}
 			recoveredMsg = truncateString(recoveredMsg, 2048)
 			recoveredErrorType := "upstream_error"
-			if len(events) > 0 {
-				if last := events[len(events)-1]; last != nil && last.Kind == service.UpstreamErrorTypeFirstTokenTimeout {
+			for _, event := range events {
+				if event != nil && event.Kind == service.UpstreamErrorTypeFirstTokenTimeout {
 					recoveredErrorType = service.UpstreamErrorTypeFirstTokenTimeout
+					break
 				}
 			}
 
@@ -1382,6 +1383,9 @@ func isKnownOpsErrorType(t string) bool {
 }
 
 func normalizeOpsErrorType(errType string, code string) string {
+	if errType != "" && errType != "api_error" && isKnownOpsErrorType(errType) {
+		return errType
+	}
 	if strings.TrimSpace(code) == service.UpstreamErrorTypeFirstTokenTimeout {
 		return service.UpstreamErrorTypeFirstTokenTimeout
 	}

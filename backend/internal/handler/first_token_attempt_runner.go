@@ -111,6 +111,7 @@ func runFirstTokenAttempt[T any](
 	originalRequest := c.Request
 	attempt := service.NewFirstTokenAttempt(originalRequest.Context(), snapshot.Timeout)
 	gate := NewFirstTokenResponseGate(originalWriter, attempt)
+	finishResponseCommitAttempt := service.BeginResponseCommitAttempt(c)
 	attemptCtx := service.WithFirstTokenAttempt(attempt.Context(), attempt, gate.Commit)
 	c.Writer = gate
 	c.Request = originalRequest.WithContext(attemptCtx)
@@ -119,6 +120,7 @@ func runFirstTokenAttempt[T any](
 		c.Writer = originalWriter
 		c.Request = originalRequest
 	}()
+	defer func() { finishResponseCommitAttempt(gate.Committed()) }()
 	defer attempt.Close()
 	defer gate.Rollback()
 

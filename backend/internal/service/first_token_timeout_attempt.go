@@ -53,6 +53,13 @@ func isFirstTokenAttemptContext(ctx context.Context) bool {
 	return ok
 }
 
+func isFirstTokenTimeoutCause(ctx context.Context, err error) bool {
+	if errors.Is(err, ErrFirstTokenTimeout) {
+		return true
+	}
+	return ctx != nil && errors.Is(context.Cause(ctx), ErrFirstTokenTimeout)
+}
+
 func isFirstTokenAttemptCommitted(ctx context.Context) bool {
 	binding, ok := firstTokenAttemptBindingFromContext(ctx)
 	return ok && binding.attempt.State() == FirstTokenCommitted

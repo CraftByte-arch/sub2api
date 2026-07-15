@@ -281,6 +281,9 @@ func TestNormalizeOpsErrorType(t *testing.T) {
 
 		// Known type overrides conflicting code-based mapping.
 		{"known type overrides conflicting code", "rate_limit_error", "INSUFFICIENT_BALANCE", "rate_limit_error"},
+		{"explicit type overrides first token timeout code", "invalid_request_error", service.UpstreamErrorTypeFirstTokenTimeout, "invalid_request_error"},
+		{"generic type yields to first token timeout code", "api_error", service.UpstreamErrorTypeFirstTokenTimeout, service.UpstreamErrorTypeFirstTokenTimeout},
+		{"empty type maps first token timeout code", "", service.UpstreamErrorTypeFirstTokenTimeout, service.UpstreamErrorTypeFirstTokenTimeout},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

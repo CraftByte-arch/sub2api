@@ -76,9 +76,13 @@ func (u *firstTokenBillingHTTPUpstream) Do(req *http.Request, _ string, accountI
 				"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_ttft_success\",\"model\":\"gpt-5.1\",\"usage\":{\"input_tokens\":100,\"output_tokens\":20,\"total_tokens\":120}}}\n\n",
 		))
 	}
+	header := http.Header{"Content-Type": []string{"text/event-stream"}}
+	if accountID == 2 {
+		header.Set("x-request-id", "resp_ttft_success")
+	}
 	return &http.Response{
 		StatusCode: http.StatusOK,
-		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Header:     header,
 		Body:       body,
 		Request:    req,
 	}, nil
@@ -107,14 +111,17 @@ func (b *firstTokenBlockingBody) Close() error { return nil }
 
 type firstTokenBillingUsageRepo struct {
 	service.UsageLogRepository
-	mu    sync.Mutex
-	calls int
+	mu      sync.Mutex
+	calls   int
+	lastLog *service.UsageLog
 }
 
-func (r *firstTokenBillingUsageRepo) Create(_ context.Context, _ *service.UsageLog) (bool, error) {
+func (r *firstTokenBillingUsageRepo) Create(_ context.Context, log *service.UsageLog) (bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.calls++
+	copy := *log
+	r.lastLog = &copy
 	return true, nil
 }
 
@@ -124,20 +131,34 @@ func (r *firstTokenBillingUsageRepo) callCount() int {
 	return r.calls
 }
 
+func (r *firstTokenBillingUsageRepo) recordedLog() *service.UsageLog {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.lastLog == nil {
+		return nil
+	}
+	copy := *r.lastLog
+	return &copy
+}
+
 type firstTokenBillingUserRepo struct {
 	service.UserRepository
-	mu          sync.Mutex
-	deductCalls int
+	mu           sync.Mutex
+	deductCalls  int
+	deductUserID int64
+	deductAmount float64
 }
 
 func (r *firstTokenBillingUserRepo) GetByID(_ context.Context, id int64) (*service.User, error) {
 	return &service.User{ID: id, Status: service.StatusActive, Balance: 100}, nil
 }
 
-func (r *firstTokenBillingUserRepo) DeductBalance(_ context.Context, _ int64, _ float64) error {
+func (r *firstTokenBillingUserRepo) DeductBalance(_ context.Context, userID int64, amount float64) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.deductCalls++
+	r.deductUserID = userID
+	r.deductAmount = amount
 	return nil
 }
 
@@ -145,6 +166,12 @@ func (r *firstTokenBillingUserRepo) callCount() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.deductCalls
+}
+
+func (r *firstTokenBillingUserRepo) deduction() (int64, float64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.deductUserID, r.deductAmount
 }
 
 type firstTokenBillingSettingRepo struct {
@@ -222,4 +249,22 @@ func TestFirstTokenTimeoutBillingFailoverThenSuccessRecordsOnce(t *testing.T) {
 	require.Equal(t, 1, usageRepo.callCount())
 	require.Equal(t, 1, userRepo.callCount())
 	require.Contains(t, recorder.Body.String(), "resp_ttft_success")
+
+	rawEvents, ok := c.Get(service.OpsUpstreamErrorsKey)
+	require.True(t, ok)
+	events, ok := rawEvents.([]*service.OpsUpstreamErrorEvent)
+	require.True(t, ok)
+	require.Len(t, events, 1, "the real Responses reader and runner must not both record the TTFT attempt")
+	require.Equal(t, service.UpstreamErrorTypeFirstTokenTimeout, events[0].Kind)
+
+	usageLog := usageRepo.recordedLog()
+	require.NotNil(t, usageLog)
+	require.Equal(t, int64(2), usageLog.AccountID)
+	require.Equal(t, "resp_ttft_success", usageLog.RequestID)
+	require.Equal(t, 100, usageLog.InputTokens)
+	require.Equal(t, 20, usageLog.OutputTokens)
+	require.Equal(t, 120, usageLog.TotalTokens())
+	deductUserID, deductAmount := userRepo.deduction()
+	require.Equal(t, int64(8001), deductUserID)
+	require.Positive(t, deductAmount)
 }

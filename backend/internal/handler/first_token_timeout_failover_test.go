@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/model"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
@@ -22,6 +23,33 @@ import (
 type firstTokenTimeoutOpsRepo struct {
 	service.OpsRepository
 	inserted chan *service.OpsInsertErrorLogInput
+}
+
+type firstTokenTimeoutPassthroughRepo struct {
+	service.ErrorPassthroughRepository
+	rules []*model.ErrorPassthroughRule
+}
+
+func (r firstTokenTimeoutPassthroughRepo) List(context.Context) ([]*model.ErrorPassthroughRule, error) {
+	return r.rules, nil
+}
+
+func newFirstTokenTimeoutSkipRuleService() *service.ErrorPassthroughService {
+	responseCode := http.StatusGatewayTimeout
+	message := "skip synthetic timeout"
+	return service.NewErrorPassthroughService(firstTokenTimeoutPassthroughRepo{rules: []*model.ErrorPassthroughRule{{
+		ID:              1,
+		Name:            "skip synthetic TTFT",
+		Enabled:         true,
+		Priority:        1,
+		ErrorCodes:      []int{http.StatusGatewayTimeout},
+		MatchMode:       model.MatchModeAll,
+		PassthroughCode: false,
+		ResponseCode:    &responseCode,
+		PassthroughBody: false,
+		CustomMessage:   &message,
+		SkipMonitoring:  true,
+	}}}, nil)
 }
 
 func resetFirstTokenTimeoutOpsLogger(t *testing.T) {
@@ -43,7 +71,12 @@ func flushFirstTokenTimeoutOpsJob(t *testing.T) {
 	queue := opsErrorLogQueue
 	opsErrorLogMu.RUnlock()
 	require.NotNil(t, queue)
-	job := <-queue
+	var job opsErrorLogJob
+	select {
+	case job = <-queue:
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for TTFT ops queue job")
+	}
 	opsErrorLogQueueLen.Add(-1)
 	require.NoError(t, job.ops.RecordError(context.Background(), job.entry))
 }
@@ -183,6 +216,10 @@ func requireFirstTokenTimeoutOpsEvent(t *testing.T, c *gin.Context, accountID in
 	require.False(t, gjson.GetBytes(payload, "upstream_response_body").Exists())
 	require.False(t, gjson.GetBytes(payload, "detail").Exists())
 	require.NotContains(t, string(payload), "credential")
+	_, hasStatus := c.Get(service.OpsUpstreamStatusCodeKey)
+	require.False(t, hasStatus, "synthetic TTFT attempts must not replace the request-level upstream status")
+	_, hasMessage := c.Get(service.OpsUpstreamErrorMessageKey)
+	require.False(t, hasMessage, "synthetic TTFT attempts must not replace the request-level upstream message")
 }
 
 func TestFirstTokenTimeoutOpsRecoveredMiddlewarePersistsStableType(t *testing.T) {
@@ -197,6 +234,7 @@ func TestFirstTokenTimeoutOpsRecoveredMiddlewarePersistsStableType(t *testing.T)
 	router.Use(OpsErrorLoggerMiddleware(ops))
 	router.POST("/v1/responses", func(c *gin.Context) {
 		setOpsRequestContext(c, "gpt-5", true)
+		service.BindErrorPassthroughService(c, newFirstTokenTimeoutSkipRuleService())
 		_, err := runFirstTokenAttempt(c, policy, FirstTokenAttemptMetadata{
 			Protocol: service.ProtocolResponses, Platform: service.PlatformOpenAI, AccountID: 42, Model: "gpt-5", AttemptIndex: 1,
 		}, func(ctx context.Context) (*service.ForwardResult, error) {
@@ -248,6 +286,7 @@ func TestFirstTokenTimeoutOpsExhaustedMiddlewarePersistsStableType(t *testing.T)
 	router.Use(OpsErrorLoggerMiddleware(ops))
 	router.POST("/v1/responses", func(c *gin.Context) {
 		setOpsRequestContext(c, "gpt-5", true)
+		service.BindErrorPassthroughService(c, newFirstTokenTimeoutSkipRuleService())
 		_, err := runFirstTokenAttempt(c, policy, FirstTokenAttemptMetadata{
 			Protocol: service.ProtocolResponses, Platform: service.PlatformOpenAI, AccountID: 42, Model: "gpt-5", AttemptIndex: 1,
 		}, func(ctx context.Context) (*service.ForwardResult, error) {
@@ -276,6 +315,104 @@ func TestFirstTokenTimeoutOpsExhaustedMiddlewarePersistsStableType(t *testing.T)
 	}
 }
 
+func TestFirstTokenTimeoutOpsRecoveredMixedAttemptsKeepsTimeoutType(t *testing.T) {
+	resetFirstTokenTimeoutOpsLogger(t)
+	t.Cleanup(func() { resetFirstTokenTimeoutOpsLogger(t) })
+	repo := &firstTokenTimeoutOpsRepo{inserted: make(chan *service.OpsInsertErrorLogInput, 1)}
+	ops := service.NewOpsService(repo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	configureFirstTokenTimeoutOpsQueue()
+
+	router := gin.New()
+	router.Use(OpsErrorLoggerMiddleware(ops))
+	router.POST("/v1/responses", func(c *gin.Context) {
+		setOpsRequestContext(c, "gpt-5", true)
+		service.RecordFirstTokenTimeoutOpsEvent(c, service.FirstTokenTimeoutOpsEvent{
+			Protocol: service.ProtocolResponses, Platform: service.PlatformOpenAI, AccountID: 42,
+			Model: "gpt-5", Threshold: time.Second, AttemptIndex: 1, Elapsed: time.Second,
+		})
+		raw, ok := c.Get(service.OpsUpstreamErrorsKey)
+		require.True(t, ok)
+		events, ok := raw.([]*service.OpsUpstreamErrorEvent)
+		require.True(t, ok)
+		events = append(events, &service.OpsUpstreamErrorEvent{
+			Platform: service.PlatformOpenAI, AccountID: 43, UpstreamStatusCode: http.StatusServiceUnavailable,
+			Kind: "failover", Message: "ordinary failover",
+		})
+		c.Set(service.OpsUpstreamErrorsKey, events)
+		service.SetOpsUpstreamError(c, http.StatusServiceUnavailable, "ordinary failover", "")
+		c.JSON(http.StatusOK, gin.H{"status": "recovered"})
+	})
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/responses", nil))
+	require.Equal(t, http.StatusOK, recorder.Code)
+	flushFirstTokenTimeoutOpsJob(t)
+
+	select {
+	case entry := <-repo.inserted:
+		require.Equal(t, service.UpstreamErrorTypeFirstTokenTimeout, entry.ErrorType)
+		require.NotNil(t, entry.UpstreamStatusCode)
+		require.Equal(t, http.StatusServiceUnavailable, *entry.UpstreamStatusCode)
+		require.NotNil(t, entry.UpstreamErrorMessage)
+		require.Equal(t, "ordinary failover", *entry.UpstreamErrorMessage)
+		require.NotNil(t, entry.UpstreamErrorsJSON)
+		require.Contains(t, *entry.UpstreamErrorsJSON, `"kind":"first_token_timeout"`)
+		require.Contains(t, *entry.UpstreamErrorsJSON, `"kind":"failover"`)
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for recovered mixed-attempt ops entry")
+	}
+}
+
+func TestFirstTokenTimeoutOpsMixedAttemptsExhaustedUsesFinalResponseType(t *testing.T) {
+	resetFirstTokenTimeoutOpsLogger(t)
+	t.Cleanup(func() { resetFirstTokenTimeoutOpsLogger(t) })
+	repo := &firstTokenTimeoutOpsRepo{inserted: make(chan *service.OpsInsertErrorLogInput, 1)}
+	ops := service.NewOpsService(repo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	configureFirstTokenTimeoutOpsQueue()
+
+	router := gin.New()
+	router.Use(OpsErrorLoggerMiddleware(ops))
+	router.POST("/v1/responses", func(c *gin.Context) {
+		setOpsRequestContext(c, "gpt-5", true)
+		service.RecordFirstTokenTimeoutOpsEvent(c, service.FirstTokenTimeoutOpsEvent{
+			Protocol: service.ProtocolResponses, Platform: service.PlatformOpenAI, AccountID: 42,
+			Model: "gpt-5", Threshold: time.Second, AttemptIndex: 1, Elapsed: time.Second,
+		})
+		raw, ok := c.Get(service.OpsUpstreamErrorsKey)
+		require.True(t, ok)
+		events, ok := raw.([]*service.OpsUpstreamErrorEvent)
+		require.True(t, ok)
+		events = append(events, &service.OpsUpstreamErrorEvent{
+			Platform: service.PlatformOpenAI, AccountID: 43, UpstreamStatusCode: http.StatusServiceUnavailable,
+			Kind: "failover", Message: "ordinary 503 failure",
+		})
+		c.Set(service.OpsUpstreamErrorsKey, events)
+		service.SetOpsUpstreamError(c, http.StatusServiceUnavailable, "ordinary 503 failure", "")
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{
+			"type": "overloaded_error", "message": "ordinary 503 failure",
+		}})
+	})
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/responses", nil))
+	require.Equal(t, http.StatusServiceUnavailable, recorder.Code)
+	flushFirstTokenTimeoutOpsJob(t)
+
+	select {
+	case entry := <-repo.inserted:
+		require.Equal(t, "overloaded_error", entry.ErrorType)
+		require.NotNil(t, entry.UpstreamStatusCode)
+		require.Equal(t, http.StatusServiceUnavailable, *entry.UpstreamStatusCode)
+		require.NotNil(t, entry.UpstreamErrorMessage)
+		require.Equal(t, "ordinary 503 failure", *entry.UpstreamErrorMessage)
+		require.NotNil(t, entry.UpstreamErrorsJSON)
+		require.Contains(t, *entry.UpstreamErrorsJSON, `"kind":"first_token_timeout"`)
+		require.Contains(t, *entry.UpstreamErrorsJSON, `"kind":"failover"`)
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for exhausted mixed-attempt ops entry")
+	}
+}
+
 func TestFirstTokenTimeoutRetrySkipsSameAccountInPoolMode(t *testing.T) {
 	fs := NewFailoverState(2, false)
 	unscheduler := &mockTempUnscheduler{}
@@ -293,25 +430,20 @@ func TestFirstTokenTimeoutRetrySkipsSameAccountInPoolMode(t *testing.T) {
 	require.Empty(t, unscheduler.calls)
 }
 
-func TestFirstTokenTimeoutOpenAILoopsSkipSameAccountRetry(t *testing.T) {
-	for _, loop := range []string{"responses", "messages", "chat_completions"} {
-		t.Run(loop, func(t *testing.T) {
-			failoverErr := service.NewFirstTokenTimeoutFailoverError()
-			failoverErr.RetryableOnSameAccount = true
-			retryCount := 0
-			switchCount := 0
-			failedAccountIDs := map[int64]struct{}{}
-
-			if shouldRetryFailoverOnSameAccount(failoverErr) {
-				retryCount++
-			} else {
-				failedAccountIDs[42] = struct{}{}
-				switchCount++
-			}
-
-			require.Zero(t, retryCount)
-			require.Contains(t, failedAccountIDs, int64(42))
-			require.Equal(t, 1, switchCount)
+func TestFirstTokenFailoverSameAccountRetryDecision(t *testing.T) {
+	tests := []struct {
+		name string
+		err  *service.UpstreamFailoverError
+		want bool
+	}{
+		{name: "ordinary retryable failure", err: &service.UpstreamFailoverError{RetryableOnSameAccount: true}, want: true},
+		{name: "first token timeout", err: service.NewFirstTokenTimeoutFailoverError()},
+		{name: "first token prelude overflow", err: service.NewFirstTokenPreludeOverflowFailoverError()},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.err.RetryableOnSameAccount = true
+			require.Equal(t, tt.want, shouldRetryFailoverOnSameAccount(tt.err))
 		})
 	}
 }

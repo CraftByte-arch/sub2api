@@ -760,6 +760,9 @@ func (s *OpenAIGatewayService) recordOpenAIStreamUpstreamError(
 	if message == "" {
 		message = "OpenAI upstream response failed"
 	}
+	if c != nil && isFirstTokenTimeoutCause(firstTokenContextFromGin(c), nil) {
+		return message
+	}
 	detail := ""
 	if len(payload) > 0 && s != nil && s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
 		maxBytes := s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes

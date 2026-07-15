@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -43,7 +44,8 @@ const (
 	// but should be excluded from SLA/error-rate calculations.
 	// ResponseCommittedKey 由 handleErrorResponse 系列函数在写完 HTTP 错误响应后设置。
 	// ensureForwardErrorResponse 检查此 key，为 true 时跳过兜底写入，避免在已完成的 JSON 后追加 SSE。
-	ResponseCommittedKey = "response_committed"
+	ResponseCommittedKey     = "response_committed"
+	responseCommitAttemptKey = "response_commit_attempt"
 
 	OpsClientBusinessLimitedKey                          = "ops_client_business_limited"
 	OpsClientBusinessLimitedReasonKey                    = "ops_client_business_limited_reason"
@@ -54,7 +56,54 @@ const (
 	OpsClientBusinessLimitedReasonLocalPolicyDenied      = "local_policy_denied"
 )
 
-func MarkResponseCommitted(c *gin.Context) { c.Set(ResponseCommittedKey, true) }
+type responseCommitAttempt struct {
+	marked atomic.Bool
+}
+
+// BeginResponseCommitAttempt isolates response markers written while a gated
+// first-token attempt is still reversible. The returned closure must be called
+// with whether the gate actually committed to the downstream writer.
+func BeginResponseCommitAttempt(c *gin.Context) func(bool) {
+	if c == nil {
+		return func(bool) {}
+	}
+	previousMarker, markerExisted := c.Get(ResponseCommittedKey)
+	previousAttempt, attemptExisted := c.Get(responseCommitAttemptKey)
+	attempt := &responseCommitAttempt{}
+	c.Set(responseCommitAttemptKey, attempt)
+
+	return func(committed bool) {
+		if current, ok := c.Get(responseCommitAttemptKey); ok && current == attempt {
+			if attemptExisted {
+				c.Set(responseCommitAttemptKey, previousAttempt)
+			} else {
+				c.Set(responseCommitAttemptKey, nil)
+			}
+		}
+		if committed {
+			if attempt.marked.Load() {
+				c.Set(ResponseCommittedKey, true)
+			}
+			return
+		}
+		if markerExisted {
+			c.Set(ResponseCommittedKey, previousMarker)
+		}
+	}
+}
+
+func MarkResponseCommitted(c *gin.Context) {
+	if c == nil {
+		return
+	}
+	if v, ok := c.Get(responseCommitAttemptKey); ok {
+		if attempt, ok := v.(*responseCommitAttempt); ok && attempt != nil {
+			attempt.marked.Store(true)
+			return
+		}
+	}
+	c.Set(ResponseCommittedKey, true)
+}
 
 func IsResponseCommitted(c *gin.Context) bool {
 	v, ok := c.Get(ResponseCommittedKey)
@@ -217,8 +266,7 @@ func RecordFirstTokenTimeoutOpsEvent(c *gin.Context, ev FirstTokenTimeoutOpsEven
 	if c == nil {
 		return
 	}
-	setOpsUpstreamError(c, http.StatusGatewayTimeout, UpstreamErrorTypeFirstTokenTimeout, "")
-	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+	appendSyntheticOpsUpstreamError(c, OpsUpstreamErrorEvent{
 		Platform:           ev.Platform,
 		AccountID:          ev.AccountID,
 		Protocol:           string(ev.Protocol),
@@ -234,6 +282,16 @@ func RecordFirstTokenTimeoutOpsEvent(c *gin.Context, ev FirstTokenTimeoutOpsEven
 }
 
 func appendOpsUpstreamError(c *gin.Context, ev OpsUpstreamErrorEvent) {
+	appendOpsUpstreamErrorWithMonitoring(c, ev, true)
+}
+
+// appendSyntheticOpsUpstreamError stores an attempt-only diagnostic event.
+// Synthetic events must not activate request-level passthrough monitoring rules.
+func appendSyntheticOpsUpstreamError(c *gin.Context, ev OpsUpstreamErrorEvent) {
+	appendOpsUpstreamErrorWithMonitoring(c, ev, false)
+}
+
+func appendOpsUpstreamErrorWithMonitoring(c *gin.Context, ev OpsUpstreamErrorEvent, checkMonitoring bool) {
 	if c == nil {
 		return
 	}
@@ -262,7 +320,9 @@ func appendOpsUpstreamError(c *gin.Context, ev OpsUpstreamErrorEvent) {
 	existing = append(existing, &evCopy)
 	c.Set(OpsUpstreamErrorsKey, existing)
 
-	checkSkipMonitoringForUpstreamEvent(c, &evCopy)
+	if checkMonitoring {
+		checkSkipMonitoringForUpstreamEvent(c, &evCopy)
+	}
 }
 
 // checkSkipMonitoringForUpstreamEvent checks whether the upstream error event

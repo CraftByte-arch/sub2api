@@ -97,6 +97,47 @@ func TestRunFirstTokenAttemptTimeoutRollsBackAndReturnsFailover(t *testing.T) {
 	require.Empty(t, recorder.Body.String())
 }
 
+func TestRunFirstTokenAttemptTimeoutRestoresResponseCommittedBeforeFallback(t *testing.T) {
+	c, recorder := newFirstTokenRunnerContext()
+	policy := firstTokenRunnerPolicyStub{snapshot: service.FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 5 * time.Millisecond}}
+
+	_, err := runFirstTokenAttempt(c, policy, FirstTokenAttemptMetadata{Protocol: service.ProtocolResponses}, func(ctx context.Context) (*service.ForwardResult, error) {
+		service.MarkResponseCommitted(c)
+		_, writeErr := c.Writer.WriteString("gated bytes")
+		require.NoError(t, writeErr)
+		<-ctx.Done()
+		return nil, context.Cause(ctx)
+	})
+	require.Error(t, err)
+	_, markerExists := c.Get(service.ResponseCommittedKey)
+	require.False(t, markerExists, "a rolled-back attempt must restore an originally absent marker")
+	require.Empty(t, recorder.Body.String())
+
+	ordinaryErr := errors.New("next upstream attempt failed before writing")
+	_, err = runFirstTokenAttempt(c, policy, FirstTokenAttemptMetadata{Protocol: service.ProtocolResponses}, func(context.Context) (*service.ForwardResult, error) {
+		return nil, ordinaryErr
+	})
+	require.ErrorIs(t, err, ordinaryErr)
+	require.True(t, (&OpenAIGatewayHandler{}).ensureForwardErrorResponse(c, false))
+	require.NotEmpty(t, recorder.Body.String(), "the fallback must not be suppressed as a silent EOF")
+}
+
+func TestRunFirstTokenAttemptTimeoutRestoresExistingResponseCommittedValue(t *testing.T) {
+	c, _ := newFirstTokenRunnerContext()
+	c.Set(service.ResponseCommittedKey, "original")
+	policy := firstTokenRunnerPolicyStub{snapshot: service.FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 5 * time.Millisecond}}
+
+	_, err := runFirstTokenAttempt(c, policy, FirstTokenAttemptMetadata{Protocol: service.ProtocolResponses}, func(ctx context.Context) (*service.ForwardResult, error) {
+		service.MarkResponseCommitted(c)
+		<-ctx.Done()
+		return nil, context.Cause(ctx)
+	})
+	require.Error(t, err)
+	marker, markerExists := c.Get(service.ResponseCommittedKey)
+	require.True(t, markerExists)
+	require.Equal(t, "original", marker)
+}
+
 func TestRunFirstTokenAttemptPreludeOverflowRollsBackAndReturnsFailover(t *testing.T) {
 	c, recorder := newFirstTokenRunnerContext()
 	policy := firstTokenRunnerPolicyStub{snapshot: service.FirstTokenTimeoutSnapshot{Enabled: true, Timeout: time.Second}}

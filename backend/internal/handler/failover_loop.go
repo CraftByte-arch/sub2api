@@ -131,7 +131,8 @@ func (s *FailoverState) HandleFailoverError(
 func shouldRetryFailoverOnSameAccount(failoverErr *service.UpstreamFailoverError) bool {
 	return failoverErr != nil &&
 		failoverErr.RetryableOnSameAccount &&
-		failoverErr.ErrorType != service.UpstreamErrorTypeFirstTokenTimeout
+		failoverErr.ErrorType != service.UpstreamErrorTypeFirstTokenTimeout &&
+		failoverErr.ErrorType != service.UpstreamErrorTypeFirstTokenPreludeOverflow
 }
 
 // HandleSelectionExhausted 处理选号失败（所有候选账号都在排除列表中）时的退避重试决策。

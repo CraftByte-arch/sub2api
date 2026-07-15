@@ -528,6 +528,9 @@ func (s *OpenAIGatewayService) recordOpenAIMessagesStreamUpstreamError(c *gin.Co
 	if c == nil {
 		return
 	}
+	if isFirstTokenTimeoutCause(firstTokenContextFromGin(c), nil) {
+		return
+	}
 	message = sanitizeUpstreamErrorMessage(message)
 	setOpsUpstreamError(c, http.StatusBadGateway, message, "")
 	event := OpsUpstreamErrorEvent{
