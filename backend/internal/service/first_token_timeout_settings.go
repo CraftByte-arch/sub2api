@@ -76,27 +76,33 @@ func (p *FirstTokenTimeoutPolicy) Snapshot() FirstTokenTimeoutSnapshot {
 }
 
 func (p *FirstTokenTimeoutPolicy) Update(ctx context.Context, in FirstTokenTimeoutSettings) error {
+	_, err := p.UpdateAndSnapshot(ctx, in)
+	return err
+}
+
+func (p *FirstTokenTimeoutPolicy) UpdateAndSnapshot(ctx context.Context, in FirstTokenTimeoutSettings) (FirstTokenTimeoutSnapshot, error) {
 	if err := validateFirstTokenTimeoutSettings(in); err != nil {
-		return err
+		return FirstTokenTimeoutSnapshot{}, err
 	}
 
 	encoded, err := json.Marshal(in)
 	if err != nil {
-		return fmt.Errorf("encode first token timeout settings: %w", err)
+		return FirstTokenTimeoutSnapshot{}, fmt.Errorf("encode first token timeout settings: %w", err)
 	}
 	p.writeMu.Lock()
 	defer p.writeMu.Unlock()
 	if err := p.repo.Set(ctx, SettingKeyFirstTokenTimeoutSettings, string(encoded)); err != nil {
-		return fmt.Errorf("save first token timeout settings: %w", err)
+		return FirstTokenTimeoutSnapshot{}, fmt.Errorf("save first token timeout settings: %w", err)
 	}
 
-	p.current.Store(snapshotFromFirstTokenTimeoutSettings(in))
+	snapshot := snapshotFromFirstTokenTimeoutSettings(in)
+	p.current.Store(snapshot)
 	if p.notifier != nil {
 		if err := p.notifier.Publish(ctx); err != nil {
 			logger.LegacyPrintf("service.first_token_timeout", "failed to publish policy invalidation; DB reload fallback remains active: %v", err)
 		}
 	}
-	return nil
+	return snapshot, nil
 }
 
 func (p *FirstTokenTimeoutPolicy) Reload(ctx context.Context) error {

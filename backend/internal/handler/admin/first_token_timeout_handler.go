@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -19,6 +20,7 @@ import (
 const (
 	firstTokenTimeoutAdminMinSeconds = 1
 	firstTokenTimeoutAdminMaxSeconds = 300
+	firstTokenTimeoutSettingsMaxBody = 4 * 1024
 )
 
 type FirstTokenTimeoutHandler struct {
@@ -73,12 +75,12 @@ func (h *FirstTokenTimeoutHandler) UpdateSettings(c *gin.Context) {
 		Enabled:        *request.Enabled,
 		TimeoutSeconds: *request.TimeoutSeconds,
 	}
-	if err := h.policy.Update(c.Request.Context(), settings); err != nil {
+	snapshot, err := h.policy.UpdateAndSnapshot(c.Request.Context(), settings)
+	if err != nil {
 		response.Error(c, http.StatusInternalServerError, "Failed to update first token timeout settings")
 		return
 	}
 
-	snapshot := h.policy.Snapshot()
 	response.Success(c, firstTokenTimeoutSettingsResponse{
 		Saved: firstTokenTimeoutSettingsValue{
 			Enabled:        settings.Enabled,
@@ -94,17 +96,18 @@ func (h *FirstTokenTimeoutHandler) UpdateSettings(c *gin.Context) {
 
 func decodeFirstTokenTimeoutSettingsUpdate(c *gin.Context) (firstTokenTimeoutSettingsUpdateRequest, bool) {
 	var request firstTokenTimeoutSettingsUpdateRequest
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, firstTokenTimeoutSettingsMaxBody)
 	decoder := json.NewDecoder(c.Request.Body)
 	opening, err := decoder.Token()
 	if err != nil || opening != json.Delim('{') {
-		response.BadRequest(c, "Invalid first token timeout settings")
+		writeFirstTokenTimeoutSettingsDecodeError(c, err)
 		return firstTokenTimeoutSettingsUpdateRequest{}, false
 	}
 	seen := make(map[string]struct{}, 2)
 	for decoder.More() {
 		keyToken, err := decoder.Token()
 		if err != nil {
-			response.BadRequest(c, "Invalid first token timeout settings")
+			writeFirstTokenTimeoutSettingsDecodeError(c, err)
 			return firstTokenTimeoutSettingsUpdateRequest{}, false
 		}
 		key, ok := keyToken.(string)
@@ -120,7 +123,7 @@ func decodeFirstTokenTimeoutSettingsUpdate(c *gin.Context) (firstTokenTimeoutSet
 
 		var raw json.RawMessage
 		if err := decoder.Decode(&raw); err != nil || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-			response.BadRequest(c, "Invalid first token timeout settings")
+			writeFirstTokenTimeoutSettingsDecodeError(c, err)
 			return firstTokenTimeoutSettingsUpdateRequest{}, false
 		}
 		switch key {
@@ -142,11 +145,11 @@ func decodeFirstTokenTimeoutSettingsUpdate(c *gin.Context) (firstTokenTimeoutSet
 	}
 	closing, err := decoder.Token()
 	if err != nil || closing != json.Delim('}') {
-		response.BadRequest(c, "Invalid first token timeout settings")
+		writeFirstTokenTimeoutSettingsDecodeError(c, err)
 		return firstTokenTimeoutSettingsUpdateRequest{}, false
 	}
 	if err := requireJSONEOF(decoder); err != nil {
-		response.BadRequest(c, "Invalid first token timeout settings")
+		writeFirstTokenTimeoutSettingsDecodeError(c, err)
 		return firstTokenTimeoutSettingsUpdateRequest{}, false
 	}
 	if request.Enabled == nil || request.TimeoutSeconds == nil {
@@ -158,6 +161,15 @@ func decodeFirstTokenTimeoutSettingsUpdate(c *gin.Context) (firstTokenTimeoutSet
 		return firstTokenTimeoutSettingsUpdateRequest{}, false
 	}
 	return request, true
+}
+
+func writeFirstTokenTimeoutSettingsDecodeError(c *gin.Context, err error) {
+	var maxBytesError *http.MaxBytesError
+	if errors.As(err, &maxBytesError) {
+		response.Error(c, http.StatusRequestEntityTooLarge, "First token timeout settings request body is too large")
+		return
+	}
+	response.BadRequest(c, "Invalid first token timeout settings")
 }
 
 func requireJSONEOF(decoder *json.Decoder) error {
@@ -255,11 +267,15 @@ func parseFirstTokenStatsOverviewFilter(c *gin.Context) (service.FirstTokenStats
 		response.BadRequest(c, "protocol must be responses, chat_completions, or anthropic_messages")
 		return service.FirstTokenStatsOverviewFilter{}, false
 	}
+	model, ok := parseFirstTokenStatsTextFilter(c, "model", service.FirstTokenStatsModelMaxRunes)
+	if !ok {
+		return service.FirstTokenStatsOverviewFilter{}, false
+	}
 	return service.FirstTokenStatsOverviewFilter{
 		Range:    statsRange,
 		End:      time.Now().UTC(),
 		Protocol: protocol,
-		Model:    strings.TrimSpace(c.Query("model")),
+		Model:    model,
 	}, true
 }
 
@@ -367,13 +383,25 @@ func parseFirstTokenStatsAccountFilter(c *gin.Context) (service.FirstTokenStatsA
 		response.BadRequest(c, "protocol must be responses, chat_completions, or anthropic_messages")
 		return service.FirstTokenStatsAccountFilter{}, false
 	}
+	model, ok := parseFirstTokenStatsTextFilter(c, "model", service.FirstTokenStatsModelMaxRunes)
+	if !ok {
+		return service.FirstTokenStatsAccountFilter{}, false
+	}
+	platform, ok := parseFirstTokenStatsTextFilter(c, "platform", service.FirstTokenStatsPlatformMaxRunes)
+	if !ok {
+		return service.FirstTokenStatsAccountFilter{}, false
+	}
+	search, ok := parseFirstTokenStatsTextFilter(c, "search", service.FirstTokenStatsSearchMaxRunes)
+	if !ok {
+		return service.FirstTokenStatsAccountFilter{}, false
+	}
 	filter := service.FirstTokenStatsAccountFilter{
 		Range:     statsRange,
 		End:       time.Now().UTC(),
 		Protocol:  protocol,
-		Model:     strings.TrimSpace(c.Query("model")),
-		Platform:  strings.TrimSpace(c.Query("platform")),
-		Search:    strings.TrimSpace(c.Query("search")),
+		Model:     model,
+		Platform:  platform,
+		Search:    search,
 		SortBy:    service.FirstTokenStatsAccountSortSamples,
 		SortOrder: "desc",
 		Page:      1,
@@ -418,6 +446,10 @@ func parseFirstTokenStatsAccountFilter(c *gin.Context) (service.FirstTokenStatsA
 			return service.FirstTokenStatsAccountFilter{}, false
 		}
 		filter.PageSize = pageSize
+	}
+	if !isFirstTokenStatsPageOffsetSafe(filter.Page, filter.PageSize) {
+		response.BadRequest(c, "page exceeds the maximum supported offset")
+		return service.FirstTokenStatsAccountFilter{}, false
 	}
 	return filter, true
 }
@@ -521,14 +553,35 @@ func isFirstTokenStatsPageSizeAllowed(pageSize int) bool {
 	}
 }
 
+func parseFirstTokenStatsTextFilter(c *gin.Context, field string, maxRunes int) (string, bool) {
+	value := strings.TrimSpace(c.Query(field))
+	if strings.ContainsRune(value, '\x00') {
+		response.BadRequest(c, field+" must not contain NUL")
+		return "", false
+	}
+	if utf8.RuneCountInString(value) > maxRunes {
+		response.BadRequest(c, field+" exceeds the maximum length")
+		return "", false
+	}
+	return value, true
+}
+
+func isFirstTokenStatsPageOffsetSafe(page, pageSize int) bool {
+	return page > 0 && pageSize > 0 && int64(page-1) <= math.MaxInt64/int64(pageSize)
+}
+
 func validateFirstTokenStatsQueryParams(c *gin.Context, allowed ...string) bool {
 	allowedSet := make(map[string]struct{}, len(allowed))
 	for _, key := range allowed {
 		allowedSet[key] = struct{}{}
 	}
-	for key := range c.Request.URL.Query() {
+	for key, values := range c.Request.URL.Query() {
 		if _, ok := allowedSet[key]; ok {
-			continue
+			if len(values) == 1 {
+				continue
+			}
+			response.BadRequest(c, "Query parameter must be provided exactly once: "+key)
+			return false
 		}
 		response.BadRequest(c, "Unsupported query parameter: "+key)
 		return false

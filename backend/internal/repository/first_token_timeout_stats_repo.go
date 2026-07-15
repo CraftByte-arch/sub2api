@@ -524,10 +524,10 @@ func normalizeFirstTokenStatsOverviewFilter(filter service.FirstTokenStatsOvervi
 	default:
 		return time.Time{}, time.Time{}, fmt.Errorf("unsupported first token stats range %q", filter.Range)
 	}
-	if utf8.RuneCountInString(filter.Protocol) > 32 {
+	if utf8.RuneCountInString(filter.Protocol) > service.FirstTokenStatsProtocolMaxRunes {
 		return time.Time{}, time.Time{}, fmt.Errorf("protocol exceeds 32 characters")
 	}
-	if utf8.RuneCountInString(filter.Model) > 255 {
+	if utf8.RuneCountInString(filter.Model) > service.FirstTokenStatsModelMaxRunes {
 		return time.Time{}, time.Time{}, fmt.Errorf("model exceeds 255 characters")
 	}
 	end := filter.End
@@ -691,13 +691,13 @@ func normalizeFirstTokenStatsAccountFilter(filter service.FirstTokenStatsAccount
 	if err != nil {
 		return time.Time{}, time.Time{}, "", "", 0, 0, 0, err
 	}
-	if utf8.RuneCountInString(filter.Platform) > 32 {
+	if utf8.RuneCountInString(filter.Platform) > service.FirstTokenStatsPlatformMaxRunes {
 		return time.Time{}, time.Time{}, "", "", 0, 0, 0, fmt.Errorf("platform exceeds 32 characters")
 	}
 	if filter.AccountID < 0 {
 		return time.Time{}, time.Time{}, "", "", 0, 0, 0, fmt.Errorf("account id must be non-negative")
 	}
-	if utf8.RuneCountInString(filter.Search) > 255 {
+	if utf8.RuneCountInString(filter.Search) > service.FirstTokenStatsSearchMaxRunes {
 		return time.Time{}, time.Time{}, "", "", 0, 0, 0, fmt.Errorf("search exceeds 255 characters")
 	}
 

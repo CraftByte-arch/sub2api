@@ -9,6 +9,11 @@ const (
 	FirstTokenStatsScopeAttempt = "attempt"
 	FirstTokenStatsScopeRequest = "request"
 
+	FirstTokenStatsProtocolMaxRunes = 32
+	FirstTokenStatsModelMaxRunes    = 255
+	FirstTokenStatsPlatformMaxRunes = 32
+	FirstTokenStatsSearchMaxRunes   = 255
+
 	FirstTokenStatsAttemptSuccess        = "success"
 	FirstTokenStatsAttemptTTFTTimeout    = "ttft_timeout"
 	FirstTokenStatsAttemptClientCanceled = "client_canceled"

@@ -8,6 +8,9 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -99,6 +102,16 @@ func TestFirstTokenTimeoutUpdateSettingsHidesPolicyErrors(t *testing.T) {
 	require.NotContains(t, response.Body.Body.String(), "database")
 	require.NotContains(t, response.Body.Body.String(), "postgres")
 	require.NotContains(t, response.Body.Body.String(), "secret")
+}
+
+func TestFirstTokenTimeoutSettingsRejectsOversizedBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	policy := service.NewFirstTokenTimeoutPolicy(newFirstTokenTimeoutHandlerSettingRepo(), nil)
+	router := newFirstTokenTimeoutHandlerRouter(NewFirstTokenTimeoutHandler(policy, &firstTokenTimeoutHandlerStatsRepo{}, nil))
+
+	body := `{"enabled":true,"timeout_seconds":` + strings.Repeat("1", 4*1024) + `}`
+	response := firstTokenTimeoutHandlerRequest(t, router, http.MethodPut, "/settings", body)
+	require.Equal(t, http.StatusRequestEntityTooLarge, response.Code, response.Body.Body.String())
 }
 
 func TestFirstTokenTimeoutOverviewAPI(t *testing.T) {
@@ -197,6 +210,8 @@ func TestFirstTokenTimeoutOverviewValidatesAndForwardsFilters(t *testing.T) {
 
 	invalid := []string{
 		"/overview?range=1h",
+		"/overview?range=24h&range=90d",
+		"/overview?model=&model=gpt-5",
 		"/overview?protocol=openai",
 		"/overview?account=42",
 		"/overview?account_id=42",
@@ -221,6 +236,78 @@ func TestFirstTokenTimeoutOverviewHidesRepositoryErrors(t *testing.T) {
 	require.NotContains(t, response.Body.Body.String(), "sql")
 	require.NotContains(t, response.Body.Body.String(), "SELECT")
 	require.NotContains(t, response.Body.Body.String(), "secret")
+}
+
+func TestFirstTokenTimeoutStatsRejectsUnsafeFilterBoundaries(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	statsRepo := &firstTokenTimeoutHandlerStatsRepo{
+		overviewErr: errors.New("repository should not receive invalid overview filters"),
+		accountsErr: errors.New("repository should not receive invalid account filters"),
+	}
+	router := newFirstTokenTimeoutHandlerRouter(NewFirstTokenTimeoutHandler(
+		service.NewFirstTokenTimeoutPolicy(newFirstTokenTimeoutHandlerSettingRepo(), nil), statsRepo, nil,
+	))
+
+	tests := []struct {
+		name   string
+		path   string
+		values url.Values
+	}{
+		{
+			name:   "overview model exceeds repository limit",
+			path:   "/overview",
+			values: url.Values{"model": {strings.Repeat("m", 256)}},
+		},
+		{
+			name:   "overview model contains NUL",
+			path:   "/overview",
+			values: url.Values{"model": {"gpt\x00-5"}},
+		},
+		{
+			name:   "accounts model exceeds repository limit",
+			path:   "/accounts",
+			values: url.Values{"model": {strings.Repeat("m", 256)}},
+		},
+		{
+			name:   "accounts platform exceeds repository limit",
+			path:   "/accounts",
+			values: url.Values{"platform": {strings.Repeat("p", 33)}},
+		},
+		{
+			name:   "accounts search exceeds repository limit",
+			path:   "/accounts",
+			values: url.Values{"search": {strings.Repeat("s", 256)}},
+		},
+		{
+			name:   "accounts model contains NUL",
+			path:   "/accounts",
+			values: url.Values{"model": {"gpt\x00-5"}},
+		},
+		{
+			name:   "accounts platform contains NUL",
+			path:   "/accounts",
+			values: url.Values{"platform": {"open\x00ai"}},
+		},
+		{
+			name:   "accounts search contains NUL",
+			path:   "/accounts",
+			values: url.Values{"search": {"alice\x00bob"}},
+		},
+		{
+			name: "accounts page overflows SQL offset",
+			path: "/accounts",
+			values: url.Values{
+				"page":      {strconv.FormatInt(1<<63-1, 10)},
+				"page_size": {"100"},
+			},
+		},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			response := firstTokenTimeoutHandlerRequest(t, router, http.MethodGet, testCase.path+"?"+testCase.values.Encode(), "")
+			require.Equal(t, http.StatusBadRequest, response.Code, "response=%s", response.Body.Body.String())
+		})
+	}
 }
 
 func TestFirstTokenTimeoutAccountsAPI(t *testing.T) {
@@ -289,6 +376,8 @@ func TestFirstTokenTimeoutAccountsDefaultsAndValidation(t *testing.T) {
 
 	invalid := []string{
 		"/accounts?range=1h",
+		"/accounts?range=24h&range=90d",
+		"/accounts?search=alice&search=bob",
 		"/accounts?protocol=openai",
 		"/accounts?sort=unknown",
 		"/accounts?order=sideways",

@@ -145,6 +145,54 @@ func TestFirstTokenTimeoutPolicySerializesConcurrentUpdates(t *testing.T) {
 	require.Equal(t, 22*time.Second, policy.Snapshot().Timeout)
 }
 
+func TestFirstTokenTimeoutPolicyUpdateAndSnapshotReturnsOwnSnapshotWithQueuedUpdate(t *testing.T) {
+	base := &firstTokenTimeoutMemorySettingRepo{values: make(map[string]string)}
+	firstSetEntered := make(chan struct{})
+	releaseFirstSet := make(chan struct{})
+	repo := &firstTokenTimeoutBlockingSettingRepo{
+		firstTokenTimeoutMemorySettingRepo: base,
+		set: func(ctx context.Context, key, value string) error {
+			if value == `{"enabled":true,"timeout_seconds":11}` {
+				if err := base.Set(ctx, key, value); err != nil {
+					return err
+				}
+				close(firstSetEntered)
+				<-releaseFirstSet
+				return nil
+			}
+			return base.Set(ctx, key, value)
+		},
+	}
+	policy := NewFirstTokenTimeoutPolicy(repo, nil)
+	type result struct {
+		snapshot FirstTokenTimeoutSnapshot
+		err      error
+	}
+	firstDone := make(chan result, 1)
+	secondDone := make(chan result, 1)
+	go func() {
+		snapshot, err := policy.UpdateAndSnapshot(context.Background(), FirstTokenTimeoutSettings{Enabled: true, TimeoutSeconds: 11})
+		firstDone <- result{snapshot: snapshot, err: err}
+	}()
+	<-firstSetEntered
+	go func() {
+		snapshot, err := policy.UpdateAndSnapshot(context.Background(), FirstTokenTimeoutSettings{Enabled: false, TimeoutSeconds: 22})
+		secondDone <- result{snapshot: snapshot, err: err}
+	}()
+	close(releaseFirstSet)
+
+	first := <-firstDone
+	second := <-secondDone
+	require.NoError(t, first.err)
+	require.NoError(t, second.err)
+	require.True(t, first.snapshot.Enabled)
+	require.Equal(t, 11*time.Second, first.snapshot.Timeout)
+	require.False(t, second.snapshot.Enabled)
+	require.Equal(t, 22*time.Second, second.snapshot.Timeout)
+	require.False(t, first.snapshot.LoadedAt.IsZero())
+	require.False(t, second.snapshot.LoadedAt.IsZero())
+}
+
 func TestFirstTokenTimeoutPolicySerializesReloadWithUpdate(t *testing.T) {
 	base := &firstTokenTimeoutMemorySettingRepo{values: map[string]string{
 		SettingKeyFirstTokenTimeoutSettings: `{"enabled":true,"timeout_seconds":11}`,
