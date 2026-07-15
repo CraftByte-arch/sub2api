@@ -89,7 +89,7 @@ func newFirstTokenRequestTrackerWithClock(
 	if !isFirstTokenStatsProtocol(protocol) {
 		return nil
 	}
-	if !utf8.ValidString(model) {
+	if !utf8.ValidString(model) || strings.ContainsRune(model, '\x00') {
 		return nil
 	}
 	model = strings.TrimSpace(model)
@@ -120,7 +120,7 @@ func (t *FirstTokenRequestTracker) BeginAttempt(meta FirstTokenStatsAttemptMetad
 	if t == nil || meta.AccountID <= 0 {
 		return nil
 	}
-	if !utf8.ValidString(meta.Platform) {
+	if !utf8.ValidString(meta.Platform) || strings.ContainsRune(meta.Platform, '\x00') {
 		return nil
 	}
 	meta.Platform = strings.TrimSpace(meta.Platform)
@@ -389,12 +389,24 @@ func isFirstTokenTransportError(err error) bool {
 	if errors.As(err, &unknownAuthority) {
 		return true
 	}
+	var unknownAuthorityPtr *x509.UnknownAuthorityError
+	if errors.As(err, &unknownAuthorityPtr) {
+		return true
+	}
 	var certificateInvalid x509.CertificateInvalidError
 	if errors.As(err, &certificateInvalid) {
 		return true
 	}
+	var certificateInvalidPtr *x509.CertificateInvalidError
+	if errors.As(err, &certificateInvalidPtr) {
+		return true
+	}
 	var hostnameError x509.HostnameError
-	return errors.As(err, &hostnameError)
+	if errors.As(err, &hostnameError) {
+		return true
+	}
+	var hostnameErrorPtr *x509.HostnameError
+	return errors.As(err, &hostnameErrorPtr)
 }
 
 func isFirstTokenProtocolError(err error, failoverErr *UpstreamFailoverError) bool {

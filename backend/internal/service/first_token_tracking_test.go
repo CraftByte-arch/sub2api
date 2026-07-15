@@ -353,6 +353,7 @@ func TestFirstTokenTrackingRejectsInvalidRequestDimensions(t *testing.T) {
 		{name: "empty model", protocol: ProtocolResponses, model: ""},
 		{name: "whitespace model", protocol: ProtocolResponses, model: "   "},
 		{name: "invalid UTF-8 model", protocol: ProtocolResponses, model: string([]byte{0xff})},
+		{name: "NUL model", protocol: ProtocolResponses, model: "gpt\x005"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -393,6 +394,7 @@ func TestFirstTokenTrackingRejectsInvalidAttemptDimensions(t *testing.T) {
 		{name: "whitespace platform", meta: FirstTokenStatsAttemptMetadata{AccountID: 1, Platform: "   "}},
 		{name: "platform too long", meta: FirstTokenStatsAttemptMetadata{AccountID: 1, Platform: strings.Repeat("平", 33)}},
 		{name: "invalid UTF-8 platform", meta: FirstTokenStatsAttemptMetadata{AccountID: 1, Platform: string([]byte{0xff})}},
+		{name: "NUL platform", meta: FirstTokenStatsAttemptMetadata{AccountID: 1, Platform: "open\x00ai"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -543,6 +545,9 @@ func TestFirstTokenFailureKindPriority(t *testing.T) {
 		{name: "tls", err: tls.RecordHeaderError{}, want: FirstTokenStatsFailureTransport},
 		{name: "tls pointer", err: &tls.RecordHeaderError{}, want: FirstTokenStatsFailureTransport},
 		{name: "x509 hostname", err: x509.HostnameError{Certificate: &x509.Certificate{DNSNames: []string{"other.example"}}, Host: "api.example"}, want: FirstTokenStatsFailureTransport},
+		{name: "x509 unknown authority pointer", err: &x509.UnknownAuthorityError{Cert: &x509.Certificate{}}, want: FirstTokenStatsFailureTransport},
+		{name: "x509 certificate invalid pointer", err: &x509.CertificateInvalidError{Cert: &x509.Certificate{}, Reason: x509.Expired}, want: FirstTokenStatsFailureTransport},
+		{name: "x509 hostname pointer", err: &x509.HostnameError{Certificate: &x509.Certificate{DNSNames: []string{"other.example"}}, Host: "api.example"}, want: FirstTokenStatsFailureTransport},
 		{name: "context canceled without canceled parent", err: context.Canceled, want: FirstTokenStatsFailureTransport},
 		{name: "context deadline", err: context.DeadlineExceeded, want: FirstTokenStatsFailureTransport},
 		{name: "idle", err: ErrStreamDataIntervalTimeout, want: FirstTokenStatsFailureStreamIdleTimeout},

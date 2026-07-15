@@ -167,6 +167,15 @@ func normalizeFirstTokenStatsDelta(delta service.FirstTokenStatsDelta) (service.
 		return service.FirstTokenStatsDelta{}, fmt.Errorf("bucket start is required")
 	}
 	delta.BucketStart = delta.BucketStart.UTC().Truncate(time.Hour)
+	if strings.ContainsRune(delta.Protocol, '\x00') {
+		return service.FirstTokenStatsDelta{}, fmt.Errorf("protocol contains NUL")
+	}
+	if strings.ContainsRune(delta.Platform, '\x00') {
+		return service.FirstTokenStatsDelta{}, fmt.Errorf("platform contains NUL")
+	}
+	if strings.ContainsRune(delta.Model, '\x00') {
+		return service.FirstTokenStatsDelta{}, fmt.Errorf("model contains NUL")
+	}
 
 	switch delta.Scope {
 	case service.FirstTokenStatsScopeAttempt:

@@ -224,6 +224,47 @@ func TestFirstTokenTimeoutStatsUpsertBatchRejectsInvalidDelta(t *testing.T) {
 	}
 }
 
+func TestFirstTokenTimeoutStatsUpsertBatchRejectsNULDimensionsBeforeSQL(t *testing.T) {
+	valid := service.FirstTokenStatsDelta{
+		BucketStart:    time.Date(2026, 7, 15, 5, 0, 0, 0, time.UTC),
+		Scope:          service.FirstTokenStatsScopeAttempt,
+		AccountID:      42,
+		Protocol:       "responses",
+		Platform:       "openai",
+		Model:          "gpt-5",
+		TimeoutSeconds: 30,
+		Outcome:        service.FirstTokenStatsAttemptSuccess,
+		SampleCount:    1,
+	}
+	tests := []struct {
+		name   string
+		mutate func(*service.FirstTokenStatsDelta)
+		want   string
+	}{
+		{name: "protocol", mutate: func(delta *service.FirstTokenStatsDelta) { delta.Protocol = "responses\x00v2" }, want: "protocol contains NUL"},
+		{name: "platform", mutate: func(delta *service.FirstTokenStatsDelta) { delta.Platform = "open\x00ai" }, want: "platform contains NUL"},
+		{name: "request platform before sentinel normalization", mutate: func(delta *service.FirstTokenStatsDelta) {
+			delta.Scope = service.FirstTokenStatsScopeRequest
+			delta.Platform = "open\x00ai"
+			delta.Outcome = service.FirstTokenStatsRequestSuccess
+		}, want: "platform contains NUL"},
+		{name: "model", mutate: func(delta *service.FirstTokenStatsDelta) { delta.Model = "gpt\x005" }, want: "model contains NUL"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			defer func() { _ = db.Close() }()
+			delta := valid
+			tt.mutate(&delta)
+
+			err = NewFirstTokenTimeoutStatsRepository(db).UpsertBatch(context.Background(), []service.FirstTokenStatsDelta{delta})
+			require.ErrorContains(t, err, tt.want)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
 func TestFirstTokenTimeoutStatsUpsertBatchEmptyIsNoop(t *testing.T) {
 	repo := &firstTokenTimeoutStatsRepository{}
 	require.NoError(t, repo.UpsertBatch(context.Background(), nil))
