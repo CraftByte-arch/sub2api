@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"log/slog"
 	"math"
 	"strings"
 	"sync"
@@ -35,6 +36,14 @@ type FirstTokenTimeoutStatsRecorderHealth struct {
 	PendingSamples        int64      `json:"pending_samples"`
 }
 
+type firstTokenTimeoutStatsRecorderHealthState struct {
+	droppedSamples         int64
+	pendingSamples         int64
+	lastSuccessfulFlushAt  time.Time
+	hasLastSuccessfulFlush bool
+	closed                 bool
+}
+
 type firstTokenTimeoutStatsRecorderConfig struct {
 	queueCapacity    int
 	flushUniqueKeys  int
@@ -42,6 +51,7 @@ type firstTokenTimeoutStatsRecorderConfig struct {
 	cleanupInterval  time.Duration
 	operationTimeout time.Duration
 	now              func() time.Time
+	logger           *slog.Logger
 }
 
 type firstTokenStatsRecorderKey struct {
@@ -61,11 +71,13 @@ type FirstTokenTimeoutStatsRecorder struct {
 	config firstTokenTimeoutStatsRecorderConfig
 	queue  chan FirstTokenStatsDelta
 
-	lifecycleMu sync.Mutex
-	started     bool
-	appCtx      context.Context
-	flushTicker *time.Ticker
-	cleanupTick *time.Ticker
+	lifecycleMu    sync.Mutex
+	started        bool
+	appCtx         context.Context
+	shutdownCtx    context.Context
+	shutdownCancel context.CancelFunc
+	flushTicker    *time.Ticker
+	cleanupTick    *time.Ticker
 
 	state          atomic.Uint64
 	shutdownOnce   sync.Once
@@ -75,9 +87,7 @@ type FirstTokenTimeoutStatsRecorder struct {
 	producersDone  chan struct{}
 	workerDone     chan struct{}
 
-	pendingSamples atomic.Int64
-	droppedSamples atomic.Int64
-	lastFlush      atomic.Pointer[time.Time]
+	health atomic.Pointer[firstTokenTimeoutStatsRecorderHealthState]
 }
 
 func NewFirstTokenTimeoutStatsRecorder(repo FirstTokenTimeoutStatsRepository) *FirstTokenTimeoutStatsRecorder {
@@ -89,7 +99,7 @@ func newFirstTokenTimeoutStatsRecorderWithConfig(
 	config firstTokenTimeoutStatsRecorderConfig,
 ) *FirstTokenTimeoutStatsRecorder {
 	config = normalizeFirstTokenTimeoutStatsRecorderConfig(config)
-	return &FirstTokenTimeoutStatsRecorder{
+	recorder := &FirstTokenTimeoutStatsRecorder{
 		repo:          repo,
 		config:        config,
 		queue:         make(chan FirstTokenStatsDelta, config.queueCapacity),
@@ -97,6 +107,8 @@ func newFirstTokenTimeoutStatsRecorderWithConfig(
 		producersDone: make(chan struct{}),
 		workerDone:    make(chan struct{}),
 	}
+	recorder.health.Store(&firstTokenTimeoutStatsRecorderHealthState{closed: true})
+	return recorder
 }
 
 func normalizeFirstTokenTimeoutStatsRecorderConfig(config firstTokenTimeoutStatsRecorderConfig) firstTokenTimeoutStatsRecorderConfig {
@@ -117,6 +129,9 @@ func normalizeFirstTokenTimeoutStatsRecorderConfig(config firstTokenTimeoutStats
 	}
 	if config.now == nil {
 		config.now = time.Now
+	}
+	if config.logger == nil {
+		config.logger = slog.Default()
 	}
 	return config
 }
@@ -139,11 +154,12 @@ func (r *FirstTokenTimeoutStatsRecorder) Start(ctx context.Context) {
 	r.flushTicker = time.NewTicker(r.config.flushInterval)
 	r.cleanupTick = time.NewTicker(r.config.cleanupInterval)
 	r.state.Store(firstTokenStatsRecorderAcceptingBit)
+	r.transitionHealthClosed(false)
 	flushC := r.flushTicker.C
 	cleanupC := r.cleanupTick.C
 	r.lifecycleMu.Unlock()
 
-	context.AfterFunc(ctx, r.requestShutdown)
+	context.AfterFunc(ctx, func() { r.requestShutdown() })
 	go r.run(flushC, cleanupC)
 }
 
@@ -154,22 +170,16 @@ func (r *FirstTokenTimeoutStatsRecorder) Stop() {
 
 	r.lifecycleMu.Lock()
 	started := r.started
-	if !started {
-		r.stopAccepting()
-		r.shutdownOnce.Do(func() { close(r.stopCh) })
-		r.workerDoneOnce.Do(func() { close(r.workerDone) })
-	}
 	r.lifecycleMu.Unlock()
+	shutdownCtx := r.requestShutdown()
 	if !started {
+		r.finishWorker()
 		return
 	}
 
-	r.requestShutdown()
-	timer := time.NewTimer(r.config.operationTimeout)
-	defer timer.Stop()
 	select {
 	case <-r.workerDone:
-	case <-timer.C:
+	case <-shutdownCtx.Done():
 	}
 }
 
@@ -197,8 +207,7 @@ func (r *FirstTokenTimeoutStatsRecorder) Record(delta FirstTokenStatsDelta) {
 	select {
 	case r.queue <- delta:
 	default:
-		r.pendingSamples.Add(-delta.SampleCount)
-		r.addDroppedSamples(weight)
+		r.transitionPendingDrop(delta.SampleCount, weight)
 	}
 }
 
@@ -206,21 +215,22 @@ func (r *FirstTokenTimeoutStatsRecorder) Health() FirstTokenTimeoutStatsRecorder
 	if r == nil {
 		return FirstTokenTimeoutStatsRecorderHealth{Status: FirstTokenStatsCompletenessComplete}
 	}
-	dropped := r.droppedSamples.Load()
+	state := r.loadHealthState()
+	dropped := state.droppedSamples
 	status := FirstTokenStatsCompletenessComplete
 	if dropped > 0 {
 		status = FirstTokenStatsCompletenessDegraded
 	}
 	var lastSuccessfulFlushAt *time.Time
-	if stored := r.lastFlush.Load(); stored != nil {
-		value := *stored
+	if state.hasLastSuccessfulFlush {
+		value := state.lastSuccessfulFlushAt
 		lastSuccessfulFlushAt = &value
 	}
 	return FirstTokenTimeoutStatsRecorderHealth{
 		Status:                status,
 		DroppedSamples:        dropped,
 		LastSuccessfulFlushAt: lastSuccessfulFlushAt,
-		PendingSamples:        r.pendingSamples.Load(),
+		PendingSamples:        state.pendingSamples,
 	}
 }
 
@@ -243,10 +253,16 @@ func (r *FirstTokenTimeoutStatsRecorder) endRecord() {
 	}
 }
 
-func (r *FirstTokenTimeoutStatsRecorder) requestShutdown() {
+func (r *FirstTokenTimeoutStatsRecorder) requestShutdown() context.Context {
 	r.shutdownOnce.Do(func() {
 		r.stopAccepting()
+		r.transitionHealthClosed(true)
 		r.lifecycleMu.Lock()
+		baseCtx := r.appCtx
+		if baseCtx == nil {
+			baseCtx = context.Background()
+		}
+		r.shutdownCtx, r.shutdownCancel = context.WithTimeout(context.WithoutCancel(baseCtx), r.config.operationTimeout)
 		if r.flushTicker != nil {
 			r.flushTicker.Stop()
 		}
@@ -256,6 +272,10 @@ func (r *FirstTokenTimeoutStatsRecorder) requestShutdown() {
 		r.lifecycleMu.Unlock()
 		close(r.stopCh)
 	})
+	r.lifecycleMu.Lock()
+	shutdownCtx := r.shutdownCtx
+	r.lifecycleMu.Unlock()
+	return shutdownCtx
 }
 
 func (r *FirstTokenTimeoutStatsRecorder) stopAccepting() {
@@ -275,15 +295,20 @@ func (r *FirstTokenTimeoutStatsRecorder) stopAccepting() {
 }
 
 func (r *FirstTokenTimeoutStatsRecorder) run(flushC, cleanupC <-chan time.Time) {
-	defer r.workerDoneOnce.Do(func() { close(r.workerDone) })
+	defer r.finishWorker()
 
 	aggregates := make(map[firstTokenStatsRecorderKey]FirstTokenStatsDelta, r.config.flushUniqueKeys)
 	for {
 		select {
+		case <-r.stopCh:
+			r.shutdown(&aggregates)
+			return
+		default:
+		}
+		select {
 		case delta := <-r.queue:
 			if !r.mergeDelta(aggregates, delta) {
-				r.addDroppedSamples(delta.SampleCount)
-				r.pendingSamples.Add(-delta.SampleCount)
+				r.transitionFlushFailure(delta.SampleCount)
 			}
 			if len(aggregates) >= r.config.flushUniqueKeys {
 				r.flush(&aggregates)
@@ -293,22 +318,56 @@ func (r *FirstTokenTimeoutStatsRecorder) run(flushC, cleanupC <-chan time.Time) 
 		case <-cleanupC:
 			r.cleanup()
 		case <-r.stopCh:
-			<-r.producersDone
-			for {
-				select {
-				case delta := <-r.queue:
-					if !r.mergeDelta(aggregates, delta) {
-						r.addDroppedSamples(delta.SampleCount)
-						r.pendingSamples.Add(-delta.SampleCount)
-					}
-					if len(aggregates) >= r.config.flushUniqueKeys {
-						r.flush(&aggregates)
-					}
-				default:
-					r.flush(&aggregates)
-					return
-				}
+			r.shutdown(&aggregates)
+			return
+		}
+	}
+}
+
+func (r *FirstTokenTimeoutStatsRecorder) finishWorker() {
+	r.lifecycleMu.Lock()
+	shutdownCancel := r.shutdownCancel
+	r.lifecycleMu.Unlock()
+	if shutdownCancel != nil {
+		defer shutdownCancel()
+	}
+	r.workerDoneOnce.Do(func() { close(r.workerDone) })
+}
+
+func (r *FirstTokenTimeoutStatsRecorder) shutdown(aggregates *map[firstTokenStatsRecorderKey]FirstTokenStatsDelta) {
+	r.lifecycleMu.Lock()
+	shutdownCtx := r.shutdownCtx
+	r.lifecycleMu.Unlock()
+	if shutdownCtx == nil {
+		shutdownCtx = context.Background()
+	}
+
+	select {
+	case <-r.producersDone:
+	case <-shutdownCtx.Done():
+		r.dropAllPendingSamples()
+		return
+	}
+
+	for {
+		if shutdownCtx.Err() != nil {
+			r.dropAllPendingSamples()
+			return
+		}
+		select {
+		case delta := <-r.queue:
+			if !r.mergeDelta(*aggregates, delta) {
+				r.transitionFlushFailure(delta.SampleCount)
 			}
+			if len(*aggregates) >= r.config.flushUniqueKeys {
+				r.flushWithContext(aggregates, shutdownCtx)
+			}
+		default:
+			r.flushWithContext(aggregates, shutdownCtx)
+			if shutdownCtx.Err() != nil {
+				r.dropAllPendingSamples()
+			}
+			return
 		}
 	}
 }
@@ -324,7 +383,12 @@ func (r *FirstTokenTimeoutStatsRecorder) cleanup() {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(baseCtx), r.config.operationTimeout)
 	defer cancel()
 	cutoff := r.config.now().UTC().Add(-90 * 24 * time.Hour).Truncate(time.Hour)
-	_, _ = r.repo.DeleteBefore(ctx, cutoff)
+	if _, err := r.deleteBefore(ctx, cutoff); err != nil {
+		r.logRepositoryFailure(
+			"operation", "cleanup",
+			"error", err,
+		)
+	}
 }
 
 func (r *FirstTokenTimeoutStatsRecorder) mergeDelta(
@@ -375,6 +439,19 @@ func (r *FirstTokenTimeoutStatsRecorder) mergeDelta(
 }
 
 func (r *FirstTokenTimeoutStatsRecorder) flush(aggregates *map[firstTokenStatsRecorderKey]FirstTokenStatsDelta) {
+	baseCtx := r.appCtx
+	if baseCtx == nil {
+		baseCtx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(baseCtx), r.config.operationTimeout)
+	defer cancel()
+	r.flushWithContext(aggregates, ctx)
+}
+
+func (r *FirstTokenTimeoutStatsRecorder) flushWithContext(
+	aggregates *map[firstTokenStatsRecorderKey]FirstTokenStatsDelta,
+	ctx context.Context,
+) {
 	if len(*aggregates) == 0 {
 		return
 	}
@@ -387,26 +464,93 @@ func (r *FirstTokenTimeoutStatsRecorder) flush(aggregates *map[firstTokenStatsRe
 		samples += delta.SampleCount
 	}
 
-	baseCtx := r.appCtx
-	if baseCtx == nil {
-		baseCtx = context.Background()
-	}
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(baseCtx), r.config.operationTimeout)
-	var err error
-	if r.repo == nil {
-		err = context.Canceled
-	} else {
-		err = r.repo.UpsertBatch(ctx, batch)
-	}
-	contextErr := ctx.Err()
-	cancel()
-	if err != nil || contextErr != nil {
-		r.addDroppedSamples(samples)
+	err := r.upsertBatch(ctx, batch)
+	if err != nil {
+		r.logRepositoryFailure(
+			"operation", "flush",
+			"sample_count", samples,
+			"error", err,
+		)
+		r.transitionFlushFailure(samples)
 	} else {
 		now := r.config.now().UTC()
-		r.lastFlush.Store(&now)
+		r.transitionFlushSuccess(samples, now)
 	}
-	r.pendingSamples.Add(-samples)
+}
+
+func (r *FirstTokenTimeoutStatsRecorder) logRepositoryFailure(attrs ...any) {
+	logger := r.config.logger
+	if logger == nil {
+		return
+	}
+	go logger.Warn("first token stats recorder repository operation failed", attrs...)
+}
+
+func (r *FirstTokenTimeoutStatsRecorder) upsertBatch(ctx context.Context, batch []FirstTokenStatsDelta) error {
+	if r.repo == nil {
+		return context.Canceled
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	result := make(chan error, 1)
+	go func() {
+		result <- r.repo.UpsertBatch(ctx, batch)
+	}()
+	select {
+	case err := <-result:
+		if err != nil {
+			return err
+		}
+		return ctx.Err()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (r *FirstTokenTimeoutStatsRecorder) deleteBefore(ctx context.Context, cutoff time.Time) (int64, error) {
+	if r.repo == nil {
+		return 0, context.Canceled
+	}
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	type result struct {
+		deleted int64
+		err     error
+	}
+	results := make(chan result, 1)
+	go func() {
+		deleted, err := r.repo.DeleteBefore(ctx, cutoff)
+		results <- result{deleted: deleted, err: err}
+	}()
+	select {
+	case result := <-results:
+		if result.err != nil {
+			return 0, result.err
+		}
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
+		return result.deleted, nil
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	}
+}
+
+func (r *FirstTokenTimeoutStatsRecorder) dropAllPendingSamples() {
+	for {
+		state := r.loadHealthState()
+		if state.pendingSamples == 0 {
+			return
+		}
+		next := *state
+		next.droppedSamples = addFirstTokenStatsRecorderSaturated(state.droppedSamples, state.pendingSamples)
+		next.pendingSamples = 0
+		if r.health.CompareAndSwap(state, &next) {
+			return
+		}
+	}
 }
 
 func firstTokenStatsRecorderSafeWeight(delta FirstTokenStatsDelta) int64 {
@@ -418,11 +562,13 @@ func firstTokenStatsRecorderSafeWeight(delta FirstTokenStatsDelta) int64 {
 
 func (r *FirstTokenTimeoutStatsRecorder) reservePendingSamples(samples int64) bool {
 	for {
-		pending := r.pendingSamples.Load()
-		if pending < 0 || samples > math.MaxInt64-pending {
+		state := r.loadHealthState()
+		if state.closed || state.pendingSamples < 0 || samples > math.MaxInt64-state.pendingSamples {
 			return false
 		}
-		if r.pendingSamples.CompareAndSwap(pending, pending+samples) {
+		next := *state
+		next.pendingSamples += samples
+		if r.health.CompareAndSwap(state, &next) {
 			return true
 		}
 	}
@@ -433,17 +579,85 @@ func (r *FirstTokenTimeoutStatsRecorder) addDroppedSamples(samples int64) {
 		samples = 1
 	}
 	for {
-		dropped := r.droppedSamples.Load()
-		if dropped >= math.MaxInt64-samples {
-			if r.droppedSamples.CompareAndSwap(dropped, math.MaxInt64) {
-				return
-			}
-			continue
-		}
-		if r.droppedSamples.CompareAndSwap(dropped, dropped+samples) {
+		state := r.loadHealthState()
+		next := *state
+		next.droppedSamples = addFirstTokenStatsRecorderSaturated(state.droppedSamples, samples)
+		if r.health.CompareAndSwap(state, &next) {
 			return
 		}
 	}
+}
+
+func (r *FirstTokenTimeoutStatsRecorder) transitionPendingDrop(pending, dropped int64) {
+	for {
+		state := r.loadHealthState()
+		next := *state
+		if pending >= next.pendingSamples {
+			next.pendingSamples = 0
+		} else {
+			next.pendingSamples -= pending
+		}
+		next.droppedSamples = addFirstTokenStatsRecorderSaturated(next.droppedSamples, dropped)
+		if r.health.CompareAndSwap(state, &next) {
+			return
+		}
+	}
+}
+
+func (r *FirstTokenTimeoutStatsRecorder) transitionFlushFailure(samples int64) {
+	r.transitionPendingDrop(samples, samples)
+}
+
+func (r *FirstTokenTimeoutStatsRecorder) transitionFlushSuccess(samples int64, flushedAt time.Time) {
+	for {
+		state := r.loadHealthState()
+		next := *state
+		if samples >= next.pendingSamples {
+			next.pendingSamples = 0
+		} else {
+			next.pendingSamples -= samples
+		}
+		next.lastSuccessfulFlushAt = flushedAt
+		next.hasLastSuccessfulFlush = true
+		if r.health.CompareAndSwap(state, &next) {
+			return
+		}
+	}
+}
+
+func (r *FirstTokenTimeoutStatsRecorder) transitionHealthClosed(closed bool) {
+	for {
+		state := r.loadHealthState()
+		if state.closed == closed {
+			return
+		}
+		next := *state
+		next.closed = closed
+		if r.health.CompareAndSwap(state, &next) {
+			return
+		}
+	}
+}
+
+func (r *FirstTokenTimeoutStatsRecorder) loadHealthState() *firstTokenTimeoutStatsRecorderHealthState {
+	if state := r.health.Load(); state != nil {
+		return state
+	}
+	initial := &firstTokenTimeoutStatsRecorderHealthState{closed: true}
+	if r.health.CompareAndSwap(nil, initial) {
+		return initial
+	}
+	return r.health.Load()
+}
+
+func addFirstTokenStatsRecorderSaturated(left, right int64) int64 {
+	if right <= 0 {
+		return left
+	}
+	if left >= math.MaxInt64-right {
+		return math.MaxInt64
+	}
+	return left + right
 }
 
 func addFirstTokenStatsRecorderCounter(left, right int64) (int64, bool) {
@@ -468,6 +682,7 @@ func normalizeFirstTokenStatsRecorderDelta(delta FirstTokenStatsDelta) (FirstTok
 			return FirstTokenStatsDelta{}, false
 		}
 	case FirstTokenStatsScopeRequest:
+		// Recorder events must already use the canonical request sentinels.
 		if delta.AccountID != 0 || delta.Platform != "" {
 			return FirstTokenStatsDelta{}, false
 		}
@@ -485,6 +700,7 @@ func normalizeFirstTokenStatsRecorderDelta(delta FirstTokenStatsDelta) (FirstTok
 	} else if delta.FailureKind != "" {
 		return FirstTokenStatsDelta{}, false
 	}
+	// A recorder event represents at least one observed sample, unlike generic repository deltas.
 	if delta.SampleCount <= 0 || delta.TTFTSampleCount < 0 || delta.TTFTSumMS < 0 ||
 		delta.TTFTMaxMS < 0 || delta.TTFTMaxMS > math.MaxInt32 || delta.TTFTAffectedCount < 0 ||
 		delta.TTFTSampleCount > delta.SampleCount ||

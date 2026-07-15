@@ -3,9 +3,11 @@ package service
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"math"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,6 +18,24 @@ type firstTokenStatsRecorderRepoStub struct {
 	upsertBatch  func(context.Context, []FirstTokenStatsDelta) error
 	deleteBefore func(context.Context, time.Time) (int64, error)
 }
+
+type firstTokenStatsRecorderLogHandler struct {
+	records chan slog.Record
+}
+
+func (h *firstTokenStatsRecorderLogHandler) Enabled(context.Context, slog.Level) bool { return true }
+
+func (h *firstTokenStatsRecorderLogHandler) Handle(_ context.Context, record slog.Record) error {
+	select {
+	case h.records <- record.Clone():
+	default:
+	}
+	return nil
+}
+
+func (h *firstTokenStatsRecorderLogHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+
+func (h *firstTokenStatsRecorderLogHandler) WithGroup(string) slog.Handler { return h }
 
 func (s *firstTokenStatsRecorderRepoStub) UpsertBatch(ctx context.Context, deltas []FirstTokenStatsDelta) error {
 	if s.upsertBatch != nil {
@@ -563,6 +583,165 @@ func TestFirstTokenStatsRecorderStopReturnsWhenRepositoryIgnoresContext(t *testi
 	require.Equal(t, int64(0), recorder.Health().PendingSamples)
 }
 
+func TestFirstTokenStatsRecorderShutdownUsesOneBudgetAcrossAllRemainingBatches(t *testing.T) {
+	const operationTimeout = 40 * time.Millisecond
+	var calls atomic.Int64
+	callStarted := make(chan time.Time, 4)
+	repo := &firstTokenStatsRecorderRepoStub{
+		upsertBatch: func(ctx context.Context, _ []FirstTokenStatsDelta) error {
+			calls.Add(1)
+			deadline, _ := ctx.Deadline()
+			callStarted <- deadline
+			<-ctx.Done()
+			return ctx.Err()
+		},
+	}
+	recorder := newFirstTokenTimeoutStatsRecorderWithConfig(repo, firstTokenTimeoutStatsRecorderConfig{
+		queueCapacity:    3,
+		flushUniqueKeys:  1,
+		flushInterval:    time.Hour,
+		cleanupInterval:  time.Hour,
+		operationTimeout: operationTimeout,
+		now:              time.Now,
+	})
+	recorder.Start(context.Background())
+	recorder.Record(validFirstTokenStatsRecorderDelta(1))
+	select {
+	case <-callStarted:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for the first flush")
+	}
+	recorder.Record(validFirstTokenStatsRecorderDelta(2))
+	recorder.Record(validFirstTokenStatsRecorderDelta(3))
+
+	recorder.Stop()
+	select {
+	case <-recorder.workerDone:
+	case <-time.After(time.Second):
+		t.Fatal("worker did not exit after shutdown deadline")
+	}
+	shutdownDeadline, ok := recorder.shutdownCtx.Deadline()
+	require.True(t, ok)
+	for {
+		select {
+		case deadline := <-callStarted:
+			require.False(t, deadline.After(shutdownDeadline), "repository call exceeded the shared shutdown deadline")
+		default:
+			goto deadlinesChecked
+		}
+	}
+deadlinesChecked:
+	require.Positive(t, calls.Load())
+	health := recorder.Health()
+	require.Equal(t, int64(3), health.DroppedSamples)
+	require.Equal(t, int64(0), health.PendingSamples)
+}
+
+func TestFirstTokenStatsRecorderIgnoringContextDoesNotHoldWorkerPastShutdownBudget(t *testing.T) {
+	releaseRepo := make(chan struct{})
+	repoStarted := make(chan struct{}, 1)
+	repoDone := make(chan struct{}, 4)
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseRepo) }) }
+	t.Cleanup(release)
+	repo := &firstTokenStatsRecorderRepoStub{
+		upsertBatch: func(context.Context, []FirstTokenStatsDelta) error {
+			select {
+			case repoStarted <- struct{}{}:
+			default:
+			}
+			defer func() { repoDone <- struct{}{} }()
+			<-releaseRepo
+			return nil
+		},
+	}
+	recorder := newFirstTokenTimeoutStatsRecorderWithConfig(repo, firstTokenTimeoutStatsRecorderConfig{
+		queueCapacity:    2,
+		flushUniqueKeys:  1,
+		flushInterval:    time.Hour,
+		cleanupInterval:  time.Hour,
+		operationTimeout: 30 * time.Millisecond,
+		now:              time.Now,
+	})
+	recorder.Start(context.Background())
+	recorder.Record(validFirstTokenStatsRecorderDelta(1))
+	select {
+	case <-repoStarted:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for the blocking repository")
+	}
+	recorder.Record(validFirstTokenStatsRecorderDelta(2))
+	recorder.Stop()
+
+	select {
+	case <-recorder.workerDone:
+	case <-time.After(time.Second):
+		t.Fatal("repository that ignores context held the recorder worker")
+	}
+	health := recorder.Health()
+	require.Equal(t, int64(2), health.DroppedSamples)
+	require.Equal(t, int64(0), health.PendingSamples)
+
+	release()
+	select {
+	case <-repoDone:
+	case <-time.After(time.Second):
+		t.Fatal("blocking repository goroutine did not exit after release")
+	}
+	require.Equal(t, health, recorder.Health())
+}
+
+func TestFirstTokenStatsRecorderIgnoringContextCleanupDoesNotHoldWorker(t *testing.T) {
+	releaseRepo := make(chan struct{})
+	cleanupStarted := make(chan struct{}, 1)
+	cleanupDone := make(chan struct{}, 4)
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseRepo) }) }
+	t.Cleanup(release)
+	repo := &firstTokenStatsRecorderRepoStub{
+		deleteBefore: func(context.Context, time.Time) (int64, error) {
+			select {
+			case cleanupStarted <- struct{}{}:
+			default:
+			}
+			defer func() { cleanupDone <- struct{}{} }()
+			<-releaseRepo
+			return 0, nil
+		},
+	}
+	recorder := newFirstTokenTimeoutStatsRecorderWithConfig(repo, firstTokenTimeoutStatsRecorderConfig{
+		queueCapacity:    1,
+		flushUniqueKeys:  1,
+		flushInterval:    time.Hour,
+		cleanupInterval:  time.Millisecond,
+		operationTimeout: 30 * time.Millisecond,
+		now:              time.Now,
+	})
+	recorder.Start(context.Background())
+	select {
+	case <-cleanupStarted:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for blocking cleanup")
+	}
+	recorder.Stop()
+
+	select {
+	case <-recorder.workerDone:
+	case <-time.After(time.Second):
+		t.Fatal("cleanup that ignores context held the recorder worker")
+	}
+	require.Equal(t, FirstTokenTimeoutStatsRecorderHealth{
+		Status: FirstTokenStatsCompletenessComplete,
+	}, recorder.Health())
+
+	release()
+	select {
+	case <-cleanupDone:
+	case <-time.After(time.Second):
+		t.Fatal("blocking cleanup goroutine did not exit after release")
+	}
+}
+
 func TestFirstTokenStatsRecorderStopBeforeStartPermanentlyRejectsRecords(t *testing.T) {
 	recorder := NewFirstTokenTimeoutStatsRecorder(&firstTokenStatsRecorderRepoStub{})
 	recorder.Stop()
@@ -636,6 +815,198 @@ func TestFirstTokenStatsRecorderDefaultProductionConfig(t *testing.T) {
 	require.Equal(t, firstTokenStatsRecorderDefaultTimeout, recorder.config.operationTimeout)
 }
 
+func TestFirstTokenStatsRecorderFlushFailureLogsOnlySafeFields(t *testing.T) {
+	handler := &firstTokenStatsRecorderLogHandler{records: make(chan slog.Record, 16)}
+	logger := slog.New(handler)
+	recorder := newFirstTokenTimeoutStatsRecorderWithConfig(&firstTokenStatsRecorderRepoStub{
+		upsertBatch: func(context.Context, []FirstTokenStatsDelta) error {
+			return errors.New("db unavailable")
+		},
+	}, firstTokenTimeoutStatsRecorderConfig{
+		queueCapacity:    1,
+		flushUniqueKeys:  1,
+		flushInterval:    time.Hour,
+		cleanupInterval:  time.Hour,
+		operationTimeout: time.Second,
+		now:              time.Now,
+		logger:           logger,
+	})
+	recorder.Start(context.Background())
+	defer recorder.Stop()
+	delta := validFirstTokenStatsRecorderDelta(42)
+	delta.SampleCount = 2
+	recorder.Record(delta)
+	waitForFirstTokenStatsRecorderHealth(t, recorder, func(health FirstTokenTimeoutStatsRecorderHealth) bool {
+		return health.PendingSamples == 0
+	})
+
+	record := waitForFirstTokenStatsRecorderLog(t, handler.records)
+	require.Equal(t, map[string]any{
+		"operation":    "flush",
+		"sample_count": int64(2),
+		"error":        "db unavailable",
+	}, firstTokenStatsRecorderLogAttrs(record))
+}
+
+func TestFirstTokenStatsRecorderCleanupFailureLogsOnlySafeFields(t *testing.T) {
+	handler := &firstTokenStatsRecorderLogHandler{records: make(chan slog.Record, 16)}
+	logger := slog.New(handler)
+	recorder := newFirstTokenTimeoutStatsRecorderWithConfig(&firstTokenStatsRecorderRepoStub{
+		deleteBefore: func(context.Context, time.Time) (int64, error) {
+			return 0, errors.New("cleanup unavailable")
+		},
+	}, firstTokenTimeoutStatsRecorderConfig{
+		queueCapacity:    1,
+		flushUniqueKeys:  1,
+		flushInterval:    time.Hour,
+		cleanupInterval:  time.Millisecond,
+		operationTimeout: time.Second,
+		now:              time.Now,
+		logger:           logger,
+	})
+	recorder.Start(context.Background())
+	defer recorder.Stop()
+
+	record := waitForFirstTokenStatsRecorderLog(t, handler.records)
+	require.Equal(t, map[string]any{
+		"operation": "cleanup",
+		"error":     "cleanup unavailable",
+	}, firstTokenStatsRecorderLogAttrs(record))
+}
+
+func TestFirstTokenStatsRecorderHealthFailureTransitionIsLinear(t *testing.T) {
+	recorder := NewFirstTokenTimeoutStatsRecorder(&firstTokenStatsRecorderRepoStub{})
+	for i := 0; i < 2000; i++ {
+		recorder.health.Store(&firstTokenTimeoutStatsRecorderHealthState{pendingSamples: 1})
+		start := make(chan struct{})
+		healthResult := make(chan FirstTokenTimeoutStatsRecorderHealth, 1)
+		transitionDone := make(chan struct{})
+		go func() {
+			<-start
+			healthResult <- recorder.Health()
+		}()
+		go func() {
+			<-start
+			recorder.transitionFlushFailure(1)
+			close(transitionDone)
+		}()
+		close(start)
+		health := <-healthResult
+		<-transitionDone
+		before := health.Status == FirstTokenStatsCompletenessComplete &&
+			health.DroppedSamples == 0 && health.PendingSamples == 1
+		after := health.Status == FirstTokenStatsCompletenessDegraded &&
+			health.DroppedSamples == 1 && health.PendingSamples == 0
+		if !before && !after {
+			t.Fatalf("observed non-linear failure health snapshot: %+v", health)
+		}
+	}
+}
+
+func TestFirstTokenStatsRecorderHealthSuccessTransitionIsLinear(t *testing.T) {
+	recorder := NewFirstTokenTimeoutStatsRecorder(&firstTokenStatsRecorderRepoStub{})
+	oldFlush := time.Date(2026, 7, 15, 1, 0, 0, 0, time.UTC)
+	newFlush := oldFlush.Add(time.Hour)
+	for i := 0; i < 2000; i++ {
+		recorder.health.Store(&firstTokenTimeoutStatsRecorderHealthState{
+			pendingSamples:         1,
+			lastSuccessfulFlushAt:  oldFlush,
+			hasLastSuccessfulFlush: true,
+		})
+		start := make(chan struct{})
+		healthResult := make(chan FirstTokenTimeoutStatsRecorderHealth, 1)
+		transitionDone := make(chan struct{})
+		go func() {
+			<-start
+			healthResult <- recorder.Health()
+		}()
+		go func() {
+			<-start
+			recorder.transitionFlushSuccess(1, newFlush)
+			close(transitionDone)
+		}()
+		close(start)
+		health := <-healthResult
+		<-transitionDone
+		require.NotNil(t, health.LastSuccessfulFlushAt)
+		before := health.PendingSamples == 1 && health.LastSuccessfulFlushAt.Equal(oldFlush)
+		after := health.PendingSamples == 0 && health.LastSuccessfulFlushAt.Equal(newFlush)
+		if !before && !after {
+			t.Fatalf("observed non-linear success health snapshot: %+v", health)
+		}
+	}
+}
+
+func TestFirstTokenStatsRecorderRecordRacesWithStopConservesSamples(t *testing.T) {
+	testFirstTokenStatsRecorderRecordShutdownRace(t, func(recorder *FirstTokenTimeoutStatsRecorder, _ context.CancelFunc) {
+		recorder.Stop()
+	})
+}
+
+func TestFirstTokenStatsRecorderRecordRacesWithContextCancelConservesSamples(t *testing.T) {
+	testFirstTokenStatsRecorderRecordShutdownRace(t, func(_ *FirstTokenTimeoutStatsRecorder, cancel context.CancelFunc) {
+		cancel()
+	})
+}
+
+func testFirstTokenStatsRecorderRecordShutdownRace(
+	t *testing.T,
+	shutdown func(*FirstTokenTimeoutStatsRecorder, context.CancelFunc),
+) {
+	t.Helper()
+	const attempted = 128
+	var persisted atomic.Int64
+	repo := &firstTokenStatsRecorderRepoStub{
+		upsertBatch: func(_ context.Context, deltas []FirstTokenStatsDelta) error {
+			for _, delta := range deltas {
+				persisted.Add(delta.SampleCount)
+			}
+			return nil
+		},
+	}
+	recorder := newFirstTokenTimeoutStatsRecorderWithConfig(repo, firstTokenTimeoutStatsRecorderConfig{
+		queueCapacity:    attempted,
+		flushUniqueKeys:  16,
+		flushInterval:    time.Hour,
+		cleanupInterval:  time.Hour,
+		operationTimeout: time.Second,
+		now:              time.Now,
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	recorder.Start(ctx)
+	start := make(chan struct{})
+	var records sync.WaitGroup
+	for i := 0; i < attempted; i++ {
+		records.Add(1)
+		go func(accountID int64) {
+			defer records.Done()
+			<-start
+			recorder.Record(validFirstTokenStatsRecorderDelta(accountID))
+		}(int64(i + 1))
+	}
+	shutdownDone := make(chan struct{})
+	go func() {
+		<-start
+		shutdown(recorder, cancel)
+		close(shutdownDone)
+	}()
+	close(start)
+	records.Wait()
+	select {
+	case <-shutdownDone:
+	case <-time.After(time.Second):
+		t.Fatal("shutdown did not return")
+	}
+	select {
+	case <-recorder.workerDone:
+	case <-time.After(time.Second):
+		t.Fatal("recorder worker did not exit")
+	}
+	health := recorder.Health()
+	require.Equal(t, int64(attempted), persisted.Load()+health.DroppedSamples)
+	require.Equal(t, int64(0), health.PendingSamples)
+}
+
 func waitForFirstTokenStatsRecorderHealth(
 	t *testing.T,
 	recorder *FirstTokenTimeoutStatsRecorder,
@@ -658,6 +1029,30 @@ func waitForFirstTokenStatsRecorderHealth(
 			return health
 		}
 	}
+}
+
+func waitForFirstTokenStatsRecorderLog(t *testing.T, records <-chan slog.Record) slog.Record {
+	t.Helper()
+	select {
+	case record := <-records:
+		return record
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for recorder log")
+		return slog.Record{}
+	}
+}
+
+func firstTokenStatsRecorderLogAttrs(record slog.Record) map[string]any {
+	attrs := make(map[string]any, record.NumAttrs())
+	record.Attrs(func(attr slog.Attr) bool {
+		value := attr.Value.Any()
+		if err, ok := value.(error); ok {
+			value = err.Error()
+		}
+		attrs[attr.Key] = value
+		return true
+	})
+	return attrs
 }
 
 func validFirstTokenStatsRecorderDelta(accountID int64) FirstTokenStatsDelta {
