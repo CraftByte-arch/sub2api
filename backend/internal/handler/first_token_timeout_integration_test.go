@@ -123,6 +123,7 @@ func TestFirstTokenTimeoutGatesCompactKeepalivePerAttempt(t *testing.T) {
 
 func TestFirstTokenTimeoutClientCancelDoesNotSelectAnotherAccount(t *testing.T) {
 	parent, cancelParent := context.WithCancelCause(context.Background())
+	defer cancelParent(nil)
 	c, recorder := newFirstTokenRunnerContextWithParent(parent)
 	policy := firstTokenRunnerPolicyStub{snapshot: service.FirstTokenTimeoutSnapshot{Enabled: true, Timeout: time.Second}}
 	attempts := 0

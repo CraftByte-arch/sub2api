@@ -698,46 +698,54 @@ git commit -m "feat: add first token monitoring admin page"
 - Modify: `openspec/changes/configurable-first-token-timeout-failover/tasks.md`
 - Modify: `docs/superpowers/plans/2026-07-14-first-token-timeout-failover.md`
 
-- [ ] **Step 1: 补上候选耗尽、客户端取消和首 token 后停流失败测试**
+- [x] **Step 1: 补上候选耗尽、客户端取消和首 token 后停流失败测试**
 
 断言耗尽为 504；客户端断开后 upstream context canceled 且 selector 不再调用；首 token commit 后 idle timeout 不换号；失败 attempt 的 header/body 字节数为零。
 
-- [ ] **Step 2: 补上全部排除范围与零统计失败测试**
+- [x] **Step 2: 补上全部排除范围与零统计失败测试**
 
 覆盖 disabled、non-stream、WebSocket、image generation intent、video、batch/background，断言原 forward path 被调用且 recorder event count 为零。
 
-- [ ] **Step 3: 运行目标测试并修正仅由本 change 引入的问题**
+- [x] **Step 3: 运行目标测试并修正仅由本 change 引入的问题**
 
 Run: `cd backend && go test -race ./internal/service ./internal/handler ./internal/repository -run 'FirstToken|TTFT' -count=1`
 
 Expected: PASS。若失败，先加载 systematic-debugging，定位根因后补最小失败测试再修改。
 
-- [ ] **Step 4: 运行后端 migration 与全量测试**
+- [x] **Step 4: 运行后端 migration 与全量测试**
 
 Run: `cd backend && go test ./migrations -count=1 && go test ./... -count=1`
 
 Expected: PASS，无 migration 重号/语法/全包回归。
 
-- [ ] **Step 5: 运行前端全量验证**
+- [x] **Step 5: 运行前端全量验证**
 
 Run: `cd frontend && pnpm lint:check && pnpm typecheck && pnpm test:run && pnpm build`
 
 Expected: 全部 PASS。
 
-- [ ] **Step 6: 检查低冲突边界和敏感数据**
+- [x] **Step 6: 检查低冲突边界和敏感数据**
 
 Run: `git diff --check && git diff --stat e15265205a50addfeba66f935b7e256ea2a51f20...HEAD && rg -n 'T[B]D|T[O]DO|first_token_timeout.*(body|credential|token=)' backend/internal frontend/src`
 
 Expected: 无 whitespace error、无占位符、日志/统计无正文凭据；大型文件只有必要 hook。
 
-- [ ] **Step 7: 同步 OpenSpec 与 plan 勾选并提交验证补充**
+- [x] **Step 7: 同步 OpenSpec 与 plan 勾选并提交验证补充**
 
-确认本计划所有任务和 `openspec/.../tasks.md` 1.1-7.3 均为 `[x]`，且未把用户的 `api_key` 加入 Git。
+确认 Task 10 steps 和 `openspec/.../tasks.md` 7.1-7.3 均为 `[x]`，且未把用户的 `api_key` 加入 Git。
 
 ```bash
 git add backend frontend openspec/changes/configurable-first-token-timeout-failover/tasks.md docs/superpowers/plans/2026-07-14-first-token-timeout-failover.md
-git commit -m "test: verify first token timeout failover"
+git commit -m "test: verify first token timeout release safety"
 ```
+
+#### Task 10 验证记录（2026-07-15）
+
+- 集成覆盖：慢账号超时后的换号成功、候选耗尽 504、客户端取消、失败 attempt 输出不可见、attempt/request outcome 和首 token 后 idle 失败不换号。
+- 排除范围：disabled、non-stream、WebSocket、image、video、batch 和 background 均保持原 forward 路径且 recorder 为零。
+- 后端：目标 race 测试、`go test ./migrations`、`go test ./...`、`go vet`、真实 PostgreSQL/Redis Testcontainers stats integration 均通过。Colima 需要显式 `DOCKER_HOST=unix://$HOME/.colima/default/docker.sock` 和 `TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock`。
+- 前端：`pnpm lint:check`（0 errors，已有 3 warnings）、`pnpm test:run`（165 files / 1140 tests）、`pnpm typecheck` 和 `pnpm build` 均通过。
+- 发布保护：默认关闭；1 秒短阈值启用；degraded completeness 前后端可见；设置持久化失败保持旧 snapshot；timezone 客户端注入与服务端参数契约受测试保护。
 
 ## Spec Coverage 自审
 

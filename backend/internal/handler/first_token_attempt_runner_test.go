@@ -720,6 +720,56 @@ func TestBeginFirstTokenRequestTrackingUsesRunnerEligibility(t *testing.T) {
 	require.Equal(t, 15, deltas[0].TimeoutSeconds)
 }
 
+func TestRunEligibleFirstTokenAttemptBypassesExcludedRequestsWithoutStats(t *testing.T) {
+	enabled := firstTokenRunnerPolicyStub{snapshot: service.FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 15 * time.Second}}
+	disabled := firstTokenRunnerPolicyStub{snapshot: service.FirstTokenTimeoutSnapshot{Enabled: false, Timeout: 15 * time.Second}}
+
+	tests := []struct {
+		name      string
+		policy    firstTokenTimeoutPolicySnapshotter
+		protocol  service.FirstTokenProtocol
+		stream    bool
+		model     string
+		body      []byte
+		websocket bool
+	}{
+		{name: "disabled policy", policy: disabled, protocol: service.ProtocolResponses, stream: true, model: "gpt-5", body: []byte(`{"stream":true}`)},
+		{name: "non stream", policy: enabled, protocol: service.ProtocolResponses, model: "gpt-5", body: []byte(`{"stream":false}`)},
+		{name: "websocket", policy: enabled, protocol: service.ProtocolResponses, stream: true, model: "gpt-5", body: []byte(`{"stream":true}`), websocket: true},
+		{name: "image generation", policy: enabled, protocol: service.ProtocolResponses, stream: true, model: "gpt-image-1", body: []byte(`{"stream":true}`)},
+		{name: "video generation", policy: enabled, protocol: service.FirstTokenProtocol("videos_generations"), stream: true, model: "grok-imagine-video", body: []byte(`{"stream":true}`)},
+		{name: "batch", policy: enabled, protocol: service.ProtocolAnthropicMessages, model: "claude", body: []byte(`{"stream":false,"messages":[]}`)},
+		{name: "background", policy: enabled, protocol: service.ProtocolResponses, stream: true, model: "gpt-5", body: []byte(`{"stream":true,"background":true}`)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, _ := newFirstTokenRunnerContext()
+			if tt.websocket {
+				c.Request.Header.Set("Connection", "upgrade")
+				c.Request.Header.Set("Upgrade", "websocket")
+			}
+			originalWriter := c.Writer
+			originalContext := c.Request.Context()
+			recorder := &firstTokenRunnerStatsRecorderSpy{}
+			tracker := beginFirstTokenRequestTracking(c, tt.policy, recorder, tt.protocol, tt.stream, tt.model, tt.body)
+			require.Nil(t, tracker)
+
+			forwarded := false
+			_, err := runEligibleFirstTokenAttempt(c, tt.policy, tt.protocol, tt.stream, tt.model, tt.body, FirstTokenAttemptMetadata{}, func(ctx context.Context) (*service.ForwardResult, error) {
+				forwarded = true
+				require.Same(t, originalWriter, c.Writer)
+				require.Equal(t, originalContext, ctx)
+				return &service.ForwardResult{}, nil
+			})
+
+			require.NoError(t, err)
+			require.True(t, forwarded)
+			require.Empty(t, recorder.snapshot())
+		})
+	}
+}
+
 func newFirstTokenRunnerContext() (*gin.Context, *httptest.ResponseRecorder) {
 	return newFirstTokenRunnerContextWithParent(context.Background())
 }
