@@ -2,10 +2,14 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"database/sql/driver"
+	"errors"
+	"fmt"
 	"math"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -96,9 +100,9 @@ func TestFirstTokenTimeoutStatsUpsertBatchForcesRequestSentinels(t *testing.T) {
 			service.FirstTokenStatsRequestRecoveredAfterTTFT,
 			"",
 			int64(1),
-			int64(1),
-			int64(900),
-			int64(900),
+			int64(0),
+			int64(0),
+			int64(0),
 			int64(1),
 		).
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -113,9 +117,9 @@ func TestFirstTokenTimeoutStatsUpsertBatchForcesRequestSentinels(t *testing.T) {
 		TimeoutSeconds:    20,
 		Outcome:           service.FirstTokenStatsRequestRecoveredAfterTTFT,
 		SampleCount:       1,
-		TTFTSampleCount:   1,
-		TTFTSumMS:         900,
-		TTFTMaxMS:         900,
+		TTFTSampleCount:   0,
+		TTFTSumMS:         0,
+		TTFTMaxMS:         0,
 		TTFTAffectedCount: 1,
 	}})
 	require.NoError(t, err)
@@ -158,6 +162,55 @@ func TestFirstTokenTimeoutStatsUpsertBatchRejectsInvalidDelta(t *testing.T) {
 		"negative ttft max":    func(d *service.FirstTokenStatsDelta) { d.TTFTMaxMS = -1 },
 		"ttft max over int4":   func(d *service.FirstTokenStatsDelta) { d.TTFTMaxMS = math.MaxInt32 + 1 },
 		"negative affected":    func(d *service.FirstTokenStatsDelta) { d.TTFTAffectedCount = -1 },
+		"ttft samples exceed samples": func(d *service.FirstTokenStatsDelta) {
+			d.TTFTSampleCount = 2
+		},
+		"zero ttft samples with sum": func(d *service.FirstTokenStatsDelta) {
+			d.TTFTSumMS = 1
+		},
+		"zero ttft samples with max": func(d *service.FirstTokenStatsDelta) {
+			d.TTFTMaxMS = 1
+		},
+		"ttft max exceeds sum": func(d *service.FirstTokenStatsDelta) {
+			d.TTFTSampleCount = 1
+			d.TTFTSumMS = 4
+			d.TTFTMaxMS = 5
+		},
+		"request has ttft sample": func(d *service.FirstTokenStatsDelta) {
+			d.Scope = service.FirstTokenStatsScopeRequest
+			d.Outcome = service.FirstTokenStatsRequestSuccess
+			d.TTFTSampleCount = 1
+		},
+		"attempt has affected request count": func(d *service.FirstTokenStatsDelta) {
+			d.TTFTAffectedCount = 1
+		},
+		"request affected exceeds samples": func(d *service.FirstTokenStatsDelta) {
+			d.Scope = service.FirstTokenStatsScopeRequest
+			d.Outcome = service.FirstTokenStatsRequestOtherFailure
+			d.FailureKind = service.FirstTokenStatsFailureTransport
+			d.TTFTAffectedCount = 2
+		},
+		"request success is affected": func(d *service.FirstTokenStatsDelta) {
+			d.Scope = service.FirstTokenStatsScopeRequest
+			d.Outcome = service.FirstTokenStatsRequestSuccess
+			d.TTFTAffectedCount = 1
+		},
+		"recovered request affected mismatch": func(d *service.FirstTokenStatsDelta) {
+			d.Scope = service.FirstTokenStatsScopeRequest
+			d.Outcome = service.FirstTokenStatsRequestRecoveredAfterTTFT
+			d.SampleCount = 2
+			d.TTFTAffectedCount = 1
+		},
+		"exhausted request affected mismatch": func(d *service.FirstTokenStatsDelta) {
+			d.Scope = service.FirstTokenStatsScopeRequest
+			d.Outcome = service.FirstTokenStatsRequestTTFTExhausted
+			d.SampleCount = 2
+			d.TTFTAffectedCount = 1
+		},
+		"ttft timeout has ttft sample": func(d *service.FirstTokenStatsDelta) {
+			d.Outcome = service.FirstTokenStatsAttemptTTFTTimeout
+			d.TTFTSampleCount = 1
+		},
 	}
 
 	for name, mutate := range tests {
@@ -166,7 +219,7 @@ func TestFirstTokenTimeoutStatsUpsertBatchRejectsInvalidDelta(t *testing.T) {
 			mutate(&delta)
 			repo := &firstTokenTimeoutStatsRepository{}
 			err := repo.UpsertBatch(context.Background(), []service.FirstTokenStatsDelta{delta})
-			require.Error(t, err)
+			require.ErrorContains(t, err, "invalid first token stats delta")
 		})
 	}
 }
@@ -196,6 +249,54 @@ func TestFirstTokenTimeoutStatsUpsertBatchRejectsCounterOverflow(t *testing.T) {
 	require.ErrorContains(t, err, "overflow")
 }
 
+func TestFirstTokenTimeoutStatsUpsertBatchRejectsMoreThanOneThousandUniqueKeys(t *testing.T) {
+	deltas := make([]service.FirstTokenStatsDelta, 1001)
+	for i := range deltas {
+		deltas[i] = service.FirstTokenStatsDelta{
+			BucketStart:    time.Date(2026, 7, 15, 5, 0, 0, 0, time.UTC),
+			Scope:          service.FirstTokenStatsScopeAttempt,
+			AccountID:      int64(i + 1),
+			Protocol:       "openai_responses",
+			Platform:       "openai",
+			Model:          "gpt-5.2",
+			TimeoutSeconds: 30,
+			Outcome:        service.FirstTokenStatsAttemptSuccess,
+			SampleCount:    1,
+		}
+	}
+
+	repo := &firstTokenTimeoutStatsRepository{}
+	err := repo.UpsertBatch(context.Background(), deltas)
+	require.ErrorContains(t, err, "unique key limit")
+}
+
+func TestFirstTokenTimeoutStatsUpsertBatchAcceptsOneThousandUniqueKeys(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+	mock.ExpectExec("INSERT INTO first_token_timeout_stats_hourly").
+		WillReturnResult(sqlmock.NewResult(0, 1000))
+
+	deltas := make([]service.FirstTokenStatsDelta, 1000)
+	for i := range deltas {
+		deltas[i] = service.FirstTokenStatsDelta{
+			BucketStart:    time.Date(2026, 7, 15, 5, 0, 0, 0, time.UTC),
+			Scope:          service.FirstTokenStatsScopeAttempt,
+			AccountID:      int64(i + 1),
+			Protocol:       "openai_responses",
+			Platform:       "openai",
+			Model:          "gpt-5.2",
+			TimeoutSeconds: 30,
+			Outcome:        service.FirstTokenStatsAttemptSuccess,
+			SampleCount:    1,
+		}
+	}
+
+	err = NewFirstTokenTimeoutStatsRepository(db).UpsertBatch(context.Background(), deltas)
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestFirstTokenTimeoutStatsQueryOverviewCalculatesStableRates(t *testing.T) {
 	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
 	require.NoError(t, err)
@@ -206,6 +307,7 @@ func TestFirstTokenTimeoutStatsQueryOverviewCalculatesStableRates(t *testing.T) 
 	wantStart := wantEnd.Add(-24 * time.Hour)
 	args := []driver.Value{wantStart, wantEnd, "openai_responses", "gpt-5.2"}
 
+	mock.ExpectBegin()
 	mock.ExpectQuery("FROM first_token_timeout_stats_hourly").
 		WithArgs(args...).
 		WillReturnRows(sqlmock.NewRows([]string{
@@ -239,6 +341,7 @@ func TestFirstTokenTimeoutStatsQueryOverviewCalculatesStableRates(t *testing.T) 
 		WillReturnRows(sqlmock.NewRows([]string{"failure_kind", "sample_count"}).
 			AddRow(service.FirstTokenStatsFailureTransport, int64(2)).
 			AddRow(service.FirstTokenStatsFailureUpstream5xx, int64(1)))
+	mock.ExpectCommit()
 
 	overview, err := NewFirstTokenTimeoutStatsRepository(db).QueryOverview(context.Background(), service.FirstTokenStatsOverviewFilter{
 		Range:    service.FirstTokenStatsRange24Hours,
@@ -277,6 +380,7 @@ func TestFirstTokenTimeoutStatsQueryAccountsFiltersSortsAndPaginates(t *testing.
 	wantStart := wantEnd.Add(-7 * 24 * time.Hour)
 	filterArgs := []driver.Value{wantStart, wantEnd, "openai_responses", "gpt-5.2", "openai", int64(99), "%#99%"}
 
+	mock.ExpectBegin()
 	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM filtered").
 		WithArgs(filterArgs...).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(2)))
@@ -295,6 +399,7 @@ func TestFirstTokenTimeoutStatsQueryAccountsFiltersSortsAndPaginates(t *testing.
 		}).
 			AddRow(int64(99), "#99", "openai", int64(10), int64(6), int64(3), int64(1), int64(900), int64(2)).
 			AddRow(int64(100), "active", "openai", int64(0), int64(0), int64(0), int64(0), int64(0), int64(0)))
+	mock.ExpectCommit()
 
 	page, err := NewFirstTokenTimeoutStatsRepository(db).QueryAccounts(context.Background(), service.FirstTokenStatsAccountFilter{
 		Range:     service.FirstTokenStatsRange7Days,
@@ -349,6 +454,96 @@ func TestFirstTokenTimeoutStatsQueryAccountsRejectsUnsafeSort(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestFirstTokenTimeoutStatsQueryAccountsRejectsPageOffsetOverflow(t *testing.T) {
+	repo := &firstTokenTimeoutStatsRepository{}
+	_, err := repo.QueryAccounts(context.Background(), service.FirstTokenStatsAccountFilter{
+		Range:    service.FirstTokenStatsRange24Hours,
+		Page:     math.MaxInt,
+		PageSize: 100,
+	})
+	require.ErrorContains(t, err, "page offset")
+}
+
+func TestFirstTokenTimeoutStatsQueryOverviewRollsBackOnQueryError(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("FROM first_token_timeout_stats_hourly").
+		WillReturnError(errors.New("summary unavailable"))
+	mock.ExpectRollback()
+
+	_, err = NewFirstTokenTimeoutStatsRepository(db).QueryOverview(context.Background(), service.FirstTokenStatsOverviewFilter{
+		Range: service.FirstTokenStatsRange24Hours,
+		End:   time.Date(2026, 7, 15, 5, 23, 0, 0, time.UTC),
+	})
+	require.ErrorContains(t, err, "summary unavailable")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestFirstTokenTimeoutStatsQueryOverviewReturnsCommitError(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("FROM first_token_timeout_stats_hourly").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"controlled_requests",
+			"attempt_ttft_timeout_count",
+			"attempt_denominator",
+			"recovered_count",
+			"affected_count",
+			"final_ttft_count",
+			"request_denominator",
+			"other_final_count",
+		}).AddRow(int64(0), int64(0), int64(0), int64(0), int64(0), int64(0), int64(0), int64(0)))
+	mock.ExpectQuery("generate_series").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"bucket_start",
+			"attempt_ttft_timeout_count",
+			"attempt_denominator",
+			"recovered_count",
+			"affected_count",
+			"final_ttft_count",
+			"request_denominator",
+			"other_final_count",
+		}))
+	mock.ExpectQuery("outcome = 'other_failure'").
+		WillReturnRows(sqlmock.NewRows([]string{"failure_kind", "sample_count"}))
+	mock.ExpectCommit().WillReturnError(errors.New("commit snapshot"))
+
+	_, err = NewFirstTokenTimeoutStatsRepository(db).QueryOverview(context.Background(), service.FirstTokenStatsOverviewFilter{
+		Range: service.FirstTokenStatsRange24Hours,
+		End:   time.Date(2026, 7, 15, 5, 23, 0, 0, time.UTC),
+	})
+	require.ErrorContains(t, err, "commit snapshot")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestFirstTokenTimeoutStatsQueriesUseRepeatableReadReadOnly(t *testing.T) {
+	state := &firstTokenStatsTxOptionsState{}
+	driverName := fmt.Sprintf("first_token_stats_tx_options_%d", time.Now().UnixNano())
+	sql.Register(driverName, firstTokenStatsTxOptionsDriver{state: state})
+	db, err := sql.Open(driverName, "")
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	_, err = NewFirstTokenTimeoutStatsRepository(db).QueryOverview(context.Background(), service.FirstTokenStatsOverviewFilter{
+		Range: service.FirstTokenStatsRange24Hours,
+		End:   time.Date(2026, 7, 15, 5, 23, 0, 0, time.UTC),
+	})
+	require.ErrorContains(t, err, "stop after begin")
+
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	require.True(t, state.beginCalled)
+	require.Equal(t, driver.IsolationLevel(sql.LevelRepeatableRead), state.options.Isolation)
+	require.True(t, state.options.ReadOnly)
+	require.True(t, state.rollbackCalled)
+}
+
 func TestFirstTokenTimeoutStatsDeleteBeforeUsesTruncatedUTCCutoff(t *testing.T) {
 	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
 	require.NoError(t, err)
@@ -376,4 +571,58 @@ func TestFirstTokenTimeoutStatsProviderRegistered(t *testing.T) {
 	content, err := os.ReadFile("wire.go")
 	require.NoError(t, err)
 	require.Contains(t, string(content), "NewFirstTokenTimeoutStatsRepository,")
+}
+
+type firstTokenStatsTxOptionsState struct {
+	mu             sync.Mutex
+	beginCalled    bool
+	rollbackCalled bool
+	options        driver.TxOptions
+}
+
+type firstTokenStatsTxOptionsDriver struct {
+	state *firstTokenStatsTxOptionsState
+}
+
+func (d firstTokenStatsTxOptionsDriver) Open(string) (driver.Conn, error) {
+	return &firstTokenStatsTxOptionsConn{state: d.state}, nil
+}
+
+type firstTokenStatsTxOptionsConn struct {
+	state *firstTokenStatsTxOptionsState
+}
+
+func (c *firstTokenStatsTxOptionsConn) Prepare(string) (driver.Stmt, error) {
+	return nil, errors.New("prepare not supported")
+}
+
+func (c *firstTokenStatsTxOptionsConn) Close() error { return nil }
+
+func (c *firstTokenStatsTxOptionsConn) Begin() (driver.Tx, error) {
+	return c.BeginTx(context.Background(), driver.TxOptions{})
+}
+
+func (c *firstTokenStatsTxOptionsConn) BeginTx(_ context.Context, options driver.TxOptions) (driver.Tx, error) {
+	c.state.mu.Lock()
+	c.state.beginCalled = true
+	c.state.options = options
+	c.state.mu.Unlock()
+	return &firstTokenStatsTxOptionsTx{state: c.state}, nil
+}
+
+func (c *firstTokenStatsTxOptionsConn) QueryContext(context.Context, string, []driver.NamedValue) (driver.Rows, error) {
+	return nil, errors.New("stop after begin")
+}
+
+type firstTokenStatsTxOptionsTx struct {
+	state *firstTokenStatsTxOptionsState
+}
+
+func (t *firstTokenStatsTxOptionsTx) Commit() error { return nil }
+
+func (t *firstTokenStatsTxOptionsTx) Rollback() error {
+	t.state.mu.Lock()
+	t.state.rollbackCalled = true
+	t.state.mu.Unlock()
+	return nil
 }

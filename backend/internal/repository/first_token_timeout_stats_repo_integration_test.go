@@ -4,6 +4,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"math"
 	"testing"
@@ -14,10 +15,29 @@ import (
 )
 
 func TestFirstTokenTimeoutStatsUpsertBatchAccumulatesAcrossInstancesAndSeparatesThresholds(t *testing.T) {
-	tx := testTx(t)
-	repoA := newFirstTokenTimeoutStatsRepositoryWithSQL(tx)
-	repoB := newFirstTokenTimeoutStatsRepositoryWithSQL(tx)
+	dbA, err := sql.Open("postgres", integrationPostgresDSN)
+	require.NoError(t, err)
+	defer func() { _ = dbA.Close() }()
+	dbB, err := sql.Open("postgres", integrationPostgresDSN)
+	require.NoError(t, err)
+	defer func() { _ = dbB.Close() }()
+	require.NotSame(t, dbA, dbB)
+	require.NoError(t, dbA.PingContext(context.Background()))
+	require.NoError(t, dbB.PingContext(context.Background()))
+
+	repoA := NewFirstTokenTimeoutStatsRepository(dbA)
+	repoB := NewFirstTokenTimeoutStatsRepository(dbB)
 	bucket := time.Date(2026, 7, 15, 5, 0, 0, 0, time.UTC)
+	model := "gpt-5.2-concurrent-upsert-test"
+	_, err = integrationDB.ExecContext(context.Background(), `
+DELETE FROM first_token_timeout_stats_hourly WHERE model = $1
+`, model)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = integrationDB.ExecContext(context.Background(), `
+DELETE FROM first_token_timeout_stats_hourly WHERE model = $1
+`, model)
+	})
 
 	base := service.FirstTokenStatsDelta{
 		BucketStart:     bucket,
@@ -25,7 +45,7 @@ func TestFirstTokenTimeoutStatsUpsertBatchAccumulatesAcrossInstancesAndSeparates
 		AccountID:       42,
 		Protocol:        "openai_responses",
 		Platform:        "openai",
-		Model:           "gpt-5.2",
+		Model:           model,
 		TimeoutSeconds:  30,
 		Outcome:         service.FirstTokenStatsAttemptSuccess,
 		SampleCount:     2,
@@ -33,26 +53,36 @@ func TestFirstTokenTimeoutStatsUpsertBatchAccumulatesAcrossInstancesAndSeparates
 		TTFTSumMS:       500,
 		TTFTMaxMS:       500,
 	}
-	require.NoError(t, repoA.UpsertBatch(context.Background(), []service.FirstTokenStatsDelta{base}))
-
 	second := base
 	second.SampleCount = 3
 	second.TTFTSampleCount = 2
 	second.TTFTSumMS = 900
 	second.TTFTMaxMS = 700
-	require.NoError(t, repoB.UpsertBatch(context.Background(), []service.FirstTokenStatsDelta{second}))
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	go func() {
+		<-start
+		errs <- repoA.UpsertBatch(context.Background(), []service.FirstTokenStatsDelta{base})
+	}()
+	go func() {
+		<-start
+		errs <- repoB.UpsertBatch(context.Background(), []service.FirstTokenStatsDelta{second})
+	}()
+	close(start)
+	require.NoError(t, <-errs)
+	require.NoError(t, <-errs)
 
 	differentThreshold := base
 	differentThreshold.TimeoutSeconds = 20
 	differentThreshold.SampleCount = 7
 	require.NoError(t, repoB.UpsertBatch(context.Background(), []service.FirstTokenStatsDelta{differentThreshold}))
 
-	rows, err := tx.QueryContext(context.Background(), `
+	rows, err := integrationDB.QueryContext(context.Background(), `
 SELECT timeout_seconds, sample_count, ttft_sample_count, ttft_sum_ms, ttft_max_ms
 FROM first_token_timeout_stats_hourly
-WHERE bucket_start = $1 AND scope = 'attempt' AND account_id = 42
+WHERE bucket_start = $1 AND scope = 'attempt' AND account_id = 42 AND model = $2
 ORDER BY timeout_seconds
-`, bucket)
+`, bucket, model)
 	require.NoError(t, err)
 	defer func() { _ = rows.Close() }()
 
@@ -77,22 +107,30 @@ ORDER BY timeout_seconds
 }
 
 func TestFirstTokenTimeoutStatsQueriesUseDocumentedDenominators(t *testing.T) {
-	tx := testTx(t)
-	repo := newFirstTokenTimeoutStatsRepositoryWithSQL(tx)
+	repo := NewFirstTokenTimeoutStatsRepository(integrationDB)
 	ctx := context.Background()
+	model := "gpt-5.2-query-snapshot-test"
+	_, err := integrationDB.ExecContext(ctx, `DELETE FROM first_token_timeout_stats_hourly WHERE model = $1`, model)
+	require.NoError(t, err)
+	_, err = integrationDB.ExecContext(ctx, `DELETE FROM accounts WHERE name IN ('deleted stats account', 'active stats account')`)
+	require.NoError(t, err)
 
 	var deletedAccountID int64
-	require.NoError(t, tx.QueryRowContext(ctx, `
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `
 INSERT INTO accounts (name, platform, type, deleted_at)
 VALUES ('deleted stats account', 'openai', 'api_key', NOW())
 RETURNING id
-`).Scan(&deletedAccountID))
+	`).Scan(&deletedAccountID))
 	var activeAccountID int64
-	require.NoError(t, tx.QueryRowContext(ctx, `
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `
 INSERT INTO accounts (name, platform, type)
 VALUES ('active stats account', 'openai', 'api_key')
 RETURNING id
-`).Scan(&activeAccountID))
+	`).Scan(&activeAccountID))
+	t.Cleanup(func() {
+		_, _ = integrationDB.ExecContext(context.Background(), `DELETE FROM first_token_timeout_stats_hourly WHERE model = $1`, model)
+		_, _ = integrationDB.ExecContext(context.Background(), `DELETE FROM accounts WHERE id IN ($1, $2)`, deletedAccountID, activeAccountID)
+	})
 
 	bucket := time.Date(2026, 7, 15, 5, 0, 0, 0, time.UTC)
 	baseAttempt := service.FirstTokenStatsDelta{
@@ -100,14 +138,14 @@ RETURNING id
 		Scope:          service.FirstTokenStatsScopeAttempt,
 		Protocol:       "openai_responses",
 		Platform:       "openai",
-		Model:          "gpt-5.2",
+		Model:          model,
 		TimeoutSeconds: 30,
 	}
 	baseRequest := service.FirstTokenStatsDelta{
 		BucketStart:    bucket,
 		Scope:          service.FirstTokenStatsScopeRequest,
 		Protocol:       "openai_responses",
-		Model:          "gpt-5.2",
+		Model:          model,
 		TimeoutSeconds: 30,
 	}
 	deltas := []service.FirstTokenStatsDelta{
@@ -134,7 +172,7 @@ RETURNING id
 		Range:    service.FirstTokenStatsRange24Hours,
 		End:      time.Date(2026, 7, 15, 5, 23, 0, 0, time.UTC),
 		Protocol: "openai_responses",
-		Model:    "gpt-5.2",
+		Model:    model,
 	})
 	require.NoError(t, err)
 	require.Equal(t, int64(15), overview.Summary.ControlledRequests)
@@ -156,7 +194,7 @@ RETURNING id
 		Range:     service.FirstTokenStatsRange24Hours,
 		End:       time.Date(2026, 7, 15, 5, 23, 0, 0, time.UTC),
 		Protocol:  "openai_responses",
-		Model:     "gpt-5.2",
+		Model:     model,
 		Platform:  "openai",
 		SortBy:    service.FirstTokenStatsAccountSortAvgTTFTMS,
 		SortOrder: "desc",
@@ -177,7 +215,7 @@ RETURNING id
 		Range:     service.FirstTokenStatsRange24Hours,
 		End:       time.Date(2026, 7, 15, 5, 23, 0, 0, time.UTC),
 		Protocol:  "openai_responses",
-		Model:     "gpt-5.2",
+		Model:     model,
 		Platform:  "openai",
 		AccountID: deletedAccountID,
 		Search:    fmt.Sprintf("#%d", deletedAccountID),
@@ -222,6 +260,82 @@ func TestFirstTokenTimeoutStatsDeleteBeforeIsStrictAndIdempotent(t *testing.T) {
 SELECT COUNT(*) FROM first_token_timeout_stats_hourly WHERE bucket_start = $1
 `, boundary.BucketStart).Scan(&remaining))
 	require.Equal(t, int64(1), remaining)
+}
+
+func TestFirstTokenTimeoutStatsMigrationRejectsCrossInvariantViolations(t *testing.T) {
+	tests := map[string]struct {
+		scope             string
+		outcome           string
+		failureKind       string
+		sampleCount       int64
+		ttftSampleCount   int64
+		ttftSumMS         int64
+		ttftMaxMS         int64
+		ttftAffectedCount int64
+	}{
+		"ttft samples exceed samples": {
+			scope: service.FirstTokenStatsScopeAttempt, outcome: service.FirstTokenStatsAttemptSuccess,
+			sampleCount: 1, ttftSampleCount: 2,
+		},
+		"zero ttft samples carry metrics": {
+			scope: service.FirstTokenStatsScopeAttempt, outcome: service.FirstTokenStatsAttemptSuccess,
+			sampleCount: 1, ttftSumMS: 1, ttftMaxMS: 1,
+		},
+		"ttft max exceeds sum": {
+			scope: service.FirstTokenStatsScopeAttempt, outcome: service.FirstTokenStatsAttemptSuccess,
+			sampleCount: 1, ttftSampleCount: 1, ttftSumMS: 4, ttftMaxMS: 5,
+		},
+		"request carries ttft metrics": {
+			scope: service.FirstTokenStatsScopeRequest, outcome: service.FirstTokenStatsRequestSuccess,
+			sampleCount: 1, ttftSampleCount: 1,
+		},
+		"attempt carries affected count": {
+			scope: service.FirstTokenStatsScopeAttempt, outcome: service.FirstTokenStatsAttemptSuccess,
+			sampleCount: 1, ttftAffectedCount: 1,
+		},
+		"request success is affected": {
+			scope: service.FirstTokenStatsScopeRequest, outcome: service.FirstTokenStatsRequestSuccess,
+			sampleCount: 1, ttftAffectedCount: 1,
+		},
+		"recovered request affected mismatch": {
+			scope: service.FirstTokenStatsScopeRequest, outcome: service.FirstTokenStatsRequestRecoveredAfterTTFT,
+			sampleCount: 2, ttftAffectedCount: 1,
+		},
+		"other failure missing kind": {
+			scope: service.FirstTokenStatsScopeRequest, outcome: service.FirstTokenStatsRequestOtherFailure,
+			sampleCount: 1,
+		},
+		"success has failure kind": {
+			scope: service.FirstTokenStatsScopeAttempt, outcome: service.FirstTokenStatsAttemptSuccess,
+			failureKind: service.FirstTokenStatsFailureTransport, sampleCount: 1,
+		},
+		"ttft timeout has sample": {
+			scope: service.FirstTokenStatsScopeAttempt, outcome: service.FirstTokenStatsAttemptTTFTTimeout,
+			sampleCount: 1, ttftSampleCount: 1,
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			tx := testTx(t)
+			accountID := int64(1)
+			platform := "openai"
+			if test.scope == service.FirstTokenStatsScopeRequest {
+				accountID = 0
+				platform = ""
+			}
+			_, err := tx.ExecContext(context.Background(), `
+INSERT INTO first_token_timeout_stats_hourly (
+    bucket_start, scope, account_id, protocol, platform, model, timeout_seconds,
+    outcome, failure_kind, sample_count, ttft_sample_count, ttft_sum_ms,
+    ttft_max_ms, ttft_affected_count
+) VALUES ($1, $2, $3, 'openai_responses', $4, 'gpt-5.2', 30, $5, $6, $7, $8, $9, $10, $11)
+`, time.Date(2026, 7, 13, 1, 0, 0, 0, time.UTC), test.scope, accountID, platform,
+				test.outcome, test.failureKind, test.sampleCount, test.ttftSampleCount,
+				test.ttftSumMS, test.ttftMaxMS, test.ttftAffectedCount)
+			require.Error(t, err)
+		})
+	}
 }
 
 func withFirstTokenStatsDelta(

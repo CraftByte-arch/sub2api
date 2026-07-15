@@ -33,6 +33,12 @@ CREATE TABLE IF NOT EXISTS first_token_timeout_stats_hourly (
     CHECK (ttft_sum_ms >= 0),
     CHECK (ttft_max_ms >= 0),
     CHECK (ttft_affected_count >= 0),
+    CHECK (ttft_sample_count <= sample_count),
+    CHECK (
+        (ttft_sample_count = 0 AND ttft_sum_ms = 0 AND ttft_max_ms = 0)
+        OR (ttft_sample_count > 0 AND ttft_max_ms <= ttft_sum_ms)
+    ),
+    CHECK (ttft_affected_count <= sample_count),
     CHECK (
         (scope = 'request' AND account_id = 0 AND platform = '')
         OR (scope = 'attempt' AND account_id > 0 AND platform <> '')
@@ -52,17 +58,32 @@ CREATE TABLE IF NOT EXISTS first_token_timeout_stats_hourly (
             'other_failure'
         ))
     ),
-    CHECK (failure_kind IN (
-        '',
-        'rate_limit',
-        'auth',
-        'upstream_4xx',
-        'upstream_5xx',
-        'transport',
-        'stream_idle_timeout',
-        'protocol',
-        'other'
-    ))
+    CHECK (
+        (scope = 'request' AND ttft_sample_count = 0 AND ttft_sum_ms = 0 AND ttft_max_ms = 0)
+        OR (scope = 'attempt' AND ttft_affected_count = 0)
+    ),
+    CHECK (
+        scope <> 'request'
+        OR (outcome = 'success' AND ttft_affected_count = 0)
+        OR (outcome IN ('recovered_after_ttft', 'ttft_exhausted') AND ttft_affected_count = sample_count)
+        OR (outcome IN ('other_failure', 'client_canceled') AND ttft_affected_count BETWEEN 0 AND sample_count)
+    ),
+    CHECK (NOT (
+        scope = 'attempt' AND outcome = 'ttft_timeout' AND ttft_sample_count <> 0
+    )),
+    CHECK (
+        (outcome = 'other_failure' AND failure_kind IN (
+            'rate_limit',
+            'auth',
+            'upstream_4xx',
+            'upstream_5xx',
+            'transport',
+            'stream_idle_timeout',
+            'protocol',
+            'other'
+        ))
+        OR (outcome <> 'other_failure' AND failure_kind = '')
+    )
 );
 
 CREATE INDEX IF NOT EXISTS idx_first_token_timeout_stats_scope_bucket

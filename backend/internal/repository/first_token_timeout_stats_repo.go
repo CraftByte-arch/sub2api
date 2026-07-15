@@ -14,15 +14,20 @@ import (
 )
 
 type firstTokenTimeoutStatsRepository struct {
-	db sqlExecutor
+	db         sqlExecutor
+	snapshotDB *sql.DB
 }
 
 func NewFirstTokenTimeoutStatsRepository(db *sql.DB) service.FirstTokenTimeoutStatsRepository {
-	return newFirstTokenTimeoutStatsRepositoryWithSQL(db)
+	return &firstTokenTimeoutStatsRepository{db: db, snapshotDB: db}
 }
 
 func newFirstTokenTimeoutStatsRepositoryWithSQL(db sqlExecutor) *firstTokenTimeoutStatsRepository {
-	return &firstTokenTimeoutStatsRepository{db: db}
+	repository := &firstTokenTimeoutStatsRepository{db: db}
+	if sqlDB, ok := db.(*sql.DB); ok {
+		repository.snapshotDB = sqlDB
+	}
+	return repository
 }
 
 type firstTokenStatsKey struct {
@@ -36,6 +41,8 @@ type firstTokenStatsKey struct {
 	outcome        string
 	failureKind    string
 }
+
+const maxFirstTokenStatsUpsertKeys = 1000
 
 func (r *firstTokenTimeoutStatsRepository) UpsertBatch(ctx context.Context, deltas []service.FirstTokenStatsDelta) error {
 	if len(deltas) == 0 {
@@ -80,8 +87,16 @@ func (r *firstTokenTimeoutStatsRepository) UpsertBatch(ctx context.Context, delt
 			}
 			continue
 		}
+		if len(aggregated) >= maxFirstTokenStatsUpsertKeys {
+			return fmt.Errorf("first token stats unique key limit exceeded: max %d", maxFirstTokenStatsUpsertKeys)
+		}
 		indexByKey[key] = len(aggregated)
 		aggregated = append(aggregated, delta)
+	}
+	for i, delta := range aggregated {
+		if err := validateFirstTokenStatsCrossInvariants(delta); err != nil {
+			return fmt.Errorf("invalid aggregated first token stats delta %d: %w", i, err)
+		}
 	}
 	if r == nil || r.db == nil {
 		return fmt.Errorf("nil first token timeout stats repository")
@@ -199,7 +214,50 @@ func normalizeFirstTokenStatsDelta(delta service.FirstTokenStatsDelta) (service.
 	if delta.TTFTMaxMS > math.MaxInt32 {
 		return service.FirstTokenStatsDelta{}, fmt.Errorf("ttft max exceeds PostgreSQL integer range")
 	}
+	if err := validateFirstTokenStatsCrossInvariants(delta); err != nil {
+		return service.FirstTokenStatsDelta{}, err
+	}
 	return delta, nil
+}
+
+func validateFirstTokenStatsCrossInvariants(delta service.FirstTokenStatsDelta) error {
+	if delta.TTFTSampleCount > delta.SampleCount {
+		return fmt.Errorf("ttft sample count cannot exceed sample count")
+	}
+	if delta.TTFTSampleCount == 0 && (delta.TTFTSumMS != 0 || delta.TTFTMaxMS != 0) {
+		return fmt.Errorf("ttft metrics require at least one ttft sample")
+	}
+	if delta.TTFTMaxMS > delta.TTFTSumMS {
+		return fmt.Errorf("ttft max cannot exceed ttft sum")
+	}
+
+	switch delta.Scope {
+	case service.FirstTokenStatsScopeAttempt:
+		if delta.TTFTAffectedCount != 0 {
+			return fmt.Errorf("attempt delta cannot carry affected request count")
+		}
+		if delta.Outcome == service.FirstTokenStatsAttemptTTFTTimeout && delta.TTFTSampleCount != 0 {
+			return fmt.Errorf("ttft timeout attempt cannot carry ttft samples")
+		}
+	case service.FirstTokenStatsScopeRequest:
+		if delta.TTFTSampleCount != 0 || delta.TTFTSumMS != 0 || delta.TTFTMaxMS != 0 {
+			return fmt.Errorf("request delta cannot carry ttft metrics")
+		}
+		if delta.TTFTAffectedCount > delta.SampleCount {
+			return fmt.Errorf("affected request count cannot exceed sample count")
+		}
+		switch delta.Outcome {
+		case service.FirstTokenStatsRequestSuccess:
+			if delta.TTFTAffectedCount != 0 {
+				return fmt.Errorf("successful request cannot be ttft affected")
+			}
+		case service.FirstTokenStatsRequestRecoveredAfterTTFT, service.FirstTokenStatsRequestTTFTExhausted:
+			if delta.TTFTAffectedCount != delta.SampleCount {
+				return fmt.Errorf("ttft recovery and exhaustion require every sample to be affected")
+			}
+		}
+	}
+	return nil
 }
 
 func isValidFirstTokenStatsOutcome(scope, outcome string) bool {
@@ -249,6 +307,16 @@ func (r *firstTokenTimeoutStatsRepository) QueryOverview(ctx context.Context, fi
 	if r == nil || r.db == nil {
 		return nil, fmt.Errorf("nil first token timeout stats repository")
 	}
+	tx, err := r.beginReadSnapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
 
 	args := []any{start, end, filter.Protocol, filter.Model}
 	const summaryQuery = `
@@ -267,7 +335,7 @@ WHERE bucket_start >= $1 AND bucket_start < $2
   AND ($4 = '' OR model = $4)`
 
 	var summaryValues firstTokenStatsRateValues
-	if err := scanSingleRow(ctx, r.db, summaryQuery, args,
+	if err := scanSingleRow(ctx, tx, summaryQuery, args,
 		&summaryValues.controlledRequests,
 		&summaryValues.attemptTTFTTimeoutCount,
 		&summaryValues.attemptDenominator,
@@ -316,7 +384,7 @@ FROM buckets
 LEFT JOIN aggregated USING (bucket_start)
 ORDER BY buckets.bucket_start`
 
-	rows, err := r.db.QueryContext(ctx, trendQuery, args...)
+	rows, err := tx.QueryContext(ctx, trendQuery, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query first token stats trend: %w", err)
 	}
@@ -357,7 +425,7 @@ WHERE bucket_start >= $1 AND bucket_start < $2
   AND outcome = 'other_failure'
 GROUP BY failure_kind
 ORDER BY sample_count DESC, failure_kind ASC`
-	failureRows, err := r.db.QueryContext(ctx, failureQuery, args...)
+	failureRows, err := tx.QueryContext(ctx, failureQuery, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query first token stats failure distribution: %w", err)
 	}
@@ -378,11 +446,16 @@ ORDER BY sample_count DESC, failure_kind ASC`
 		return nil, fmt.Errorf("close first token stats failure distribution: %w", err)
 	}
 
-	return &service.FirstTokenStatsOverview{
+	overview := &service.FirstTokenStatsOverview{
 		Summary:       summaryValues.summary(),
 		Trend:         trend,
 		OtherFailures: failures,
-	}, nil
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit first token stats overview snapshot: %w", err)
+	}
+	committed = true
+	return overview, nil
 }
 
 type firstTokenStatsRateValues struct {
@@ -453,13 +526,23 @@ func normalizeFirstTokenStatsOverviewFilter(filter service.FirstTokenStatsOvervi
 }
 
 func (r *firstTokenTimeoutStatsRepository) QueryAccounts(ctx context.Context, filter service.FirstTokenStatsAccountFilter) (*service.FirstTokenStatsAccountPage, error) {
-	start, end, sortColumn, sortOrder, page, pageSize, err := normalizeFirstTokenStatsAccountFilter(filter)
+	start, end, sortColumn, sortOrder, page, pageSize, offset, err := normalizeFirstTokenStatsAccountFilter(filter)
 	if err != nil {
 		return nil, err
 	}
 	if r == nil || r.db == nil {
 		return nil, fmt.Errorf("nil first token timeout stats repository")
 	}
+	tx, err := r.beginReadSnapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
 
 	search := ""
 	if filter.Search != "" {
@@ -506,7 +589,7 @@ WITH aggregated AS (
 )`
 
 	var total int64
-	if err := scanSingleRow(ctx, r.db, accountsCTE+`
+	if err := scanSingleRow(ctx, tx, accountsCTE+`
 SELECT COUNT(*) FROM filtered`, args, &total); err != nil {
 		return nil, fmt.Errorf("count first token stats accounts: %w", err)
 	}
@@ -525,8 +608,8 @@ SELECT
 FROM filtered
 ORDER BY %s %s, account_id ASC
 LIMIT $8 OFFSET $9`, sortColumn, sortOrder)
-	queryArgs := append(args, pageSize, (page-1)*pageSize)
-	rows, err := r.db.QueryContext(ctx, query, queryArgs...)
+	queryArgs := append(args, int64(pageSize), offset)
+	rows, err := tx.QueryContext(ctx, query, queryArgs...)
 	if err != nil {
 		return nil, fmt.Errorf("query first token stats accounts: %w", err)
 	}
@@ -571,16 +654,21 @@ LIMIT $8 OFFSET $9`, sortColumn, sortOrder)
 	if int(total)%pageSize != 0 {
 		pages++
 	}
-	return &service.FirstTokenStatsAccountPage{
+	result := &service.FirstTokenStatsAccountPage{
 		Items:    items,
 		Total:    total,
 		Page:     page,
 		PageSize: pageSize,
 		Pages:    pages,
-	}, nil
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit first token stats accounts snapshot: %w", err)
+	}
+	committed = true
+	return result, nil
 }
 
-func normalizeFirstTokenStatsAccountFilter(filter service.FirstTokenStatsAccountFilter) (time.Time, time.Time, string, string, int, int, error) {
+func normalizeFirstTokenStatsAccountFilter(filter service.FirstTokenStatsAccountFilter) (time.Time, time.Time, string, string, int, int, int64, error) {
 	start, end, err := normalizeFirstTokenStatsOverviewFilter(service.FirstTokenStatsOverviewFilter{
 		Range:    filter.Range,
 		End:      filter.End,
@@ -588,16 +676,16 @@ func normalizeFirstTokenStatsAccountFilter(filter service.FirstTokenStatsAccount
 		Model:    filter.Model,
 	})
 	if err != nil {
-		return time.Time{}, time.Time{}, "", "", 0, 0, err
+		return time.Time{}, time.Time{}, "", "", 0, 0, 0, err
 	}
 	if utf8.RuneCountInString(filter.Platform) > 32 {
-		return time.Time{}, time.Time{}, "", "", 0, 0, fmt.Errorf("platform exceeds 32 characters")
+		return time.Time{}, time.Time{}, "", "", 0, 0, 0, fmt.Errorf("platform exceeds 32 characters")
 	}
 	if filter.AccountID < 0 {
-		return time.Time{}, time.Time{}, "", "", 0, 0, fmt.Errorf("account id must be non-negative")
+		return time.Time{}, time.Time{}, "", "", 0, 0, 0, fmt.Errorf("account id must be non-negative")
 	}
 	if utf8.RuneCountInString(filter.Search) > 255 {
-		return time.Time{}, time.Time{}, "", "", 0, 0, fmt.Errorf("search exceeds 255 characters")
+		return time.Time{}, time.Time{}, "", "", 0, 0, 0, fmt.Errorf("search exceeds 255 characters")
 	}
 
 	sortColumns := map[string]string{
@@ -615,14 +703,14 @@ func normalizeFirstTokenStatsAccountFilter(filter service.FirstTokenStatsAccount
 	}
 	sortColumn, ok := sortColumns[sortBy]
 	if !ok {
-		return time.Time{}, time.Time{}, "", "", 0, 0, fmt.Errorf("unsupported account stats sort %q", filter.SortBy)
+		return time.Time{}, time.Time{}, "", "", 0, 0, 0, fmt.Errorf("unsupported account stats sort %q", filter.SortBy)
 	}
 	sortOrder := strings.ToLower(filter.SortOrder)
 	if sortOrder == "" {
 		sortOrder = "desc"
 	}
 	if sortOrder != "asc" && sortOrder != "desc" {
-		return time.Time{}, time.Time{}, "", "", 0, 0, fmt.Errorf("unsupported account stats sort order %q", filter.SortOrder)
+		return time.Time{}, time.Time{}, "", "", 0, 0, 0, fmt.Errorf("unsupported account stats sort order %q", filter.SortOrder)
 	}
 
 	page := filter.Page
@@ -636,7 +724,12 @@ func normalizeFirstTokenStatsAccountFilter(filter service.FirstTokenStatsAccount
 	if pageSize > 100 {
 		pageSize = 100
 	}
-	return start, end, sortColumn, strings.ToUpper(sortOrder), page, pageSize, nil
+	pageIndex := int64(page - 1)
+	if pageIndex > math.MaxInt64/int64(pageSize) {
+		return time.Time{}, time.Time{}, "", "", 0, 0, 0, fmt.Errorf("account stats page offset exceeds int64 range")
+	}
+	offset := pageIndex * int64(pageSize)
+	return start, end, sortColumn, strings.ToUpper(sortOrder), page, pageSize, offset, nil
 }
 
 func escapeFirstTokenStatsLike(value string) string {
@@ -662,4 +755,18 @@ func (r *firstTokenTimeoutStatsRepository) DeleteBefore(ctx context.Context, cut
 		return 0, fmt.Errorf("read deleted first token timeout stats rows: %w", err)
 	}
 	return deleted, nil
+}
+
+func (r *firstTokenTimeoutStatsRepository) beginReadSnapshot(ctx context.Context) (*sql.Tx, error) {
+	if r == nil || r.snapshotDB == nil {
+		return nil, fmt.Errorf("first token timeout stats repository does not support read snapshots")
+	}
+	tx, err := r.snapshotDB.BeginTx(ctx, &sql.TxOptions{
+		Isolation: sql.LevelRepeatableRead,
+		ReadOnly:  true,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("begin first token stats read snapshot: %w", err)
+	}
+	return tx, nil
 }
