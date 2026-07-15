@@ -105,16 +105,21 @@ func provideCleanup(
 	imageStudioJobService *service.ImageStudioJobService,
 	quotaFlusher *service.UserPlatformQuotaUsageFlusher,
 	firstTokenTimeoutPolicy *service.FirstTokenTimeoutPolicy,
+	firstTokenStatsRecorder *service.FirstTokenTimeoutStatsRecorder,
 ) func() {
-	stopFirstTokenPolicy := func() {}
+	appCtx, cancelApp := context.WithCancel(context.Background())
 	if firstTokenTimeoutPolicy != nil {
-		firstTokenPolicyCtx, cancelFirstTokenPolicy := context.WithCancel(context.Background())
-		stopFirstTokenPolicy = cancelFirstTokenPolicy
-		firstTokenTimeoutPolicy.Start(firstTokenPolicyCtx)
+		firstTokenTimeoutPolicy.Start(appCtx)
+	}
+	if firstTokenStatsRecorder != nil {
+		firstTokenStatsRecorder.Start(appCtx)
 	}
 
 	return func() {
-		stopFirstTokenPolicy()
+		cancelApp()
+		if firstTokenStatsRecorder != nil {
+			firstTokenStatsRecorder.Stop()
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 

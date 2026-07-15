@@ -260,8 +260,10 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	userMessageQueueService := service.ProvideUserMessageQueueService(userMsgQueueCache, rpmCache, configConfig)
 	firstTokenTimeoutPolicyNotifier := repository.NewFirstTokenTimeoutPolicyNotifier(redisClient)
 	firstTokenTimeoutPolicy := service.NewFirstTokenTimeoutPolicy(settingRepository, firstTokenTimeoutPolicyNotifier)
-	gatewayHandler := handler.NewGatewayHandler(gatewayService, geminiMessagesCompatService, antigravityGatewayService, userService, concurrencyService, billingCacheService, usageService, apiKeyService, usageRecordWorkerPool, errorPassthroughService, contentModerationService, userMessageQueueService, configConfig, settingService, firstTokenTimeoutPolicy)
-	openAIGatewayHandler := handler.NewOpenAIGatewayHandler(openAIGatewayService, concurrencyService, billingCacheService, apiKeyService, usageRecordWorkerPool, errorPassthroughService, contentModerationService, opsService, configConfig, firstTokenTimeoutPolicy)
+	firstTokenTimeoutStatsRepository := repository.NewFirstTokenTimeoutStatsRepository(db)
+	firstTokenTimeoutStatsRecorder := service.NewFirstTokenTimeoutStatsRecorder(firstTokenTimeoutStatsRepository)
+	gatewayHandler := handler.NewGatewayHandler(gatewayService, geminiMessagesCompatService, antigravityGatewayService, userService, concurrencyService, billingCacheService, usageService, apiKeyService, usageRecordWorkerPool, errorPassthroughService, contentModerationService, userMessageQueueService, configConfig, settingService, firstTokenTimeoutPolicy, firstTokenTimeoutStatsRecorder)
+	openAIGatewayHandler := handler.NewOpenAIGatewayHandler(openAIGatewayService, concurrencyService, billingCacheService, apiKeyService, usageRecordWorkerPool, errorPassthroughService, contentModerationService, opsService, configConfig, firstTokenTimeoutPolicy, firstTokenTimeoutStatsRecorder)
 	handlerSettingHandler := handler.ProvideSettingHandler(settingService, buildInfo, notificationEmailService)
 	totpHandler := handler.NewTotpHandler(totpService)
 	handlerPaymentHandler := handler.NewPaymentHandler(paymentService, paymentConfigService, channelService, usageCardService)
@@ -298,7 +300,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	paymentOrderExpiryService := service.ProvidePaymentOrderExpiryService(paymentService, leaderLockCache, db)
 	channelMonitorRunner := service.ProvideChannelMonitorRunner(channelMonitorService, settingService)
 	userPlatformQuotaUsageFlusher := service.ProvideUserPlatformQuotaUsageFlusher(configConfig, billingCache, serviceUserPlatformQuotaRepository, timingWheelService)
-	v := provideCleanup(client, redisClient, opsMetricsCollector, opsAggregationService, opsAlertEvaluatorService, opsCleanupService, opsScheduledReportService, opsSystemLogSink, schedulerSnapshotService, tokenRefreshService, accountExpiryService, proxyExpiryService, subscriptionExpiryService, usageCleanupService, idempotencyCleanupService, batchImageCleanupService, batchImageWorkerRuntime, pricingService, emailQueueService, billingCacheService, usageRecordWorkerPool, subscriptionService, oAuthService, openAIOAuthService, geminiOAuthService, antigravityOAuthService, grokOAuthService, openAIGatewayService, scheduledTestRunnerService, backupService, paymentOrderExpiryService, channelMonitorRunner, imageStudioJobService, userPlatformQuotaUsageFlusher, firstTokenTimeoutPolicy)
+	v := provideCleanup(client, redisClient, opsMetricsCollector, opsAggregationService, opsAlertEvaluatorService, opsCleanupService, opsScheduledReportService, opsSystemLogSink, schedulerSnapshotService, tokenRefreshService, accountExpiryService, proxyExpiryService, subscriptionExpiryService, usageCleanupService, idempotencyCleanupService, batchImageCleanupService, batchImageWorkerRuntime, pricingService, emailQueueService, billingCacheService, usageRecordWorkerPool, subscriptionService, oAuthService, openAIOAuthService, geminiOAuthService, antigravityOAuthService, grokOAuthService, openAIGatewayService, scheduledTestRunnerService, backupService, paymentOrderExpiryService, channelMonitorRunner, imageStudioJobService, userPlatformQuotaUsageFlusher, firstTokenTimeoutPolicy, firstTokenTimeoutStatsRecorder)
 	application := &Application{
 		Server:  httpServer,
 		Cleanup: v,
@@ -360,16 +362,21 @@ func provideCleanup(
 	imageStudioJobService *service.ImageStudioJobService,
 	quotaFlusher *service.UserPlatformQuotaUsageFlusher,
 	firstTokenTimeoutPolicy *service.FirstTokenTimeoutPolicy,
+	firstTokenStatsRecorder *service.FirstTokenTimeoutStatsRecorder,
 ) func() {
-	stopFirstTokenPolicy := func() {}
+	appCtx, cancelApp := context.WithCancel(context.Background())
 	if firstTokenTimeoutPolicy != nil {
-		firstTokenPolicyCtx, cancelFirstTokenPolicy := context.WithCancel(context.Background())
-		stopFirstTokenPolicy = cancelFirstTokenPolicy
-		firstTokenTimeoutPolicy.Start(firstTokenPolicyCtx)
+		firstTokenTimeoutPolicy.Start(appCtx)
+	}
+	if firstTokenStatsRecorder != nil {
+		firstTokenStatsRecorder.Start(appCtx)
 	}
 
 	return func() {
-		stopFirstTokenPolicy()
+		cancelApp()
+		if firstTokenStatsRecorder != nil {
+			firstTokenStatsRecorder.Stop()
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 

@@ -26,6 +26,43 @@ func newCompactBodySignalTestContext(t *testing.T, path string, body []byte) *gi
 	return c
 }
 
+func TestFirstTokenTrackingCompactEligibilityUsesBodySignalClientStream(t *testing.T) {
+	h := &OpenAIGatewayHandler{}
+	policy := firstTokenRunnerPolicyStub{snapshot: service.FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 15 * time.Second}}
+
+	t.Run("direct compact path is excluded", func(t *testing.T) {
+		body := []byte(`{"model":"gpt-5.5","stream":true,"input":[{"type":"compaction_trigger"}]}`)
+		c := newCompactBodySignalTestContext(t, "/v1/responses/compact", body)
+		normalized, ok := h.normalizeOpenAIResponsesCompactRequest(c, zap.NewNop(), body)
+		require.True(t, ok)
+		reqStream, streamOK := parseOpenAICompatibleStream(normalized)
+		require.True(t, streamOK)
+		recorder := &firstTokenRunnerStatsRecorderSpy{}
+
+		tracker := beginFirstTokenRequestTracking(c, policy, recorder, service.ProtocolResponses, openAIResponsesFirstTokenStream(c, reqStream), "gpt-5.5", normalized)
+
+		require.Nil(t, tracker)
+		require.Empty(t, recorder.snapshot())
+	})
+
+	t.Run("body signal client stream is tracked", func(t *testing.T) {
+		body := []byte(`{"model":"gpt-5.5","stream":true,"input":[{"type":"compaction_trigger"}]}`)
+		c := newCompactBodySignalTestContext(t, "/v1/responses", body)
+		normalized, ok := h.normalizeOpenAIResponsesCompactRequest(c, zap.NewNop(), body)
+		require.True(t, ok)
+		reqStream, streamOK := parseOpenAICompatibleStream(normalized)
+		require.True(t, streamOK)
+		recorder := &firstTokenRunnerStatsRecorderSpy{}
+
+		tracker := beginFirstTokenRequestTracking(c, policy, recorder, service.ProtocolResponses, openAIResponsesFirstTokenStream(c, reqStream), "gpt-5.5", normalized)
+
+		require.NotNil(t, tracker)
+		tracker.Abandon()
+		tracker.Finish()
+		require.Empty(t, recorder.snapshot())
+	})
+}
+
 func TestNormalizeOpenAIResponsesCompactRequest_RemoteV2StaysOnResponses(t *testing.T) {
 	h := &OpenAIGatewayHandler{}
 	body := []byte(`{

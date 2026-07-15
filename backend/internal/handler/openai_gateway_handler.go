@@ -39,6 +39,7 @@ type OpenAIGatewayHandler struct {
 	maxAccountSwitches       int
 	cfg                      *config.Config
 	firstTokenTimeoutPolicy  *service.FirstTokenTimeoutPolicy
+	firstTokenStatsRecorder  service.FirstTokenStatsRecorder
 }
 
 func resolveOpenAIMessagesDispatchMappedModel(apiKey *service.APIKey, requestedModel string) string {
@@ -126,6 +127,7 @@ func NewOpenAIGatewayHandler(
 	opsService *service.OpsService,
 	cfg *config.Config,
 	firstTokenTimeoutPolicy *service.FirstTokenTimeoutPolicy,
+	firstTokenStatsRecorder service.FirstTokenStatsRecorder,
 ) *OpenAIGatewayHandler {
 	pingInterval := time.Duration(0)
 	maxAccountSwitches := 3
@@ -148,6 +150,7 @@ func NewOpenAIGatewayHandler(
 		maxAccountSwitches:       maxAccountSwitches,
 		cfg:                      cfg,
 		firstTokenTimeoutPolicy:  firstTokenTimeoutPolicy,
+		firstTokenStatsRecorder:  firstTokenStatsRecorder,
 	}
 }
 
@@ -322,6 +325,8 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	if h.rejectIfCyberSessionBlocked(c, apiKey, sessionHashBody, reqModel, cyberBlockFormatResponses) {
 		return
 	}
+	firstTokenTracker := beginFirstTokenRequestTracking(c, h.firstTokenTimeoutPolicy, h.firstTokenStatsRecorder, service.ProtocolResponses, openAIResponsesFirstTokenStream(c, reqStream), reqModel, body)
+	defer firstTokenTracker.Finish()
 	requireCompact := isOpenAIRemoteCompactPath(c)
 
 	maxAccountSwitches := h.maxAccountSwitches
@@ -842,6 +847,8 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	if h.rejectIfCyberSessionBlocked(c, apiKey, body, reqModel, cyberBlockFormatAnthropic) {
 		return
 	}
+	firstTokenTracker := beginFirstTokenRequestTracking(c, h.firstTokenTimeoutPolicy, h.firstTokenStatsRecorder, service.ProtocolAnthropicMessages, reqStream, reqModel, body)
+	defer firstTokenTracker.Finish()
 
 	maxAccountSwitches := h.maxAccountSwitches
 	switchCount := 0

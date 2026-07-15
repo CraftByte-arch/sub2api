@@ -502,21 +502,21 @@ git commit -m "feat: store hourly first token timeout stats"
 - Modify: `backend/internal/handler/openai_chat_completions.go`
 - Modify: `backend/cmd/server/wire_gen.go`
 
-- [ ] **Step 1: 写恰好一次 outcome 与分类失败测试**
+- [x] **Step 1: 写恰好一次 outcome 与分类失败测试**
 
 断言 timeout+success => 2 attempt rows + 1 `recovered_after_ttft` request；timeout+other failure => request `other_failure` 且 affected=1；客户端取消 outcome 存在但不进入 rate；重复 Finish 只产生一次 event。
 
-- [ ] **Step 2: 写 recorder 非阻塞与故障健康失败测试**
+- [x] **Step 2: 写 recorder 非阻塞与故障健康失败测试**
 
 用容量 1 queue 和阻塞 fake repo：第三次 Record 必须立即返回并增加 dropped；flush error 不返回到请求调用方；成功后 lastSuccessfulFlush 更新但 dropped 不清零；Stop 最多等待 2 秒。
 
-- [ ] **Step 3: 运行并确认失败**
+- [x] **Step 3: 运行并确认失败**
 
 Run: `cd backend && go test ./internal/service -run 'FirstToken(Tracking|StatsRecorder|FailureKind)' -count=1`
 
 Expected: FAIL，tracker/recorder 未定义。
 
-- [ ] **Step 4: 实现 tracker 与固定优先级分类**
+- [x] **Step 4: 实现 tracker 与固定优先级分类**
 
 ```go
 type FirstTokenRequestTracker struct {
@@ -532,21 +532,21 @@ func (t *FirstTokenRequestTracker) Finish(err error, clientCanceled bool)
 
 按 design 的 rate_limit/auth/4xx/5xx/transport/stream_idle_timeout/protocol/other 顺序分类；TTFT 与 client cancel 先短路。
 
-- [ ] **Step 5: 实现 recorder**
+- [x] **Step 5: 实现 recorder**
 
 4096 channel、1000 unique keys、5 秒 ticker、2 秒 flush context、map swap、失败批次按 sample count 增加 dropped、每日 DeleteBefore(now-90d)、健康快照。Record 只用 non-blocking select。
 
-- [ ] **Step 6: 接入 handler request/attempt 终结**
+- [x] **Step 6: 接入 handler request/attempt 终结**
 
 只在 enabled eligible request 创建 request tracker；attempt runner 每次实际发起上游时创建/Finish attempt；handler 所有最终 return 通过单一 defer Finish request。语义 commit 保存真实 TTFT；timeout 不把阈值写成 TTFT sample。
 
-- [ ] **Step 7: 运行 race 与生命周期测试**
+- [x] **Step 7: 运行 race 与生命周期测试**
 
 Run: `cd backend && go test -race ./internal/service ./internal/handler -run 'FirstToken(Tracking|StatsRecorder|Timeout)' -count=1`
 
 Expected: PASS，无重复 outcome、无 race。
 
-- [ ] **Step 8: 生成 Wire 并提交**
+- [x] **Step 8: 生成 Wire 并提交**
 
 Run: `cd backend && go generate ./cmd/server`
 

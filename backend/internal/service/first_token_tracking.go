@@ -36,6 +36,8 @@ type FirstTokenStatsAttemptMetadata struct {
 	Platform  string
 }
 
+type firstTokenRequestTrackerContextKey struct{}
+
 type firstTokenTrackedAttemptResult struct {
 	outcome        string
 	failureKind    string
@@ -54,9 +56,11 @@ type FirstTokenRequestTracker struct {
 	finalizeOnce          sync.Once
 	mu                    sync.Mutex
 	finishing             bool
+	abandoned             bool
 	succeeded             bool
 	active                int
 	attempts              []*FirstTokenAttemptTracker
+	uncontrolled          *firstTokenTrackedAttemptResult
 }
 
 type FirstTokenAttemptTracker struct {
@@ -76,6 +80,24 @@ func NewFirstTokenRequestTracker(
 	snapshot FirstTokenTimeoutSnapshot,
 ) *FirstTokenRequestTracker {
 	return newFirstTokenRequestTrackerWithClock(recorder, parent, protocol, model, snapshot, time.Now)
+}
+
+func WithFirstTokenRequestTracker(ctx context.Context, tracker *FirstTokenRequestTracker) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if tracker == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, firstTokenRequestTrackerContextKey{}, tracker)
+}
+
+func FirstTokenRequestTrackerFromContext(ctx context.Context) *FirstTokenRequestTracker {
+	if ctx == nil {
+		return nil
+	}
+	tracker, _ := ctx.Value(firstTokenRequestTrackerContextKey{}).(*FirstTokenRequestTracker)
+	return tracker
 }
 
 func newFirstTokenRequestTrackerWithClock(
@@ -135,12 +157,49 @@ func (t *FirstTokenRequestTracker) BeginAttempt(meta FirstTokenStatsAttemptMetad
 	attempt.ttftMS.Store(-1)
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.finishing || t.succeeded {
+	if t.finishing || t.abandoned || t.succeeded {
 		return nil
 	}
+	t.uncontrolled = nil
 	t.attempts = append(t.attempts, attempt)
 	t.active++
 	return attempt
+}
+
+func (t *FirstTokenRequestTracker) Abandon() {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.finishing || t.active != 0 || len(t.attempts) != 0 || t.uncontrolled != nil {
+		return
+	}
+	t.abandoned = true
+}
+
+func (t *FirstTokenRequestTracker) ObserveUncontrolledAttempt(err error, snapshot FirstTokenTimeoutSnapshot) {
+	if t == nil {
+		return
+	}
+	result := &firstTokenTrackedAttemptResult{
+		outcome:        FirstTokenStatsAttemptSuccess,
+		timeoutSeconds: firstTokenTimeoutSeconds(snapshot.Timeout),
+	}
+	if err != nil {
+		result.outcome = FirstTokenStatsAttemptOtherFailure
+		result.failureKind = classifyFirstTokenFailureKind(err)
+	}
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.finishing || t.abandoned || t.succeeded {
+		return
+	}
+	t.uncontrolled = result
+	if err == nil {
+		t.succeeded = true
+	}
 }
 
 func (t *FirstTokenRequestTracker) Finish() {
@@ -164,20 +223,32 @@ func (t *FirstTokenRequestTracker) finalize() {
 	}
 	t.finalizeOnce.Do(func() {
 		t.mu.Lock()
+		abandoned := t.abandoned
 		trackedAttempts := append([]*FirstTokenAttemptTracker(nil), t.attempts...)
+		uncontrolled := t.uncontrolled
 		attempts := make([]firstTokenTrackedAttemptResult, 0, len(trackedAttempts))
 		for _, attempt := range trackedAttempts {
 			attempts = append(attempts, attempt.result)
 		}
 		t.mu.Unlock()
+		if abandoned {
+			return
+		}
+		if len(attempts) == 0 && uncontrolled != nil {
+			return
+		}
 
 		outcome := FirstTokenStatsRequestOtherFailure
 		failureKind := FirstTokenStatsFailureOther
 		timeoutSeconds := t.requestTimeoutSeconds
 		affected := int64(0)
 		hadTimeout := false
-		if len(attempts) > 0 {
+		if uncontrolled != nil {
+			timeoutSeconds = uncontrolled.timeoutSeconds
+		} else if len(attempts) > 0 {
 			timeoutSeconds = attempts[len(attempts)-1].timeoutSeconds
+		}
+		if len(attempts) > 0 {
 			for _, attempt := range attempts {
 				if attempt.outcome == FirstTokenStatsAttemptTTFTTimeout {
 					hadTimeout = true
@@ -185,11 +256,21 @@ func (t *FirstTokenRequestTracker) finalize() {
 			}
 		}
 
+		finalResult := firstTokenTrackedAttemptResult{}
+		hasFinalResult := false
+		if uncontrolled != nil {
+			finalResult = *uncontrolled
+			hasFinalResult = true
+		} else if len(attempts) > 0 {
+			finalResult = attempts[len(attempts)-1]
+			hasFinalResult = true
+		}
+
 		switch {
 		case t.parent.Err() != nil:
 			outcome = FirstTokenStatsRequestClientCanceled
 			failureKind = ""
-		case len(attempts) > 0 && attempts[len(attempts)-1].outcome == FirstTokenStatsAttemptSuccess:
+		case hasFinalResult && finalResult.outcome == FirstTokenStatsAttemptSuccess:
 			failureKind = ""
 			if hadTimeout {
 				outcome = FirstTokenStatsRequestRecoveredAfterTTFT
@@ -197,13 +278,13 @@ func (t *FirstTokenRequestTracker) finalize() {
 			} else {
 				outcome = FirstTokenStatsRequestSuccess
 			}
-		case len(attempts) > 0 && attempts[len(attempts)-1].outcome == FirstTokenStatsAttemptTTFTTimeout:
+		case hasFinalResult && finalResult.outcome == FirstTokenStatsAttemptTTFTTimeout:
 			outcome = FirstTokenStatsRequestTTFTExhausted
 			failureKind = ""
 			affected = 1
-		case len(attempts) > 0:
+		case hasFinalResult:
 			outcome = FirstTokenStatsRequestOtherFailure
-			failureKind = attempts[len(attempts)-1].failureKind
+			failureKind = finalResult.failureKind
 			if failureKind == "" {
 				failureKind = FirstTokenStatsFailureOther
 			}

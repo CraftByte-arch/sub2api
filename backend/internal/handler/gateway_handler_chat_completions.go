@@ -147,6 +147,8 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 	if apiKey.Group != nil {
 		groupPlatform = apiKey.Group.Platform
 	}
+	firstTokenTracker := beginFirstTokenRequestTracking(c, h.firstTokenTimeoutPolicy, h.firstTokenStatsRecorder, service.ProtocolChatCompletions, reqStream, reqModel, body)
+	defer firstTokenTracker.Finish()
 	selectionSessionHash := sessionHash
 	if groupPlatform == service.PlatformGemini && selectionSessionHash != "" {
 		selectionSessionHash = "gemini:" + selectionSessionHash

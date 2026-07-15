@@ -605,6 +605,8 @@ var ProviderSet = wire.NewSet(
 	NewAnnouncementService,
 	NewAdminService,
 	NewFirstTokenTimeoutPolicy,
+	NewFirstTokenTimeoutStatsRecorder,
+	wire.Bind(new(FirstTokenStatsRecorder), new(*FirstTokenTimeoutStatsRecorder)),
 	NewGatewayService,
 	NewOpenAIGatewayService,
 	ProvideBatchImageModelPricingResolver,

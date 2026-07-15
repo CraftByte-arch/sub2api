@@ -342,6 +342,100 @@ func TestFirstTokenTrackingFinalAttemptOverridesHistoricalSuccess(t *testing.T) 
 	require.Equal(t, 20, deltas[2].TimeoutSeconds)
 }
 
+func TestFirstTokenRequestTrackerContextBindingIsNilSafeAndPreservedByAttempt(t *testing.T) {
+	require.Nil(t, FirstTokenRequestTrackerFromContext(nil))
+
+	request := NewFirstTokenRequestTracker(
+		&firstTokenStatsRecorderSpy{},
+		context.Background(),
+		ProtocolResponses,
+		"gpt-5",
+		FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 30 * time.Second},
+	)
+	ctx := WithFirstTokenRequestTracker(nil, request)
+	require.Same(t, request, FirstTokenRequestTrackerFromContext(ctx))
+
+	attempt := NewFirstTokenAttempt(ctx, time.Second)
+	t.Cleanup(attempt.Close)
+	require.Same(t, request, FirstTokenRequestTrackerFromContext(attempt.Context()))
+	require.Same(t, ctx, WithFirstTokenRequestTracker(ctx, nil))
+}
+
+func TestFirstTokenTrackingAbandonsRequestWithOnlyUncontrolledAttempt(t *testing.T) {
+	recorder := &firstTokenStatsRecorderSpy{}
+	request := NewFirstTokenRequestTracker(recorder, context.Background(), ProtocolResponses, "gpt-5", FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 30 * time.Second})
+
+	request.ObserveUncontrolledAttempt(nil, FirstTokenTimeoutSnapshot{Enabled: false, Timeout: 12 * time.Second})
+	request.Finish()
+
+	require.Empty(t, recorder.snapshot(t))
+}
+
+func TestFirstTokenTrackingExplicitAbandonSuppressesLocalIntercept(t *testing.T) {
+	recorder := &firstTokenStatsRecorderSpy{}
+	request := NewFirstTokenRequestTracker(recorder, context.Background(), ProtocolAnthropicMessages, "claude", FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 30 * time.Second})
+
+	request.Abandon()
+	request.Finish()
+
+	require.Empty(t, recorder.snapshot(t))
+}
+
+func TestFirstTokenTrackingUsesUncontrolledFinalAttemptAfterControlledTimeout(t *testing.T) {
+	t.Run("success is recovered with direct forward threshold", func(t *testing.T) {
+		recorder := &firstTokenStatsRecorderSpy{}
+		request := NewFirstTokenRequestTracker(recorder, context.Background(), ProtocolResponses, "gpt-5", FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 30 * time.Second})
+		attempt := request.BeginAttempt(FirstTokenStatsAttemptMetadata{AccountID: 1, Platform: PlatformOpenAI}, FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 20 * time.Second})
+		attempt.Finish(NewFirstTokenTimeoutFailoverError(), FirstTokenTimedOut)
+
+		request.ObserveUncontrolledAttempt(nil, FirstTokenTimeoutSnapshot{Enabled: false, Timeout: 12 * time.Second})
+		request.Finish()
+
+		deltas := recorder.snapshot(t)
+		require.Len(t, deltas, 2)
+		require.Equal(t, FirstTokenStatsAttemptTTFTTimeout, deltas[0].Outcome)
+		require.Equal(t, FirstTokenStatsRequestRecoveredAfterTTFT, deltas[1].Outcome)
+		require.Equal(t, int64(1), deltas[1].TTFTAffectedCount)
+		require.Equal(t, 12, deltas[1].TimeoutSeconds)
+	})
+
+	t.Run("other failure stays affected and uses direct forward threshold", func(t *testing.T) {
+		recorder := &firstTokenStatsRecorderSpy{}
+		request := NewFirstTokenRequestTracker(recorder, context.Background(), ProtocolResponses, "gpt-5", FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 30 * time.Second})
+		attempt := request.BeginAttempt(FirstTokenStatsAttemptMetadata{AccountID: 1, Platform: PlatformOpenAI}, FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 20 * time.Second})
+		attempt.Finish(NewFirstTokenTimeoutFailoverError(), FirstTokenTimedOut)
+
+		request.ObserveUncontrolledAttempt(io.ErrUnexpectedEOF, FirstTokenTimeoutSnapshot{Enabled: false, Timeout: 9 * time.Second})
+		request.Finish()
+
+		deltas := recorder.snapshot(t)
+		require.Len(t, deltas, 2)
+		require.Equal(t, FirstTokenStatsRequestOtherFailure, deltas[1].Outcome)
+		require.Equal(t, FirstTokenStatsFailureTransport, deltas[1].FailureKind)
+		require.Equal(t, int64(1), deltas[1].TTFTAffectedCount)
+		require.Equal(t, 9, deltas[1].TimeoutSeconds)
+	})
+}
+
+func TestFirstTokenTrackingLaterControlledAttemptSupersedesUncontrolledFailure(t *testing.T) {
+	recorder := &firstTokenStatsRecorderSpy{}
+	request := NewFirstTokenRequestTracker(recorder, context.Background(), ProtocolResponses, "gpt-5", FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 30 * time.Second})
+	first := request.BeginAttempt(FirstTokenStatsAttemptMetadata{AccountID: 1, Platform: PlatformOpenAI}, FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 20 * time.Second})
+	first.Finish(NewFirstTokenTimeoutFailoverError(), FirstTokenTimedOut)
+	request.ObserveUncontrolledAttempt(io.ErrUnexpectedEOF, FirstTokenTimeoutSnapshot{Enabled: false, Timeout: 9 * time.Second})
+	last := request.BeginAttempt(FirstTokenStatsAttemptMetadata{AccountID: 3, Platform: PlatformOpenAI}, FirstTokenTimeoutSnapshot{Enabled: true, Timeout: 14 * time.Second})
+	last.MarkFirstToken(50 * time.Millisecond)
+	last.Finish(nil, FirstTokenCommitted)
+	request.Finish()
+
+	deltas := recorder.snapshot(t)
+	require.Len(t, deltas, 3)
+	require.Equal(t, int64(3), deltas[1].AccountID)
+	require.Equal(t, FirstTokenStatsAttemptSuccess, deltas[1].Outcome)
+	require.Equal(t, FirstTokenStatsRequestRecoveredAfterTTFT, deltas[2].Outcome)
+	require.Equal(t, 14, deltas[2].TimeoutSeconds)
+}
+
 func TestFirstTokenTrackingRejectsInvalidRequestDimensions(t *testing.T) {
 	tests := []struct {
 		name     string

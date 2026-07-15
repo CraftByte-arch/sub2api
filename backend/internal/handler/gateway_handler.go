@@ -55,6 +55,7 @@ type GatewayHandler struct {
 	cfg                       *config.Config
 	settingService            *service.SettingService
 	firstTokenTimeoutPolicy   *service.FirstTokenTimeoutPolicy
+	firstTokenStatsRecorder   service.FirstTokenStatsRecorder
 }
 
 // NewGatewayHandler creates a new GatewayHandler
@@ -74,6 +75,7 @@ func NewGatewayHandler(
 	cfg *config.Config,
 	settingService *service.SettingService,
 	firstTokenTimeoutPolicy *service.FirstTokenTimeoutPolicy,
+	firstTokenStatsRecorder service.FirstTokenStatsRecorder,
 ) *GatewayHandler {
 	pingInterval := time.Duration(0)
 	maxAccountSwitches := 10
@@ -112,6 +114,7 @@ func NewGatewayHandler(
 		cfg:                       cfg,
 		settingService:            settingService,
 		firstTokenTimeoutPolicy:   firstTokenTimeoutPolicy,
+		firstTokenStatsRecorder:   firstTokenStatsRecorder,
 	}
 }
 
@@ -238,6 +241,8 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		h.handleStreamingAwareError(c, status, code, message, streamStarted)
 		return
 	}
+	firstTokenTracker := beginFirstTokenRequestTracking(c, h.firstTokenTimeoutPolicy, h.firstTokenStatsRecorder, service.ProtocolAnthropicMessages, reqStream, reqModel, body)
+	defer firstTokenTracker.Finish()
 
 	// 设置请求所属分组 ID（用于渠道级功能判断，如 WebSearch 模拟）
 	parsedReq.GroupID = apiKey.GroupID
@@ -347,6 +352,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			if account.IsInterceptWarmupEnabled() {
 				interceptType := detectInterceptType(body, reqModel, parsedReq.MaxTokens, isClaudeCodeClient)
 				if interceptType != InterceptTypeNone {
+					firstTokenTracker.Abandon()
 					if selection.Acquired && selection.ReleaseFunc != nil {
 						selection.ReleaseFunc()
 					}
@@ -652,6 +658,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			if account.IsInterceptWarmupEnabled() {
 				interceptType := detectInterceptType(body, reqModel, parsedReq.MaxTokens, isClaudeCodeClient)
 				if interceptType != InterceptTypeNone {
+					firstTokenTracker.Abandon()
 					if selection.Acquired && selection.ReleaseFunc != nil {
 						selection.ReleaseFunc()
 					}

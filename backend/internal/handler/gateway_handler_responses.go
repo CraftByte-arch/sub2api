@@ -152,6 +152,8 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 		APIKeyID:  apiKey.ID,
 	}
 	sessionHash := h.gatewayService.GenerateSessionHash(parsedReq)
+	firstTokenTracker := beginFirstTokenRequestTracking(c, h.firstTokenTimeoutPolicy, h.firstTokenStatsRecorder, service.ProtocolResponses, reqStream, reqModel, body)
+	defer firstTokenTracker.Finish()
 
 	// 3. Account selection + failover loop
 	fs := NewFailoverState(h.maxAccountSwitches, false)

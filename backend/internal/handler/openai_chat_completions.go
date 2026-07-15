@@ -127,6 +127,8 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 
 	sessionHash := h.gatewayService.GenerateSessionHash(c, body)
 	promptCacheKey := h.gatewayService.ExtractSessionID(c, body)
+	firstTokenTracker := beginFirstTokenRequestTracking(c, h.firstTokenTimeoutPolicy, h.firstTokenStatsRecorder, service.ProtocolChatCompletions, reqStream, reqModel, body)
+	defer firstTokenTracker.Finish()
 
 	maxAccountSwitches := h.maxAccountSwitches
 	switchCount := 0

@@ -224,12 +224,14 @@ func TestFirstTokenTimeoutBillingFailoverThenSuccessRecordsOnce(t *testing.T) {
 	}
 	policy := service.NewFirstTokenTimeoutPolicy(firstTokenBillingSettingRepo{}, nil)
 	require.NoError(t, policy.Update(context.Background(), service.FirstTokenTimeoutSettings{Enabled: true, TimeoutSeconds: 1}))
+	statsRecorder := &firstTokenRunnerStatsRecorderSpy{}
 	h := NewOpenAIGatewayHandler(
 		gateway,
 		service.NewConcurrencyService(concurrencyCache),
 		billingCache,
 		service.NewAPIKeyService(nil, nil, nil, nil, nil, nil, cfg),
 		nil, nil, nil, nil, cfg, policy,
+		statsRecorder,
 	)
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -249,6 +251,18 @@ func TestFirstTokenTimeoutBillingFailoverThenSuccessRecordsOnce(t *testing.T) {
 	require.Equal(t, 1, usageRepo.callCount())
 	require.Equal(t, 1, userRepo.callCount())
 	require.Contains(t, recorder.Body.String(), "resp_ttft_success")
+	deltas := statsRecorder.snapshot()
+	require.Len(t, deltas, 3)
+	require.Equal(t, service.FirstTokenStatsScopeAttempt, deltas[0].Scope)
+	require.Equal(t, int64(1), deltas[0].AccountID)
+	require.Equal(t, service.FirstTokenStatsAttemptTTFTTimeout, deltas[0].Outcome)
+	require.Equal(t, service.FirstTokenStatsScopeAttempt, deltas[1].Scope)
+	require.Equal(t, int64(2), deltas[1].AccountID)
+	require.Equal(t, service.FirstTokenStatsAttemptSuccess, deltas[1].Outcome)
+	require.Equal(t, int64(1), deltas[1].TTFTSampleCount)
+	require.Equal(t, service.FirstTokenStatsScopeRequest, deltas[2].Scope)
+	require.Equal(t, service.FirstTokenStatsRequestRecoveredAfterTTFT, deltas[2].Outcome)
+	require.Equal(t, int64(1), deltas[2].TTFTAffectedCount)
 
 	rawEvents, ok := c.Get(service.OpsUpstreamErrorsKey)
 	require.True(t, ok)
@@ -267,4 +281,56 @@ func TestFirstTokenTimeoutBillingFailoverThenSuccessRecordsOnce(t *testing.T) {
 	deductUserID, deductAmount := userRepo.deduction()
 	require.Equal(t, int64(8001), deductUserID)
 	require.Positive(t, deductAmount)
+}
+
+func TestFirstTokenTrackingNoAccountSelectionRecordsRequestOnly(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	groupID := int64(9002)
+	accountRepo := &firstTokenBillingAccountRepo{}
+	usageRepo := &firstTokenBillingUsageRepo{}
+	userRepo := &firstTokenBillingUserRepo{}
+	cfg := &config.Config{RunMode: config.RunModeStandard}
+	cfg.Default.RateMultiplier = 1
+	billingCache := service.NewBillingCacheService(nil, userRepo, nil, nil, nil, nil, cfg, nil)
+	t.Cleanup(billingCache.Stop)
+	gateway := service.NewOpenAIGatewayService(
+		accountRepo, usageRepo, nil, userRepo, nil, nil, firstTokenBillingGatewayCache{}, cfg, nil, nil,
+		service.NewBillingService(cfg, nil), nil, billingCache, &firstTokenBillingHTTPUpstream{},
+		&service.DeferredService{}, nil, nil, nil, nil, nil, nil, nil,
+	)
+	concurrencyCache := &concurrencyCacheMock{
+		acquireUserSlotFn:    func(context.Context, int64, int, string) (bool, error) { return true, nil },
+		acquireAccountSlotFn: func(context.Context, int64, int, string) (bool, error) { return true, nil },
+	}
+	policy := service.NewFirstTokenTimeoutPolicy(firstTokenBillingSettingRepo{}, nil)
+	require.NoError(t, policy.Update(context.Background(), service.FirstTokenTimeoutSettings{Enabled: true, TimeoutSeconds: 23}))
+	statsRecorder := &firstTokenRunnerStatsRecorderSpy{}
+	h := NewOpenAIGatewayHandler(
+		gateway,
+		service.NewConcurrencyService(concurrencyCache),
+		billingCache,
+		service.NewAPIKeyService(nil, nil, nil, nil, nil, nil, cfg),
+		nil, nil, nil, nil, cfg, policy, statsRecorder,
+	)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", bytes.NewBufferString(`{"model":"gpt-5.1","stream":true,"input":"hello"}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	apiKey := &service.APIKey{
+		ID: 7002, GroupID: &groupID,
+		User:  &service.User{ID: 8002, Status: service.StatusActive, Balance: 100},
+		Group: &service.Group{ID: groupID, Platform: service.PlatformOpenAI, Status: service.StatusActive, RateMultiplier: 1},
+	}
+	c.Set(string(middleware2.ContextKeyAPIKey), apiKey)
+	c.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: apiKey.User.ID, Concurrency: 1})
+
+	h.Responses(c)
+
+	deltas := statsRecorder.snapshot()
+	require.Len(t, deltas, 1)
+	require.Equal(t, service.FirstTokenStatsScopeRequest, deltas[0].Scope)
+	require.Zero(t, deltas[0].AccountID)
+	require.Equal(t, service.FirstTokenStatsRequestOtherFailure, deltas[0].Outcome)
+	require.Equal(t, service.FirstTokenStatsFailureOther, deltas[0].FailureKind)
+	require.Equal(t, 23, deltas[0].TimeoutSeconds)
 }

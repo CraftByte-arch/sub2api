@@ -30,8 +30,8 @@
 
 - [x] 5.1 新增 `first_token_timeout_stats_hourly` migration，定义 attempt/request scope、维度哨兵、outcome/failure kind 约束、加法 UPSERT 唯一键和 90 天查询索引，并增加迁移测试
 - [x] 5.2 新增独立 stats port/repository，实现批量原子 UPSERT、汇总/趋势/失败分类/账号分页查询和 90 天幂等清理，覆盖多实例累加与阈值快照测试
-- [ ] 5.3 新增有界异步 recorder，支持非阻塞 Record、5 秒/批量阈值 flush、2 秒停机 flush、dropped count、last successful flush 和每日清理，覆盖 DB 失败不传播及竞态测试
-- [ ] 5.4 在 attempt 与 request 生命周期末端各记录一次 outcome，统一其他失败分类，确保 client_canceled 排除率分母、TTFT 后其他失败仍进入受影响 request 分母
+- [x] 5.3 新增有界异步 recorder，支持非阻塞 Record、5 秒/批量阈值 flush、2 秒停机 flush、dropped count、last successful flush 和每日清理，覆盖 DB 失败不传播及竞态测试
+- [x] 5.4 在 attempt 与 request 生命周期末端各记录一次 outcome，统一其他失败分类，确保 client_canceled 排除率分母、TTFT 后其他失败仍进入受影响 request 分母
 - [ ] 5.5 新增管理员 TTFT summary/trend/failure-distribution/account-stats API、DTO、参数校验和 completeness 元数据，覆盖 24h/7d/30d/90d、协议/模型与账号局部筛选
 
 ## 6. 独立管理员页面

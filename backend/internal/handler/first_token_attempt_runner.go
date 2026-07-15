@@ -57,6 +57,30 @@ func openAIResponsesFirstTokenStream(c *gin.Context, stream bool) bool {
 	return stream || service.OpenAICompactClientWantsStream(c)
 }
 
+func beginFirstTokenRequestTracking(
+	c *gin.Context,
+	policy firstTokenTimeoutPolicySnapshotter,
+	recorder service.FirstTokenStatsRecorder,
+	protocol service.FirstTokenProtocol,
+	stream bool,
+	model string,
+	body []byte,
+) *service.FirstTokenRequestTracker {
+	if recorder == nil || firstTokenPolicyDisabled(policy) || !firstTokenAttemptEligible(c, protocol, stream, model, body) {
+		return nil
+	}
+	snapshot := policy.Snapshot()
+	if !snapshot.Enabled {
+		return nil
+	}
+	tracker := service.NewFirstTokenRequestTracker(recorder, c.Request.Context(), protocol, model, snapshot)
+	if tracker == nil {
+		return nil
+	}
+	c.Request = c.Request.WithContext(service.WithFirstTokenRequestTracker(c.Request.Context(), tracker))
+	return tracker
+}
+
 func runEligibleFirstTokenAttempt[T any](
 	c *gin.Context,
 	policy firstTokenTimeoutPolicySnapshotter,
@@ -93,7 +117,7 @@ func runFirstTokenAttempt[T any](
 	policy firstTokenTimeoutPolicySnapshotter,
 	meta FirstTokenAttemptMetadata,
 	forward func(context.Context) (T, error),
-) (T, error) {
+) (result T, finalErr error) {
 	if c == nil || c.Request == nil || c.Writer == nil || firstTokenPolicyDisabled(policy) {
 		var ctx context.Context
 		if c != nil && c.Request != nil {
@@ -104,15 +128,35 @@ func runFirstTokenAttempt[T any](
 
 	snapshot := policy.Snapshot()
 	if !snapshot.Enabled {
-		return forward(c.Request.Context())
+		result, finalErr = forward(c.Request.Context())
+		if tracker := service.FirstTokenRequestTrackerFromContext(c.Request.Context()); tracker != nil {
+			tracker.ObserveUncontrolledAttempt(finalErr, snapshot)
+		}
+		return result, finalErr
 	}
 
 	originalWriter := c.Writer
 	originalRequest := c.Request
 	attempt := service.NewFirstTokenAttempt(originalRequest.Context(), snapshot.Timeout)
 	gate := NewFirstTokenResponseGate(originalWriter, attempt)
+	requestTracker := service.FirstTokenRequestTrackerFromContext(originalRequest.Context())
+	attemptTracker := requestTracker.BeginAttempt(service.FirstTokenStatsAttemptMetadata{
+		AccountID: meta.AccountID,
+		Platform:  meta.Platform,
+	}, snapshot)
+	if attemptTracker != nil {
+		defer func() { attemptTracker.Finish(finalErr, attempt.State()) }()
+	}
 	finishResponseCommitAttempt := service.BeginResponseCommitAttempt(c)
-	attemptCtx := service.WithFirstTokenAttempt(attempt.Context(), attempt, gate.Commit)
+	commitFirstToken := func() error {
+		elapsed := attempt.Elapsed()
+		if err := gate.Commit(); err != nil {
+			return err
+		}
+		attemptTracker.MarkFirstToken(elapsed)
+		return nil
+	}
+	attemptCtx := service.WithFirstTokenAttempt(attempt.Context(), attempt, commitFirstToken)
 	c.Writer = gate
 	c.Request = originalRequest.WithContext(attemptCtx)
 
@@ -125,7 +169,8 @@ func runFirstTokenAttempt[T any](
 	defer gate.Rollback()
 
 	result, forwardErr := forward(attemptCtx)
-	return result, finishFirstTokenAttempt(c, snapshot, meta, attempt, originalRequest.Context(), gate, forwardErr)
+	finalErr = finishFirstTokenAttempt(c, snapshot, meta, attempt, originalRequest.Context(), gate, forwardErr)
+	return result, finalErr
 }
 
 func finishFirstTokenAttempt(
