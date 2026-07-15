@@ -295,4 +295,3 @@ Full source: openspec/changes/configurable-first-token-timeout-failover/design.m
 ```
 
 Full source: openspec/changes/configurable-first-token-timeout-failover/specs/first-token-timeout-failover/spec.md
-
