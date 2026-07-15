@@ -1,5 +1,5 @@
 workflow: full
-phase: build
+phase: verify
 context_compression: off
 build_mode: subagent-driven-development
 build_pause: null
@@ -8,6 +8,7 @@ tdd_mode: tdd
 isolation: worktree
 verify_mode: null
 auto_transition: true
+build_command: make build
 base_ref: e15265205a50addfeba66f935b7e256ea2a51f20
 design_doc: docs/superpowers/specs/2026-07-14-first-token-timeout-failover-design.md
 plan: docs/superpowers/plans/2026-07-14-first-token-timeout-failover.md
