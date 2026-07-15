@@ -432,6 +432,18 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/ttft',
+    name: 'AdminTTFT',
+    component: () => import('@/views/admin/ttft/FirstTokenTimeoutView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'First Token Monitoring',
+      titleKey: 'admin.ttft.title',
+      descriptionKey: 'admin.ttft.description'
+    }
+  },
+  {
     path: '/admin/users',
     name: 'AdminUsers',
     component: () => import('@/views/admin/UsersView.vue'),
