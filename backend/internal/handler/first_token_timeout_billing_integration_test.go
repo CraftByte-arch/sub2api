@@ -1,0 +1,225 @@
+package handler
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
+	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
+	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/require"
+)
+
+type firstTokenBillingAccountRepo struct {
+	service.AccountRepository
+	accounts []service.Account
+}
+
+func (r *firstTokenBillingAccountRepo) GetByID(_ context.Context, id int64) (*service.Account, error) {
+	for i := range r.accounts {
+		if r.accounts[i].ID == id {
+			account := r.accounts[i]
+			return &account, nil
+		}
+	}
+	return nil, service.ErrNoAvailableAccounts
+}
+
+func (r *firstTokenBillingAccountRepo) ListSchedulableByPlatform(_ context.Context, platform string) ([]service.Account, error) {
+	return r.schedulable(platform), nil
+}
+
+func (r *firstTokenBillingAccountRepo) ListSchedulableByGroupIDAndPlatform(_ context.Context, _ int64, platform string) ([]service.Account, error) {
+	return r.schedulable(platform), nil
+}
+
+func (r *firstTokenBillingAccountRepo) ListSchedulableUngroupedByPlatform(_ context.Context, platform string) ([]service.Account, error) {
+	return r.schedulable(platform), nil
+}
+
+func (r *firstTokenBillingAccountRepo) schedulable(platform string) []service.Account {
+	out := make([]service.Account, 0, len(r.accounts))
+	for _, account := range r.accounts {
+		if account.Platform == platform && account.IsSchedulable() {
+			out = append(out, account)
+		}
+	}
+	return out
+}
+
+type firstTokenBillingHTTPUpstream struct {
+	service.HTTPUpstream
+	mu    sync.Mutex
+	calls []int64
+}
+
+func (u *firstTokenBillingHTTPUpstream) Do(req *http.Request, _ string, accountID int64, _ int) (*http.Response, error) {
+	u.mu.Lock()
+	u.calls = append(u.calls, accountID)
+	u.mu.Unlock()
+
+	var body io.ReadCloser
+	if accountID == 1 {
+		body = &firstTokenBlockingBody{ctx: req.Context()}
+	} else {
+		body = io.NopCloser(bytes.NewBufferString(
+			"data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\n" +
+				"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_ttft_success\",\"model\":\"gpt-5.1\",\"usage\":{\"input_tokens\":100,\"output_tokens\":20,\"total_tokens\":120}}}\n\n",
+		))
+	}
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       body,
+		Request:    req,
+	}, nil
+}
+
+func (u *firstTokenBillingHTTPUpstream) DoWithTLS(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, _ *tlsfingerprint.Profile) (*http.Response, error) {
+	return u.Do(req, proxyURL, accountID, accountConcurrency)
+}
+
+func (u *firstTokenBillingHTTPUpstream) accountCalls() []int64 {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return append([]int64(nil), u.calls...)
+}
+
+type firstTokenBlockingBody struct {
+	ctx context.Context
+}
+
+func (b *firstTokenBlockingBody) Read([]byte) (int, error) {
+	<-b.ctx.Done()
+	return 0, context.Cause(b.ctx)
+}
+
+func (b *firstTokenBlockingBody) Close() error { return nil }
+
+type firstTokenBillingUsageRepo struct {
+	service.UsageLogRepository
+	mu    sync.Mutex
+	calls int
+}
+
+func (r *firstTokenBillingUsageRepo) Create(_ context.Context, _ *service.UsageLog) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls++
+	return true, nil
+}
+
+func (r *firstTokenBillingUsageRepo) callCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.calls
+}
+
+type firstTokenBillingUserRepo struct {
+	service.UserRepository
+	mu          sync.Mutex
+	deductCalls int
+}
+
+func (r *firstTokenBillingUserRepo) GetByID(_ context.Context, id int64) (*service.User, error) {
+	return &service.User{ID: id, Status: service.StatusActive, Balance: 100}, nil
+}
+
+func (r *firstTokenBillingUserRepo) DeductBalance(_ context.Context, _ int64, _ float64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.deductCalls++
+	return nil
+}
+
+func (r *firstTokenBillingUserRepo) callCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.deductCalls
+}
+
+type firstTokenBillingSettingRepo struct {
+	service.SettingRepository
+}
+
+func (firstTokenBillingSettingRepo) Set(context.Context, string, string) error { return nil }
+
+type firstTokenBillingGatewayCache struct{}
+
+func (firstTokenBillingGatewayCache) GetSessionAccountID(context.Context, int64, string) (int64, error) {
+	return 0, errors.New("not found")
+}
+
+func (firstTokenBillingGatewayCache) SetSessionAccountID(context.Context, int64, string, int64, time.Duration) error {
+	return nil
+}
+
+func (firstTokenBillingGatewayCache) RefreshSessionTTL(context.Context, int64, string, time.Duration) error {
+	return nil
+}
+
+func (firstTokenBillingGatewayCache) DeleteSessionAccountID(context.Context, int64, string) error {
+	return nil
+}
+
+func TestFirstTokenTimeoutBillingFailoverThenSuccessRecordsOnce(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	groupID := int64(9001)
+	accountRepo := &firstTokenBillingAccountRepo{accounts: []service.Account{
+		{ID: 1, Name: "slow", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Status: service.StatusActive, Schedulable: true, Priority: 0, Credentials: map[string]any{"access_token": "token-1"}},
+		{ID: 2, Name: "fast", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Status: service.StatusActive, Schedulable: true, Priority: 1, Credentials: map[string]any{"access_token": "token-2"}},
+	}}
+	upstream := &firstTokenBillingHTTPUpstream{}
+	usageRepo := &firstTokenBillingUsageRepo{}
+	userRepo := &firstTokenBillingUserRepo{}
+	cfg := &config.Config{RunMode: config.RunModeStandard}
+	cfg.Default.RateMultiplier = 1
+	cfg.Gateway.MaxAccountSwitches = 3
+	billingCache := service.NewBillingCacheService(nil, userRepo, nil, nil, nil, nil, cfg, nil)
+	t.Cleanup(billingCache.Stop)
+	gateway := service.NewOpenAIGatewayService(
+		accountRepo, usageRepo, nil, userRepo, nil, nil, firstTokenBillingGatewayCache{}, cfg, nil, nil,
+		service.NewBillingService(cfg, nil), nil, billingCache, upstream,
+		&service.DeferredService{}, nil, nil, nil, nil, nil, nil, nil,
+	)
+	concurrencyCache := &concurrencyCacheMock{
+		acquireUserSlotFn:    func(context.Context, int64, int, string) (bool, error) { return true, nil },
+		acquireAccountSlotFn: func(context.Context, int64, int, string) (bool, error) { return true, nil },
+	}
+	policy := service.NewFirstTokenTimeoutPolicy(firstTokenBillingSettingRepo{}, nil)
+	require.NoError(t, policy.Update(context.Background(), service.FirstTokenTimeoutSettings{Enabled: true, TimeoutSeconds: 1}))
+	h := NewOpenAIGatewayHandler(
+		gateway,
+		service.NewConcurrencyService(concurrencyCache),
+		billingCache,
+		service.NewAPIKeyService(nil, nil, nil, nil, nil, nil, cfg),
+		nil, nil, nil, nil, cfg, policy,
+	)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", bytes.NewBufferString(`{"model":"gpt-5.1","stream":true,"input":"hello"}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	apiKey := &service.APIKey{
+		ID: 7001, GroupID: &groupID,
+		User:  &service.User{ID: 8001, Status: service.StatusActive, Balance: 100},
+		Group: &service.Group{ID: groupID, Platform: service.PlatformOpenAI, Status: service.StatusActive, RateMultiplier: 1},
+	}
+	c.Set(string(middleware2.ContextKeyAPIKey), apiKey)
+	c.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: apiKey.User.ID, Concurrency: 1})
+
+	h.Responses(c)
+
+	require.Equal(t, []int64{1, 2}, upstream.accountCalls())
+	require.Equal(t, 1, usageRepo.callCount())
+	require.Equal(t, 1, userRepo.callCount())
+	require.Contains(t, recorder.Body.String(), "resp_ttft_success")
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -25,6 +26,16 @@ const firstTokenTimeoutClientMessage = "Upstream timed out before first token"
 
 type firstTokenTimeoutPolicySnapshotter interface {
 	Snapshot() service.FirstTokenTimeoutSnapshot
+}
+
+type firstTokenAttemptTerminalController interface {
+	State() service.FirstTokenAttemptState
+	Cause() error
+	Elapsed() time.Duration
+}
+
+type firstTokenTerminalCommitter interface {
+	CommitTerminal() error
 }
 
 func firstTokenAttemptEligible(c *gin.Context, protocol service.FirstTokenProtocol, stream bool, model string, body []byte) bool {
@@ -112,43 +123,68 @@ func runFirstTokenAttempt[T any](
 	defer gate.Rollback()
 
 	result, forwardErr := forward(attemptCtx)
-	if failoverErr := firstTokenAttemptTerminalFailover(attempt, originalRequest.Context()); failoverErr != nil {
-		var typedFailover *service.UpstreamFailoverError
-		if errors.As(failoverErr, &typedFailover) && typedFailover.ErrorType == service.UpstreamErrorTypeFirstTokenTimeout {
-			logger.FromContext(originalRequest.Context()).Warn("gateway.first_token_timeout",
-				zap.String("protocol", string(meta.Protocol)),
-				zap.String("platform", meta.Platform),
-				zap.Int64("account", meta.AccountID),
-				zap.String("model", meta.Model),
-				zap.Duration("threshold", snapshot.Timeout),
-				zap.Int("attempt", meta.AttemptIndex),
-				zap.Int("switch", meta.SwitchCount),
-				zap.Duration("elapsed", attempt.Elapsed()),
-			)
+	return result, finishFirstTokenAttempt(c, snapshot, meta, attempt, originalRequest.Context(), gate, forwardErr)
+}
+
+func finishFirstTokenAttempt(
+	c *gin.Context,
+	snapshot service.FirstTokenTimeoutSnapshot,
+	meta FirstTokenAttemptMetadata,
+	attempt firstTokenAttemptTerminalController,
+	parent context.Context,
+	gate firstTokenTerminalCommitter,
+	forwardErr error,
+) error {
+	finalErr := firstTokenAttemptTerminalFailover(attempt, parent)
+	if finalErr == nil {
+		var existingFailover *service.UpstreamFailoverError
+		if errors.As(forwardErr, &existingFailover) {
+			finalErr = forwardErr
+		} else if attempt.State() == service.FirstTokenPending {
+			if forwardErr == nil {
+				finalErr = &service.UpstreamFailoverError{
+					StatusCode:             http.StatusBadGateway,
+					RetryableOnSameAccount: false,
+				}
+			} else if commitErr := gate.CommitTerminal(); commitErr != nil {
+				if terminalErr := firstTokenAttemptTerminalFailover(attempt, parent); terminalErr != nil {
+					finalErr = terminalErr
+				} else {
+					finalErr = commitErr
+				}
+			} else {
+				finalErr = forwardErr
+			}
+		} else {
+			finalErr = forwardErr
 		}
-		return result, failoverErr
 	}
 
-	var existingFailover *service.UpstreamFailoverError
-	if errors.As(forwardErr, &existingFailover) {
-		return result, forwardErr
+	var typedFailover *service.UpstreamFailoverError
+	if errors.As(finalErr, &typedFailover) && typedFailover.ErrorType == service.UpstreamErrorTypeFirstTokenTimeout {
+		elapsed := attempt.Elapsed()
+		logger.FromContext(parent).Warn("gateway.first_token_timeout",
+			zap.String("protocol", string(meta.Protocol)),
+			zap.String("platform", meta.Platform),
+			zap.Int64("account", meta.AccountID),
+			zap.String("model", meta.Model),
+			zap.Duration("threshold", snapshot.Timeout),
+			zap.Int("attempt", meta.AttemptIndex),
+			zap.Int("switch", meta.SwitchCount),
+			zap.Duration("elapsed", elapsed),
+		)
+		service.RecordFirstTokenTimeoutOpsEvent(c, service.FirstTokenTimeoutOpsEvent{
+			Protocol:     meta.Protocol,
+			Platform:     meta.Platform,
+			AccountID:    meta.AccountID,
+			Model:        meta.Model,
+			Threshold:    snapshot.Timeout,
+			AttemptIndex: meta.AttemptIndex,
+			SwitchCount:  meta.SwitchCount,
+			Elapsed:      elapsed,
+		})
 	}
-
-	if attempt.State() == service.FirstTokenPending {
-		if forwardErr == nil {
-			return result, &service.UpstreamFailoverError{
-				StatusCode:             http.StatusBadGateway,
-				RetryableOnSameAccount: false,
-			}
-		}
-		if commitErr := gate.CommitTerminal(); commitErr != nil {
-			if failoverErr := firstTokenAttemptTerminalFailover(attempt, originalRequest.Context()); failoverErr != nil {
-				return result, failoverErr
-			}
-			return result, commitErr
-		}
-	}
-	return result, forwardErr
+	return finalErr
 }
 
 func firstTokenPolicyDisabled(policy firstTokenTimeoutPolicySnapshotter) bool {
@@ -161,7 +197,7 @@ func firstTokenPolicyDisabled(policy firstTokenTimeoutPolicySnapshotter) bool {
 	return false
 }
 
-func firstTokenAttemptTerminalFailover(attempt *service.FirstTokenAttempt, parent context.Context) error {
+func firstTokenAttemptTerminalFailover(attempt firstTokenAttemptTerminalController, parent context.Context) error {
 	if attempt == nil {
 		return nil
 	}

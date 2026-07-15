@@ -72,8 +72,7 @@ func (s *FailoverState) HandleFailoverError(
 	failoverErr *service.UpstreamFailoverError,
 ) FailoverAction {
 	s.LastFailoverErr = failoverErr
-	retryableOnSameAccount := failoverErr.RetryableOnSameAccount &&
-		failoverErr.ErrorType != service.UpstreamErrorTypeFirstTokenTimeout
+	retryableOnSameAccount := shouldRetryFailoverOnSameAccount(failoverErr)
 
 	// 缓存计费判断
 	if needForceCacheBilling(s.hasBoundSession, failoverErr) {
@@ -127,6 +126,12 @@ func (s *FailoverState) HandleFailoverError(
 	}
 
 	return FailoverContinue
+}
+
+func shouldRetryFailoverOnSameAccount(failoverErr *service.UpstreamFailoverError) bool {
+	return failoverErr != nil &&
+		failoverErr.RetryableOnSameAccount &&
+		failoverErr.ErrorType != service.UpstreamErrorTypeFirstTokenTimeout
 }
 
 // HandleSelectionExhausted 处理选号失败（所有候选账号都在排除列表中）时的退避重试决策。

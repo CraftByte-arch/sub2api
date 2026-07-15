@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/json"
+	"net/http"
 	"strings"
 	"time"
 
@@ -174,6 +175,12 @@ type OpsUpstreamErrorEvent struct {
 	Platform    string `json:"platform,omitempty"`
 	AccountID   int64  `json:"account_id,omitempty"`
 	AccountName string `json:"account_name,omitempty"`
+	Protocol    string `json:"protocol,omitempty"`
+	Model       string `json:"model,omitempty"`
+	ThresholdMs int64  `json:"threshold_ms,omitempty"`
+	Attempt     int    `json:"attempt,omitempty"`
+	Switch      int    `json:"switch,omitempty"`
+	ElapsedMs   int64  `json:"elapsed_ms,omitempty"`
 
 	// Outcome
 	UpstreamStatusCode int    `json:"upstream_status_code,omitempty"`
@@ -191,6 +198,39 @@ type OpsUpstreamErrorEvent struct {
 
 	Message string `json:"message,omitempty"`
 	Detail  string `json:"detail,omitempty"`
+}
+
+type FirstTokenTimeoutOpsEvent struct {
+	Protocol     FirstTokenProtocol
+	Platform     string
+	AccountID    int64
+	Model        string
+	Threshold    time.Duration
+	AttemptIndex int
+	SwitchCount  int
+	Elapsed      time.Duration
+}
+
+// RecordFirstTokenTimeoutOpsEvent appends a synthetic upstream failure using
+// only the safe TTFT dimensions accepted from the attempt runner.
+func RecordFirstTokenTimeoutOpsEvent(c *gin.Context, ev FirstTokenTimeoutOpsEvent) {
+	if c == nil {
+		return
+	}
+	setOpsUpstreamError(c, http.StatusGatewayTimeout, UpstreamErrorTypeFirstTokenTimeout, "")
+	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+		Platform:           ev.Platform,
+		AccountID:          ev.AccountID,
+		Protocol:           string(ev.Protocol),
+		Model:              ev.Model,
+		ThresholdMs:        ev.Threshold.Milliseconds(),
+		Attempt:            ev.AttemptIndex,
+		Switch:             ev.SwitchCount,
+		ElapsedMs:          ev.Elapsed.Milliseconds(),
+		UpstreamStatusCode: http.StatusGatewayTimeout,
+		Kind:               UpstreamErrorTypeFirstTokenTimeout,
+		Message:            UpstreamErrorTypeFirstTokenTimeout,
+	})
 }
 
 func appendOpsUpstreamError(c *gin.Context, ev OpsUpstreamErrorEvent) {

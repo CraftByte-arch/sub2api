@@ -788,6 +788,12 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 				recoveredMsg += ": " + strings.TrimSpace(*upstreamErrorMessage)
 			}
 			recoveredMsg = truncateString(recoveredMsg, 2048)
+			recoveredErrorType := "upstream_error"
+			if len(events) > 0 {
+				if last := events[len(events)-1]; last != nil && last.Kind == service.UpstreamErrorTypeFirstTokenTimeout {
+					recoveredErrorType = service.UpstreamErrorTypeFirstTokenTimeout
+				}
+			}
 
 			entry := &service.OpsInsertErrorLogInput{
 				RequestID:       requestID,
@@ -829,7 +835,7 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 				UserAgent: c.GetHeader("User-Agent"),
 
 				ErrorPhase: "upstream",
-				ErrorType:  "upstream_error",
+				ErrorType:  recoveredErrorType,
 				// Severity should reflect the upstream failure, not the final client status (200).
 				Severity:          classifyOpsSeverity("upstream_error", effectiveUpstreamStatus),
 				StatusCode:        status,
@@ -1368,13 +1374,17 @@ func isKnownOpsErrorType(t string) bool {
 		"overloaded_error",
 		"api_error",
 		"not_found_error",
-		"forbidden_error":
+		"forbidden_error",
+		service.UpstreamErrorTypeFirstTokenTimeout:
 		return true
 	}
 	return false
 }
 
 func normalizeOpsErrorType(errType string, code string) string {
+	if strings.TrimSpace(code) == service.UpstreamErrorTypeFirstTokenTimeout {
+		return service.UpstreamErrorTypeFirstTokenTimeout
+	}
 	if errType != "" && isKnownOpsErrorType(errType) {
 		return errType
 	}
