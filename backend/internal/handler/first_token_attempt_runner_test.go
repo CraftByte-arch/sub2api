@@ -666,7 +666,7 @@ func TestGatewayHandlersReceiveFirstTokenTimeoutPolicy(t *testing.T) {
 	policy := service.NewFirstTokenTimeoutPolicy(nil, nil)
 	recorder := &firstTokenRunnerStatsRecorderSpy{}
 
-	gateway := NewGatewayHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, policy, recorder)
+	gateway := NewGatewayHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, policy, recorder)
 	openAI := NewOpenAIGatewayHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, policy, recorder)
 
 	require.Same(t, policy, gateway.firstTokenTimeoutPolicy)

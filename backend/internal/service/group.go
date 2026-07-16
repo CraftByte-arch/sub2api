@@ -29,6 +29,9 @@ type Group struct {
 	Status             string
 	Hydrated           bool // indicates the group was loaded from a trusted repository source
 	UsageCardDisabled  bool
+	// DuplicateOperationID is internal persistence metadata used only to recover
+	// an already committed one-click copy. It must never be mapped to API DTOs.
+	DuplicateOperationID string
 
 	SubscriptionType    string
 	DailyLimitUSD       *float64

@@ -5,7 +5,6 @@ package server_test
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"math"
@@ -21,7 +20,6 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
-	serverroutes "github.com/Wei-Shaw/sub2api/internal/server/routes"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -233,7 +231,6 @@ func TestAPIContracts(t *testing.T) {
 					"name": "Key One",
 					"group_id": null,
 					"status": "active",
-					"billing_priority": "auto",
 					"ip_whitelist": null,
 					"ip_blacklist": null,
 					"last_used_at": null,
@@ -285,7 +282,6 @@ func TestAPIContracts(t *testing.T) {
 							"name": "Key One",
 							"group_id": null,
 							"status": "active",
-							"billing_priority": "auto",
 							"ip_whitelist": null,
 							"ip_blacklist": null,
 							"last_used_at": null,
@@ -359,7 +355,6 @@ func TestAPIContracts(t *testing.T) {
 						"peak_end": "",
 						"peak_rate_multiplier": 1,
 						"is_exclusive": false,
-						"usage_card_disabled": false,
 						"status": "active",
 						"subscription_type": "standard",
 						"daily_limit_usd": null,
@@ -586,7 +581,6 @@ func TestAPIContracts(t *testing.T) {
 								"openai_ws_mode": false,
 								"group_id": null,
 								"subscription_id": null,
-								"usage_card_id": null,
 							"input_tokens": 10,
 							"output_tokens": 20,
 							"cache_creation_tokens": 1,
@@ -609,6 +603,8 @@ func TestAPIContracts(t *testing.T) {
 							"image_size": null,
 							"image_input_size": null,
 							"image_output_size": null,
+							"image_input_tokens": 0,
+							"image_input_cost": 0,
 							"image_output_tokens": 0,
 							"image_output_cost": 0,
 							"image_size_source": null,
@@ -690,6 +686,8 @@ func TestAPIContracts(t *testing.T) {
 					service.SettingPaymentVisibleMethodWxpaySource:                       service.VisibleMethodSourceOfficialWechat,
 					service.SettingPaymentVisibleMethodAlipayEnabled:                     "true",
 					service.SettingPaymentVisibleMethodWxpayEnabled:                      "false",
+					service.SettingKeyOpenAILowUpstreamRatePriorityEnabled:               "true",
+					service.SettingKeyOpenAIOAuthSchedulingRateMultiplier:                "0.05",
 					"openai_advanced_scheduler_enabled":                                  "true",
 					service.SettingKeyOpenAIAdvancedSchedulerStickyWeightedEnabled:       "false",
 					service.SettingKeyOpenAIAdvancedSchedulerSubscriptionPriorityEnabled: "false",
@@ -710,6 +708,8 @@ func TestAPIContracts(t *testing.T) {
 						"frontend_url": "",
 						"totp_enabled": false,
 						"totp_encryption_key_configured": false,
+						"session_binding_enabled": true,
+						"audit_log_retention_days": 180,
 						"login_agreement_enabled": false,
 						"login_agreement_mode": "modal",
 						"login_agreement_updated_at": "2026-03-31",
@@ -845,7 +845,6 @@ func TestAPIContracts(t *testing.T) {
 					"affiliate_admin_recharge_enabled": false,
 					"default_user_rpm_limit": 0,
 					"default_subscriptions": [],
-					"default_usage_cards": [],
 					"enable_model_fallback": false,
 					"fallback_model_anthropic": "claude-3-5-sonnet-20241022",
 					"fallback_model_antigravity": "gemini-2.5-pro",
@@ -853,23 +852,11 @@ func TestAPIContracts(t *testing.T) {
 						"fallback_model_openai": "gpt-4o",
 						"enable_identity_patch": true,
 						"identity_patch_prompt": "",
-						"image_generation_tool_declaration_policy": "strip",
-						"image_studio_async_concurrency": 2,
-						"image_studio_available_group_ids": [],
-						"image_studio_retention_unit": "day",
-						"image_studio_retention_value": 0,
 						"invitation_code_enabled": false,
 						"home_content": "",
 					"hide_ccs_import_button": false,
 					"purchase_subscription_enabled": false,
 					"purchase_subscription_url": "",
-					"legacy_subscription_purchase_enabled": true,
-					"legacy_subscription_visible": true,
-					"usage_card_enabled": false,
-					"usage_card_payment_enabled": false,
-					"usage_card_redeem_enabled": false,
-					"usage_card_billing_enabled": false,
-					"usage_card_default_priority": "usage_card_first",
 					"table_default_page_size": 20,
 						"table_page_size_options": [10, 20, 50, 100],
 					"min_claude_code_version": "",
@@ -897,10 +884,8 @@ func TestAPIContracts(t *testing.T) {
 					"payment_visible_method_wxpay_source": "official_wxpay",
 					"payment_visible_method_alipay_enabled": true,
 					"payment_visible_method_wxpay_enabled": false,
-					"openai_long_context_billing_enabled": true,
-					"openai_long_context_billing_threshold": 272000,
-					"openai_long_context_billing_multiplier": 2,
-					"openai_long_context_output_multiplier": 1.5,
+					"openai_low_upstream_rate_priority_enabled": true,
+					"openai_oauth_scheduling_rate_multiplier": 0.05,
 					"openai_advanced_scheduler_enabled": true,
 					"openai_advanced_scheduler_sticky_weighted_enabled": false,
 					"openai_advanced_scheduler_subscription_priority_enabled": false,
@@ -912,6 +897,7 @@ func TestAPIContracts(t *testing.T) {
 					"openai_advanced_scheduler_weight_ttft": "",
 					"openai_advanced_scheduler_weight_reset": "",
 					"openai_advanced_scheduler_weight_quota_headroom": "",
+					"openai_advanced_scheduler_weight_upstream_cost": "",
 					"openai_advanced_scheduler_weight_previous_response": "",
 					"openai_advanced_scheduler_weight_session_sticky": "",
 					"openai_advanced_scheduler_effective_lb_top_k": "7",
@@ -922,6 +908,7 @@ func TestAPIContracts(t *testing.T) {
 					"openai_advanced_scheduler_effective_weight_ttft": "0.5",
 					"openai_advanced_scheduler_effective_weight_reset": "0",
 					"openai_advanced_scheduler_effective_weight_quota_headroom": "0",
+					"openai_advanced_scheduler_effective_weight_upstream_cost": "0",
 					"openai_advanced_scheduler_effective_weight_previous_response": "5",
 					"openai_advanced_scheduler_effective_weight_session_sticky": "3",
 					"openai_codex_user_agent":           "",
@@ -936,7 +923,6 @@ func TestAPIContracts(t *testing.T) {
 					"payment_daily_limit": 0,
 					"payment_order_timeout_minutes": 0,
 					"payment_max_pending_orders": 0,
-					"payment_merchant_order_prefix": "",
 					"payment_balance_disabled": false,
 					"payment_balance_recharge_multiplier": 0,
 					"payment_subscription_usd_to_cny_rate": 0,
@@ -1036,6 +1022,8 @@ func TestAPIContracts(t *testing.T) {
 						"invitation_code_enabled": false,
 						"totp_enabled": false,
 						"totp_encryption_key_configured": false,
+						"session_binding_enabled": true,
+						"audit_log_retention_days": 180,
 						"login_agreement_enabled": false,
 						"login_agreement_mode": "modal",
 						"login_agreement_updated_at": "2026-03-31",
@@ -1118,13 +1106,6 @@ func TestAPIContracts(t *testing.T) {
 					"hide_ccs_import_button": false,
 					"purchase_subscription_enabled": false,
 					"purchase_subscription_url": "",
-					"legacy_subscription_purchase_enabled": true,
-					"legacy_subscription_visible": true,
-					"usage_card_enabled": false,
-					"usage_card_payment_enabled": false,
-					"usage_card_redeem_enabled": false,
-					"usage_card_billing_enabled": false,
-					"usage_card_default_priority": "usage_card_first",
 					"table_default_page_size": 20,
 					"table_page_size_options": [10, 20, 50],
 					"default_platform_quotas": {"anthropic":{"daily":null,"weekly":null,"monthly":null},"antigravity":{"daily":null,"weekly":null,"monthly":null},"gemini":{"daily":null,"weekly":null,"monthly":null},"grok":{"daily":null,"weekly":null,"monthly":null},"openai":{"daily":null,"weekly":null,"monthly":null}},
@@ -1146,7 +1127,6 @@ func TestAPIContracts(t *testing.T) {
 					"affiliate_admin_recharge_enabled": false,
 					"default_user_rpm_limit": 0,
 					"default_subscriptions": [],
-					"default_usage_cards": [],
 					"enable_model_fallback": false,
 					"fallback_model_anthropic": "claude-3-5-sonnet-20241022",
 					"fallback_model_openai": "gpt-4o",
@@ -1154,11 +1134,6 @@ func TestAPIContracts(t *testing.T) {
 					"fallback_model_antigravity": "gemini-2.5-pro",
 					"enable_identity_patch": true,
 					"identity_patch_prompt": "",
-					"image_generation_tool_declaration_policy": "strip",
-					"image_studio_async_concurrency": 2,
-					"image_studio_available_group_ids": [],
-					"image_studio_retention_unit": "day",
-					"image_studio_retention_value": 0,
 					"ops_monitoring_enabled": false,
 					"ops_realtime_monitoring_enabled": true,
 					"ops_query_mode_default": "auto",
@@ -1188,10 +1163,8 @@ func TestAPIContracts(t *testing.T) {
 					"payment_visible_method_wxpay_source": "",
 					"payment_visible_method_alipay_enabled": false,
 					"payment_visible_method_wxpay_enabled": false,
-					"openai_long_context_billing_enabled": true,
-					"openai_long_context_billing_threshold": 272000,
-					"openai_long_context_billing_multiplier": 2,
-					"openai_long_context_output_multiplier": 1.5,
+					"openai_low_upstream_rate_priority_enabled": false,
+					"openai_oauth_scheduling_rate_multiplier": 1,
 					"openai_advanced_scheduler_enabled": false,
 					"openai_advanced_scheduler_sticky_weighted_enabled": false,
 					"openai_advanced_scheduler_subscription_priority_enabled": false,
@@ -1203,6 +1176,7 @@ func TestAPIContracts(t *testing.T) {
 					"openai_advanced_scheduler_weight_ttft": "",
 					"openai_advanced_scheduler_weight_reset": "",
 					"openai_advanced_scheduler_weight_quota_headroom": "",
+					"openai_advanced_scheduler_weight_upstream_cost": "",
 					"openai_advanced_scheduler_weight_previous_response": "",
 					"openai_advanced_scheduler_weight_session_sticky": "",
 					"openai_advanced_scheduler_effective_lb_top_k": "7",
@@ -1213,6 +1187,7 @@ func TestAPIContracts(t *testing.T) {
 					"openai_advanced_scheduler_effective_weight_ttft": "0.5",
 					"openai_advanced_scheduler_effective_weight_reset": "0",
 					"openai_advanced_scheduler_effective_weight_quota_headroom": "0",
+					"openai_advanced_scheduler_effective_weight_upstream_cost": "0",
 					"openai_advanced_scheduler_effective_weight_previous_response": "5",
 					"openai_advanced_scheduler_effective_weight_session_sticky": "3",
 					"openai_codex_user_agent":           "",
@@ -1225,7 +1200,6 @@ func TestAPIContracts(t *testing.T) {
 					"payment_daily_limit": 0,
 					"payment_order_timeout_minutes": 0,
 					"payment_max_pending_orders": 0,
-					"payment_merchant_order_prefix": "",
 					"payment_enabled_types": null,
 					"payment_balance_disabled": false,
 					"payment_balance_recharge_multiplier": 0,
@@ -1349,86 +1323,6 @@ func TestAPIContracts(t *testing.T) {
 			require.JSONEq(t, tt.wantJSON, body)
 		})
 	}
-}
-
-func TestFirstTokenTimeoutAdminRouteContract(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	newRouter := func(t *testing.T, acknowledged bool) *gin.Engine {
-		t.Helper()
-		settingRepo := newStubSettingRepo()
-		if acknowledged {
-			ack, err := json.Marshal(service.AdminComplianceAcknowledgement{
-				Version:     service.AdminComplianceVersion,
-				AdminUserID: 1,
-				AcceptedAt:  time.Date(2026, 7, 15, 1, 2, 3, 0, time.UTC),
-			})
-			require.NoError(t, err)
-			settingRepo.all["admin_compliance_acknowledgement:1"] = string(ack)
-		}
-		settingService := service.NewSettingService(settingRepo, &config.Config{})
-		firstTokenTimeoutHandler := adminhandler.NewFirstTokenTimeoutHandler(
-			service.NewFirstTokenTimeoutPolicy(settingRepo, nil),
-			nil,
-			nil,
-		)
-		handlers := &handler.Handlers{Admin: &handler.AdminHandlers{FirstTokenTimeout: firstTokenTimeoutHandler}}
-		adminAuth := middleware.AdminAuthMiddleware(func(c *gin.Context) {
-			if c.GetHeader("Authorization") != "Bearer admin" {
-				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"message": "unauthorized"})
-				return
-			}
-			c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: 1})
-			c.Set(string(middleware.ContextKeyUserRole), service.RoleAdmin)
-			c.Next()
-		})
-		router := gin.New()
-		serverroutes.RegisterAdminRoutes(router.Group("/api/v1"), handlers, adminAuth, settingService)
-		return router
-	}
-
-	requests := []struct {
-		method string
-		path   string
-		body   string
-	}{
-		{method: http.MethodGet, path: "/api/v1/admin/settings/first-token-timeout"},
-		{method: http.MethodPut, path: "/api/v1/admin/settings/first-token-timeout", body: `{"enabled":false,"timeout_seconds":30}`},
-		{method: http.MethodGet, path: "/api/v1/admin/ttft/overview"},
-		{method: http.MethodGet, path: "/api/v1/admin/ttft/accounts"},
-	}
-
-	t.Run("admin auth protects every appended route", func(t *testing.T) {
-		router := newRouter(t, true)
-		for _, request := range requests {
-			status, body := doRequest(t, router, request.method, request.path, request.body, nil)
-			require.Equal(t, http.StatusUnauthorized, status, "%s %s: %s", request.method, request.path, body)
-			require.Contains(t, body, "unauthorized")
-		}
-	})
-
-	t.Run("admin compliance protects every appended route", func(t *testing.T) {
-		router := newRouter(t, false)
-		for _, request := range requests {
-			status, body := doRequest(t, router, request.method, request.path, request.body, map[string]string{
-				"Authorization": "Bearer admin",
-				"Content-Type":  "application/json",
-			})
-			require.Equal(t, http.StatusLocked, status, "%s %s: %s", request.method, request.path, body)
-			require.Contains(t, body, "ADMIN_COMPLIANCE_ACK_REQUIRED")
-		}
-	})
-
-	t.Run("all first token timeout routes are registered for an acknowledged admin", func(t *testing.T) {
-		router := newRouter(t, true)
-		for _, request := range requests {
-			status, body := doRequest(t, router, request.method, request.path, request.body, map[string]string{
-				"Authorization": "Bearer admin",
-				"Content-Type":  "application/json",
-			})
-			require.NotEqual(t, http.StatusNotFound, status, "%s %s: %s", request.method, request.path, body)
-		}
-	})
 }
 
 type contractDeps struct {
@@ -1663,6 +1557,9 @@ func (r *stubUserRepo) UpdateConcurrency(ctx context.Context, id int64, amount i
 
 func (r *stubUserRepo) BatchSetConcurrency(context.Context, []int64, int) (int, error) { return 0, nil }
 func (r *stubUserRepo) BatchAddConcurrency(context.Context, []int64, int) (int, error) { return 0, nil }
+func (r *stubUserRepo) BatchUpdateLimits(context.Context, []int64, *int, *int) (int, error) {
+	return 0, nil
+}
 
 func (r *stubUserRepo) ExistsByEmail(ctx context.Context, email string) (bool, error) {
 	return false, errors.New("not implemented")
@@ -1835,6 +1732,14 @@ func (stubGroupRepo) GetAccountIDsByGroupIDs(ctx context.Context, groupIDs []int
 
 func (stubGroupRepo) UpdateSortOrders(ctx context.Context, updates []service.GroupSortOrderUpdate) error {
 	return nil
+}
+
+func (stubGroupRepo) FindByDuplicateOperationID(ctx context.Context, operationID string) (*service.Group, error) {
+	return nil, nil
+}
+
+func (stubGroupRepo) CreateFromSource(ctx context.Context, group *service.Group, sourceGroupID int64) error {
+	return errors.New("not implemented")
 }
 
 type stubAccountRepo struct {
@@ -2535,10 +2440,6 @@ func (r *stubUsageLogRepo) Create(ctx context.Context, log *service.UsageLog) (b
 }
 
 func (r *stubUsageLogRepo) GetByID(ctx context.Context, id int64) (*service.UsageLog, error) {
-	return nil, errors.New("not implemented")
-}
-
-func (r *stubUsageLogRepo) GetByRequestIDAndAPIKey(ctx context.Context, requestID string, apiKeyID int64) (*service.UsageLog, error) {
 	return nil, errors.New("not implemented")
 }
 

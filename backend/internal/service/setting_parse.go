@@ -213,6 +213,8 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 
 		// 分组隔离（默认不允许未分组 Key 调度）
 		SettingKeyAllowUngroupedKeyScheduling:                        "false",
+		SettingKeyOpenAILowUpstreamRatePriorityEnabled:               "false",
+		SettingKeyOpenAIOAuthSchedulingRateMultiplier:                "1",
 		SettingKeyEnableAnthropicCacheTTL1hInjection:                 "false",
 		SettingKeyRewriteMessageCacheControl:                         strconv.FormatBool(s.defaultRewriteMessageCacheControl()),
 		SettingKeyEnableClientDatelineNormalization:                  "true",
@@ -233,6 +235,7 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyOpenAIAdvancedSchedulerWeightTTFT:                  "",
 		SettingKeyOpenAIAdvancedSchedulerWeightReset:                 "",
 		SettingKeyOpenAIAdvancedSchedulerWeightQuotaHeadroom:         "",
+		SettingKeyOpenAIAdvancedSchedulerWeightUpstreamCost:          "",
 		SettingKeyOpenAIAdvancedSchedulerWeightPreviousResponse:      "",
 		SettingKeyOpenAIAdvancedSchedulerWeightSessionSticky:         "",
 		SettingKeyImageStudioAsyncConcurrency:                        strconv.Itoa(defaultImageStudioAsyncConcurrency),
@@ -244,6 +247,8 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyOpenAILongContextBillingThreshold:                  strconv.Itoa(defaultOpenAILongContextBillingThreshold),
 		SettingKeyOpenAILongContextBillingMultiplier:                 strconv.FormatFloat(defaultOpenAILongContextBillingMultiplier, 'f', -1, 64),
 		SettingKeyOpenAILongContextOutputMultiplier:                  strconv.FormatFloat(defaultOpenAILongContextOutputMultiplier, 'f', -1, 64),
+		SettingKeySessionBindingEnabled:                              "true",
+		SettingKeyAuditLogRetentionDays:                              strconv.Itoa(defaultAuditLogRetentionDays),
 
 		SettingKeyAllowUserViewErrorRequests: "false",
 	}
@@ -274,6 +279,8 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 		FrontendURL:                       settings[SettingKeyFrontendURL],
 		InvitationCodeEnabled:             settings[SettingKeyInvitationCodeEnabled] == "true",
 		TotpEnabled:                       settings[SettingKeyTotpEnabled] == "true",
+		SessionBindingEnabled:             settings[SettingKeySessionBindingEnabled] != "false",
+		AuditLogRetentionDays:             parseAuditLogRetentionDays(settings[SettingKeyAuditLogRetentionDays]),
 		LoginAgreementEnabled:             settings[SettingKeyLoginAgreementEnabled] == "true",
 		LoginAgreementMode:                normalizeLoginAgreementMode(settings[SettingKeyLoginAgreementMode]),
 		LoginAgreementUpdatedAt:           loginAgreementUpdatedAt,
@@ -827,6 +834,8 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	result.PaymentVisibleMethodWxpaySource = NormalizeVisibleMethodSource("wxpay", settings[SettingPaymentVisibleMethodWxpaySource])
 	result.PaymentVisibleMethodAlipayEnabled = settings[SettingPaymentVisibleMethodAlipayEnabled] == "true"
 	result.PaymentVisibleMethodWxpayEnabled = settings[SettingPaymentVisibleMethodWxpayEnabled] == "true"
+	result.OpenAILowUpstreamRatePriorityEnabled = settings[SettingKeyOpenAILowUpstreamRatePriorityEnabled] == "true"
+	result.OpenAIOAuthSchedulingRateMultiplier = parseOpenAIOAuthSchedulingRateMultiplier(settings[SettingKeyOpenAIOAuthSchedulingRateMultiplier])
 	result.OpenAIAdvancedSchedulerEnabled = settings[openAIAdvancedSchedulerSettingKey] == "true"
 	result.OpenAIAdvancedSchedulerStickyWeightedEnabled = settings[SettingKeyOpenAIAdvancedSchedulerStickyWeightedEnabled] == "true"
 	result.OpenAIAdvancedSchedulerSubscriptionPriorityEnabled = settings[SettingKeyOpenAIAdvancedSchedulerSubscriptionPriorityEnabled] == "true"
@@ -1069,6 +1078,14 @@ func (s *SettingService) normalizeOpenAIAdvancedSchedulerOverrides(settings *Sys
 		return infraerrors.BadRequest("INVALID_OPENAI_ADVANCED_SCHEDULER_WEIGHT", "openai advanced scheduler base weights must not all be zero")
 	}
 	return nil
+}
+
+func parseOpenAIOAuthSchedulingRateMultiplier(raw string) float64 {
+	value, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+	if err != nil || value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+		return 1
+	}
+	return value
 }
 
 // resolveOpenAIAdvancedSchedulerWeight 返回覆盖值（已归一化的非空字符串），空则回退默认值。

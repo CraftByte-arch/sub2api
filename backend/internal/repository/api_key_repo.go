@@ -934,6 +934,7 @@ func groupEntityToService(g *dbent.Group) *service.Group {
 		Status:                          g.Status,
 		UsageCardDisabled:               g.UsageCardDisabled,
 		Hydrated:                        true,
+		DuplicateOperationID:            derefString(g.DuplicateOperationID),
 		SubscriptionType:                g.SubscriptionType,
 		DailyLimitUSD:                   g.DailyLimitUsd,
 		WeeklyLimitUSD:                  g.WeeklyLimitUsd,

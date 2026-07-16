@@ -5,6 +5,7 @@ import resources from './resources'
 import ops from './ops'
 import settings from './settings'
 import ttft from './ttft'
+import audit from './audit'
 
 export default {
   ...overview,
@@ -14,4 +15,5 @@ export default {
   ...ops,
   ...settings,
   ...ttft,
+  ...audit,
 }
