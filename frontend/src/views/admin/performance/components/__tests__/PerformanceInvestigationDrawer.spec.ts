@@ -101,4 +101,22 @@ describe('PerformanceInvestigationDrawer', () => {
     expect(document.body.textContent).toContain('10 / 100 次失败')
     wrapper.unmount()
   })
+
+  it('keeps the app inert until the last open drawer closes', async () => {
+    const appRoot = document.createElement('div')
+    appRoot.id = 'app'
+    document.body.append(appRoot)
+    const first = mount(PerformanceInvestigationDrawer, { attachTo: appRoot, props: { ...props, error: '详情加载失败' }, global })
+    const second = mount(PerformanceInvestigationDrawer, { attachTo: appRoot, props: { ...props, error: '详情加载失败' }, global })
+    await nextTick()
+
+    expect(appRoot.hasAttribute('inert')).toBe(true)
+    await first.setProps({ open: false })
+    first.unmount()
+    expect(appRoot.hasAttribute('inert')).toBe(true)
+
+    await second.setProps({ open: false })
+    expect(appRoot.hasAttribute('inert')).toBe(false)
+    second.unmount()
+  })
 })

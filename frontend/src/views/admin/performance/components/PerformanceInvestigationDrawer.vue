@@ -2,7 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import Icon from '@/components/icons/Icon.vue'
 import { performanceMetricsFromCounters, type PerformanceAccountItem as PerformanceAccount, type PerformanceInvestigation } from '@/api/admin/performance'
-import { acquireModalBodyLock, releaseModalBodyLock } from '@/utils/modalBodyLock'
+import { acquireModalBodyLock, lockAppInert, releaseAppInert, releaseModalBodyLock } from '@/utils/modalBodyLock'
 import PerformanceFailureDistribution from './PerformanceFailureDistribution.vue'
 import PerformanceMetricCard from './PerformanceMetricCard.vue'
 import PerformanceTrendChart, { type PerformanceSeriesDefinition } from './PerformanceTrendChart.vue'
@@ -19,8 +19,7 @@ const emit = defineEmits<{ close: []; retry: [] }>()
 
 let previousActiveElement: HTMLElement | null = null
 let hasBodyLock = false
-let inertDrawerCount = 0
-let appWasInert = false
+let hasAppInertLock = false
 const dialogRef = ref<HTMLElement | null>(null)
 
 const focusableSelector = [
@@ -59,29 +58,6 @@ function failureCount(account: PerformanceAccount) {
   return Math.max(0, eligibleAttempts(account) - account.counters.success_count)
 }
 
-function makeBackgroundInert() {
-  const appRoot = document.getElementById('app') as (HTMLElement & { inert?: boolean }) | null
-  if (!appRoot) return
-  if (inertDrawerCount === 0) appWasInert = appRoot.hasAttribute('inert')
-  inertDrawerCount += 1
-  appRoot.setAttribute('inert', '')
-  appRoot.inert = true
-}
-
-function restoreBackgroundInteractivity() {
-  const appRoot = document.getElementById('app') as (HTMLElement & { inert?: boolean }) | null
-  if (!appRoot || inertDrawerCount === 0) return
-  inertDrawerCount -= 1
-  if (inertDrawerCount !== 0) return
-  if (appWasInert) {
-    appRoot.setAttribute('inert', '')
-    appRoot.inert = true
-  } else {
-    appRoot.removeAttribute('inert')
-    appRoot.inert = false
-  }
-}
-
 function focusableElements() {
   return Array.from(dialogRef.value?.querySelectorAll<HTMLElement>(focusableSelector) ?? [])
     .filter((element) => element.tabIndex >= 0 && element.getAttribute('aria-hidden') !== 'true')
@@ -92,7 +68,10 @@ function restorePageState() {
     releaseModalBodyLock()
     hasBodyLock = false
   }
-  restoreBackgroundInteractivity()
+  if (hasAppInertLock) {
+    releaseAppInert()
+    hasAppInertLock = false
+  }
   previousActiveElement?.focus?.()
   previousActiveElement = null
 }
@@ -128,7 +107,9 @@ watch(() => props.open, async (open) => {
     acquireModalBodyLock()
     hasBodyLock = true
   }
-  makeBackgroundInert()
+  if (!hasAppInertLock) {
+    hasAppInertLock = lockAppInert()
+  }
   await nextTick()
   focusableElements()[0]?.focus()
 }, { immediate: true })
