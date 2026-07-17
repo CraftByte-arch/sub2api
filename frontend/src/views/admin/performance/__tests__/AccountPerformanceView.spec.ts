@@ -96,6 +96,21 @@ describe('AccountPerformanceView', () => {
     wrapper.unmount()
   })
 
+  it('reloads once when an external route update changes page filters', async () => {
+    const wrapper = await mountView()
+    getOverview.mockClear()
+    getAccounts.mockClear()
+
+    route.value.query = { range: '7d', platform: 'openai' }
+    await flushPromises()
+
+    expect(getOverview).toHaveBeenCalledTimes(1)
+    expect(getOverview).toHaveBeenCalledWith({ range: '7d', platform: 'openai' })
+    expect(getAccounts).toHaveBeenCalledTimes(1)
+    expect(getAccounts).toHaveBeenCalledWith(expect.objectContaining({ range: '7d', platform: 'openai' }))
+    wrapper.unmount()
+  })
+
   it('opens account investigation using the active page filters', async () => {
     const wrapper = await mountView()
     await wrapper.get('[data-testid="select-account"]').trigger('click')
