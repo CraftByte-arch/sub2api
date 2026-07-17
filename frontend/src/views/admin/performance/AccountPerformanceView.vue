@@ -133,6 +133,13 @@ function rememberInternalRouteWrite(query: Record<string, string>) {
   internalRouteWrites.set(signature, (internalRouteWrites.get(signature) ?? 0) + 1)
 }
 
+function discardInternalRouteWrite(query: Record<string, string>) {
+  const signature = querySignature(query)
+  const count = internalRouteWrites.get(signature) ?? 0
+  if (count <= 1) internalRouteWrites.delete(signature)
+  else internalRouteWrites.set(signature, count - 1)
+}
+
 function consumeInternalRouteWrite(query: Record<string, unknown>) {
   const signature = querySignature(query)
   const count = internalRouteWrites.get(signature) ?? 0
@@ -146,6 +153,10 @@ function routeMatchesPageFilters() {
   return querySignature(route.query) === querySignature(pageQuery())
 }
 
+function routeMatchesQuery(query: Record<string, string>) {
+  return querySignature(route.query) === querySignature(query)
+}
+
 async function refreshFiltersOnce(generation: number) {
   if (generation !== filterGeneration || generation === loadedFilterGeneration) return
   loadedFilterGeneration = generation
@@ -154,8 +165,15 @@ async function refreshFiltersOnce(generation: number) {
 
 async function syncQuery(generation = filterGeneration) {
   const query = pageQuery()
-  rememberInternalRouteWrite(query)
-  await router.replace({ query })
+  const tracksRouteWrite = !routeMatchesQuery(query)
+  if (tracksRouteWrite) rememberInternalRouteWrite(query)
+  try {
+    await router.replace({ query })
+  } catch {
+    if (tracksRouteWrite) discardInternalRouteWrite(query)
+    return
+  }
+  if (tracksRouteWrite && !routeMatchesQuery(query)) discardInternalRouteWrite(query)
   if (generation !== filterGeneration) {
     if (!routeMatchesPageFilters()) void syncQuery(filterGeneration)
     return

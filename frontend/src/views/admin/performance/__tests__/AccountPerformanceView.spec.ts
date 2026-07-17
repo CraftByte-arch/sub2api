@@ -111,6 +111,30 @@ describe('AccountPerformanceView', () => {
     wrapper.unmount()
   })
 
+  it('does not consume browser back navigation after a duplicate internal replace', async () => {
+    route.value = { query: { range: '24h' } }
+    replace.mockImplementation(async ({ query }) => {
+      if (JSON.stringify(route.value.query) !== JSON.stringify(query)) route.value.query = query
+    })
+    const wrapper = await mountView()
+    const rangeButtons = wrapper.findAll('[aria-label="时间范围"] button')
+
+    await rangeButtons.find((button) => button.text() === '7d')!.trigger('click')
+    await flushPromises()
+    getOverview.mockClear()
+    getAccounts.mockClear()
+
+    route.value.query = { range: '24h' }
+    await flushPromises()
+
+    expect(getOverview).toHaveBeenCalledTimes(1)
+    expect(getOverview).toHaveBeenCalledWith({ range: '24h', platform: undefined })
+    expect(getAccounts).toHaveBeenCalledTimes(1)
+    expect(getAccounts).toHaveBeenCalledWith(expect.objectContaining({ range: '24h', platform: undefined }))
+    expect(rangeButtons.find((button) => button.text() === '24h')!.classes()).toContain('bg-primary-600')
+    wrapper.unmount()
+  })
+
   it('opens account investigation using the active page filters', async () => {
     const wrapper = await mountView()
     await wrapper.get('[data-testid="select-account"]').trigger('click')
