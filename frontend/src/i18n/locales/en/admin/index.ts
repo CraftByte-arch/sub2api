@@ -6,6 +6,7 @@ import ops from './ops'
 import settings from './settings'
 import ttft from './ttft'
 import audit from './audit'
+import promptAudit from './promptAudit'
 
 export default {
   ...overview,
@@ -16,4 +17,5 @@ export default {
   ...settings,
   ...ttft,
   ...audit,
+  ...promptAudit,
 }
