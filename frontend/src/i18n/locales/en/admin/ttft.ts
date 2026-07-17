@@ -8,9 +8,15 @@ export default {
       enabled: 'Enable first token timeout',
       timeoutSeconds: 'Timeout (seconds)',
       timeoutError: 'Enter a whole number from 1 to 300.',
+      statusEnabled: 'Enabled',
+      statusDisabled: 'Disabled',
       effectiveEnabled: 'Effective: enabled ({seconds}s)',
       effectiveDisabled: 'Effective: disabled',
       loadedAt: 'Loaded {time}'
+    },
+    emptyState: {
+      title: 'No first-token protection samples yet',
+      description: 'Eligible streaming requests will appear here with protection, recovery, and failure outcomes after the policy takes effect.'
     },
     filters: { range: 'Range', protocol: 'Protocol', model: 'Model' },
     metrics: {

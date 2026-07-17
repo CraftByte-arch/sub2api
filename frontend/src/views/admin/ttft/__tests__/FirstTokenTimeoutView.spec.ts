@@ -44,7 +44,14 @@ const overview = {
   completeness: { status: 'degraded', dropped_samples: 2, last_successful_flush_at: '2026-07-15T00:00:00Z', pending_samples: 1 }
 }
 
-const accounts = { items: [], total: 0, page: 1, page_size: 20, pages: 0 }
+const accounts = {
+  items: [{ account_id: 42, account_name: 'production', platform: 'openai', samples: 20, success_count: 17, ttft_timeout_count: 2, ttft_timeout_rate: { numerator: 2, denominator: 20, rate: 0.1 }, other_failure_count: 1, other_failure_rate: { numerator: 1, denominator: 20, rate: 0.05 }, avg_ttft_ms: 123, low_sample: false }],
+  total: 1,
+  page: 1,
+  page_size: 20,
+  pages: 1
+}
+const emptyAccounts = { items: [], total: 0, page: 1, page_size: 20, pages: 0 }
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -65,8 +72,12 @@ async function mountView() {
       mocks: { $t: (key: string, values?: Record<string, unknown>) => values ? `${key} ${Object.values(values).join(' ')}` : key },
       stubs: {
         AppLayout: { template: '<main><slot /></main>' },
-        TTFTFailureTrendChart: { template: '<div />' },
-        TTFTFailureDistributionChart: { template: '<div />' }
+        TTFTRecoveryFunnel: { template: '<div data-testid="ttft-recovery-funnel" />' },
+        TTFTFailureTrendChart: {
+          props: ['mode'],
+          template: '<div data-testid="ttft-trend-chart" :data-mode="mode" />'
+        },
+        TTFTFailureDistributionChart: { template: '<div data-testid="ttft-failure-distribution" />' }
       }
     }
   })
@@ -92,6 +103,25 @@ describe('FirstTokenTimeoutView', () => {
     expect(wrapper.text()).toContain('3 / 10')
     expect(wrapper.text()).toContain('1 / 12')
     expect(wrapper.find('[data-testid="ttft-skeleton"]').exists()).toBe(false)
+  })
+
+  it('shows one no-sample panel instead of zero KPI cards and charts', async () => {
+    getOverview.mockResolvedValueOnce({ ...overview, summary: { ...overview.summary, controlled_requests: 0 } })
+    getAccounts.mockResolvedValueOnce(emptyAccounts)
+    const wrapper = await mountView()
+
+    expect(wrapper.get('[data-testid="ttft-empty-state"]').text()).toContain('admin.ttft.emptyState.title')
+    expect(wrapper.find('[data-testid="ttft-summary-metrics"]').exists()).toBe(false)
+    expect(wrapper.findAll('[data-testid="ttft-trend-chart"]')).toHaveLength(0)
+    expect(wrapper.find('[data-testid="ttft-failure-distribution"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="ttft-account-filters"]').exists()).toBe(false)
+  })
+
+  it('shows separate recovery and residual trends and omits an empty failure distribution', async () => {
+    const wrapper = await mountView()
+
+    expect(wrapper.findAll('[data-testid="ttft-trend-chart"]')).toHaveLength(2)
+    expect(wrapper.find('[data-testid="ttft-failure-distribution"]').exists()).toBe(false)
   })
 
   it('restores and synchronizes only global filters from the URL', async () => {
@@ -243,10 +273,9 @@ describe('FirstTokenTimeoutView', () => {
   it('keeps loaded overview metrics visible when a later refresh fails', async () => {
     const wrapper = await mountView()
     getOverview.mockRejectedValueOnce(new Error('network'))
-    const refreshButton = wrapper.findAll('button').find((button) => button.text() === 'common.refresh')
-    expect(refreshButton).toBeDefined()
+    const refreshButton = wrapper.get('[aria-label="common.refresh"]')
 
-    await refreshButton!.trigger('click')
+    await refreshButton.trigger('click')
     await flushPromises()
 
     expect(wrapper.findAll('article')[0].text()).toContain('12')

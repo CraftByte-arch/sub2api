@@ -8,9 +8,15 @@ export default {
       enabled: '启用首 Token 超时',
       timeoutSeconds: '超时秒数',
       timeoutError: '请输入 1 到 300 之间的整数。',
+      statusEnabled: '已启用',
+      statusDisabled: '已关闭',
       effectiveEnabled: '当前生效：已启用（{seconds} 秒）',
       effectiveDisabled: '当前生效：已关闭',
       loadedAt: '加载于 {time}'
+    },
+    emptyState: {
+      title: '尚无首 Token 保护样本',
+      description: '首 Token 超时策略生效后，符合条件的流式请求会在此显示保护、恢复与失败情况。'
     },
     filters: { range: '时间范围', protocol: '协议', model: '模型' },
     metrics: {

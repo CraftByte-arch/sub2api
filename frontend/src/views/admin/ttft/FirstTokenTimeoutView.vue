@@ -7,9 +7,11 @@ import ttftAPI, { type FirstTokenTimeoutSettings, type TTFTAccountsPage, type TT
 import { formatDateTime } from '@/utils/format'
 import TTFTSettingsBar from './components/TTFTSettingsBar.vue'
 import TTFTSummaryMetrics from './components/TTFTSummaryMetrics.vue'
+import TTFTRecoveryFunnel from './components/TTFTRecoveryFunnel.vue'
 import TTFTFailureTrendChart from './components/TTFTFailureTrendChart.vue'
 import TTFTFailureDistributionChart from './components/TTFTFailureDistributionChart.vue'
 import TTFTAccountStatsTable from './components/TTFTAccountStatsTable.vue'
+import Icon from '@/components/icons/Icon.vue'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -54,6 +56,8 @@ const accountID = computed<number | undefined>(() => {
 const accountIDError = computed(() => accountIDInput.value !== '' && accountID.value === undefined)
 const accountsParams = computed<TTFTAccountsParams>(() => ({ ...globalParams.value, platform: accountPlatform.value.trim() || undefined, account_id: accountID.value, search: accountSearch.value.trim() || undefined, sort: accountSort.value, order: accountOrder.value, page: accountPage.value, page_size: accountPageSize.value }))
 const degraded = computed(() => overview.value?.completeness.status === 'degraded')
+const hasControlledRequests = computed(() => (overview.value?.summary.controlled_requests ?? 0) > 0)
+const hasAccountSamples = computed(() => (accounts.value?.items.length ?? 0) > 0)
 
 function readQuery() {
   const query = route.query
@@ -166,11 +170,17 @@ onUnmounted(() => {
 
 <template>
   <AppLayout>
-    <main class="min-w-0 space-y-5 pb-10">
+    <main class="min-w-0 space-y-4 pb-10">
       <TTFTSettingsBar :settings="settings" :loading="settingsLoading" :saving="settingsSaving" :error="settingsError" @save="saveSettings" />
-      <section class="flex flex-col gap-3 border-b border-gray-200 pb-4 dark:border-dark-700 lg:flex-row lg:items-end lg:justify-between" aria-label="TTFT filters">
-        <div class="flex flex-wrap gap-2" role="group" :aria-label="$t('admin.ttft.filters.range')"><button v-for="item in ranges" :key="item" type="button" :class="range === item ? 'bg-blue-600 text-white' : 'border border-gray-300 text-gray-700 dark:border-dark-600 dark:text-gray-200'" class="h-9 rounded-lg px-3 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500" @click="range = item; changeGlobalFilters()">{{ item }}</button></div>
-        <div class="grid gap-2 sm:grid-cols-3"><label class="grid gap-1 text-xs text-gray-500 dark:text-gray-400"><span>{{ $t('admin.ttft.filters.protocol') }}</span><select v-model="protocol" class="h-9 rounded-lg border border-gray-300 bg-white px-2 text-sm text-gray-900 dark:border-dark-600 dark:bg-dark-900 dark:text-white" @change="changeGlobalFilters"><option :value="undefined">{{ $t('common.all') }}</option><option v-for="item in protocols" :key="item" :value="item">{{ item }}</option></select></label><label class="grid gap-1 text-xs text-gray-500 dark:text-gray-400"><span>{{ $t('admin.ttft.filters.model') }}</span><input v-model="model" class="h-9 rounded-lg border border-gray-300 bg-white px-2 text-sm text-gray-900 dark:border-dark-600 dark:bg-dark-900 dark:text-white" @change="changeGlobalFilters" /></label><button type="button" class="h-9 self-end rounded-lg border border-gray-300 px-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-dark-600 dark:text-gray-200" @click="refreshAll">{{ $t('common.refresh') }}</button></div>
+      <section class="flex flex-col gap-3 border-y border-gray-200 py-3 dark:border-dark-700 lg:flex-row lg:items-end lg:justify-between" aria-label="TTFT filters">
+        <div class="flex flex-wrap gap-2" role="group" :aria-label="$t('admin.ttft.filters.range')">
+          <button v-for="item in ranges" :key="item" type="button" :class="range === item ? 'border-blue-600 bg-blue-600 text-white shadow-sm' : 'border-gray-300 bg-white text-gray-700 hover:border-gray-400 dark:border-dark-600 dark:bg-dark-800 dark:text-gray-200 dark:hover:border-dark-500'" class="h-9 rounded-md border px-3 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500" @click="range = item; changeGlobalFilters()">{{ item }}</button>
+        </div>
+        <div class="flex flex-col gap-2 sm:flex-row sm:items-end">
+          <label class="grid gap-1 text-xs font-medium text-gray-500 dark:text-gray-400"><span>{{ $t('admin.ttft.filters.protocol') }}</span><select v-model="protocol" class="h-9 min-w-36 rounded-md border border-gray-300 bg-white px-2 text-sm font-normal text-gray-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:border-dark-600 dark:bg-dark-900 dark:text-white" @change="changeGlobalFilters"><option :value="undefined">{{ $t('common.all') }}</option><option v-for="item in protocols" :key="item" :value="item">{{ item }}</option></select></label>
+          <label class="grid gap-1 text-xs font-medium text-gray-500 dark:text-gray-400"><span>{{ $t('admin.ttft.filters.model') }}</span><input v-model="model" class="h-9 min-w-40 rounded-md border border-gray-300 bg-white px-2 text-sm font-normal text-gray-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:border-dark-600 dark:bg-dark-900 dark:text-white" @change="changeGlobalFilters" /></label>
+          <button type="button" class="flex h-11 w-11 items-center justify-center rounded-md border border-gray-300 text-gray-600 transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-dark-600 dark:text-gray-300 dark:hover:bg-dark-800" :aria-label="$t('common.refresh')" :title="$t('common.refresh')" @click="refreshAll"><Icon name="refresh" size="sm" /></button>
+        </div>
       </section>
       <aside v-if="degraded" class="border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
         {{ $t('admin.ttft.completeness.degraded', { dropped: overview?.completeness.dropped_samples, pending: overview?.completeness.pending_samples }) }}
@@ -178,8 +188,35 @@ onUnmounted(() => {
       </aside>
       <section v-if="overviewLoading && !hasOverviewLoaded" data-testid="ttft-skeleton" class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5"><div v-for="item in 5" :key="item" class="h-32 animate-pulse rounded-lg bg-gray-100 dark:bg-dark-800" /></section>
       <section v-else-if="overviewError && !overview" class="border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300">{{ overviewError }} <button data-testid="ttft-overview-retry" type="button" class="ml-3 underline" @click="loadOverview">{{ $t('common.refresh') }}</button></section>
-      <template v-else-if="overview"><section v-if="overviewError" class="border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300">{{ overviewError }} <button data-testid="ttft-overview-retry" type="button" class="ml-3 underline" @click="loadOverview">{{ $t('common.refresh') }}</button></section><TTFTSummaryMetrics :summary="overview.summary" /><section class="grid grid-cols-1 gap-4 xl:grid-cols-2"><TTFTFailureTrendChart :points="overview.trend" /><TTFTFailureDistributionChart :failures="overview.other_failures" /></section></template>
-      <section class="border-t border-gray-200 pt-5 dark:border-dark-700"><div class="mb-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4"><label class="grid gap-1 text-xs text-gray-500 dark:text-gray-400"><span>{{ $t('common.search') }}</span><input data-testid="ttft-account-search" v-model="accountSearch" class="h-9 rounded-lg border border-gray-300 bg-white px-2 text-sm text-gray-900 dark:border-dark-600 dark:bg-dark-900 dark:text-white" /></label><label class="grid gap-1 text-xs text-gray-500 dark:text-gray-400"><span>{{ $t('admin.ttft.accounts.platform') }}</span><input v-model="accountPlatform" class="h-9 rounded-lg border border-gray-300 bg-white px-2 text-sm text-gray-900 dark:border-dark-600 dark:bg-dark-900 dark:text-white" /></label><label class="grid gap-1 text-xs text-gray-500 dark:text-gray-400"><span>{{ $t('admin.ttft.accounts.accountId') }}</span><input v-model.number="accountIDInput" type="number" min="1" class="h-9 rounded-lg border border-gray-300 bg-white px-2 text-sm text-gray-900 dark:border-dark-600 dark:bg-dark-900 dark:text-white" :aria-invalid="accountIDError" /><span v-if="accountIDError" class="text-xs text-red-600 dark:text-red-400">{{ $t('admin.ttft.accounts.accountIdError') }}</span></label><label class="grid gap-1 text-xs text-gray-500 dark:text-gray-400"><span>{{ $t('admin.ttft.accounts.pageSize') }}</span><select v-model.number="accountPageSize" class="h-9 rounded-lg border border-gray-300 bg-white px-2 text-sm text-gray-900 dark:border-dark-600 dark:bg-dark-900 dark:text-white"><option :value="10">10</option><option :value="20">20</option><option :value="50">50</option><option :value="100">100</option></select></label></div><TTFTAccountStatsTable :page="accounts" :loading="accountsLoading" :error="accountsError" :sort="accountSort" :order="accountOrder" @retry="loadAccounts" @sort="changeAccountSort" @page="(value) => { accountPage = value; loadAccounts() }" /></section>
+      <template v-else-if="overview">
+        <section v-if="overviewError" class="border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300">{{ overviewError }} <button data-testid="ttft-overview-retry" type="button" class="ml-3 underline" @click="loadOverview">{{ $t('common.refresh') }}</button></section>
+        <section v-if="!hasControlledRequests" data-testid="ttft-empty-state" class="border border-dashed border-gray-300 bg-gray-50 px-5 py-8 text-center dark:border-dark-600 dark:bg-dark-800/60">
+          <Icon name="clock" size="lg" class="mx-auto text-gray-400 dark:text-gray-500" />
+          <h2 class="mt-3 text-sm font-semibold text-gray-900 dark:text-white">{{ $t('admin.ttft.emptyState.title') }}</h2>
+          <p class="mx-auto mt-1 max-w-xl text-sm text-gray-500 dark:text-gray-400">{{ $t('admin.ttft.emptyState.description') }}</p>
+        </section>
+        <template v-else>
+          <TTFTRecoveryFunnel :summary="overview.summary" />
+          <TTFTSummaryMetrics data-testid="ttft-summary-metrics" :summary="overview.summary" />
+          <section class="grid grid-cols-1 gap-4 xl:grid-cols-2">
+            <TTFTFailureTrendChart :points="overview.trend" mode="recovery" />
+            <TTFTFailureTrendChart :points="overview.trend" mode="residual" />
+          </section>
+          <TTFTFailureDistributionChart v-if="overview.other_failures.length" data-testid="ttft-failure-distribution" :failures="overview.other_failures" />
+        </template>
+      </template>
+      <section v-if="hasAccountSamples" data-testid="ttft-account-filters" class="border-t border-gray-200 pt-5 dark:border-dark-700">
+        <div class="mb-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+          <label class="grid gap-1 text-xs font-medium text-gray-500 dark:text-gray-400"><span>{{ $t('common.search') }}</span><input data-testid="ttft-account-search" v-model="accountSearch" class="h-9 rounded-md border border-gray-300 bg-white px-2 text-sm font-normal text-gray-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:border-dark-600 dark:bg-dark-900 dark:text-white" /></label>
+          <label class="grid gap-1 text-xs font-medium text-gray-500 dark:text-gray-400"><span>{{ $t('admin.ttft.accounts.platform') }}</span><input v-model="accountPlatform" class="h-9 rounded-md border border-gray-300 bg-white px-2 text-sm font-normal text-gray-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:border-dark-600 dark:bg-dark-900 dark:text-white" /></label>
+          <label class="grid gap-1 text-xs font-medium text-gray-500 dark:text-gray-400"><span>{{ $t('admin.ttft.accounts.accountId') }}</span><input v-model.number="accountIDInput" type="number" min="1" class="h-9 rounded-md border border-gray-300 bg-white px-2 text-sm font-normal text-gray-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:border-dark-600 dark:bg-dark-900 dark:text-white" :aria-invalid="accountIDError" /><span v-if="accountIDError" class="text-xs text-red-600 dark:text-red-400">{{ $t('admin.ttft.accounts.accountIdError') }}</span></label>
+          <label class="grid gap-1 text-xs font-medium text-gray-500 dark:text-gray-400"><span>{{ $t('admin.ttft.accounts.pageSize') }}</span><select v-model.number="accountPageSize" class="h-9 rounded-md border border-gray-300 bg-white px-2 text-sm font-normal text-gray-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:border-dark-600 dark:bg-dark-900 dark:text-white"><option :value="10">10</option><option :value="20">20</option><option :value="50">50</option><option :value="100">100</option></select></label>
+        </div>
+        <TTFTAccountStatsTable :page="accounts" :loading="accountsLoading" :error="accountsError" :sort="accountSort" :order="accountOrder" @retry="loadAccounts" @sort="changeAccountSort" @page="(value) => { accountPage = value; loadAccounts() }" />
+      </section>
+      <section v-else-if="accountsError" class="border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300">
+        {{ accountsError }} <button data-testid="ttft-accounts-retry" type="button" class="ml-3 underline" @click="loadAccounts">{{ $t('common.refresh') }}</button>
+      </section>
     </main>
   </AppLayout>
 </template>
