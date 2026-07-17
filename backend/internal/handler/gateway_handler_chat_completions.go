@@ -254,7 +254,7 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 			reqStream,
 			reqModel,
 			body,
-			FirstTokenAttemptMetadata{AccountID: account.ID, Platform: account.Platform, Model: reqModel, AttemptIndex: fs.SwitchCount + 1, SwitchCount: fs.SwitchCount},
+			FirstTokenAttemptMetadata{AccountID: account.ID, Platform: account.Platform, GroupID: derefGroupID(apiKey.GroupID), Model: reqModel, AttemptIndex: fs.SwitchCount + 1, SwitchCount: fs.SwitchCount, PerformanceRecorder: h.accountPerformanceRecorder},
 			func(attemptCtx context.Context) (*service.ForwardResult, error) {
 				if account.Platform == service.PlatformGemini {
 					return h.geminiCompatService.ForwardAsChatCompletions(attemptCtx, c, account, forwardBody)

@@ -225,7 +225,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 				reqStream,
 				reqModel,
 				body,
-				FirstTokenAttemptMetadata{AccountID: account.ID, Platform: account.Platform, Model: reqModel, AttemptIndex: switchCount + 1, SwitchCount: switchCount},
+				FirstTokenAttemptMetadata{AccountID: account.ID, Platform: account.Platform, GroupID: derefGroupID(apiKey.GroupID), Model: reqModel, AttemptIndex: switchCount + 1, SwitchCount: switchCount, PerformanceRecorder: h.accountPerformanceRecorder},
 				func(attemptCtx context.Context) (*service.OpenAIForwardResult, error) {
 					return h.gatewayService.ForwardAsChatCompletions(attemptCtx, c, account, forwardBody, promptCacheKey, "")
 				},

@@ -14,12 +14,14 @@ import (
 )
 
 type FirstTokenAttemptMetadata struct {
-	Protocol     service.FirstTokenProtocol
-	AccountID    int64
-	Platform     string
-	Model        string
-	AttemptIndex int
-	SwitchCount  int
+	Protocol            service.FirstTokenProtocol
+	AccountID           int64
+	Platform            string
+	GroupID             int64
+	Model               string
+	AttemptIndex        int
+	SwitchCount         int
+	PerformanceRecorder service.AccountPerformanceRecorder
 }
 
 const firstTokenTimeoutClientMessage = "Upstream timed out before first token"
@@ -108,11 +110,16 @@ func runEligibleFirstTokenAttemptFromContext[T any](
 	meta FirstTokenAttemptMetadata,
 	forward func(context.Context) (T, error),
 ) (T, error) {
-	if !firstTokenAttemptEligible(c, protocol, stream, model, body) {
-		return forward(requestCtx)
-	}
 	meta.Protocol = protocol
-	return runFirstTokenAttempt(c, policy, meta, forward)
+	performanceAttempt := beginAccountPerformanceAttempt(meta.PerformanceRecorder, meta.AccountID, meta.Platform, meta.GroupID, protocol, meta.Model, meta.SwitchCount)
+	if !firstTokenAttemptEligible(c, protocol, stream, model, body) {
+		result, err := forward(requestCtx)
+		performanceAttempt.Finish(requestCtx, err, result)
+		return result, err
+	}
+	result, err := runFirstTokenAttempt(c, policy, meta, forward)
+	performanceAttempt.Finish(requestCtx, err, result)
+	return result, err
 }
 
 func runFirstTokenAttempt[T any](

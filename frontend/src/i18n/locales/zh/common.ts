@@ -169,6 +169,7 @@ export default {
     redeemCodes: '兑换码',
     ops: '运维监控',
     ttftMonitoring: '首 Token 监控',
+    accountPerformance: '账号性能',
     promoCodes: '优惠码',
     settings: '系统设置',
     myAccount: '我的账户',

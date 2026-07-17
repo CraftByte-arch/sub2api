@@ -27,19 +27,20 @@ import (
 
 // OpenAIGatewayHandler handles OpenAI API gateway requests
 type OpenAIGatewayHandler struct {
-	gatewayService           *service.OpenAIGatewayService
-	billingCacheService      *service.BillingCacheService
-	apiKeyService            *service.APIKeyService
-	usageRecordWorkerPool    *service.UsageRecordWorkerPool
-	errorPassthroughService  *service.ErrorPassthroughService
-	contentModerationService *service.ContentModerationService
-	opsService               *service.OpsService
-	concurrencyHelper        *ConcurrencyHelper
-	imageLimiter             *imageConcurrencyLimiter
-	maxAccountSwitches       int
-	cfg                      *config.Config
-	firstTokenTimeoutPolicy  *service.FirstTokenTimeoutPolicy
-	firstTokenStatsRecorder  service.FirstTokenStatsRecorder
+	gatewayService             *service.OpenAIGatewayService
+	billingCacheService        *service.BillingCacheService
+	apiKeyService              *service.APIKeyService
+	usageRecordWorkerPool      *service.UsageRecordWorkerPool
+	errorPassthroughService    *service.ErrorPassthroughService
+	contentModerationService   *service.ContentModerationService
+	opsService                 *service.OpsService
+	concurrencyHelper          *ConcurrencyHelper
+	imageLimiter               *imageConcurrencyLimiter
+	maxAccountSwitches         int
+	cfg                        *config.Config
+	firstTokenTimeoutPolicy    *service.FirstTokenTimeoutPolicy
+	firstTokenStatsRecorder    service.FirstTokenStatsRecorder
+	accountPerformanceRecorder service.AccountPerformanceRecorder
 }
 
 const maxOpenAIFirstOutputTimeoutSwitches = 1
@@ -142,6 +143,7 @@ func NewOpenAIGatewayHandler(
 	cfg *config.Config,
 	firstTokenTimeoutPolicy *service.FirstTokenTimeoutPolicy,
 	firstTokenStatsRecorder service.FirstTokenStatsRecorder,
+	accountPerformanceRecorders ...service.AccountPerformanceRecorder,
 ) *OpenAIGatewayHandler {
 	pingInterval := time.Duration(0)
 	maxAccountSwitches := 3
@@ -151,20 +153,25 @@ func NewOpenAIGatewayHandler(
 			maxAccountSwitches = cfg.Gateway.MaxAccountSwitches
 		}
 	}
+	var accountPerformanceRecorder service.AccountPerformanceRecorder
+	if len(accountPerformanceRecorders) > 0 {
+		accountPerformanceRecorder = accountPerformanceRecorders[0]
+	}
 	return &OpenAIGatewayHandler{
-		gatewayService:           gatewayService,
-		billingCacheService:      billingCacheService,
-		apiKeyService:            apiKeyService,
-		usageRecordWorkerPool:    usageRecordWorkerPool,
-		errorPassthroughService:  errorPassthroughService,
-		contentModerationService: contentModerationService,
-		opsService:               opsService,
-		concurrencyHelper:        NewConcurrencyHelper(concurrencyService, SSEPingFormatComment, pingInterval),
-		imageLimiter:             &imageConcurrencyLimiter{},
-		maxAccountSwitches:       maxAccountSwitches,
-		cfg:                      cfg,
-		firstTokenTimeoutPolicy:  firstTokenTimeoutPolicy,
-		firstTokenStatsRecorder:  firstTokenStatsRecorder,
+		gatewayService:             gatewayService,
+		billingCacheService:        billingCacheService,
+		apiKeyService:              apiKeyService,
+		usageRecordWorkerPool:      usageRecordWorkerPool,
+		errorPassthroughService:    errorPassthroughService,
+		contentModerationService:   contentModerationService,
+		opsService:                 opsService,
+		concurrencyHelper:          NewConcurrencyHelper(concurrencyService, SSEPingFormatComment, pingInterval),
+		imageLimiter:               &imageConcurrencyLimiter{},
+		maxAccountSwitches:         maxAccountSwitches,
+		cfg:                        cfg,
+		firstTokenTimeoutPolicy:    firstTokenTimeoutPolicy,
+		firstTokenStatsRecorder:    firstTokenStatsRecorder,
+		accountPerformanceRecorder: accountPerformanceRecorder,
 	}
 }
 
@@ -461,7 +468,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 				openAIResponsesFirstTokenStream(c, reqStream),
 				reqModel,
 				body,
-				FirstTokenAttemptMetadata{AccountID: account.ID, Platform: account.Platform, Model: reqModel, AttemptIndex: switchCount + 1, SwitchCount: switchCount},
+				FirstTokenAttemptMetadata{AccountID: account.ID, Platform: account.Platform, GroupID: derefGroupID(apiKey.GroupID), Model: reqModel, AttemptIndex: switchCount + 1, SwitchCount: switchCount, PerformanceRecorder: h.accountPerformanceRecorder},
 				func(attemptCtx context.Context) (*service.OpenAIForwardResult, error) {
 					// Start after the attempt gate is installed so compact keepalives are
 					// committed or rolled back with the selected account.
@@ -1012,7 +1019,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 				reqStream,
 				reqModel,
 				body,
-				FirstTokenAttemptMetadata{AccountID: account.ID, Platform: account.Platform, Model: reqModel, AttemptIndex: switchCount + 1, SwitchCount: switchCount},
+				FirstTokenAttemptMetadata{AccountID: account.ID, Platform: account.Platform, GroupID: derefGroupID(apiKey.GroupID), Model: reqModel, AttemptIndex: switchCount + 1, SwitchCount: switchCount, PerformanceRecorder: h.accountPerformanceRecorder},
 				func(attemptCtx context.Context) (*service.OpenAIForwardResult, error) {
 					return h.gatewayService.ForwardAsAnthropic(attemptCtx, c, account, forwardBody, promptCacheKey, defaultMappedModel)
 				},

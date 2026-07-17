@@ -444,6 +444,12 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/performance',
+    name: 'AdminPerformance',
+    component: () => import('@/views/admin/performance/AccountPerformanceView.vue'),
+    meta: { requiresAuth: true, requiresAdmin: true, title: 'Account Performance' }
+  },
+  {
     path: '/admin/audit-logs',
     name: 'AdminAuditLogs',
     component: () => import('@/views/admin/AuditLogView.vue'),

@@ -35,6 +35,7 @@ import riskControlAPI from './riskControl'
 import adminComplianceAPI from './compliance'
 import ttftAPI from './ttft'
 import auditAPI from './audit'
+import performanceAPI from './performance'
 
 /**
  * Unified admin API object for convenient access
@@ -70,8 +71,9 @@ export const adminAPI = {
   affiliates: affiliatesAPI,
   riskControl: riskControlAPI,
   compliance: adminComplianceAPI,
-  ttft: ttftAPI,
-  audit: auditAPI
+	ttft: ttftAPI,
+	performance: performanceAPI,
+	audit: auditAPI
 }
 
 export {
@@ -105,8 +107,9 @@ export {
   affiliatesAPI,
   riskControlAPI,
   adminComplianceAPI,
-  ttftAPI,
-  auditAPI
+	ttftAPI,
+	performanceAPI,
+	auditAPI
 }
 
 export default adminAPI

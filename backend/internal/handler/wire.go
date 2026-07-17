@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler/admin"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
@@ -26,6 +27,7 @@ func ProvideAdminHandlers(
 	promoHandler *admin.PromoHandler,
 	settingHandler *admin.SettingHandler,
 	firstTokenTimeoutHandler *admin.FirstTokenTimeoutHandler,
+	accountPerformanceHandler *admin.AccountPerformanceHandler,
 	opsHandler *admin.OpsHandler,
 	systemHandler *admin.SystemHandler,
 	subscriptionHandler *admin.SubscriptionHandler,
@@ -65,6 +67,7 @@ func ProvideAdminHandlers(
 		Promo:                  promoHandler,
 		Setting:                settingHandler,
 		FirstTokenTimeout:      firstTokenTimeoutHandler,
+		AccountPerformance:     accountPerformanceHandler,
 		Ops:                    opsHandler,
 		System:                 systemHandler,
 		Subscription:           subscriptionHandler,
@@ -96,6 +99,49 @@ func ProvideSettingHandler(settingService *service.SettingService, buildInfo Bui
 	h := NewSettingHandler(settingService, buildInfo.Version)
 	h.SetNotificationEmailService(notificationEmailService)
 	return h
+}
+
+// ProvideGatewayHandler keeps the public constructor convenient for focused
+// tests while making the performance recorder an explicit production
+// dependency for Wire.
+func ProvideGatewayHandler(
+	gatewayService *service.GatewayService,
+	openAIGatewayService *service.OpenAIGatewayService,
+	geminiCompatService *service.GeminiMessagesCompatService,
+	antigravityGatewayService *service.AntigravityGatewayService,
+	userService *service.UserService,
+	concurrencyService *service.ConcurrencyService,
+	billingCacheService *service.BillingCacheService,
+	usageService *service.UsageService,
+	apiKeyService *service.APIKeyService,
+	usageRecordWorkerPool *service.UsageRecordWorkerPool,
+	errorPassthroughService *service.ErrorPassthroughService,
+	contentModerationService *service.ContentModerationService,
+	userMsgQueueService *service.UserMessageQueueService,
+	cfg *config.Config,
+	settingService *service.SettingService,
+	firstTokenTimeoutPolicy *service.FirstTokenTimeoutPolicy,
+	firstTokenStatsRecorder service.FirstTokenStatsRecorder,
+	performanceRecorder service.AccountPerformanceRecorder,
+) *GatewayHandler {
+	return NewGatewayHandler(gatewayService, openAIGatewayService, geminiCompatService, antigravityGatewayService, userService, concurrencyService, billingCacheService, usageService, apiKeyService, usageRecordWorkerPool, errorPassthroughService, contentModerationService, userMsgQueueService, cfg, settingService, firstTokenTimeoutPolicy, firstTokenStatsRecorder, performanceRecorder)
+}
+
+func ProvideOpenAIGatewayHandler(
+	gatewayService *service.OpenAIGatewayService,
+	concurrencyService *service.ConcurrencyService,
+	billingCacheService *service.BillingCacheService,
+	apiKeyService *service.APIKeyService,
+	usageRecordWorkerPool *service.UsageRecordWorkerPool,
+	errorPassthroughService *service.ErrorPassthroughService,
+	contentModerationService *service.ContentModerationService,
+	opsService *service.OpsService,
+	cfg *config.Config,
+	firstTokenTimeoutPolicy *service.FirstTokenTimeoutPolicy,
+	firstTokenStatsRecorder service.FirstTokenStatsRecorder,
+	performanceRecorder service.AccountPerformanceRecorder,
+) *OpenAIGatewayHandler {
+	return NewOpenAIGatewayHandler(gatewayService, concurrencyService, billingCacheService, apiKeyService, usageRecordWorkerPool, errorPassthroughService, contentModerationService, opsService, cfg, firstTokenTimeoutPolicy, firstTokenStatsRecorder, performanceRecorder)
 }
 
 // ProvideAdminSettingHandler creates admin.SettingHandler with notification template APIs.
@@ -166,8 +212,8 @@ var ProviderSet = wire.NewSet(
 	NewAnnouncementHandler,
 	NewImageStudioJobHandler,
 	NewChannelMonitorUserHandler,
-	NewGatewayHandler,
-	NewOpenAIGatewayHandler,
+	ProvideGatewayHandler,
+	ProvideOpenAIGatewayHandler,
 	NewTotpHandler,
 	ProvideSettingHandler,
 	NewPaymentHandler,
@@ -195,6 +241,7 @@ var ProviderSet = wire.NewSet(
 	admin.NewPromoHandler,
 	ProvideAdminSettingHandler,
 	admin.NewFirstTokenTimeoutHandler,
+	admin.NewAccountPerformanceHandler,
 	admin.NewOpsHandler,
 	ProvideSystemHandler,
 	admin.NewSubscriptionHandler,

@@ -38,25 +38,26 @@ var gatewayCompatibilityMetricsLogCounter atomic.Uint64
 
 // GatewayHandler handles API gateway requests
 type GatewayHandler struct {
-	gatewayService            *service.GatewayService
-	openAIGatewayService      *service.OpenAIGatewayService
-	geminiCompatService       *service.GeminiMessagesCompatService
-	antigravityGatewayService *service.AntigravityGatewayService
-	userService               *service.UserService
-	billingCacheService       *service.BillingCacheService
-	usageService              *service.UsageService
-	apiKeyService             *service.APIKeyService
-	usageRecordWorkerPool     *service.UsageRecordWorkerPool
-	errorPassthroughService   *service.ErrorPassthroughService
-	contentModerationService  *service.ContentModerationService
-	concurrencyHelper         *ConcurrencyHelper
-	userMsgQueueHelper        *UserMsgQueueHelper
-	maxAccountSwitches        int
-	maxAccountSwitchesGemini  int
-	cfg                       *config.Config
-	settingService            *service.SettingService
-	firstTokenTimeoutPolicy   *service.FirstTokenTimeoutPolicy
-	firstTokenStatsRecorder   service.FirstTokenStatsRecorder
+	gatewayService             *service.GatewayService
+	openAIGatewayService       *service.OpenAIGatewayService
+	geminiCompatService        *service.GeminiMessagesCompatService
+	antigravityGatewayService  *service.AntigravityGatewayService
+	userService                *service.UserService
+	billingCacheService        *service.BillingCacheService
+	usageService               *service.UsageService
+	apiKeyService              *service.APIKeyService
+	usageRecordWorkerPool      *service.UsageRecordWorkerPool
+	errorPassthroughService    *service.ErrorPassthroughService
+	contentModerationService   *service.ContentModerationService
+	concurrencyHelper          *ConcurrencyHelper
+	userMsgQueueHelper         *UserMsgQueueHelper
+	maxAccountSwitches         int
+	maxAccountSwitchesGemini   int
+	cfg                        *config.Config
+	settingService             *service.SettingService
+	firstTokenTimeoutPolicy    *service.FirstTokenTimeoutPolicy
+	firstTokenStatsRecorder    service.FirstTokenStatsRecorder
+	accountPerformanceRecorder service.AccountPerformanceRecorder
 }
 
 // NewGatewayHandler creates a new GatewayHandler
@@ -78,6 +79,7 @@ func NewGatewayHandler(
 	settingService *service.SettingService,
 	firstTokenTimeoutPolicy *service.FirstTokenTimeoutPolicy,
 	firstTokenStatsRecorder service.FirstTokenStatsRecorder,
+	accountPerformanceRecorders ...service.AccountPerformanceRecorder,
 ) *GatewayHandler {
 	pingInterval := time.Duration(0)
 	maxAccountSwitches := 10
@@ -97,27 +99,32 @@ func NewGatewayHandler(
 	if userMsgQueueService != nil && cfg != nil {
 		umqHelper = NewUserMsgQueueHelper(userMsgQueueService, SSEPingFormatClaude, pingInterval)
 	}
+	var accountPerformanceRecorder service.AccountPerformanceRecorder
+	if len(accountPerformanceRecorders) > 0 {
+		accountPerformanceRecorder = accountPerformanceRecorders[0]
+	}
 
 	return &GatewayHandler{
-		gatewayService:            gatewayService,
-		openAIGatewayService:      openAIGatewayService,
-		geminiCompatService:       geminiCompatService,
-		antigravityGatewayService: antigravityGatewayService,
-		userService:               userService,
-		billingCacheService:       billingCacheService,
-		usageService:              usageService,
-		apiKeyService:             apiKeyService,
-		usageRecordWorkerPool:     usageRecordWorkerPool,
-		errorPassthroughService:   errorPassthroughService,
-		contentModerationService:  contentModerationService,
-		concurrencyHelper:         NewConcurrencyHelper(concurrencyService, SSEPingFormatClaude, pingInterval),
-		userMsgQueueHelper:        umqHelper,
-		maxAccountSwitches:        maxAccountSwitches,
-		maxAccountSwitchesGemini:  maxAccountSwitchesGemini,
-		cfg:                       cfg,
-		settingService:            settingService,
-		firstTokenTimeoutPolicy:   firstTokenTimeoutPolicy,
-		firstTokenStatsRecorder:   firstTokenStatsRecorder,
+		gatewayService:             gatewayService,
+		openAIGatewayService:       openAIGatewayService,
+		geminiCompatService:        geminiCompatService,
+		antigravityGatewayService:  antigravityGatewayService,
+		userService:                userService,
+		billingCacheService:        billingCacheService,
+		usageService:               usageService,
+		apiKeyService:              apiKeyService,
+		usageRecordWorkerPool:      usageRecordWorkerPool,
+		errorPassthroughService:    errorPassthroughService,
+		contentModerationService:   contentModerationService,
+		concurrencyHelper:          NewConcurrencyHelper(concurrencyService, SSEPingFormatClaude, pingInterval),
+		userMsgQueueHelper:         umqHelper,
+		maxAccountSwitches:         maxAccountSwitches,
+		maxAccountSwitchesGemini:   maxAccountSwitchesGemini,
+		cfg:                        cfg,
+		settingService:             settingService,
+		firstTokenTimeoutPolicy:    firstTokenTimeoutPolicy,
+		firstTokenStatsRecorder:    firstTokenStatsRecorder,
+		accountPerformanceRecorder: accountPerformanceRecorder,
 	}
 }
 
@@ -438,7 +445,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				reqStream,
 				reqModel,
 				body,
-				FirstTokenAttemptMetadata{AccountID: account.ID, Platform: account.Platform, Model: reqModel, AttemptIndex: fs.SwitchCount + 1, SwitchCount: fs.SwitchCount},
+				FirstTokenAttemptMetadata{AccountID: account.ID, Platform: account.Platform, GroupID: derefGroupID(apiKey.GroupID), Model: reqModel, AttemptIndex: fs.SwitchCount + 1, SwitchCount: fs.SwitchCount, PerformanceRecorder: h.accountPerformanceRecorder},
 				func(attemptCtx context.Context) (*service.ForwardResult, error) {
 					if fs.SwitchCount > 0 {
 						attemptCtx = service.WithAccountSwitchCount(attemptCtx, fs.SwitchCount, h.metadataBridgeEnabled())
@@ -818,7 +825,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				reqStream,
 				reqModel,
 				body,
-				FirstTokenAttemptMetadata{AccountID: account.ID, Platform: account.Platform, Model: reqModel, AttemptIndex: fs.SwitchCount + 1, SwitchCount: fs.SwitchCount},
+				FirstTokenAttemptMetadata{AccountID: account.ID, Platform: account.Platform, GroupID: derefGroupID(apiKey.GroupID), Model: reqModel, AttemptIndex: fs.SwitchCount + 1, SwitchCount: fs.SwitchCount, PerformanceRecorder: h.accountPerformanceRecorder},
 				func(attemptCtx context.Context) (*service.ForwardResult, error) {
 					if fs.SwitchCount > 0 {
 						attemptCtx = service.WithAccountSwitchCount(attemptCtx, fs.SwitchCount, h.metadataBridgeEnabled())

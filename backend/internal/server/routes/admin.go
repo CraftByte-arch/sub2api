@@ -69,6 +69,9 @@ func RegisterAdminRoutes(
 		// 首 Token 超时统计
 		registerFirstTokenTimeoutRoutes(admin, h)
 
+		// 账号性能看板
+		registerAccountPerformanceRoutes(admin, h)
+
 		// 数据管理
 		registerDataManagementRoutes(admin, h, stepUpAuth)
 
@@ -119,6 +122,16 @@ func RegisterAdminRoutes(
 
 		// 操作审计日志
 		registerAuditLogRoutes(admin, h, stepUpAuth)
+	}
+}
+
+func registerAccountPerformanceRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	performance := admin.Group("/performance")
+	{
+		performance.GET("/overview", h.Admin.AccountPerformance.GetOverview)
+		performance.GET("/accounts", h.Admin.AccountPerformance.GetAccounts)
+		performance.GET("/investigation", h.Admin.AccountPerformance.GetInvestigation)
+		performance.GET("/health", h.Admin.AccountPerformance.GetHealth)
 	}
 }
 

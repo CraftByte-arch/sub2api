@@ -106,6 +106,7 @@ func provideCleanup(
 	quotaFlusher *service.UserPlatformQuotaUsageFlusher,
 	firstTokenTimeoutPolicy *service.FirstTokenTimeoutPolicy,
 	firstTokenStatsRecorder *service.FirstTokenTimeoutStatsRecorder,
+	accountPerformanceRecorder *service.AsyncAccountPerformanceRecorder,
 	upstreamBillingProbe *service.UpstreamBillingProbeService,
 	auditLog *service.AuditLogService,
 ) func() {
@@ -116,11 +117,17 @@ func provideCleanup(
 	if firstTokenStatsRecorder != nil {
 		firstTokenStatsRecorder.Start(appCtx)
 	}
+	if accountPerformanceRecorder != nil {
+		accountPerformanceRecorder.Start(appCtx)
+	}
 
 	return func() {
 		cancelApp()
 		if firstTokenStatsRecorder != nil {
 			firstTokenStatsRecorder.Stop()
+		}
+		if accountPerformanceRecorder != nil {
+			accountPerformanceRecorder.Stop()
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
