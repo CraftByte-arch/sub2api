@@ -48,7 +48,7 @@ type AsyncAccountPerformanceRecorder struct {
 	stopOnce    sync.Once
 
 	healthMu sync.RWMutex
-	health   accountPerformanceCollectionHealth
+	health   AccountPerformanceCollectionHealth
 }
 
 func NewAccountPerformanceRecorder(repo AccountPerformanceRepository) *AsyncAccountPerformanceRecorder {

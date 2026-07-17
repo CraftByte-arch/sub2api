@@ -57,12 +57,20 @@ func accountPerformanceFirstTokenMS(result any) *int64 {
 	switch value := result.(type) {
 	case *service.ForwardResult:
 		if value != nil {
-			return value.FirstTokenMs
+			return accountPerformanceMilliseconds(value.FirstTokenMs)
 		}
 	case *service.OpenAIForwardResult:
 		if value != nil {
-			return value.FirstTokenMs
+			return accountPerformanceMilliseconds(value.FirstTokenMs)
 		}
 	}
 	return nil
+}
+
+func accountPerformanceMilliseconds(value *int) *int64 {
+	if value == nil {
+		return nil
+	}
+	converted := int64(*value)
+	return &converted
 }

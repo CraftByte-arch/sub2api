@@ -48,10 +48,10 @@ func TestAccountPerformanceAttemptRecordsClientCancellationSeparately(t *testing
 func TestAccountPerformanceAttemptRecordsSuccessfulLatency(t *testing.T) {
 	recorder := &accountPerformanceRecorderSpy{}
 	attempt := beginAccountPerformanceAttempt(recorder, 7, service.PlatformOpenAI, 3, service.ProtocolResponses, "gpt-5", 0)
-	ttft := int64(125)
+	ttft := 125
 	attempt.Finish(context.Background(), nil, &service.OpenAIForwardResult{FirstTokenMs: &ttft})
 	require.Len(t, recorder.deltas, 1)
 	require.Equal(t, service.AccountPerformanceOutcomeSuccess, recorder.deltas[0].Outcome)
-	require.Equal(t, &ttft, recorder.deltas[0].TTFTMS)
+	require.EqualValues(t, ttft, *recorder.deltas[0].TTFTMS)
 	require.NotNil(t, recorder.deltas[0].DurationMS)
 }
