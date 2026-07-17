@@ -65,4 +65,15 @@ describe('PerformanceAccountTable', () => {
 
     expect(wrapper.emitted('retry')).toHaveLength(1)
   })
+
+  it('only exposes backend-supported sorting and maps attempts to samples', async () => {
+    const wrapper = mount(PerformanceAccountTable, { props })
+    const headers = wrapper.findAll('th')
+
+    expect(headers[0].find('button').exists()).toBe(false)
+    expect(headers[1].find('button').exists()).toBe(false)
+    await headers[7].get('button').trigger('click')
+
+    expect(wrapper.emitted('sort')).toEqual([['samples']])
+  })
 })

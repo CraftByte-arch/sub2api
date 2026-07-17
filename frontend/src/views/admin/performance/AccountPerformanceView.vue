@@ -44,7 +44,9 @@ const accountPageSize = 20
 let overviewGeneration = 0
 let accountsGeneration = 0
 let investigationGeneration = 0
-let syncingRouteQuery = false
+let filterGeneration = 0
+let loadedFilterGeneration = -1
+const internalRouteWrites = new Map<string, number>()
 
 const pageFilters = computed(() => ({ range: range.value, platform: platform.value.trim() || undefined }))
 const accountParams = computed(() => ({
@@ -116,11 +118,49 @@ function readQuery() {
   platform.value = typeof route.query.platform === 'string' ? route.query.platform : ''
 }
 
-async function syncQuery() {
+function pageQuery() {
   const query: Record<string, string> = { range: range.value }
   if (platform.value.trim()) query.platform = platform.value.trim()
-  syncingRouteQuery = true
-  try { await router.replace({ query }) } finally { syncingRouteQuery = false }
+  return query
+}
+
+function querySignature(query: Record<string, unknown>) {
+  return `${query.range ?? '24h'}\u0000${query.platform ?? ''}`
+}
+
+function rememberInternalRouteWrite(query: Record<string, string>) {
+  const signature = querySignature(query)
+  internalRouteWrites.set(signature, (internalRouteWrites.get(signature) ?? 0) + 1)
+}
+
+function consumeInternalRouteWrite(query: Record<string, unknown>) {
+  const signature = querySignature(query)
+  const count = internalRouteWrites.get(signature) ?? 0
+  if (!count) return false
+  if (count === 1) internalRouteWrites.delete(signature)
+  else internalRouteWrites.set(signature, count - 1)
+  return true
+}
+
+function routeMatchesPageFilters() {
+  return querySignature(route.query) === querySignature(pageQuery())
+}
+
+async function refreshFiltersOnce(generation: number) {
+  if (generation !== filterGeneration || generation === loadedFilterGeneration) return
+  loadedFilterGeneration = generation
+  await refreshAll()
+}
+
+async function syncQuery(generation = filterGeneration) {
+  const query = pageQuery()
+  rememberInternalRouteWrite(query)
+  await router.replace({ query })
+  if (generation !== filterGeneration) {
+    if (!routeMatchesPageFilters()) void syncQuery(filterGeneration)
+    return
+  }
+  await refreshFiltersOnce(generation)
 }
 
 async function loadOverview() {
@@ -184,10 +224,10 @@ async function manualRefresh() {
 }
 
 async function changePageFilters() {
+  const generation = ++filterGeneration
   accountPage.value = 1
   closeInvestigation()
-  await syncQuery()
-  await refreshAll()
+  await syncQuery(generation)
 }
 
 function changeSort(sort: string) {
@@ -218,17 +258,18 @@ function closeInvestigation() {
 }
 
 watch(() => route.query, async () => {
-  if (syncingRouteQuery) return
+  if (consumeInternalRouteWrite(route.query)) return
   readQuery()
+  const generation = ++filterGeneration
+  loadedFilterGeneration = -1
   accountPage.value = 1
   closeInvestigation()
-  await refreshAll()
+  await refreshFiltersOnce(generation)
 }, { deep: true })
 
 onMounted(async () => {
   readQuery()
-  await syncQuery()
-  await refreshAll()
+  await syncQuery(filterGeneration)
 })
 
 onUnmounted(() => {

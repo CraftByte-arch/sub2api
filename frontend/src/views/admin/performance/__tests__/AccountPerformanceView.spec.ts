@@ -47,6 +47,11 @@ const accounts = {
 }
 
 const investigation = { time_points: [], failures: [], collection_health: accounts.collection_health }
+const PerformanceAccountTableStub = {
+  props: ['page', 'loading', 'error', 'sort', 'order'],
+  emits: ['retry', 'sort', 'page', 'select'],
+  template: '<button data-testid="select-account" @click="$emit(\'select\', page.items[0])">select</button><button data-testid="sort-samples" @click="$emit(\'sort\', \'samples\')">samples</button>'
+}
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -62,7 +67,7 @@ async function mountView() {
         PerformanceMetricCard: { props: ['label', 'value', 'context'], template: '<div>{{ label }} {{ value }} {{ context }}</div>' },
         PerformanceTrendChart: { template: '<div />' },
         PerformanceFailureDistribution: { template: '<div />' },
-        PerformanceAccountTable: { props: ['page'], template: '<button data-testid="select-account" @click="$emit(\'select\', page.items[0])">select</button>' },
+        PerformanceAccountTable: PerformanceAccountTableStub,
         PerformanceInvestigationDrawer: { template: '<div />' }
       }
     }
@@ -100,6 +105,17 @@ describe('AccountPerformanceView', () => {
     wrapper.unmount()
   })
 
+  it('uses the supported samples key when the table requests attempt sorting', async () => {
+    const wrapper = await mountView()
+    getAccounts.mockClear()
+
+    await wrapper.get('[data-testid="sort-samples"]').trigger('click')
+    await flushPromises()
+
+    expect(getAccounts).toHaveBeenCalledWith(expect.objectContaining({ sort: 'samples', order: 'asc' }))
+    wrapper.unmount()
+  })
+
   it('identifies the last successful collector flush and its missing-data fallback when degraded', async () => {
     getOverview.mockResolvedValueOnce({
       ...overview(),
@@ -131,7 +147,7 @@ describe('AccountPerformanceView', () => {
         AppLayout: { template: '<main><slot /></main>' },
         PerformanceMetricCard: { props: ['label', 'value'], template: '<div>{{ label }} {{ value }}</div>' },
         PerformanceTrendChart: { template: '<div />' }, PerformanceFailureDistribution: { template: '<div />' },
-        PerformanceAccountTable: { template: '<div />' }, PerformanceInvestigationDrawer: { template: '<div />' }
+        PerformanceAccountTable: { props: ['page', 'loading', 'error', 'sort', 'order'], emits: ['retry', 'sort', 'page', 'select'], template: '<div />' }, PerformanceInvestigationDrawer: { template: '<div />' }
       } }
     })
     await flushPromises()
@@ -143,6 +159,43 @@ describe('AccountPerformanceView', () => {
 
     expect(wrapper.text()).toContain('20')
     expect(wrapper.text()).not.toContain('10 次请求')
+    wrapper.unmount()
+  })
+
+  it('loads final filters once when overlapping route replacements resolve out of order', async () => {
+    const wrapper = await mountView()
+    getOverview.mockClear()
+    getAccounts.mockClear()
+    const pending: Array<{ query: Record<string, string>; resolve: () => void }> = []
+    replace.mockImplementation(({ query }) => {
+      const navigation = deferred<void>()
+      pending.push({
+        query,
+        resolve: () => {
+          route.value.query = query
+          navigation.resolve()
+        }
+      })
+      return navigation.promise
+    })
+
+    const rangeButtons = wrapper.findAll('[aria-label="时间范围"] button')
+    await rangeButtons.find((button) => button.text() === '7d')!.trigger('click')
+    await rangeButtons.find((button) => button.text() === '30d')!.trigger('click')
+
+    expect(pending.map((navigation) => navigation.query.range)).toEqual(['7d', '30d'])
+    pending[1].resolve()
+    await flushPromises()
+    pending[0].resolve()
+    await flushPromises()
+    expect(pending.map((navigation) => navigation.query.range)).toEqual(['7d', '30d', '30d'])
+    pending[2].resolve()
+    await flushPromises()
+
+    expect(getOverview).toHaveBeenCalledTimes(1)
+    expect(getOverview).toHaveBeenCalledWith({ range: '30d', platform: undefined })
+    expect(getAccounts).toHaveBeenCalledTimes(1)
+    expect(getAccounts).toHaveBeenCalledWith(expect.objectContaining({ range: '30d' }))
     wrapper.unmount()
   })
 })
