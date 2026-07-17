@@ -79,7 +79,8 @@ async function mountView() {
 describe('AccountPerformanceView', () => {
   beforeEach(() => {
     route.value = { query: {} }
-    replace.mockClear()
+    replace.mockReset()
+    replace.mockImplementation(async ({ query }) => { route.value.query = query })
     getOverview.mockReset()
     getAccounts.mockReset()
     getInvestigation.mockReset()
@@ -132,6 +133,38 @@ describe('AccountPerformanceView', () => {
     expect(getAccounts).toHaveBeenCalledTimes(1)
     expect(getAccounts).toHaveBeenCalledWith(expect.objectContaining({ range: '24h', platform: undefined }))
     expect(rangeButtons.find((button) => button.text() === '24h')!.classes()).toContain('bg-primary-600')
+    wrapper.unmount()
+  })
+
+  it('restores current route filters when router navigation rejects', async () => {
+    const wrapper = await mountView()
+    const rangeButtons = wrapper.findAll('[aria-label="时间范围"] button')
+    getOverview.mockClear()
+    getAccounts.mockClear()
+    replace.mockRejectedValueOnce(new Error('navigation failed'))
+
+    await rangeButtons.find((button) => button.text() === '7d')!.trigger('click')
+    await flushPromises()
+
+    expect(rangeButtons.find((button) => button.text() === '24h')!.classes()).toContain('bg-primary-600')
+    expect(getOverview).not.toHaveBeenCalledWith({ range: '7d', platform: undefined })
+    expect(getAccounts).not.toHaveBeenCalledWith(expect.objectContaining({ range: '7d' }))
+    wrapper.unmount()
+  })
+
+  it('restores current route filters when router navigation resolves without updating the route', async () => {
+    const wrapper = await mountView()
+    const rangeButtons = wrapper.findAll('[aria-label="时间范围"] button')
+    getOverview.mockClear()
+    getAccounts.mockClear()
+    replace.mockResolvedValueOnce(undefined)
+
+    await rangeButtons.find((button) => button.text() === '7d')!.trigger('click')
+    await flushPromises()
+
+    expect(rangeButtons.find((button) => button.text() === '24h')!.classes()).toContain('bg-primary-600')
+    expect(getOverview).not.toHaveBeenCalledWith({ range: '7d', platform: undefined })
+    expect(getAccounts).not.toHaveBeenCalledWith(expect.objectContaining({ range: '7d' }))
     wrapper.unmount()
   })
 
