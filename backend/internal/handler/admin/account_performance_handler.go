@@ -103,7 +103,7 @@ func parseAccountPerformanceFilter(c *gin.Context) (accountPerformanceFilter, bo
 	if c == nil {
 		return accountPerformanceFilter{}, false
 	}
-	allowed := map[string]bool{"range": true, "platform": true, "group_id": true, "model": true, "protocol": true, "account_id": true, "sort": true, "order": true, "page": true, "page_size": true}
+	allowed := map[string]bool{"range": true, "platform": true, "group_id": true, "model": true, "protocol": true, "account_id": true, "sort": true, "order": true, "page": true, "page_size": true, "timezone": true}
 	for key, values := range c.Request.URL.Query() {
 		if !allowed[key] || len(values) != 1 {
 			response.BadRequest(c, "Invalid account performance query")
