@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import Icon from '@/components/icons/Icon.vue'
 import { performanceMetricsFromCounters, type PerformanceAccountItem as PerformanceAccount, type PerformanceInvestigation } from '@/api/admin/performance'
+import { acquireModalBodyLock, releaseModalBodyLock } from '@/utils/modalBodyLock'
 import PerformanceFailureDistribution from './PerformanceFailureDistribution.vue'
 import PerformanceMetricCard from './PerformanceMetricCard.vue'
 import PerformanceTrendChart, { type PerformanceSeriesDefinition } from './PerformanceTrendChart.vue'
@@ -17,8 +18,21 @@ const props = defineProps<{
 const emit = defineEmits<{ close: []; retry: [] }>()
 
 let previousActiveElement: HTMLElement | null = null
-let previousBodyOverflow = ''
-let bodyLocked = false
+let hasBodyLock = false
+let inertDrawerCount = 0
+let appWasInert = false
+const dialogRef = ref<HTMLElement | null>(null)
+
+const focusableSelector = [
+  'a[href]',
+  'area[href]',
+  'button:not([disabled])',
+  'input:not([disabled]):not([type="hidden"])',
+  'select:not([disabled])',
+  'textarea:not([disabled])',
+  '[contenteditable="true"]',
+  '[tabindex]:not([tabindex="-1"])'
+].join(',')
 
 const metrics = computed(() => props.account ? performanceMetricsFromCounters(props.account.counters) : null)
 const trendSeries: PerformanceSeriesDefinition[] = [
@@ -37,17 +51,70 @@ function milliseconds(value: number) {
   return value > 0 ? `${Math.round(value).toLocaleString()} ms` : '--'
 }
 
-function restorePageState() {
-  if (bodyLocked) {
-    document.body.style.overflow = previousBodyOverflow
-    bodyLocked = false
+function eligibleAttempts(account: PerformanceAccount) {
+  return Math.max(0, account.counters.attempt_count - account.counters.client_canceled_count)
+}
+
+function failureCount(account: PerformanceAccount) {
+  return Math.max(0, eligibleAttempts(account) - account.counters.success_count)
+}
+
+function makeBackgroundInert() {
+  const appRoot = document.getElementById('app') as (HTMLElement & { inert?: boolean }) | null
+  if (!appRoot) return
+  if (inertDrawerCount === 0) appWasInert = appRoot.hasAttribute('inert')
+  inertDrawerCount += 1
+  appRoot.setAttribute('inert', '')
+  appRoot.inert = true
+}
+
+function restoreBackgroundInteractivity() {
+  const appRoot = document.getElementById('app') as (HTMLElement & { inert?: boolean }) | null
+  if (!appRoot || inertDrawerCount === 0) return
+  inertDrawerCount -= 1
+  if (inertDrawerCount !== 0) return
+  if (appWasInert) {
+    appRoot.setAttribute('inert', '')
+    appRoot.inert = true
+  } else {
+    appRoot.removeAttribute('inert')
+    appRoot.inert = false
   }
+}
+
+function focusableElements() {
+  return Array.from(dialogRef.value?.querySelectorAll<HTMLElement>(focusableSelector) ?? [])
+    .filter((element) => element.tabIndex >= 0 && element.getAttribute('aria-hidden') !== 'true')
+}
+
+function restorePageState() {
+  if (hasBodyLock) {
+    releaseModalBodyLock()
+    hasBodyLock = false
+  }
+  restoreBackgroundInteractivity()
   previousActiveElement?.focus?.()
   previousActiveElement = null
 }
 
 function handleEscape(event: KeyboardEvent) {
   if (props.open && event.key === 'Escape') emit('close')
+}
+
+function handleTab(event: KeyboardEvent) {
+  if (!props.open || event.key !== 'Tab') return
+  const elements = focusableElements()
+  if (!elements.length) return
+  const first = elements[0]
+  const last = elements.at(-1)!
+  const active = document.activeElement
+  if (event.shiftKey && (active === first || !dialogRef.value?.contains(active))) {
+    event.preventDefault()
+    last.focus()
+  } else if (!event.shiftKey && (active === last || !dialogRef.value?.contains(active))) {
+    event.preventDefault()
+    first.focus()
+  }
 }
 
 watch(() => props.open, async (open) => {
@@ -57,16 +124,22 @@ watch(() => props.open, async (open) => {
   }
 
   previousActiveElement = document.activeElement instanceof HTMLElement ? document.activeElement : null
-  previousBodyOverflow = document.body.style.overflow
-  document.body.style.overflow = 'hidden'
-  bodyLocked = true
+  if (!hasBodyLock) {
+    acquireModalBodyLock()
+    hasBodyLock = true
+  }
+  makeBackgroundInert()
   await nextTick()
-  document.querySelector<HTMLElement>('[data-testid="performance-investigation-close"]')?.focus()
+  focusableElements()[0]?.focus()
 }, { immediate: true })
 
-onMounted(() => document.addEventListener('keydown', handleEscape))
+onMounted(() => {
+  document.addEventListener('keydown', handleEscape)
+  document.addEventListener('keydown', handleTab)
+})
 onUnmounted(() => {
   document.removeEventListener('keydown', handleEscape)
+  document.removeEventListener('keydown', handleTab)
   restorePageState()
 })
 </script>
@@ -74,7 +147,7 @@ onUnmounted(() => {
 <template>
   <Teleport to="body">
     <div v-if="open" class="fixed inset-0 z-50 flex justify-end bg-gray-950/40" @click.self="emit('close')">
-      <aside role="dialog" aria-modal="true" aria-labelledby="performance-investigation-title" class="flex h-full w-full max-w-2xl flex-col bg-white shadow-xl dark:bg-dark-900">
+      <aside ref="dialogRef" role="dialog" aria-modal="true" aria-labelledby="performance-investigation-title" class="flex h-full w-full max-w-2xl flex-col bg-white shadow-xl dark:bg-dark-900">
         <header class="flex min-h-16 items-center justify-between border-b border-gray-200 px-4 dark:border-dark-700 sm:px-6">
           <div class="min-w-0">
             <h2 id="performance-investigation-title" class="truncate text-base font-semibold text-gray-900 dark:text-white">账号 #{{ account?.account_id ?? '--' }} 性能详情</h2>
@@ -85,8 +158,8 @@ onUnmounted(() => {
 
         <div class="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6">
           <section v-if="account && metrics" class="grid grid-cols-2 gap-3 lg:grid-cols-4" aria-label="账号指标摘要">
-            <PerformanceMetricCard label="可用率" :value="percent(metrics.availability)" :context="`${account.counters.success_count} / ${account.counters.attempt_count} 次成功`" tone="success" icon="checkCircle" />
-            <PerformanceMetricCard label="失败率" :value="percent(metrics.failure_rate)" :context="`${account.counters.attempt_count} 次尝试`" tone="danger" icon="xCircle" />
+            <PerformanceMetricCard label="可用率" :value="percent(metrics.availability)" :context="`${account.counters.success_count} / ${eligibleAttempts(account)} 次成功`" tone="success" icon="checkCircle" />
+            <PerformanceMetricCard label="失败率" :value="percent(metrics.failure_rate)" :context="`${failureCount(account)} / ${eligibleAttempts(account)} 次失败`" tone="danger" icon="xCircle" />
             <PerformanceMetricCard label="P95 TTFT" :value="milliseconds(metrics.p95_ttft_ms)" context="首字节响应延迟" tone="info" icon="clock" />
             <PerformanceMetricCard label="P95 总耗时" :value="milliseconds(metrics.p95_duration_ms)" context="完整请求耗时" tone="neutral" icon="chart" />
           </section>

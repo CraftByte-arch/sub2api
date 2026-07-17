@@ -26,7 +26,10 @@ const account = { account_id: 42, platform: 'openai', counters, availability: 0.
 const props = { open: true, account, investigation: null, loading: false, error: '' }
 const global = { stubs: { PerformanceMetricCard: true, PerformanceTrendChart: true, PerformanceFailureDistribution: true } }
 
-afterEach(() => { document.body.innerHTML = '' })
+afterEach(() => {
+  document.body.innerHTML = ''
+  document.body.style.overflow = ''
+})
 
 describe('PerformanceInvestigationDrawer', () => {
   it('shows an open dialog error state, retries, and closes from its close control', async () => {
@@ -52,6 +55,50 @@ describe('PerformanceInvestigationDrawer', () => {
 
     await wrapper.setProps({ loading: false })
     expect(document.body.textContent).toContain('暂无可供分析的性能数据')
+    wrapper.unmount()
+  })
+
+  it('traps focus in the drawer and restores the app background and prior focus after close', async () => {
+    const appRoot = document.createElement('div')
+    appRoot.id = 'app'
+    const trigger = document.createElement('button')
+    trigger.textContent = '打开详情'
+    appRoot.append(trigger)
+    document.body.append(appRoot)
+    trigger.focus()
+
+    const wrapper = mount(PerformanceInvestigationDrawer, { attachTo: appRoot, props: { ...props, error: '详情加载失败' }, global })
+    await nextTick()
+    const first = document.body.querySelector<HTMLButtonElement>('[data-testid="performance-investigation-close"]')!
+    const last = document.body.querySelector<HTMLButtonElement>('[data-testid="performance-investigation-retry"]')!
+
+    expect((appRoot as HTMLElement & { inert: boolean }).inert).toBe(true)
+    last.focus()
+    last.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }))
+    expect(document.activeElement).toBe(first)
+    first.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true }))
+    expect(document.activeElement).toBe(last)
+
+    await wrapper.setProps({ open: false })
+    expect((appRoot as HTMLElement & { inert: boolean }).inert).toBe(false)
+    expect(document.activeElement).toBe(trigger)
+    wrapper.unmount()
+  })
+
+  it('uses non-cancelled attempts for availability and failure metric contexts', async () => {
+    const cancelledAccount = {
+      ...account,
+      counters: { ...counters, success_count: 90, client_canceled_count: 20 }
+    }
+    const wrapper = mount(PerformanceInvestigationDrawer, {
+      attachTo: document.body,
+      props: { ...props, account: cancelledAccount },
+      global: { stubs: { ...global.stubs, PerformanceMetricCard: { props: ['context'], template: '<div>{{ context }}</div>' } } }
+    })
+    await nextTick()
+
+    expect(document.body.textContent).toContain('90 / 100 次成功')
+    expect(document.body.textContent).toContain('10 / 100 次失败')
     wrapper.unmount()
   })
 })
