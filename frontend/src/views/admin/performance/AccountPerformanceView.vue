@@ -305,7 +305,7 @@ onUnmounted(() => {
             <dl class="mt-4 grid grid-cols-1 gap-3 text-sm sm:grid-cols-3">
               <div><dt class="text-gray-500 dark:text-gray-400">丢弃样本</dt><dd class="mt-1 font-medium tabular-nums text-gray-900 dark:text-white">{{ overview.collection_health.dropped_samples }}</dd></div>
               <div><dt class="text-gray-500 dark:text-gray-400">待写入样本</dt><dd class="mt-1 font-medium tabular-nums text-gray-900 dark:text-white">{{ overview.collection_health.pending_samples }}</dd></div>
-              <div><dt class="text-gray-500 dark:text-gray-400">最近刷新</dt><dd class="mt-1 font-medium text-gray-900 dark:text-white">{{ overview.collection_health.last_successful_flush_at ? formatDate(overview.collection_health.last_successful_flush_at) : '尚未完成' }}</dd></div>
+              <div><dt class="text-gray-500 dark:text-gray-400">最近一次成功刷新</dt><dd class="mt-1 font-medium text-gray-900 dark:text-white">{{ overview.collection_health.last_successful_flush_at ? formatDate(overview.collection_health.last_successful_flush_at) : '暂无成功刷新记录' }}</dd></div>
             </dl>
           </section>
         </section>

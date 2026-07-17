@@ -100,6 +100,27 @@ describe('AccountPerformanceView', () => {
     wrapper.unmount()
   })
 
+  it('identifies the last successful collector flush and its missing-data fallback when degraded', async () => {
+    getOverview.mockResolvedValueOnce({
+      ...overview(),
+      collection_health: { status: 'degraded', dropped_samples: 3, pending_samples: 2, last_successful_flush_at: '2026-07-17T00:00:00Z' }
+    })
+    const withFlush = await mountView()
+
+    expect(withFlush.text()).toContain('最近一次成功刷新')
+    expect(withFlush.text()).not.toContain('2026-07-17T00:00:00Z')
+    withFlush.unmount()
+
+    getOverview.mockResolvedValueOnce({
+      ...overview(),
+      collection_health: { status: 'degraded', dropped_samples: 3, pending_samples: 2, last_successful_flush_at: null }
+    })
+    const withoutFlush = await mountView()
+
+    expect(withoutFlush.text()).toContain('暂无成功刷新记录')
+    withoutFlush.unmount()
+  })
+
   it('does not allow a stale overview response to replace an explicit refresh', async () => {
     const initial = deferred<ReturnType<typeof overview>>()
     const refreshed = deferred<ReturnType<typeof overview>>()
