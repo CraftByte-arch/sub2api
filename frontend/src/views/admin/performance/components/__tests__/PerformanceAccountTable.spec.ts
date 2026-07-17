@@ -53,11 +53,16 @@ describe('PerformanceAccountTable', () => {
     expect(wrapper.emitted('select')).toEqual([[page.items[0]], [page.items[0]]])
   })
 
-  it('keeps loaded rows visible and offers retry after a refresh error', () => {
+  it('keeps loaded rows visible and retries after a refresh error', async () => {
     const wrapper = mount(PerformanceAccountTable, { props: { ...props, error: '账号性能刷新失败' } })
 
     expect(wrapper.text()).toContain('#42')
     expect(wrapper.text()).toContain('账号性能刷新失败')
-    expect(wrapper.get('[data-testid="performance-accounts-retry"]').text()).toContain('重试')
+    const retry = wrapper.get('[data-testid="performance-accounts-retry"]')
+    expect(retry.text()).toContain('重试')
+
+    await retry.trigger('click')
+
+    expect(wrapper.emitted('retry')).toHaveLength(1)
   })
 })
