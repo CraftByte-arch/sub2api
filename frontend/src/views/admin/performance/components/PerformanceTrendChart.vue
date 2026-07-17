@@ -20,7 +20,8 @@ const props = withDefaults(defineProps<{
   timeRange: string
   series: PerformanceSeriesDefinition[]
   loading?: boolean
-}>(), { loading: false })
+  valueFormat?: 'number' | 'percent'
+}>(), { loading: false, valueFormat: 'number' })
 
 const themeVersion = ref(0)
 let themeObserver: MutationObserver | undefined
@@ -65,7 +66,7 @@ const options = computed<ChartOptions<'line'>>(() => ({
   },
   scales: {
     x: { grid: { display: false }, ticks: { color: dark.value ? '#9ca3af' : '#6b7280', font: { size: 10 }, maxTicksLimit: 8, autoSkipPadding: 12 } },
-    y: { beginAtZero: true, grid: { color: dark.value ? '#374151' : '#e5e7eb', borderDash: [4, 4] }, ticks: { color: dark.value ? '#9ca3af' : '#6b7280', font: { size: 10 } } }
+    y: { beginAtZero: true, grid: { color: dark.value ? '#374151' : '#e5e7eb', borderDash: [4, 4] }, ticks: { color: dark.value ? '#9ca3af' : '#6b7280', font: { size: 10 }, callback: (value) => props.valueFormat === 'percent' ? `${(Number(value) * 100).toFixed(0)}%` : `${value}` } }
   }
 }))
 const summary = computed(() => props.points.length ? props.series.map((series) => `${series.label}: ${series.formatter(series.selector(props.points.at(-1)!))}`).join('，') : '')

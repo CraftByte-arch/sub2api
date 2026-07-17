@@ -7,6 +7,7 @@ import performanceAPI, {
   performanceMetricsFromCounters,
   type PerformanceAccountItem,
   type PerformanceAccountPage,
+  type PerformanceCounters,
   type PerformanceInvestigation,
   type PerformanceOrder,
   type PerformanceOverview,
@@ -67,6 +68,10 @@ const overviewMetrics = computed(() => overview.value ? {
   p95Duration: overview.value.summary.p95_duration_ms
 } : null)
 const trendMetrics = computed(() => overview.value?.trend.map((point) => performanceMetricsFromCounters(point.counters)) ?? [])
+const aggregateTrendMetrics = computed(() => performanceMetricsFromCounters(
+  overview.value?.trend.reduce(sumCounters, emptyCounters()) ?? emptyCounters()
+))
+const hasOverviewSamples = computed(() => (overview.value?.summary.attempts ?? 0) > 0)
 const degraded = computed(() => overview.value?.collection_health.status === 'degraded')
 const coverage = computed(() => overview.value ? `${formatDate(overview.value.coverage_start)} 至 ${formatDate(overview.value.coverage_end)}` : '--')
 const failureDistribution = computed(() => {
@@ -86,10 +91,10 @@ const failureDistribution = computed(() => {
 })
 
 const ratesSeries: PerformanceSeriesDefinition[] = [
-  { label: '可用率', color: '#10b981', selector: (point) => performanceMetricsFromCounters(point.counters).availability * 100, formatter: percent },
-  { label: '失败率', color: '#ef4444', selector: (point) => performanceMetricsFromCounters(point.counters).failure_rate * 100, formatter: percent, fill: false },
-  { label: 'TTFT 超时率', color: '#f59e0b', selector: (point) => performanceMetricsFromCounters(point.counters).ttft_timeout_rate * 100, formatter: percent, fill: false },
-  { label: '切换率', color: '#6366f1', selector: (point) => performanceMetricsFromCounters(point.counters).failover_rate * 100, formatter: percent, fill: false }
+  { label: '可用率', color: '#10b981', selector: (point) => performanceMetricsFromCounters(point.counters).availability, formatter: percent },
+  { label: '失败率', color: '#ef4444', selector: (point) => performanceMetricsFromCounters(point.counters).failure_rate, formatter: percent, fill: false },
+  { label: 'TTFT 超时率', color: '#f59e0b', selector: (point) => performanceMetricsFromCounters(point.counters).ttft_timeout_rate, formatter: percent, fill: false },
+  { label: '切换率', color: '#6366f1', selector: (point) => performanceMetricsFromCounters(point.counters).failover_rate, formatter: percent, fill: false }
 ]
 const latencySeries: PerformanceSeriesDefinition[] = [
   { label: 'P50 TTFT', color: '#0ea5e9', selector: (point) => performanceMetricsFromCounters(point.counters).p50_ttft_ms, formatter: milliseconds },
@@ -99,6 +104,27 @@ const latencySeries: PerformanceSeriesDefinition[] = [
 
 function percent(value: number) { return `${(value * 100).toFixed(2)}%` }
 function milliseconds(value: number) { return value > 0 ? `${Math.round(value).toLocaleString()} ms` : '--' }
+function emptyCounters(): PerformanceCounters {
+  return {
+    attempt_count: 0, success_count: 0, client_canceled_count: 0, ttft_timeout_count: 0,
+    rate_limit_count: 0, auth_count: 0, upstream_4xx_count: 0, upstream_5xx_count: 0,
+    transport_count: 0, protocol_count: 0, other_failure_count: 0, failover_count: 0,
+    ttft_sum_ms: 0, duration_sum_ms: 0,
+    ttft_latency: { Samples: 0, LE1000MS: 0, LE2500MS: 0, LE5000MS: 0, LE10000MS: 0, LE30000MS: 0, GT30000MS: 0 },
+    duration_latency: { Samples: 0, LE1000MS: 0, LE2500MS: 0, LE5000MS: 0, LE10000MS: 0, LE30000MS: 0, GT30000MS: 0 }
+  }
+}
+function sumCounters(total: PerformanceCounters, point: { counters: PerformanceCounters }): PerformanceCounters {
+  const current = point.counters
+  return {
+    attempt_count: total.attempt_count + current.attempt_count, success_count: total.success_count + current.success_count, client_canceled_count: total.client_canceled_count + current.client_canceled_count, ttft_timeout_count: total.ttft_timeout_count + current.ttft_timeout_count,
+    rate_limit_count: total.rate_limit_count + current.rate_limit_count, auth_count: total.auth_count + current.auth_count, upstream_4xx_count: total.upstream_4xx_count + current.upstream_4xx_count, upstream_5xx_count: total.upstream_5xx_count + current.upstream_5xx_count,
+    transport_count: total.transport_count + current.transport_count, protocol_count: total.protocol_count + current.protocol_count, other_failure_count: total.other_failure_count + current.other_failure_count, failover_count: total.failover_count + current.failover_count,
+    ttft_sum_ms: total.ttft_sum_ms + current.ttft_sum_ms, duration_sum_ms: total.duration_sum_ms + current.duration_sum_ms,
+    ttft_latency: { Samples: total.ttft_latency.Samples + current.ttft_latency.Samples, LE1000MS: total.ttft_latency.LE1000MS + current.ttft_latency.LE1000MS, LE2500MS: total.ttft_latency.LE2500MS + current.ttft_latency.LE2500MS, LE5000MS: total.ttft_latency.LE5000MS + current.ttft_latency.LE5000MS, LE10000MS: total.ttft_latency.LE10000MS + current.ttft_latency.LE10000MS, LE30000MS: total.ttft_latency.LE30000MS + current.ttft_latency.LE30000MS, GT30000MS: total.ttft_latency.GT30000MS + current.ttft_latency.GT30000MS },
+    duration_latency: { Samples: total.duration_latency.Samples + current.duration_latency.Samples, LE1000MS: total.duration_latency.LE1000MS + current.duration_latency.LE1000MS, LE2500MS: total.duration_latency.LE2500MS + current.duration_latency.LE2500MS, LE5000MS: total.duration_latency.LE5000MS + current.duration_latency.LE5000MS, LE10000MS: total.duration_latency.LE10000MS + current.duration_latency.LE10000MS, LE30000MS: total.duration_latency.LE30000MS + current.duration_latency.LE30000MS, GT30000MS: total.duration_latency.GT30000MS + current.duration_latency.GT30000MS }
+  }
+}
 function formatDate(value: string) {
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? '--' : date.toLocaleString([], { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
@@ -192,35 +218,37 @@ async function syncQuery(generation = filterGeneration) {
 
 async function loadOverview() {
   const generation = ++overviewGeneration
+  const requestedFilterGeneration = filterGeneration
   overviewLoading.value = !hasOverviewLoaded.value
   overviewError.value = ''
   try {
     const response = await performanceAPI.getOverview(pageFilters.value)
-    if (generation !== overviewGeneration) return
+    if (generation !== overviewGeneration || requestedFilterGeneration !== filterGeneration) return
     overview.value = response
     hasOverviewLoaded.value = true
   } catch {
-    if (generation !== overviewGeneration) return
+    if (generation !== overviewGeneration || requestedFilterGeneration !== filterGeneration) return
     overviewError.value = '无法加载性能概览'
   } finally {
-    if (generation === overviewGeneration) overviewLoading.value = false
+    if (generation === overviewGeneration && requestedFilterGeneration === filterGeneration) overviewLoading.value = false
   }
 }
 
 async function loadAccounts() {
   const generation = ++accountsGeneration
+  const requestedFilterGeneration = filterGeneration
   accountsLoading.value = !hasAccountsLoaded.value
   accountsError.value = ''
   try {
     const response = await performanceAPI.getAccounts(accountParams.value)
-    if (generation !== accountsGeneration) return
+    if (generation !== accountsGeneration || requestedFilterGeneration !== filterGeneration) return
     accounts.value = response
     hasAccountsLoaded.value = true
   } catch {
-    if (generation !== accountsGeneration) return
+    if (generation !== accountsGeneration || requestedFilterGeneration !== filterGeneration) return
     accountsError.value = '无法加载账号性能数据'
   } finally {
-    if (generation === accountsGeneration) accountsLoading.value = false
+    if (generation === accountsGeneration && requestedFilterGeneration === filterGeneration) accountsLoading.value = false
   }
 }
 
@@ -252,6 +280,8 @@ async function manualRefresh() {
 
 async function changePageFilters() {
   const generation = ++filterGeneration
+  overviewGeneration++
+  accountsGeneration++
   accountPage.value = 1
   closeInvestigation()
   await syncQuery(generation)
@@ -349,23 +379,26 @@ onUnmounted(() => {
           <button data-testid="performance-overview-retry" type="button" class="min-h-9 rounded-md border border-current px-3 py-1.5 font-medium" @click="loadOverview">重试</button>
         </section>
 
-        <section class="grid grid-cols-1 gap-3 xl:grid-cols-2" aria-label="核心性能指标">
-          <PerformanceMetricCard label="请求健康" :value="percent(overviewMetrics.availability)" :context="`${overview.summary.attempts.toLocaleString()} 次请求 · ${overview.summary.availability.numerator}/${overview.summary.availability.denominator} 可用`" tone="success" icon="checkCircle" :trend="trendMetrics.map((metric) => metric.availability * 100)" wide />
+        <section v-if="hasOverviewSamples" class="grid grid-cols-1 gap-3 xl:grid-cols-2" aria-label="核心性能指标">
+          <PerformanceMetricCard label="请求健康" :value="percent(overviewMetrics.availability)" :context="`${overview.summary.attempts.toLocaleString()} 次请求 · ${overview.summary.availability.numerator}/${overview.summary.availability.denominator} 可用`" tone="success" icon="checkCircle" :trend="trendMetrics.map((metric) => metric.availability)" wide />
           <PerformanceMetricCard label="响应延迟" :value="milliseconds(overviewMetrics.p95Duration)" :context="`P50 TTFT ${milliseconds(overviewMetrics.p50TTFT)} · P95 TTFT ${milliseconds(overviewMetrics.p95TTFT)}`" tone="info" icon="clock" :trend="trendMetrics.map((metric) => metric.p95_duration_ms)" wide />
         </section>
-        <section class="grid grid-cols-1 gap-3 sm:grid-cols-3" aria-label="补充性能指标">
-          <PerformanceMetricCard label="TTFT 超时率" :value="percent(overviewMetrics.ttftTimeoutRate)" :context="`${overview.summary.ttft_timeout_count} 次超时`" tone="warning" icon="clock" :trend="trendMetrics.map((metric) => metric.ttft_timeout_rate * 100)" />
-          <PerformanceMetricCard label="切换率" :value="percent(trendMetrics.at(-1)?.failover_rate ?? 0)" context="上游自动切换" tone="neutral" icon="sync" :trend="trendMetrics.map((metric) => metric.failover_rate * 100)" />
+        <section v-if="hasOverviewSamples" class="grid grid-cols-1 gap-3 sm:grid-cols-3" aria-label="补充性能指标">
+          <PerformanceMetricCard label="TTFT 超时率" :value="percent(overviewMetrics.ttftTimeoutRate)" :context="`${overview.summary.ttft_timeout_count} 次超时`" tone="warning" icon="clock" :trend="trendMetrics.map((metric) => metric.ttft_timeout_rate)" />
+          <PerformanceMetricCard label="切换率" :value="percent(aggregateTrendMetrics.failover_rate)" context="上游自动切换" tone="neutral" icon="sync" :trend="trendMetrics.map((metric) => metric.failover_rate)" />
           <PerformanceMetricCard label="样本数" :value="overview.summary.attempts.toLocaleString()" context="已汇总请求样本" tone="info" icon="chart" :trend="overview.trend.map((point) => point.counters.attempt_count)" />
         </section>
-        <p v-if="overview.summary.attempts === 0" class="text-sm text-gray-500 dark:text-gray-400">暂无可分析样本。性能样本会在部署完成并处理请求后逐步累积。</p>
+        <section v-if="!hasOverviewSamples" class="border-l-4 border-sky-500 bg-sky-50 px-5 py-6 text-sm text-sky-900 dark:bg-sky-500/10 dark:text-sky-100" aria-label="暂无性能样本">
+          <h2 class="text-base font-semibold">暂无可分析样本</h2>
+          <p class="mt-2">性能样本会在部署完成并处理请求后逐步累积。</p>
+        </section>
 
-        <section class="grid grid-cols-1 gap-x-8 gap-y-7 xl:grid-cols-2" aria-label="性能趋势">
-          <PerformanceTrendChart title="请求成功与失败趋势" :points="overview.trend" :time-range="range" :series="ratesSeries" :loading="overviewLoading" />
+        <section v-if="hasOverviewSamples" class="grid grid-cols-1 gap-x-8 gap-y-7 xl:grid-cols-2" aria-label="性能趋势">
+          <PerformanceTrendChart title="请求成功与失败趋势" :points="overview.trend" :time-range="range" :series="ratesSeries" :loading="overviewLoading" value-format="percent" />
           <PerformanceTrendChart title="延迟趋势" :points="overview.trend" :time-range="range" :series="latencySeries" :loading="overviewLoading" />
         </section>
 
-        <section class="grid grid-cols-1 gap-8 border-y border-gray-200 py-6 dark:border-dark-700 xl:grid-cols-2" aria-label="失败分布与采集健康">
+        <section v-if="hasOverviewSamples" class="grid grid-cols-1 gap-8 border-y border-gray-200 py-6 dark:border-dark-700 xl:grid-cols-2" aria-label="失败分布与采集健康">
           <PerformanceFailureDistribution :failures="failureDistribution" title="失败分布" :loading="overviewLoading" />
           <section class="border-l-4 px-4 py-1" :class="degraded ? 'border-amber-500' : 'border-emerald-500'" aria-labelledby="collection-health-title">
             <h2 id="collection-health-title" class="text-sm font-semibold text-gray-900 dark:text-white">采集健康度</h2>

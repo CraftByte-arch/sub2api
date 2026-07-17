@@ -45,7 +45,7 @@
 <script setup lang="ts">
 import { computed, watch, onMounted, onUnmounted, ref, nextTick } from 'vue'
 import Icon from '@/components/icons/Icon.vue'
-import { acquireModalBodyLock, releaseModalBodyLock } from '@/utils/modalBodyLock'
+import { acquireModalBodyLock, lockAppInert, releaseAppInert, releaseModalBodyLock } from '@/utils/modalBodyLock'
 
 // 生成唯一ID以避免多个对话框时ID冲突
 let dialogIdCounter = 0
@@ -55,6 +55,7 @@ const dialogId = `modal-title-${++dialogIdCounter}`
 const dialogRef = ref<HTMLElement | null>(null)
 let previousActiveElement: HTMLElement | null = null
 let hasBodyLock = false
+let hasAppInertLock = false
 
 type DialogWidth = 'narrow' | 'normal' | 'wide' | 'extra-wide' | 'full'
 
@@ -118,6 +119,10 @@ function releasePageState() {
     releaseModalBodyLock()
     hasBodyLock = false
   }
+  if (hasAppInertLock) {
+    releaseAppInert()
+    hasAppInertLock = false
+  }
   if (previousActiveElement && typeof previousActiveElement.focus === 'function') {
     previousActiveElement.focus()
   }
@@ -135,6 +140,7 @@ watch(
         acquireModalBodyLock()
         hasBodyLock = true
       }
+      if (!hasAppInertLock) hasAppInertLock = lockAppInert()
 
       // 等待DOM更新后设置焦点到对话框
       await nextTick()

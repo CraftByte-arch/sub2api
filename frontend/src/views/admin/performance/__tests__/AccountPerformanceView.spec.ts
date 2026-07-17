@@ -59,19 +59,23 @@ function deferred<T>() {
   return { promise, resolve }
 }
 
-async function mountView() {
-  const wrapper = mount(AccountPerformanceView, {
+function createView() {
+  return mount(AccountPerformanceView, {
     global: {
       stubs: {
         AppLayout: { template: '<main><slot /></main>' },
-        PerformanceMetricCard: { props: ['label', 'value', 'context'], template: '<div>{{ label }} {{ value }} {{ context }}</div>' },
-        PerformanceTrendChart: { template: '<div />' },
+        PerformanceMetricCard: { props: ['label', 'value', 'context'], template: '<div data-testid="metric-card">{{ label }} {{ value }} {{ context }}</div>' },
+        PerformanceTrendChart: { props: ['points', 'series'], template: '<div data-testid="performance-trend-value">{{ points.length ? series[0].formatter(series[0].selector(points[0])) : "" }}</div>' },
         PerformanceFailureDistribution: { template: '<div />' },
         PerformanceAccountTable: PerformanceAccountTableStub,
         PerformanceInvestigationDrawer: { template: '<div />' }
       }
     }
   })
+}
+
+async function mountView() {
+  const wrapper = createView()
   await flushPromises()
   return wrapper
 }
@@ -94,6 +98,76 @@ describe('AccountPerformanceView', () => {
 
     expect(getOverview).toHaveBeenCalledWith({ range: '24h', platform: undefined })
     expect(getAccounts).toHaveBeenCalledWith({ range: '24h', platform: undefined, sort: 'health_score', order: 'asc', page: 1, page_size: 20 })
+    wrapper.unmount()
+  })
+
+  it('formats canonical availability trend rates as percentages once', async () => {
+    const highAvailabilityCounters = {
+      ...counters,
+      attempt_count: 100,
+      success_count: 99,
+      ttft_latency: { ...counters.ttft_latency, Samples: 100 },
+      duration_latency: { ...counters.duration_latency, Samples: 100 }
+    }
+    getOverview.mockResolvedValueOnce({ ...overview(), trend: [{ bucket_start: '2026-07-17T00:00:00Z', counters: highAvailabilityCounters }] })
+    const wrapper = await mountView()
+
+    expect(wrapper.get('[data-testid="performance-trend-value"]').text()).toBe('99.00%')
+    expect(wrapper.text()).not.toContain('9900.00%')
+    wrapper.unmount()
+  })
+
+  it('uses total failovers across the selected range for the compact summary', async () => {
+    getOverview.mockResolvedValueOnce({
+      ...overview(20),
+      trend: [
+        { bucket_start: '2026-07-16T23:00:00Z', counters: { ...counters, failover_count: 2 } },
+        { bucket_start: '2026-07-17T00:00:00Z', counters: { ...counters, failover_count: 0 } }
+      ]
+    })
+    const wrapper = await mountView()
+
+    expect(wrapper.text()).toContain('切换率 10.00%')
+    wrapper.unmount()
+  })
+
+  it('shows an overview empty state instead of zero-valued metrics', async () => {
+    getOverview.mockResolvedValueOnce({
+      ...overview(0),
+      summary: { ...overview().summary, attempts: 0, availability: { numerator: 0, denominator: 0, rate: 0 }, failure_rate: { numerator: 0, denominator: 0, rate: 0 }, ttft_timeout_count: 0 },
+      trend: []
+    })
+    const wrapper = await mountView()
+
+    expect(wrapper.findAll('[data-testid="metric-card"]')).toHaveLength(0)
+    expect(wrapper.text()).toContain('性能样本会在部署完成并处理请求后逐步累积。')
+    wrapper.unmount()
+  })
+
+  it('does not render a stale overview while a filter navigation is pending', async () => {
+    const initialOverview = deferred<ReturnType<typeof overview>>()
+    const initialAccounts = deferred<typeof accounts>()
+    const filterNavigation = deferred<void>()
+    getOverview.mockReset()
+    getAccounts.mockReset()
+    getOverview.mockReturnValueOnce(initialOverview.promise)
+    getAccounts.mockReturnValueOnce(initialAccounts.promise)
+    replace.mockImplementation(({ query }) => {
+      if (query.range === '24h') {
+        route.value.query = query
+        return Promise.resolve()
+      }
+      return filterNavigation.promise.then(() => { route.value.query = query })
+    })
+    const wrapper = createView()
+    await flushPromises()
+
+    await wrapper.findAll('[aria-label="时间范围"] button').find((button) => button.text() === '7d')!.trigger('click')
+    initialOverview.resolve(overview(10))
+    initialAccounts.resolve(accounts)
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('10 次请求')
     wrapper.unmount()
   })
 

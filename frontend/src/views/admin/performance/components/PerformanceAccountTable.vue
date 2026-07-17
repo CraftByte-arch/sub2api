@@ -86,8 +86,8 @@ function select(account: PerformanceAccount) {
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-100 dark:divide-dark-700">
-            <tr v-for="item in page.items" :key="item.account_id" :data-testid="`performance-account-${item.account_id}`" tabindex="0" role="button" class="h-11 cursor-pointer text-gray-700 outline-none hover:bg-gray-50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500 dark:text-gray-200 dark:hover:bg-dark-700" @click="select(item)" @keydown.enter="select(item)" @keydown.space.prevent="select(item)">
-              <td class="px-3 py-3 font-medium text-gray-900 dark:text-white">#{{ item.account_id }}</td>
+            <tr v-for="item in page.items" :key="item.account_id" class="h-11 cursor-pointer text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-dark-700" @click="select(item)">
+              <td class="px-3 py-3 font-medium text-gray-900 dark:text-white"><button :data-testid="`performance-account-${item.account_id}`" type="button" class="rounded text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500" :aria-label="`查看账号 #${item.account_id} 性能详情`" @click.stop="select(item)">#{{ item.account_id }}</button></td>
               <td class="px-3 py-3">{{ item.platform }}</td>
               <td class="px-3 py-3"><span class="inline-flex rounded-md px-2 py-1 text-xs font-medium" :class="healthDetails[healthFor(item)].classes">{{ healthDetails[healthFor(item)].label }}</span></td>
               <td class="px-3 py-3 tabular-nums">{{ percent(item.availability) }}</td>

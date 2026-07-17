@@ -43,14 +43,17 @@ const page = {
 const props = { page, loading: false, error: '', sort: 'health_score', order: 'asc' as const }
 
 describe('PerformanceAccountTable', () => {
-  it('selects an account when its row is activated by keyboard', async () => {
+  it('selects through a native account button while preserving row semantics', async () => {
     const wrapper = mount(PerformanceAccountTable, { props })
-    const row = wrapper.get('[data-testid="performance-account-42"]')
+    const accountButton = wrapper.get('[data-testid="performance-account-42"]')
+    const row = accountButton.element.closest('tr')!
 
-    await row.trigger('keydown.enter')
-    await row.trigger('keydown.space')
+    await accountButton.trigger('click')
 
-    expect(wrapper.emitted('select')).toEqual([[page.items[0]], [page.items[0]]])
+    expect(accountButton.element.tagName).toBe('BUTTON')
+    expect(row.getAttribute('role')).toBeNull()
+    expect(row.getAttribute('tabindex')).toBeNull()
+    expect(wrapper.emitted('select')).toEqual([[page.items[0]]])
   })
 
   it('keeps loaded rows visible and retries after a refresh error', async () => {
