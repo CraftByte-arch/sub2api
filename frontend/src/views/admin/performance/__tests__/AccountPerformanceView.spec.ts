@@ -144,6 +144,23 @@ describe('AccountPerformanceView', () => {
     wrapper.unmount()
   })
 
+  it('keeps degraded collector health visible when no samples have accumulated', async () => {
+    getOverview.mockResolvedValueOnce({
+      ...overview(0),
+      summary: { ...overview().summary, attempts: 0, availability: { numerator: 0, denominator: 0, rate: 0 }, failure_rate: { numerator: 0, denominator: 0, rate: 0 }, ttft_timeout_count: 0 },
+      trend: [],
+      collection_health: { status: 'degraded', dropped_samples: 3, pending_samples: 2, last_successful_flush_at: null }
+    })
+    const wrapper = await mountView()
+
+    expect(wrapper.findAll('[data-testid="metric-card"]')).toHaveLength(0)
+    expect(wrapper.text()).toContain('采集健康度')
+    expect(wrapper.text()).toContain('丢弃样本3')
+    expect(wrapper.text()).toContain('待写入样本2')
+    expect(wrapper.text()).toContain('暂无成功刷新记录')
+    wrapper.unmount()
+  })
+
   it('does not render a stale overview while a filter navigation is pending', async () => {
     const initialOverview = deferred<ReturnType<typeof overview>>()
     const initialAccounts = deferred<typeof accounts>()

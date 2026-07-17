@@ -398,8 +398,8 @@ onUnmounted(() => {
           <PerformanceTrendChart title="延迟趋势" :points="overview.trend" :time-range="range" :series="latencySeries" :loading="overviewLoading" />
         </section>
 
-        <section v-if="hasOverviewSamples" class="grid grid-cols-1 gap-8 border-y border-gray-200 py-6 dark:border-dark-700 xl:grid-cols-2" aria-label="失败分布与采集健康">
-          <PerformanceFailureDistribution :failures="failureDistribution" title="失败分布" :loading="overviewLoading" />
+        <section class="grid grid-cols-1 gap-8 border-y border-gray-200 py-6 dark:border-dark-700 xl:grid-cols-2" aria-label="失败分布与采集健康">
+          <PerformanceFailureDistribution v-if="hasOverviewSamples" :failures="failureDistribution" title="失败分布" :loading="overviewLoading" />
           <section class="border-l-4 px-4 py-1" :class="degraded ? 'border-amber-500' : 'border-emerald-500'" aria-labelledby="collection-health-title">
             <h2 id="collection-health-title" class="text-sm font-semibold text-gray-900 dark:text-white">采集健康度</h2>
             <p class="mt-3 text-lg font-semibold text-gray-900 dark:text-white">{{ healthLabel() }}</p>
