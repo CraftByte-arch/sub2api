@@ -22,6 +22,20 @@ describe('admin performance API', () => {
     })
   })
 
+  it('preserves the backend failure breakdown field names', async () => {
+    get.mockResolvedValueOnce({
+      data: {
+        time_points: [],
+        failures: [{ Outcome: 'transport', Count: 4 }],
+        collection_health: { status: 'complete', dropped_samples: 0, pending_samples: 0, last_successful_flush_at: null }
+      }
+    })
+
+    const investigation = await performanceAPI.getInvestigation()
+
+    expect(investigation.failures[0]).toEqual({ Outcome: 'transport', Count: 4 })
+  })
+
   it('derives outcome ratios and latency percentiles from cumulative counters', () => {
     const metrics = performanceMetricsFromCounters({
       attempt_count: 20,
@@ -39,22 +53,22 @@ describe('admin performance API', () => {
       ttft_sum_ms: 0,
       duration_sum_ms: 0,
       ttft_latency: {
-        samples: 10,
-        le_1000_ms: 3,
-        le_2500_ms: 5,
-        le_5000_ms: 8,
-        le_10000_ms: 9,
-        le_30000_ms: 9,
-        gt_30000_ms: 1
+        Samples: 10,
+        LE1000MS: 3,
+        LE2500MS: 5,
+        LE5000MS: 8,
+        LE10000MS: 9,
+        LE30000MS: 9,
+        GT30000MS: 1
       },
       duration_latency: {
-        samples: 10,
-        le_1000_ms: 1,
-        le_2500_ms: 2,
-        le_5000_ms: 4,
-        le_10000_ms: 7,
-        le_30000_ms: 9,
-        gt_30000_ms: 1
+        Samples: 10,
+        LE1000MS: 1,
+        LE2500MS: 2,
+        LE5000MS: 4,
+        LE10000MS: 7,
+        LE30000MS: 9,
+        GT30000MS: 1
       }
     })
 
@@ -85,8 +99,8 @@ describe('admin performance API', () => {
       failover_count: 0,
       ttft_sum_ms: 0,
       duration_sum_ms: 0,
-      ttft_latency: { samples: 0, le_1000_ms: 0, le_2500_ms: 0, le_5000_ms: 0, le_10000_ms: 0, le_30000_ms: 0, gt_30000_ms: 0 },
-      duration_latency: { samples: 0, le_1000_ms: 0, le_2500_ms: 0, le_5000_ms: 0, le_10000_ms: 0, le_30000_ms: 0, gt_30000_ms: 0 }
+      ttft_latency: { Samples: 0, LE1000MS: 0, LE2500MS: 0, LE5000MS: 0, LE10000MS: 0, LE30000MS: 0, GT30000MS: 0 },
+      duration_latency: { Samples: 0, LE1000MS: 0, LE2500MS: 0, LE5000MS: 0, LE10000MS: 0, LE30000MS: 0, GT30000MS: 0 }
     })).toEqual({
       availability: 0,
       failure_rate: 0,

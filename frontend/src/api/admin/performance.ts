@@ -17,13 +17,13 @@ export interface PerformanceHealth {
 }
 
 export interface PerformanceLatencyHistogram {
-  samples: number
-  le_1000_ms: number
-  le_2500_ms: number
-  le_5000_ms: number
-  le_10000_ms: number
-  le_30000_ms: number
-  gt_30000_ms: number
+  Samples: number
+  LE1000MS: number
+  LE2500MS: number
+  LE5000MS: number
+  LE10000MS: number
+  LE30000MS: number
+  GT30000MS: number
 }
 
 export interface PerformanceCounters {
@@ -88,8 +88,8 @@ export interface PerformanceAccountPage {
 }
 
 export interface PerformanceFailureBreakdown {
-  outcome: string
-  count: number
+  Outcome: string
+  Count: number
 }
 
 export interface PerformanceInvestigation {
@@ -120,22 +120,22 @@ export interface PerformanceMetrics {
 const withDefaultRange = <T extends PerformanceParams>(params: T = {} as T) => ({ ...params, range: params.range ?? '24h' })
 
 export function performancePercentile(histogram: PerformanceLatencyHistogram, percentile: number): number {
-  if (percentile <= 0 || percentile > 1 || histogram.samples <= 0) return 0
+  if (percentile <= 0 || percentile > 1 || histogram.Samples <= 0) return 0
 
-  const rank = Math.ceil(percentile * histogram.samples)
+  const rank = Math.ceil(percentile * histogram.Samples)
   const buckets: Array<[number, number]> = [
-    [1000, histogram.le_1000_ms],
-    [2500, histogram.le_2500_ms],
-    [5000, histogram.le_5000_ms],
-    [10000, histogram.le_10000_ms],
-    [30000, histogram.le_30000_ms]
+    [1000, histogram.LE1000MS],
+    [2500, histogram.LE2500MS],
+    [5000, histogram.LE5000MS],
+    [10000, histogram.LE10000MS],
+    [30000, histogram.LE30000MS]
   ]
 
   for (const [upperBound, cumulative] of buckets) {
     if (rank <= cumulative) return upperBound
   }
 
-  return rank <= histogram.le_30000_ms + histogram.gt_30000_ms ? 30001 : 0
+  return rank <= histogram.LE30000MS + histogram.GT30000MS ? 30001 : 0
 }
 
 export function performanceMetricsFromCounters(counters: PerformanceCounters): PerformanceMetrics {
