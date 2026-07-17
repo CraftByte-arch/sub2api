@@ -11,6 +11,17 @@ vi.mock('vue-i18n', async () => {
 import TTFTFailureDistributionChart from '../TTFTFailureDistributionChart.vue'
 
 describe('TTFTFailureDistributionChart', () => {
+  it('uses semantic colors for timeout and rate-limit failures', () => {
+    const wrapper = mount(TTFTFailureDistributionChart, {
+      props: { failures: [{ failure_kind: 'ttft_timeout', sample_count: 3 }, { failure_kind: 'rate_limit', sample_count: 2 }, { failure_kind: 'transport', sample_count: 1 }] },
+      global: { mocks: { $t: (key: string) => key } }
+    })
+    const chart = wrapper.getComponent({ name: 'BarChart' })
+    const data = chart.props('data') as { datasets: Array<{ backgroundColor: string[] }> }
+
+    expect(data.datasets[0].backgroundColor).toEqual(['#dc2626', '#d97706', '#64748b'])
+  })
+
   it('provides a screen-reader summary of every failure kind and count', () => {
     const wrapper = mount(TTFTFailureDistributionChart, {
       props: { failures: [{ failure_kind: 'transport', sample_count: 3 }, { failure_kind: 'auth', sample_count: 1 }] },

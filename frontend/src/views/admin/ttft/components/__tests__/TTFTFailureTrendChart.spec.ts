@@ -26,6 +26,30 @@ const points = [{
 }]
 
 describe('TTFTFailureTrendChart', () => {
+  it('renders attempt timeout and recovery only in recovery mode', () => {
+    const wrapper = mount(TTFTFailureTrendChart, { props: { points, mode: 'recovery' }, global: { mocks: { $t: (key: string) => key } } })
+    const chart = wrapper.getComponent({ name: 'LineChart' })
+    const data = chart.props('data') as { datasets: Array<{ label: string }> }
+
+    expect(data.datasets).toHaveLength(2)
+    expect(data.datasets.map((dataset) => dataset.label)).toEqual([
+      'admin.ttft.metrics.attemptTimeout',
+      'admin.ttft.metrics.recovery'
+    ])
+  })
+
+  it('renders final failures only in residual mode', () => {
+    const wrapper = mount(TTFTFailureTrendChart, { props: { points, mode: 'residual' }, global: { mocks: { $t: (key: string) => key } } })
+    const chart = wrapper.getComponent({ name: 'LineChart' })
+    const data = chart.props('data') as { datasets: Array<{ label: string }> }
+
+    expect(data.datasets).toHaveLength(2)
+    expect(data.datasets.map((dataset) => dataset.label)).toEqual([
+      'admin.ttft.metrics.finalTTFTFailure',
+      'admin.ttft.metrics.otherFinalFailure'
+    ])
+  })
+
   it('includes rate and numerator/denominator in every tooltip and accessible summary', () => {
     const wrapper = mount(TTFTFailureTrendChart, {
       props: { points },
@@ -35,12 +59,12 @@ describe('TTFTFailureTrendChart', () => {
     const data = chart.props('data') as { datasets: Array<{ label: string }> }
     const options = chart.props('options') as { plugins: { tooltip: { callbacks: { label: (context: { dataset: { label?: string }; parsed: { y: number | null }; dataIndex: number; datasetIndex: number }) => string } } } }
 
-    expect(data.datasets).toHaveLength(4)
+    expect(data.datasets).toHaveLength(2)
     expect(options.plugins.tooltip.callbacks.label({ dataset: data.datasets[0], parsed: { y: 20 }, dataIndex: 0, datasetIndex: 0 })).toContain('20.0% (2 / 10)')
     expect(options.plugins.tooltip.callbacks.label({ dataset: data.datasets[1], parsed: { y: 75 }, dataIndex: 0, datasetIndex: 1 })).toContain('75.0% (3 / 4)')
     expect(wrapper.get('.sr-only').text()).toContain('2 / 10')
     expect(wrapper.get('.sr-only').text()).toContain('3 / 4')
-    expect(wrapper.get('.sr-only').text()).toContain('1 / 10')
+    expect(wrapper.get('.sr-only').text()).not.toContain('1 / 10')
   })
 
   it('recomputes chart options when the document theme class changes', async () => {
