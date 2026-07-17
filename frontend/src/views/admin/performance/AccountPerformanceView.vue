@@ -183,8 +183,10 @@ function routeMatchesQuery(query: Record<string, string>) {
   return querySignature(route.query) === querySignature(query)
 }
 
-function restoreFiltersFromRoute(generation: number) {
-  if (generation === filterGeneration) readQuery()
+async function restoreFiltersFromRoute(generation: number) {
+  if (generation !== filterGeneration) return
+  readQuery()
+  await refreshFiltersOnce(generation)
 }
 
 async function refreshFiltersOnce(generation: number) {
@@ -201,12 +203,12 @@ async function syncQuery(generation = filterGeneration) {
     await router.replace({ query })
   } catch {
     if (tracksRouteWrite) discardInternalRouteWrite(query)
-    restoreFiltersFromRoute(generation)
+    await restoreFiltersFromRoute(generation)
     return
   }
   if (tracksRouteWrite && !routeMatchesQuery(query)) {
     discardInternalRouteWrite(query)
-    restoreFiltersFromRoute(generation)
+    await restoreFiltersFromRoute(generation)
     return
   }
   if (generation !== filterGeneration) {
