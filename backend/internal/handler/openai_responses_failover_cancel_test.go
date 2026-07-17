@@ -114,6 +114,8 @@ func newOpenAIResponsesFailoverTestHandler(t *testing.T, upstream service.HTTPUp
 		nil,
 		nil,
 		cfg,
+		nil,
+		nil,
 	)
 	handler.maxAccountSwitches = 10
 	return handler
