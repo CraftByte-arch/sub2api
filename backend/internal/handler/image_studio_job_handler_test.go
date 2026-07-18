@@ -267,6 +267,21 @@ func (r *imageStudioHandlerJobRepoStub) ListRunnableJobs(ctx context.Context, li
 func (r *imageStudioHandlerJobRepoStub) MarkRunning(ctx context.Context, id int64, startedAt time.Time) (bool, error) {
 	panic("unexpected MarkRunning call")
 }
+func (r *imageStudioHandlerJobRepoStub) PersistLegacyInputs(context.Context, int64, []string, *string, json.RawMessage, time.Time) error {
+	panic("unexpected PersistLegacyInputs call")
+}
+func (r *imageStudioHandlerJobRepoStub) ExpireQueuedInputs(context.Context, time.Time, int) ([]service.ImageStudioJob, error) {
+	panic("unexpected ExpireQueuedInputs call")
+}
+func (r *imageStudioHandlerJobRepoStub) ListExpiredInputs(context.Context, time.Time, int) ([]service.ImageStudioJob, error) {
+	panic("unexpected ListExpiredInputs call")
+}
+func (r *imageStudioHandlerJobRepoStub) MarkInputsDeleted(context.Context, int64, time.Time) error {
+	panic("unexpected MarkInputsDeleted call")
+}
+func (r *imageStudioHandlerJobRepoStub) ListReferencedInputDirs(context.Context) (map[string]struct{}, error) {
+	panic("unexpected ListReferencedInputDirs call")
+}
 func (r *imageStudioHandlerJobRepoStub) MarkStaleRunningFailed(context.Context, int64, time.Time, time.Time) (bool, error) {
 	panic("unexpected MarkStaleRunningFailed call")
 }

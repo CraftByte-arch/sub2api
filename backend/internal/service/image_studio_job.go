@@ -109,6 +109,11 @@ type ImageStudioJobRepository interface {
 	DeleteByIDForUser(ctx context.Context, id, userID int64) error
 	ListRunnableJobs(ctx context.Context, limit int) ([]ImageStudioJob, error)
 	MarkRunning(ctx context.Context, id int64, startedAt time.Time) (bool, error)
+	PersistLegacyInputs(ctx context.Context, id int64, paths []string, maskPath *string, redacted json.RawMessage, expiresAt time.Time) error
+	ExpireQueuedInputs(ctx context.Context, now time.Time, limit int) ([]ImageStudioJob, error)
+	ListExpiredInputs(ctx context.Context, now time.Time, limit int) ([]ImageStudioJob, error)
+	MarkInputsDeleted(ctx context.Context, id int64, deletedAt time.Time) error
+	ListReferencedInputDirs(ctx context.Context) (map[string]struct{}, error)
 	MarkStaleRunningFailed(ctx context.Context, id int64, completedAt, staleBefore time.Time) (bool, error)
 	MarkSettling(ctx context.Context, id int64, settlementPayload json.RawMessage, originalPath, thumbnailPath, mimeType string, fileSizeBytes int64, width, height int, leaseAt time.Time) error
 	ClaimSettling(ctx context.Context, id int64, leaseAt, staleBefore time.Time) (bool, error)

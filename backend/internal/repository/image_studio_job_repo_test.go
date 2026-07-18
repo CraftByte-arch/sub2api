@@ -293,6 +293,265 @@ func TestImageStudioJobRepositoryMarkStaleRunningFailedUsesHeartbeatGuard(t *tes
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestImageStudioJobRepositoryMarkRunningRejectsExpiredInputsAtClaimTime(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	claimAt := time.Now()
+	mock.ExpectExec("UPDATE image_studio_jobs[\\s\\S]*status = \\$2[\\s\\S]*WHERE id = \\$1 AND status = \\$4[\\s\\S]*input_expires_at IS NULL OR input_expires_at > \\$3").
+		WithArgs(int64(39), service.ImageStudioJobStatusRunning, claimAt, service.ImageStudioJobStatusQueued).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	repo := NewImageStudioJobRepository(nil, db)
+	claimed, err := repo.MarkRunning(context.Background(), 39, claimAt)
+
+	require.NoError(t, err)
+	require.False(t, claimed)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestImageStudioJobRepositoryMarkRunningKeepsGenerationJobsWithoutInputExpiry(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	claimAt := time.Now()
+	mock.ExpectExec("UPDATE image_studio_jobs[\\s\\S]*input_expires_at IS NULL OR input_expires_at > \\$3").
+		WithArgs(int64(40), service.ImageStudioJobStatusRunning, claimAt, service.ImageStudioJobStatusQueued).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	repo := NewImageStudioJobRepository(nil, db)
+	claimed, err := repo.MarkRunning(context.Background(), 40, claimAt)
+
+	require.NoError(t, err)
+	require.True(t, claimed)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestImageStudioJobRepositoryExpireQueuedInputsUsesAtomicSkipLockedUpdate(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	now := time.Now()
+	paths := []string{"inputs/upload-expired/image-01.webp"}
+	mock.ExpectQuery("WITH expired AS[\\s\\S]*SELECT id[\\s\\S]*status = \\$1[\\s\\S]*input_deleted_at IS NULL[\\s\\S]*input_expires_at <= \\$2[\\s\\S]*ORDER BY input_expires_at ASC, id ASC[\\s\\S]*FOR UPDATE SKIP LOCKED[\\s\\S]*LIMIT \\$3[\\s\\S]*UPDATE image_studio_jobs AS j[\\s\\S]*status = \\$4[\\s\\S]*error_code = 'input_expired'[\\s\\S]*next_attempt_at = NULL[\\s\\S]*completed_at = \\$2[\\s\\S]*FROM expired[\\s\\S]*RETURNING").
+		WithArgs(service.ImageStudioJobStatusQueued, now, 2, service.ImageStudioJobStatusFailed).
+		WillReturnRows(sqlmock.NewRows(imageStudioJobColumnNames()).AddRow(imageStudioJobRowValues(now, paths, nil, &now, nil)...))
+
+	repo := NewImageStudioJobRepository(nil, db)
+	jobs, err := repo.ExpireQueuedInputs(context.Background(), now, 2)
+
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+	require.Equal(t, paths, jobs[0].InputImagePaths)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestImageStudioJobRepositoryExpireQueuedInputsDefaultsNonPositiveLimit(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	now := time.Now()
+	mock.ExpectQuery("WITH expired AS[\\s\\S]*LIMIT \\$3[\\s\\S]*UPDATE image_studio_jobs AS j").
+		WithArgs(service.ImageStudioJobStatusQueued, now, 50, service.ImageStudioJobStatusFailed).
+		WillReturnRows(sqlmock.NewRows(imageStudioJobColumnNames()))
+
+	repo := NewImageStudioJobRepository(nil, db)
+	jobs, err := repo.ExpireQueuedInputs(context.Background(), now, 0)
+
+	require.NoError(t, err)
+	require.Empty(t, jobs)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestImageStudioJobRepositoryListExpiredInputsExcludesQueuedAndRunning(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	now := time.Now()
+	paths := []string{"inputs/upload-failed/image-01.webp"}
+	mock.ExpectQuery("SELECT[\\s\\S]*FROM image_studio_jobs[\\s\\S]*input_deleted_at IS NULL[\\s\\S]*input_expires_at <= \\$1[\\s\\S]*status NOT IN \\(\\$2, \\$3\\)[\\s\\S]*ORDER BY input_expires_at ASC, id ASC[\\s\\S]*LIMIT \\$4").
+		WithArgs(now, service.ImageStudioJobStatusQueued, service.ImageStudioJobStatusRunning, 3).
+		WillReturnRows(sqlmock.NewRows(imageStudioJobColumnNames()).AddRow(imageStudioJobRowValues(now, paths, nil, &now, nil)...))
+
+	repo := NewImageStudioJobRepository(nil, db)
+	jobs, err := repo.ListExpiredInputs(context.Background(), now, 3)
+
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+	require.Equal(t, paths, jobs[0].InputImagePaths)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestImageStudioJobRepositoryListExpiredInputsPropagatesRowsError(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	now := time.Now()
+	rows := sqlmock.NewRows(imageStudioJobColumnNames()).
+		AddRow(imageStudioJobRowValues(now, []string{"inputs/upload-failed/image-01.webp"}, nil, &now, nil)...).
+		RowError(0, context.Canceled)
+	mock.ExpectQuery("SELECT[\\s\\S]*input_expires_at <= \\$1[\\s\\S]*LIMIT \\$4").
+		WithArgs(now, service.ImageStudioJobStatusQueued, service.ImageStudioJobStatusRunning, 50).
+		WillReturnRows(rows)
+
+	repo := NewImageStudioJobRepository(nil, db)
+	_, err = repo.ListExpiredInputs(context.Background(), now, -1)
+
+	require.ErrorIs(t, err, context.Canceled)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestImageStudioJobRepositoryPersistLegacyInputsUpdatesActiveEditOnce(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	expiresAt := time.Now().Add(24 * time.Hour)
+	paths := []string{"inputs/upload-legacy/image-01.webp", "inputs/upload-legacy/image-02.webp"}
+	maskPath := "inputs/upload-legacy/mask.png"
+	redacted := json.RawMessage(`{"model":"gpt-image-2","prompt":"restored"}`)
+	mock.ExpectExec("UPDATE image_studio_jobs[\\s\\S]*input_image_paths = \\$2[\\s\\S]*input_mask_path = \\$3[\\s\\S]*input_expires_at = \\$4[\\s\\S]*request_payload = \\$5[\\s\\S]*WHERE id = \\$1[\\s\\S]*mode = \\$6[\\s\\S]*status IN \\(\\$7, \\$8\\)[\\s\\S]*input_image_paths = '\\[\\]'::jsonb[\\s\\S]*input_mask_path IS NULL").
+		WithArgs(int64(39), []byte(`["inputs/upload-legacy/image-01.webp","inputs/upload-legacy/image-02.webp"]`), maskPath, expiresAt, []byte(redacted), service.ImageStudioJobModeEdit, service.ImageStudioJobStatusQueued, service.ImageStudioJobStatusRunning).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	repo := NewImageStudioJobRepository(nil, db)
+	err = repo.PersistLegacyInputs(context.Background(), 39, paths, &maskPath, redacted, expiresAt)
+
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestImageStudioJobRepositoryPersistLegacyInputsRejectsAlreadyMaterializedJob(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	expiresAt := time.Now().Add(24 * time.Hour)
+	mock.ExpectExec("UPDATE image_studio_jobs[\\s\\S]*input_image_paths = '\\[\\]'::jsonb").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	repo := NewImageStudioJobRepository(nil, db)
+	err = repo.PersistLegacyInputs(context.Background(), 39, []string{"inputs/upload-legacy/image-01.webp"}, nil, json.RawMessage(`{"model":"gpt-image-2"}`), expiresAt)
+
+	require.ErrorIs(t, err, service.ErrImageStudioJobInvalid)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestImageStudioJobRepositoryPersistLegacyInputsValidatesPathCardinalityBeforeUpdate(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	repo := NewImageStudioJobRepository(nil, db)
+	err = repo.PersistLegacyInputs(context.Background(), 39, []string{"1", "2", "3", "4", "5"}, nil, json.RawMessage(`{}`), time.Now())
+
+	require.ErrorContains(t, err, "at most four")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestImageStudioJobRepositoryMarkInputsDeletedKeepsFirstTimestamp(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	deletedAt := time.Now()
+	mock.ExpectExec("UPDATE image_studio_jobs[\\s\\S]*input_deleted_at = COALESCE\\(input_deleted_at, \\$2\\)[\\s\\S]*WHERE id = \\$1").
+		WithArgs(int64(39), deletedAt).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	repo := NewImageStudioJobRepository(nil, db)
+	err = repo.MarkInputsDeleted(context.Background(), 39, deletedAt)
+
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestImageStudioJobRepositoryMarkInputsDeletedReturnsNotFound(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	mock.ExpectExec("UPDATE image_studio_jobs[\\s\\S]*input_deleted_at = COALESCE").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	repo := NewImageStudioJobRepository(nil, db)
+	err = repo.MarkInputsDeleted(context.Background(), 39, time.Now())
+
+	require.ErrorIs(t, err, service.ErrImageStudioJobNotFound)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestImageStudioJobRepositoryListReferencedInputDirsReturnsUndeletedUploadDirs(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	mock.ExpectQuery("SELECT id, input_image_paths, input_mask_path[\\s\\S]*FROM image_studio_jobs[\\s\\S]*input_deleted_at IS NULL[\\s\\S]*ORDER BY id ASC").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "input_image_paths", "input_mask_path"}).
+			AddRow(int64(39), json.RawMessage(`["inputs/upload-a/image-01.webp","inputs/upload-a/image-02.webp"]`), "inputs/upload-a/mask.png").
+			AddRow(int64(40), json.RawMessage(`["inputs/upload-b/image-01.png"]`), nil).
+			AddRow(int64(41), json.RawMessage(`["inputs/upload-a/image-01.webp"]`), nil))
+
+	repo := NewImageStudioJobRepository(nil, db)
+	dirs, err := repo.ListReferencedInputDirs(context.Background())
+
+	require.NoError(t, err)
+	require.Equal(t, map[string]struct{}{"inputs/upload-a": {}, "inputs/upload-b": {}}, dirs)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestImageStudioJobRepositoryListReferencedInputDirsRejectsInvalidPathJSON(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	mock.ExpectQuery("SELECT id, input_image_paths, input_mask_path[\\s\\S]*input_deleted_at IS NULL").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "input_image_paths", "input_mask_path"}).
+			AddRow(int64(39), json.RawMessage(`["inputs/upload-a/image-01.webp",42]`), nil))
+
+	repo := NewImageStudioJobRepository(nil, db)
+	_, err = repo.ListReferencedInputDirs(context.Background())
+
+	require.ErrorContains(t, err, "JSON string array")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestImageStudioJobRepositoryListReferencedInputDirsRejectsUnsafeOrMixedDirectories(t *testing.T) {
+	tests := []struct {
+		name     string
+		paths    json.RawMessage
+		maskPath any
+	}{
+		{name: "unsafe", paths: json.RawMessage(`["inputs/../image-01.webp"]`)},
+		{name: "terminal traversal", paths: json.RawMessage(`["inputs/upload-a/.."]`)},
+		{name: "mixed", paths: json.RawMessage(`["inputs/upload-a/image-01.webp","inputs/upload-b/image-02.webp"]`)},
+		{name: "mixed mask", paths: json.RawMessage(`["inputs/upload-a/image-01.webp"]`), maskPath: "inputs/upload-b/mask.png"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+			require.NoError(t, err)
+			defer func() { _ = db.Close() }()
+
+			mock.ExpectQuery("SELECT id, input_image_paths, input_mask_path[\\s\\S]*input_deleted_at IS NULL").
+				WillReturnRows(sqlmock.NewRows([]string{"id", "input_image_paths", "input_mask_path"}).AddRow(int64(39), tt.paths, tt.maskPath))
+
+			repo := NewImageStudioJobRepository(nil, db)
+			_, err = repo.ListReferencedInputDirs(context.Background())
+
+			require.Error(t, err)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
 func TestImageStudioJobRepositoryMarkSettlingStoresAssetsBeforeBilling(t *testing.T) {
 	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
 	require.NoError(t, err)

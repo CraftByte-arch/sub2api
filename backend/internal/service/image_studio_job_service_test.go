@@ -128,6 +128,26 @@ func (r *imageStudioJobDeleteRepoStub) MarkRunning(context.Context, int64, time.
 	panic("unexpected MarkRunning call")
 }
 
+func (r *imageStudioJobDeleteRepoStub) PersistLegacyInputs(context.Context, int64, []string, *string, json.RawMessage, time.Time) error {
+	panic("unexpected PersistLegacyInputs call")
+}
+
+func (r *imageStudioJobDeleteRepoStub) ExpireQueuedInputs(context.Context, time.Time, int) ([]ImageStudioJob, error) {
+	panic("unexpected ExpireQueuedInputs call")
+}
+
+func (r *imageStudioJobDeleteRepoStub) ListExpiredInputs(context.Context, time.Time, int) ([]ImageStudioJob, error) {
+	panic("unexpected ListExpiredInputs call")
+}
+
+func (r *imageStudioJobDeleteRepoStub) MarkInputsDeleted(context.Context, int64, time.Time) error {
+	panic("unexpected MarkInputsDeleted call")
+}
+
+func (r *imageStudioJobDeleteRepoStub) ListReferencedInputDirs(context.Context) (map[string]struct{}, error) {
+	panic("unexpected ListReferencedInputDirs call")
+}
+
 func (r *imageStudioJobDeleteRepoStub) MarkStaleRunningFailed(context.Context, int64, time.Time, time.Time) (bool, error) {
 	panic("unexpected MarkStaleRunningFailed call")
 }

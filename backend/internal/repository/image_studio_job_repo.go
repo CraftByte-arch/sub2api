@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -200,6 +201,7 @@ func (r *imageStudioJobRepository) MarkRunning(ctx context.Context, id int64, st
 		UPDATE image_studio_jobs
 		SET status = $2, started_at = $3, heartbeat_at = $3, updated_at = NOW()
 		WHERE id = $1 AND status = $4
+			AND (input_expires_at IS NULL OR input_expires_at > $3)
 	`, id, service.ImageStudioJobStatusRunning, startedAt, service.ImageStudioJobStatusQueued)
 	if err != nil {
 		return false, err
@@ -209,6 +211,203 @@ func (r *imageStudioJobRepository) MarkRunning(ctx context.Context, id int64, st
 		return false, err
 	}
 	return rowsAffected > 0, nil
+}
+
+func (r *imageStudioJobRepository) PersistLegacyInputs(ctx context.Context, id int64, paths []string, maskPath *string, redacted json.RawMessage, expiresAt time.Time) error {
+	encodedPaths, err := encodeImageStudioInputPaths(paths)
+	if err != nil {
+		return err
+	}
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE image_studio_jobs
+		SET input_image_paths = $2, input_mask_path = $3, input_expires_at = $4,
+			request_payload = $5, updated_at = NOW()
+		WHERE id = $1
+			AND mode = $6
+			AND status IN ($7, $8)
+			AND input_image_paths = '[]'::jsonb
+			AND input_mask_path IS NULL
+			AND input_deleted_at IS NULL
+	`, id, encodedPaths, nullableImageStudioString(maskPath), expiresAt, []byte(redacted), service.ImageStudioJobModeEdit, service.ImageStudioJobStatusQueued, service.ImageStudioJobStatusRunning)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return service.ErrImageStudioJobInvalid
+	}
+	return nil
+}
+
+func (r *imageStudioJobRepository) ExpireQueuedInputs(ctx context.Context, now time.Time, limit int) ([]service.ImageStudioJob, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("image studio job repository db is nil")
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		WITH expired AS (
+			SELECT id
+			FROM image_studio_jobs
+			WHERE status = $1
+				AND input_deleted_at IS NULL
+				AND input_expires_at IS NOT NULL
+				AND input_expires_at <= $2
+			ORDER BY input_expires_at ASC, id ASC
+			FOR UPDATE SKIP LOCKED
+			LIMIT $3
+		)
+		UPDATE image_studio_jobs AS j
+		SET status = $4, error_code = 'input_expired',
+			error_message = 'image studio input files expired before execution',
+			next_attempt_at = NULL, completed_at = $2, heartbeat_at = NULL, updated_at = NOW()
+		FROM expired
+		WHERE j.id = expired.id
+		RETURNING `+qualifiedImageStudioJobColumns("j")+`
+	`, service.ImageStudioJobStatusQueued, now, limit, service.ImageStudioJobStatusFailed)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	jobs := make([]service.ImageStudioJob, 0, limit)
+	for rows.Next() {
+		job, scanErr := scanImageStudioJob(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		jobs = append(jobs, *job)
+	}
+	return jobs, rows.Err()
+}
+
+func (r *imageStudioJobRepository) ListExpiredInputs(ctx context.Context, now time.Time, limit int) ([]service.ImageStudioJob, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("image studio job repository db is nil")
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT `+imageStudioJobColumns+`
+		FROM image_studio_jobs
+		WHERE input_deleted_at IS NULL
+			AND input_expires_at IS NOT NULL
+			AND input_expires_at <= $1
+			AND status NOT IN ($2, $3)
+		ORDER BY input_expires_at ASC, id ASC
+		LIMIT $4
+	`, now, service.ImageStudioJobStatusQueued, service.ImageStudioJobStatusRunning, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	jobs := make([]service.ImageStudioJob, 0, limit)
+	for rows.Next() {
+		job, scanErr := scanImageStudioJob(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		jobs = append(jobs, *job)
+	}
+	return jobs, rows.Err()
+}
+
+func (r *imageStudioJobRepository) MarkInputsDeleted(ctx context.Context, id int64, deletedAt time.Time) error {
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE image_studio_jobs
+		SET input_deleted_at = COALESCE(input_deleted_at, $2), updated_at = NOW()
+		WHERE id = $1
+	`, id, deletedAt)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return service.ErrImageStudioJobNotFound
+	}
+	return nil
+}
+
+func (r *imageStudioJobRepository) ListReferencedInputDirs(ctx context.Context) (map[string]struct{}, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("image studio job repository db is nil")
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, input_image_paths, input_mask_path
+		FROM image_studio_jobs
+		WHERE input_deleted_at IS NULL
+			AND (input_image_paths <> '[]'::jsonb OR input_mask_path IS NOT NULL)
+		ORDER BY id ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	dirs := make(map[string]struct{})
+	for rows.Next() {
+		var (
+			id       int64
+			rawPaths []byte
+			maskPath sql.NullString
+		)
+		if err := rows.Scan(&id, &rawPaths, &maskPath); err != nil {
+			return nil, err
+		}
+		paths, err := decodeImageStudioInputPaths(rawPaths)
+		if err != nil {
+			return nil, fmt.Errorf("image studio job %d: %w", id, err)
+		}
+		var mask *string
+		if maskPath.Valid {
+			mask = &maskPath.String
+		}
+		dir, err := referencedImageStudioInputDir(paths, mask)
+		if err != nil {
+			return nil, fmt.Errorf("image studio job %d: %w", id, err)
+		}
+		dirs[dir] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return dirs, nil
+}
+
+func referencedImageStudioInputDir(paths []string, maskPath *string) (string, error) {
+	allPaths := make([]string, 0, len(paths)+1)
+	allPaths = append(allPaths, paths...)
+	if maskPath != nil {
+		allPaths = append(allPaths, *maskPath)
+	}
+	var uploadDir string
+	for _, inputPath := range allPaths {
+		parts := strings.Split(inputPath, "/")
+		if strings.TrimSpace(inputPath) != inputPath || strings.Contains(inputPath, "\\") || len(parts) != 3 ||
+			parts[0] != "inputs" || !strings.HasPrefix(parts[1], "upload-") || len(parts[1]) == len("upload-") ||
+			parts[2] == "" || parts[2] == "." || parts[2] == ".." {
+			return "", errors.New("image studio input path is invalid")
+		}
+		dir := parts[0] + "/" + parts[1]
+		if uploadDir == "" {
+			uploadDir = dir
+		} else if dir != uploadDir {
+			return "", errors.New("image studio input paths must share one upload directory")
+		}
+	}
+	if uploadDir == "" {
+		return "", errors.New("image studio input paths are empty")
+	}
+	return uploadDir, nil
 }
 
 func (r *imageStudioJobRepository) MarkStaleRunningFailed(ctx context.Context, id int64, completedAt, staleBefore time.Time) (bool, error) {

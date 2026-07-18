@@ -134,11 +134,11 @@ git commit -m "feat: add image studio input store"
 - Modify: `backend/internal/repository/image_studio_job_repo_test.go`
 - Modify: repository stubs in Image Studio tests
 
-- [ ] **Step 1: 写 RED SQL 行为测试**
+- [x] **Step 1: 写 RED SQL 行为测试**
 
 覆盖 `MarkRunning` 仅领取未过期 queued row、`ExpireQueuedInputs` 使用 `FOR UPDATE SKIP LOCKED` 原子改为 `failed/input_expired`、`ListExpiredInputs` 排除 running、`PersistLegacyInputs` 同一 UPDATE 写路径并 redaction、`MarkInputsDeleted` 幂等和引用目录列表。
 
-- [ ] **Step 2: 增加仓库接口**
+- [x] **Step 2: 增加仓库接口**
 
 ```go
 PersistLegacyInputs(ctx context.Context, id int64, paths []string, maskPath *string, redacted json.RawMessage, expiresAt time.Time) error
@@ -150,7 +150,7 @@ ListReferencedInputDirs(ctx context.Context) (map[string]struct{}, error)
 
 `MarkRunning` WHERE 增加 `input_expires_at IS NULL OR input_expires_at > now`，确保 claim 与 expiry 互斥。
 
-- [ ] **Step 3: GREEN 并提交**
+- [x] **Step 3: GREEN 并提交**
 
 ```bash
 cd backend
