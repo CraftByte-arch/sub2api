@@ -41,7 +41,7 @@ function overview(attempts = 10) {
 }
 
 const accounts = {
-  items: [{ account_id: 42, platform: 'openai', counters, availability: 0.9, failure_rate: 0.1, health_score: 0.9, p95_ttft_ms: 2500, p95_duration_ms: 10000, low_sample: false }],
+  items: [{ account_id: 42, account_name: 'Codex Team', account_type: 'oauth', auth_mode: 'personalAccessToken', platform: 'openai', counters, availability: 0.9, failure_rate: 0.1, health_score: 0.9, p95_ttft_ms: 2500, p95_duration_ms: 10000, low_sample: false }],
   total: 1, page: 1, page_size: 20, pages: 1,
   collection_health: { status: 'complete', dropped_samples: 0, pending_samples: 0, last_successful_flush_at: '2026-07-17T00:00:00Z' }
 }
@@ -50,7 +50,7 @@ const investigation = { time_points: [], failures: [], collection_health: accoun
 const PerformanceAccountTableStub = {
   props: ['page', 'loading', 'error', 'sort', 'order'],
   emits: ['retry', 'sort', 'page', 'select'],
-  template: '<button data-testid="select-account" @click="$emit(\'select\', page.items[0])">select</button><button data-testid="sort-samples" @click="$emit(\'sort\', \'samples\')">samples</button>'
+  template: '<button data-testid="select-account" @click="$emit(\'select\', page.items[0])">select</button><button data-testid="sort-success" @click="$emit(\'sort\', \'success_count\')">success</button>'
 }
 
 function deferred<T>() {
@@ -334,14 +334,14 @@ describe('AccountPerformanceView', () => {
     wrapper.unmount()
   })
 
-  it('uses the supported samples key when the table requests attempt sorting', async () => {
+  it('uses the supported success key when the table requests successful-call sorting', async () => {
     const wrapper = await mountView()
     getAccounts.mockClear()
 
-    await wrapper.get('[data-testid="sort-samples"]').trigger('click')
+    await wrapper.get('[data-testid="sort-success"]').trigger('click')
     await flushPromises()
 
-    expect(getAccounts).toHaveBeenCalledWith(expect.objectContaining({ sort: 'samples', order: 'asc' }))
+    expect(getAccounts).toHaveBeenCalledWith(expect.objectContaining({ sort: 'success_count', order: 'asc' }))
     wrapper.unmount()
   })
 

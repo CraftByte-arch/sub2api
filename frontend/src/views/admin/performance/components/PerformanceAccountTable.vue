@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import Icon from '@/components/icons/Icon.vue'
 import type { PerformanceAccountItem as PerformanceAccount, PerformanceAccountPage, PerformanceOrder } from '@/api/admin/performance'
+import PlatformIcon from '@/components/common/PlatformIcon.vue'
+import PlatformTypeBadge from '@/components/common/PlatformTypeBadge.vue'
 
 const props = defineProps<{
   page: PerformanceAccountPage | null
@@ -41,6 +43,15 @@ function milliseconds(value: number) {
   return value > 0 ? `${Math.round(value).toLocaleString()} ms` : '--'
 }
 
+function failedCalls(account: PerformanceAccount) {
+  const eligible = Math.max(0, account.counters.attempt_count - account.counters.client_canceled_count)
+  return Math.max(0, eligible - account.counters.success_count)
+}
+
+function platformLabel(platform: PerformanceAccount['platform']) {
+  return ({ anthropic: 'Anthropic', openai: 'OpenAI', gemini: 'Gemini', antigravity: 'Antigravity', grok: 'Grok' })[platform]
+}
+
 function ariaSort(column: string) {
   if (props.sort !== column) return 'none'
   return props.order === 'asc' ? 'ascending' : 'descending'
@@ -72,7 +83,7 @@ function select(account: PerformanceAccount) {
       </div>
       <p v-if="!page?.items.length" class="py-10 text-center text-sm text-gray-500 dark:text-gray-400">所选时间段暂无账号性能数据</p>
       <div v-else class="mt-4 overflow-x-auto">
-        <table class="w-full min-w-[980px] border-collapse text-left text-sm">
+        <table class="w-full min-w-[1120px] border-collapse text-left text-sm">
           <thead class="border-y border-gray-200 text-xs text-gray-500 dark:border-dark-700 dark:text-gray-400">
             <tr>
               <th class="px-3 py-2 font-medium">账号</th>
@@ -82,19 +93,32 @@ function select(account: PerformanceAccount) {
               <th class="px-3 py-2 font-medium" :aria-sort="ariaSort('failure_rate')"><button type="button" class="inline-flex min-h-11 items-center gap-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-dark-800" @click="emit('sort', 'failure_rate')">失败率 <Icon name="sort" size="xs" aria-hidden="true" /></button></th>
               <th class="px-3 py-2 font-medium" :aria-sort="ariaSort('p95_ttft_ms')"><button type="button" class="inline-flex min-h-11 items-center gap-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-dark-800" @click="emit('sort', 'p95_ttft_ms')">P95 TTFT <Icon name="sort" size="xs" aria-hidden="true" /></button></th>
               <th class="px-3 py-2 font-medium" :aria-sort="ariaSort('p95_duration_ms')"><button type="button" class="inline-flex min-h-11 items-center gap-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-dark-800" @click="emit('sort', 'p95_duration_ms')">P95 总耗时 <Icon name="sort" size="xs" aria-hidden="true" /></button></th>
-              <th class="px-3 py-2 font-medium" :aria-sort="ariaSort('samples')"><button type="button" class="inline-flex min-h-11 items-center gap-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-dark-800" @click="emit('sort', 'samples')">尝试次数 <Icon name="sort" size="xs" aria-hidden="true" /></button></th>
+              <th class="px-3 py-2 font-medium" :aria-sort="ariaSort('success_count')"><button type="button" class="inline-flex min-h-11 items-center gap-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-dark-800" @click="emit('sort', 'success_count')">成功调用 <Icon name="sort" size="xs" aria-hidden="true" /></button></th>
+              <th class="px-3 py-2 font-medium" :aria-sort="ariaSort('failure_count')"><button type="button" class="inline-flex min-h-11 items-center gap-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-dark-800" @click="emit('sort', 'failure_count')">失败调用 <Icon name="sort" size="xs" aria-hidden="true" /></button></th>
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-100 dark:divide-dark-700">
             <tr v-for="item in page.items" :key="item.account_id" class="h-11 cursor-pointer text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-dark-700" @click="select(item)">
-              <td class="px-3 py-3 font-medium text-gray-900 dark:text-white"><button :data-testid="`performance-account-${item.account_id}`" type="button" class="rounded text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500" :aria-label="`查看账号 #${item.account_id} 性能详情`" @click.stop="select(item)">#{{ item.account_id }}</button></td>
-              <td class="px-3 py-3">{{ item.platform }}</td>
+              <td class="px-3 py-3">
+                <button :data-testid="`performance-account-${item.account_id}`" type="button" class="rounded text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500" :aria-label="`查看账号 ${item.account_name || `#${item.account_id}`} 性能详情`" @click.stop="select(item)">
+                  <span class="block font-medium text-gray-900 dark:text-white">{{ item.account_name || `#${item.account_id}` }}</span>
+                  <span class="mt-0.5 block font-mono text-xs text-gray-500 dark:text-gray-400">#{{ item.account_id }}</span>
+                </button>
+              </td>
+              <td class="px-3 py-3">
+                <PlatformTypeBadge v-if="item.account_type" :platform="item.platform" :type="item.account_type" :auth-mode="item.auth_mode" />
+                <span v-else class="inline-flex items-center gap-1 rounded-md bg-gray-100 px-2 py-1 text-xs font-medium text-gray-700 dark:bg-gray-700 dark:text-gray-200">
+                  <PlatformIcon :platform="item.platform" size="xs" />
+                  {{ platformLabel(item.platform) }}
+                </span>
+              </td>
               <td class="px-3 py-3"><span class="inline-flex rounded-md px-2 py-1 text-xs font-medium" :class="healthDetails[healthFor(item)].classes">{{ healthDetails[healthFor(item)].label }}</span></td>
               <td class="px-3 py-3 tabular-nums">{{ percent(item.availability) }}</td>
               <td class="px-3 py-3 tabular-nums">{{ percent(item.failure_rate) }}</td>
               <td class="px-3 py-3 tabular-nums">{{ milliseconds(item.p95_ttft_ms) }}</td>
               <td class="px-3 py-3 tabular-nums">{{ milliseconds(item.p95_duration_ms) }}</td>
-              <td class="px-3 py-3 tabular-nums">{{ item.counters.attempt_count.toLocaleString() }}</td>
+              <td :data-testid="`performance-success-count-${item.account_id}`" class="px-3 py-3 font-medium tabular-nums text-emerald-700 dark:text-emerald-300">{{ item.counters.success_count.toLocaleString() }}</td>
+              <td :data-testid="`performance-failure-count-${item.account_id}`" class="px-3 py-3 font-medium tabular-nums text-red-700 dark:text-red-300">{{ failedCalls(item).toLocaleString() }}</td>
             </tr>
           </tbody>
         </table>

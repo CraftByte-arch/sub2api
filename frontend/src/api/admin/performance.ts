@@ -1,4 +1,5 @@
 import { apiClient } from '../client'
+import type { AccountPlatform, AccountType } from '@/types'
 
 export type PerformanceRange = '1h' | '6h' | '24h' | '7d' | '30d' | '90d'
 export type PerformanceOrder = 'asc' | 'desc'
@@ -68,7 +69,10 @@ export interface PerformanceOverview {
 
 export interface PerformanceAccountItem {
   account_id: number
-  platform: string
+  account_name: string
+  account_type: AccountType | ''
+  auth_mode?: string
+  platform: AccountPlatform
   counters: PerformanceCounters
   availability: number
   failure_rate: number

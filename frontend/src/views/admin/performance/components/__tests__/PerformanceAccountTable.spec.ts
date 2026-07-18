@@ -24,6 +24,9 @@ const counters = {
 const page = {
   items: [{
     account_id: 42,
+    account_name: 'Codex Team',
+    account_type: 'oauth',
+    auth_mode: 'personalAccessToken',
     platform: 'openai',
     counters,
     availability: 0.95,
@@ -41,10 +44,24 @@ const page = {
 }
 
 const props = { page, loading: false, error: '', sort: 'health_score', order: 'asc' as const }
+const global = {
+  stubs: {
+    PlatformTypeBadge: {
+      props: ['platform', 'type', 'authMode'],
+      template: '<span data-testid="platform-type-badge" :data-platform="platform" :data-type="type" :data-auth-mode="authMode" />'
+    },
+    PlatformIcon: true,
+    Icon: true
+  }
+}
+
+function mountTable(overrides = {}) {
+  return mount(PerformanceAccountTable, { props: { ...props, ...overrides }, global })
+}
 
 describe('PerformanceAccountTable', () => {
   it('selects through a native account button while preserving row semantics', async () => {
-    const wrapper = mount(PerformanceAccountTable, { props })
+    const wrapper = mountTable()
     const accountButton = wrapper.get('[data-testid="performance-account-42"]')
     const row = accountButton.element.closest('tr')!
 
@@ -56,8 +73,44 @@ describe('PerformanceAccountTable', () => {
     expect(wrapper.emitted('select')).toEqual([[page.items[0]]])
   })
 
+  it('shows account identity, reuses the platform badge, and splits successful and failed calls', () => {
+    const wrapper = mountTable()
+
+    expect(wrapper.text()).toContain('Codex Team')
+    expect(wrapper.text()).toContain('#42')
+    expect(wrapper.get('[data-testid="platform-type-badge"]').attributes()).toMatchObject({
+      'data-platform': 'openai',
+      'data-type': 'oauth',
+      'data-auth-mode': 'personalAccessToken'
+    })
+    expect(wrapper.get('[data-testid="performance-success-count-42"]').text()).toBe('114')
+    expect(wrapper.get('[data-testid="performance-failure-count-42"]').text()).toBe('6')
+  })
+
+  it('excludes client cancellations and clamps negative failed calls to zero', () => {
+    const withCancellations = {
+      ...page,
+      items: [{
+        ...page.items[0],
+        counters: { ...page.items[0].counters, attempt_count: 120, success_count: 90, client_canceled_count: 20 }
+      }]
+    }
+    const cancelledWrapper = mountTable({ page: withCancellations })
+    expect(cancelledWrapper.get('[data-testid="performance-failure-count-42"]').text()).toBe('10')
+
+    const inconsistent = {
+      ...page,
+      items: [{
+        ...page.items[0],
+        counters: { ...page.items[0].counters, attempt_count: 2, success_count: 4, client_canceled_count: 0 }
+      }]
+    }
+    const inconsistentWrapper = mountTable({ page: inconsistent })
+    expect(inconsistentWrapper.get('[data-testid="performance-failure-count-42"]').text()).toBe('0')
+  })
+
   it('keeps loaded rows visible and retries after a refresh error', async () => {
-    const wrapper = mount(PerformanceAccountTable, { props: { ...props, error: '账号性能刷新失败' } })
+    const wrapper = mountTable({ error: '账号性能刷新失败' })
 
     expect(wrapper.text()).toContain('#42')
     expect(wrapper.text()).toContain('账号性能刷新失败')
@@ -69,14 +122,19 @@ describe('PerformanceAccountTable', () => {
     expect(wrapper.emitted('retry')).toHaveLength(1)
   })
 
-  it('only exposes backend-supported sorting and maps attempts to samples', async () => {
-    const wrapper = mount(PerformanceAccountTable, { props })
-    const headers = wrapper.findAll('th')
+  it('exposes successful and failed call sorting keys', async () => {
+    const wrapper = mountTable()
+    const buttons = wrapper.findAll('th button')
 
-    expect(headers[0].find('button').exists()).toBe(false)
-    expect(headers[1].find('button').exists()).toBe(false)
-    await headers[7].get('button').trigger('click')
+    expect(wrapper.findAll('th')[0].find('button').exists()).toBe(false)
+    expect(wrapper.findAll('th')[1].find('button').exists()).toBe(false)
+    const success = buttons.find((button) => button.text().includes('成功调用'))
+    const failure = buttons.find((button) => button.text().includes('失败调用'))
+    expect(success).toBeDefined()
+    expect(failure).toBeDefined()
+    await success!.trigger('click')
+    await failure!.trigger('click')
 
-    expect(wrapper.emitted('sort')).toEqual([['samples']])
+    expect(wrapper.emitted('sort')).toEqual([['success_count'], ['failure_count']])
   })
 })
