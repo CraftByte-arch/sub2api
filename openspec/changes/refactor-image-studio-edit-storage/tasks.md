@@ -16,8 +16,8 @@
 
 - [x] 3.1 Load and validate stored input files before execution and classify missing, expired, corrupt, or unsafe paths as terminal storage errors.
 - [x] 3.2 Build API Key `/v1/images/edits` multipart requests with ordered repeated image parts, optional mask, and all supported edit metadata.
-- [ ] 3.3 Convert stored files through the existing OAuth Responses edit path without persisting image bytes and preserve existing billing/result decoding behavior.
-- [ ] 3.4 Add Worker regression tests for one/four images, ordering, mask handling, API Key multipart, OAuth conversion, retries, and terminal storage failures.
+- [x] 3.3 Convert stored files through the existing OAuth Responses edit path without persisting image bytes and preserve existing billing/result decoding behavior.
+- [x] 3.4 Add Worker regression tests for one/four images, ordering, mask handling, API Key multipart, OAuth conversion, retries, and terminal storage failures.
 
 ## 4. Input Lifecycle And Cleanup
 

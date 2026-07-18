@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -29,6 +30,8 @@ type openAIResponsesImageResult struct {
 	Quality       string
 	Model         string
 }
+
+const openAIImagesStoredEditMaxBytes = int64(5 * openAIImageMaxUploadPartSize)
 
 type OpenAIImagesUpstreamError struct {
 	StatusCode        int
@@ -326,6 +329,157 @@ func openAIImageUploadToDataURL(upload OpenAIImagesUpload) (string, error) {
 		contentType = http.DetectContentType(upload.Data)
 	}
 	return "data:" + contentType + ";base64," + base64.StdEncoding.EncodeToString(upload.Data), nil
+}
+
+func buildOpenAIStoredEditUploads(ctx context.Context, inputs *OpenedEditInputs, maxTotalBytes int64) ([]OpenAIImagesUpload, *OpenAIImagesUpload, error) {
+	if inputs == nil || len(inputs.Images) < 1 || len(inputs.Images) > 4 || maxTotalBytes <= 0 {
+		return nil, nil, inputInvalidError(ErrImageStudioInputInvalid)
+	}
+	uploads := make([]OpenAIImagesUpload, 0, len(inputs.Images))
+	var totalBytes int64
+	for i := range inputs.Images {
+		upload, err := readOpenAIStoredEditUpload(ctx, inputs.Images[i], &totalBytes, maxTotalBytes, false)
+		if err != nil {
+			clearOpenAIStoredEditUploads(uploads, nil)
+			return nil, nil, err
+		}
+		uploads = append(uploads, upload)
+	}
+	var maskUpload *OpenAIImagesUpload
+	if inputs.Mask != nil {
+		upload, err := readOpenAIStoredEditUpload(ctx, *inputs.Mask, &totalBytes, maxTotalBytes, true)
+		if err != nil {
+			clearOpenAIStoredEditUploads(uploads, nil)
+			return nil, nil, err
+		}
+		maskUpload = &upload
+	}
+	return uploads, maskUpload, nil
+}
+
+func readOpenAIStoredEditUpload(ctx context.Context, input OpenedEditInput, totalBytes *int64, maxTotalBytes int64, mask bool) (OpenAIImagesUpload, error) {
+	if input.File == nil || totalBytes == nil {
+		return OpenAIImagesUpload{}, inputInvalidError(ErrImageStudioInputInvalid)
+	}
+	contentType := strings.TrimSpace(input.ContentType)
+	if !supportedImageStudioContentType(contentType) || (mask && contentType != "image/png" && contentType != "image/webp") {
+		return OpenAIImagesUpload{}, inputInvalidError(ErrImageStudioInputInvalid)
+	}
+	if err := ctx.Err(); err != nil {
+		return OpenAIImagesUpload{}, inputStorageError(err)
+	}
+	info, err := input.File.Stat()
+	if err != nil {
+		return OpenAIImagesUpload{}, inputStorageError(fmt.Errorf("stat stored image edit input: %w", err))
+	}
+	size := info.Size()
+	if !info.Mode().IsRegular() || size <= 0 {
+		return OpenAIImagesUpload{}, inputInvalidError(ErrImageStudioInputInvalid)
+	}
+	if size > openAIImageMaxUploadPartSize || *totalBytes < 0 || *totalBytes > maxTotalBytes || size > maxTotalBytes-*totalBytes {
+		return OpenAIImagesUpload{}, inputInvalidError(ErrImageStudioInputTooLarge)
+	}
+	maxInt := int64(^uint(0) >> 1)
+	if size > maxInt {
+		return OpenAIImagesUpload{}, inputInvalidError(ErrImageStudioInputTooLarge)
+	}
+	if _, err := input.File.Seek(0, io.SeekStart); err != nil {
+		return OpenAIImagesUpload{}, inputStorageError(fmt.Errorf("seek stored image edit input: %w", err))
+	}
+
+	data := make([]byte, int(size))
+	for offset := 0; offset < len(data); {
+		if err := ctx.Err(); err != nil {
+			return OpenAIImagesUpload{}, inputStorageError(err)
+		}
+		end := offset + 32*1024
+		if end > len(data) {
+			end = len(data)
+		}
+		n, readErr := input.File.Read(data[offset:end])
+		offset += n
+		if readErr != nil {
+			if errors.Is(readErr, io.EOF) {
+				return OpenAIImagesUpload{}, inputInvalidError(fmt.Errorf("%w: stored input size changed during read", ErrImageStudioInputInvalid))
+			}
+			return OpenAIImagesUpload{}, inputStorageError(fmt.Errorf("read stored image edit input: %w", readErr))
+		}
+		if n == 0 {
+			return OpenAIImagesUpload{}, inputStorageError(io.ErrNoProgress)
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return OpenAIImagesUpload{}, inputStorageError(err)
+	}
+	var extra [1]byte
+	n, readErr := input.File.Read(extra[:])
+	if n != 0 {
+		return OpenAIImagesUpload{}, inputInvalidError(fmt.Errorf("%w: stored input grew during read", ErrImageStudioInputTooLarge))
+	}
+	if readErr != nil && !errors.Is(readErr, io.EOF) {
+		return OpenAIImagesUpload{}, inputStorageError(fmt.Errorf("read stored image edit input boundary: %w", readErr))
+	}
+	if readErr == nil {
+		return OpenAIImagesUpload{}, inputStorageError(io.ErrNoProgress)
+	}
+	after, err := input.File.Stat()
+	if err != nil {
+		return OpenAIImagesUpload{}, inputStorageError(fmt.Errorf("restat stored image edit input: %w", err))
+	}
+	if !after.Mode().IsRegular() || after.Size() != size {
+		return OpenAIImagesUpload{}, inputInvalidError(fmt.Errorf("%w: stored input changed during read", ErrImageStudioInputInvalid))
+	}
+	*totalBytes += size
+	fieldName := "image"
+	if mask {
+		fieldName = "mask"
+	}
+	return OpenAIImagesUpload{
+		FieldName:   fieldName,
+		FileName:    filepath.Base(input.Path),
+		ContentType: contentType,
+		Data:        data,
+	}, nil
+}
+
+func clearOpenAIStoredEditUploads(uploads []OpenAIImagesUpload, mask *OpenAIImagesUpload) {
+	for i := range uploads {
+		uploads[i].Data = nil
+	}
+	if mask != nil {
+		mask.Data = nil
+	}
+}
+
+// ForwardImagesOAuthEdit adapts already-opened stored files to the existing
+// Images-to-Responses path. Binary data stays owned by this call.
+func (s *OpenAIGatewayService) ForwardImagesOAuthEdit(
+	ctx context.Context,
+	c *gin.Context,
+	account *Account,
+	parsed *OpenAIImagesRequest,
+	inputs *OpenedEditInputs,
+	channelMappedModel string,
+) (*OpenAIForwardResult, error) {
+	if account == nil || account.Type != AccountTypeOAuth {
+		return nil, fmt.Errorf("OAuth image account is required")
+	}
+	if parsed == nil || !parsed.IsEdits() {
+		return nil, fmt.Errorf("OAuth image edit metadata is required")
+	}
+	uploads, maskUpload, err := buildOpenAIStoredEditUploads(ctx, inputs, openAIImagesStoredEditMaxBytes)
+	if err != nil {
+		return nil, err
+	}
+	defer clearOpenAIStoredEditUploads(uploads, maskUpload)
+
+	request := *parsed
+	request.InputImageURLs = nil
+	request.MaskImageURL = ""
+	request.Uploads = uploads
+	request.MaskUpload = maskUpload
+	request.HasMask = maskUpload != nil
+	return s.forwardOpenAIImagesOAuth(ctx, c, account, &request, channelMappedModel)
 }
 
 func buildOpenAIImagesResponsesRequest(parsed *OpenAIImagesRequest, toolModel string) ([]byte, error) {

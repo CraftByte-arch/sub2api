@@ -358,19 +358,19 @@ git commit -m "feat: stream image studio edit multipart"
 - Modify: `backend/internal/service/openai_images_responses.go`
 - Modify: `backend/internal/service/openai_images_test.go`
 
-- [ ] **Step 1: 写 RED OAuth 测试**
+- [x] **Step 1: 写 RED OAuth 测试**
 
 从四个磁盘输入捕获 Responses JSON，断言 `input_image` 顺序和 mask；断言 job payload/仓库写入不含 `data:` 或 base64，并保持现有 result decoding、subscription 和 billing metadata。
 
-- [ ] **Step 2: 构造请求期临时 data URL**
+- [x] **Step 2: 构造请求期临时 data URL**
 
 读取已打开文件时执行总输入大小上限，构造局部 `OpenAIImagesUpload` 并复用 `buildOpenAIImagesResponsesRequest`。临时 bytes/data URL 不回写 job，不进入日志。
 
-- [ ] **Step 3: 保持路由字段**
+- [x] **Step 3: 保持路由字段**
 
 继续使用 Responses image-protocol account selection；settlement 中 inbound endpoint 为 `/v1/images/edits`，upstream endpoint 为 `/v1/responses`。
 
-- [ ] **Step 4: GREEN 并提交**
+- [x] **Step 4: GREEN 并提交**
 
 ```bash
 cd backend

@@ -332,8 +332,13 @@ func (s *ImageStudioJobService) processJob(ctx context.Context, job ImageStudioJ
 	closeErr := execution.Close()
 	executionClosed = true
 	if err != nil {
+		executionErr := err
 		if closeErr != nil {
 			err = errors.Join(err, inputStorageError(closeErr))
+		}
+		if _, classified := classifyImageStudioInputFailure(executionErr); classified {
+			s.failImageStudioInput(ctx, job.ID, err)
+			return
 		}
 		s.handleJobError(ctx, job, "upstream_failed", err)
 		return
@@ -673,6 +678,10 @@ func (s *ImageStudioJobService) forwardExecutionJob(ctx context.Context, job Ima
 	var result *OpenAIForwardResult
 	if storedEdit && selection.Account.Type == AccountTypeAPIKey {
 		result, err = s.forwardSelectedAPIKeyEdit(requestCtx, ginCtx, selection.Account, input, parsed, channelMapping.MappedModel)
+	} else if storedEdit && selection.Account.Type == AccountTypeOAuth {
+		result, err = s.openAIGateway.ForwardImagesOAuthEdit(
+			requestCtx, ginCtx, selection.Account, parsed, input.EditInputs, channelMapping.MappedModel,
+		)
 	} else {
 		result, err = s.openAIGateway.ForwardImages(requestCtx, ginCtx, selection.Account, body, parsed, channelMapping.MappedModel)
 	}
@@ -682,13 +691,17 @@ func (s *ImageStudioJobService) forwardExecutionJob(ctx context.Context, job Ima
 	if recorder.Code >= 400 {
 		return nil, fmt.Errorf("upstream request failed with status %d", recorder.Code)
 	}
+	upstreamEndpoint := endpoint
+	if storedEdit && selection.Account.Type == AccountTypeOAuth {
+		upstreamEndpoint = openAIResponsesEndpoint
+	}
 	return &imageStudioForwardOutcome{
 		result:             result,
 		rawBody:            append([]byte(nil), recorder.Body.Bytes()...),
 		accountID:          selection.Account.ID,
 		channelUsageFields: channelMapping.ToUsageFields(requestModel, result.UpstreamModel),
 		inboundEndpoint:    endpoint,
-		upstreamEndpoint:   endpoint,
+		upstreamEndpoint:   upstreamEndpoint,
 	}, nil
 }
 
