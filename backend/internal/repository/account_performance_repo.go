@@ -424,10 +424,26 @@ SELECT *,
 ` + accountPerformanceScoredRateColumns() + `,
 CASE WHEN ttft_sample_count = 0 THEN 0 WHEN CEIL(ttft_sample_count * 0.95) <= ttft_le_1000_ms THEN 1000 WHEN CEIL(ttft_sample_count * 0.95) <= ttft_le_2500_ms THEN 2500 WHEN CEIL(ttft_sample_count * 0.95) <= ttft_le_5000_ms THEN 5000 WHEN CEIL(ttft_sample_count * 0.95) <= ttft_le_10000_ms THEN 10000 WHEN CEIL(ttft_sample_count * 0.95) <= ttft_le_30000_ms THEN 30000 ELSE 30001 END AS p95_ttft_ms,
 CASE WHEN duration_sample_count = 0 THEN 0 WHEN CEIL(duration_sample_count * 0.95) <= duration_le_1000_ms THEN 1000 WHEN CEIL(duration_sample_count * 0.95) <= duration_le_2500_ms THEN 2500 WHEN CEIL(duration_sample_count * 0.95) <= duration_le_5000_ms THEN 5000 WHEN CEIL(duration_sample_count * 0.95) <= duration_le_10000_ms THEN 10000 WHEN CEIL(duration_sample_count * 0.95) <= duration_le_30000_ms THEN 30000 ELSE 30001 END AS p95_duration_ms,
+GREATEST(attempt_count - client_canceled_count - success_count, 0) AS failure_count,
 attempt_count AS samples
 FROM aggregated
+), enriched AS (
+SELECT
+    scored.*,
+    COALESCE(account.name, '#' || scored.account_id::text) AS account_name,
+    COALESCE(account.type, '') AS account_type,
+    COALESCE(
+        NULLIF(account.credentials->>'auth_mode', ''),
+        NULLIF(account.credentials->>'openai_auth_mode', ''),
+        NULLIF(parent.credentials->>'auth_mode', ''),
+        NULLIF(parent.credentials->>'openai_auth_mode', ''),
+        ''
+    ) AS auth_mode
+FROM scored
+LEFT JOIN accounts AS account ON account.id = scored.account_id
+LEFT JOIN accounts AS parent ON parent.id = account.parent_account_id
 )
-SELECT account_id, platform, ` + accountPerformanceCounterColumns() + `, availability, failure_rate, health_score, COUNT(*) OVER() AS total FROM scored
+SELECT account_id, platform, account_name, account_type, auth_mode, ` + accountPerformanceCounterColumns() + `, availability, failure_rate, health_score, COUNT(*) OVER() AS total FROM enriched
 ORDER BY ` + sortColumn + ` ` + sortOrder + `, account_id ASC LIMIT $18 OFFSET $19`
 	queryArgs := append(args, int64(pageSize), offset)
 	rows, err := tx.QueryContext(ctx, query, queryArgs...)
@@ -437,7 +453,7 @@ ORDER BY ` + sortColumn + ` ` + sortOrder + `, account_id ASC LIMIT $18 OFFSET $
 	result := &service.AccountPerformanceAccountPage{Rows: make([]service.AccountPerformanceAccount, 0), Page: page, PageSize: pageSize}
 	for rows.Next() {
 		var item service.AccountPerformanceAccount
-		destinations := append([]any{&item.AccountID, &item.Platform}, accountPerformanceCounterDestinations(&item.Counters)...)
+		destinations := append([]any{&item.AccountID, &item.Platform, &item.AccountName, &item.AccountType, &item.AuthMode}, accountPerformanceCounterDestinations(&item.Counters)...)
 		destinations = append(destinations, &item.Availability, &item.FailureRate, &item.HealthScore, &result.Total)
 		if err := rows.Scan(destinations...); err != nil {
 			return nil, fmt.Errorf("scan account performance account: %w", err)
@@ -597,6 +613,7 @@ func normalizeAccountPerformancePage(filter service.AccountPerformanceAccountFil
 	sortColumns := map[string]string{
 		service.AccountPerformanceSortHealthScore: "health_score", service.AccountPerformanceSortAvailability: "availability", service.AccountPerformanceSortFailureRate: "failure_rate",
 		service.AccountPerformanceSortP95TTFTMS: "p95_ttft_ms", service.AccountPerformanceSortP95DurationMS: "p95_duration_ms", service.AccountPerformanceSortSamples: "samples",
+		service.AccountPerformanceSortSuccessCount: "success_count", service.AccountPerformanceSortFailureCount: "failure_count",
 	}
 	sortBy := filter.SortBy
 	if sortBy == "" {

@@ -4,6 +4,7 @@ package repository
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -91,4 +92,71 @@ func TestAccountPerformanceAvailabilityExcludesClientCancellations(t *testing.T)
 	require.Len(t, page.Rows, 1)
 	require.Equal(t, 1.0, page.Rows[0].Availability)
 	require.Equal(t, 0.0, page.Rows[0].FailureRate)
+}
+
+func TestAccountPerformanceQueryAccountsEnrichesDisplayMetadata(t *testing.T) {
+	ctx := context.Background()
+	previousNow := accountPerformanceNow
+	now := time.Date(2026, 7, 18, 8, 0, 0, 0, time.UTC)
+	accountPerformanceNow = func() time.Time { return now }
+	t.Cleanup(func() { accountPerformanceNow = previousNow })
+
+	model := "account-performance-display-metadata"
+	_, err := integrationDB.ExecContext(ctx, `DELETE FROM account_performance_minute WHERE model = $1`, model)
+	require.NoError(t, err)
+
+	var parentID, shadowID, deletedID int64
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `
+INSERT INTO accounts (name, platform, type, credentials)
+VALUES ('Metadata Parent', 'openai', 'oauth', '{"auth_mode":"personalAccessToken"}'::jsonb)
+RETURNING id`).Scan(&parentID))
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `
+INSERT INTO accounts (name, platform, type, credentials, parent_account_id, quota_dimension)
+VALUES ('Spark Shadow', 'openai', 'oauth', '{}'::jsonb, $1, 'spark')
+RETURNING id`, parentID).Scan(&shadowID))
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `
+INSERT INTO accounts (name, platform, type, credentials, deleted_at)
+VALUES ('Historical Account', 'openai', 'apikey', '{}'::jsonb, NOW())
+RETURNING id`).Scan(&deletedID))
+
+	missingID := int64(9223372036854770000)
+	t.Cleanup(func() {
+		_, _ = integrationDB.ExecContext(context.Background(), `DELETE FROM account_performance_minute WHERE model = $1`, model)
+		_, _ = integrationDB.ExecContext(context.Background(), `DELETE FROM accounts WHERE id = $1`, shadowID)
+		_, _ = integrationDB.ExecContext(context.Background(), `DELETE FROM accounts WHERE id = $1`, deletedID)
+		_, _ = integrationDB.ExecContext(context.Background(), `DELETE FROM accounts WHERE id = $1`, parentID)
+	})
+
+	bucket := now.Add(-2 * time.Minute)
+	repo := NewAccountPerformanceRepository(integrationDB)
+	ttft, duration := int64(900), int64(2_000)
+	require.NoError(t, repo.UpsertMinuteBatch(ctx, []service.AccountPerformanceDelta{
+		{BucketStart: bucket, AccountID: parentID, Platform: "openai", GroupID: 1, Model: model, Protocol: "responses", Outcome: service.AccountPerformanceOutcomeSuccess, AttemptCount: 1, TTFTMS: &ttft, DurationMS: &duration},
+		{BucketStart: bucket, AccountID: shadowID, Platform: "openai", GroupID: 1, Model: model, Protocol: "responses", Outcome: service.AccountPerformanceOutcomeSuccess, AttemptCount: 1, TTFTMS: &ttft, DurationMS: &duration},
+		{BucketStart: bucket, AccountID: deletedID, Platform: "openai", GroupID: 1, Model: model, Protocol: "responses", Outcome: service.AccountPerformanceOutcomeSuccess, AttemptCount: 1, TTFTMS: &ttft, DurationMS: &duration},
+		{BucketStart: bucket, AccountID: missingID, Platform: "openai", GroupID: 1, Model: model, Protocol: "responses", Outcome: service.AccountPerformanceOutcomeSuccess, AttemptCount: 1, TTFTMS: &ttft, DurationMS: &duration},
+	}))
+
+	page, err := repo.QueryAccounts(ctx, service.AccountPerformanceAccountFilter{
+		Start: bucket.Add(-time.Minute), End: bucket.Add(time.Minute), Model: model,
+		SortBy: service.AccountPerformanceSortSamples, SortOrder: "asc", Page: 1, PageSize: 20,
+	})
+	require.NoError(t, err)
+	require.Len(t, page.Rows, 4)
+
+	byID := make(map[int64]service.AccountPerformanceAccount, len(page.Rows))
+	for _, row := range page.Rows {
+		byID[row.AccountID] = row
+	}
+	require.Equal(t, "Metadata Parent", byID[parentID].AccountName)
+	require.Equal(t, "oauth", byID[parentID].AccountType)
+	require.Equal(t, "personalAccessToken", byID[parentID].AuthMode)
+	require.Equal(t, "Spark Shadow", byID[shadowID].AccountName)
+	require.Equal(t, "oauth", byID[shadowID].AccountType)
+	require.Equal(t, "personalAccessToken", byID[shadowID].AuthMode)
+	require.Equal(t, "Historical Account", byID[deletedID].AccountName)
+	require.Equal(t, "apikey", byID[deletedID].AccountType)
+	require.Equal(t, fmt.Sprintf("#%d", missingID), byID[missingID].AccountName)
+	require.Empty(t, byID[missingID].AccountType)
+	require.Empty(t, byID[missingID].AuthMode)
 }

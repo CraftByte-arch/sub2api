@@ -104,6 +104,8 @@ const (
 	AccountPerformanceSortP95TTFTMS     = "p95_ttft_ms"
 	AccountPerformanceSortP95DurationMS = "p95_duration_ms"
 	AccountPerformanceSortSamples       = "samples"
+	AccountPerformanceSortSuccessCount  = "success_count"
+	AccountPerformanceSortFailureCount  = "failure_count"
 )
 
 type AccountPerformanceAccountFilter struct {
@@ -122,6 +124,9 @@ type AccountPerformanceAccountFilter struct {
 
 type AccountPerformanceAccount struct {
 	AccountID    int64                      `json:"account_id"`
+	AccountName  string                     `json:"account_name"`
+	AccountType  string                     `json:"account_type"`
+	AuthMode     string                     `json:"auth_mode,omitempty"`
 	Platform     string                     `json:"platform"`
 	Counters     AccountPerformanceCounters `json:"counters"`
 	Availability float64                    `json:"availability"`

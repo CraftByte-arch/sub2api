@@ -125,6 +125,7 @@ func TestAccountPerformanceQueryRangeAndPageValidation(t *testing.T) {
 	for sortBy, want := range map[string]string{
 		service.AccountPerformanceSortHealthScore: "health_score", service.AccountPerformanceSortAvailability: "availability", service.AccountPerformanceSortFailureRate: "failure_rate",
 		service.AccountPerformanceSortP95TTFTMS: "p95_ttft_ms", service.AccountPerformanceSortP95DurationMS: "p95_duration_ms", service.AccountPerformanceSortSamples: "samples",
+		service.AccountPerformanceSortSuccessCount: "success_count", service.AccountPerformanceSortFailureCount: "failure_count",
 	} {
 		got, _, _, _, _, err := normalizeAccountPerformancePage(service.AccountPerformanceAccountFilter{SortBy: sortBy, SortOrder: "asc", Page: 1, PageSize: 1})
 		require.NoError(t, err)
@@ -174,12 +175,12 @@ func TestAccountPerformanceQueryAccountsUsesBoundedArgsAndAllowlistedSort(t *tes
 	end := start.Add(48 * time.Hour)
 	args := accountPerformanceMockArgs(t, start, end, "openai", int64(7), "gpt-5", "responses", int64(42), int64(10), int64(0))
 	mock.ExpectBegin()
-	mock.ExpectQuery("(?s)account_performance_minute.*COALESCE\\(success_count::double precision / NULLIF\\(attempt_count - client_canceled_count, 0\\), 0\\) AS availability").
+	mock.ExpectQuery("(?s)account_performance_minute.*COALESCE\\(success_count::double precision / NULLIF\\(attempt_count - client_canceled_count, 0\\), 0\\) AS availability.*LEFT JOIN accounts AS account ON account.id = scored.account_id.*LEFT JOIN accounts AS parent ON parent.id = account.parent_account_id").
 		WithArgs(args...).
 		WillReturnRows(sqlmock.NewRows([]string{
-			"account_id", "platform", "attempt_count", "success_count", "client_canceled_count", "ttft_timeout_count", "rate_limit_count", "auth_count", "upstream_4xx_count", "upstream_5xx_count", "transport_count", "protocol_count", "other_failure_count", "failover_count", "ttft_sample_count", "ttft_sum_ms", "duration_sample_count", "duration_sum_ms", "ttft_le_1000_ms", "ttft_le_2500_ms", "ttft_le_5000_ms", "ttft_le_10000_ms", "ttft_le_30000_ms", "ttft_gt_30000_ms", "duration_le_1000_ms", "duration_le_2500_ms", "duration_le_5000_ms", "duration_le_10000_ms", "duration_le_30000_ms", "duration_gt_30000_ms",
+			"account_id", "platform", "account_name", "account_type", "auth_mode", "attempt_count", "success_count", "client_canceled_count", "ttft_timeout_count", "rate_limit_count", "auth_count", "upstream_4xx_count", "upstream_5xx_count", "transport_count", "protocol_count", "other_failure_count", "failover_count", "ttft_sample_count", "ttft_sum_ms", "duration_sample_count", "duration_sum_ms", "ttft_le_1000_ms", "ttft_le_2500_ms", "ttft_le_5000_ms", "ttft_le_10000_ms", "ttft_le_30000_ms", "ttft_gt_30000_ms", "duration_le_1000_ms", "duration_le_2500_ms", "duration_le_5000_ms", "duration_le_10000_ms", "duration_le_30000_ms", "duration_gt_30000_ms",
 			"availability", "failure_rate", "health_score", "total",
-		}).AddRow(int64(42), "openai", int64(10), int64(1), int64(9), int64(0), int64(0), int64(0), int64(0), int64(0), int64(0), int64(0), int64(0), int64(0), int64(1), int64(900), int64(1), int64(1400), int64(1), int64(1), int64(1), int64(1), int64(1), int64(0), int64(0), int64(1), int64(1), int64(1), int64(1), int64(0), float64(1), float64(0), float64(1), int64(1)))
+		}).AddRow(int64(42), "openai", "Codex Team", "oauth", "personalAccessToken", int64(10), int64(1), int64(9), int64(0), int64(0), int64(0), int64(0), int64(0), int64(0), int64(0), int64(0), int64(0), int64(1), int64(900), int64(1), int64(1400), int64(1), int64(1), int64(1), int64(1), int64(1), int64(0), int64(0), int64(1), int64(1), int64(1), int64(1), int64(0), float64(1), float64(0), float64(1), int64(1)))
 	mock.ExpectCommit()
 
 	page, err := NewAccountPerformanceRepository(db).QueryAccounts(context.Background(), service.AccountPerformanceAccountFilter{
@@ -189,6 +190,9 @@ func TestAccountPerformanceQueryAccountsUsesBoundedArgsAndAllowlistedSort(t *tes
 	require.NoError(t, err)
 	require.Len(t, page.Rows, 1)
 	require.EqualValues(t, 42, page.Rows[0].AccountID)
+	require.Equal(t, "Codex Team", page.Rows[0].AccountName)
+	require.Equal(t, "oauth", page.Rows[0].AccountType)
+	require.Equal(t, "personalAccessToken", page.Rows[0].AuthMode)
 	require.EqualValues(t, 10, page.Rows[0].Counters.AttemptCount)
 	require.EqualValues(t, 1, page.Rows[0].Counters.TTFTLatency.Samples)
 	require.EqualValues(t, 1, page.Rows[0].Counters.DurationLatency.LE30000MS)
