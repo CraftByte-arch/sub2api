@@ -24,11 +24,16 @@ const (
 	ImageStudioInputCodeStorageUnavailable = "input_storage_unavailable"
 
 	defaultImageStudioInputMaxFileBytes = int64(20 << 20)
+	// These limits comfortably cover current GPT images and high-resolution uploads
+	// while bounding a single decoded RGBA image to about 160 MiB.
+	maxImageStudioInputDimension = 16_384
+	maxImageStudioInputPixels    = 40_000_000
 )
 
 var (
 	ErrImageStudioInputInvalid            = errors.New("image studio input is invalid")
 	ErrImageStudioInputTooLarge           = fmt.Errorf("%w: file exceeds size limit", ErrImageStudioInputInvalid)
+	ErrImageStudioInputDimensionsTooLarge = fmt.Errorf("%w: pixel dimensions exceed limit", ErrImageStudioInputInvalid)
 	ErrImageStudioInputPathInvalid        = errors.New("image studio input path is invalid")
 	ErrImageStudioInputMissing            = errors.New("image studio input is missing")
 	ErrImageStudioInputStorageUnavailable = errors.New("image studio input storage is unavailable")
@@ -99,11 +104,12 @@ func (o *OpenedEditInputs) Close() error {
 }
 
 type ImageStudioInputStore struct {
-	root           string
-	maxFileBytes   int64
-	syncTempFile   func(*os.File) error
-	closeTempFile  func(*os.File) error
-	renameTempFile func(string, string) error
+	root            string
+	maxFileBytes    int64
+	syncTempFile    func(*os.File) error
+	closeTempFile   func(*os.File) error
+	renameTempFile  func(string, string) error
+	removeAllInRoot func(*os.Root, string) error
 }
 
 func NewImageStudioInputStore(dataDir string, maxFileBytes int64) *ImageStudioInputStore {
@@ -119,11 +125,12 @@ func NewImageStudioInputStore(dataDir string, maxFileBytes int64) *ImageStudioIn
 		maxFileBytes = defaultImageStudioInputMaxFileBytes
 	}
 	return &ImageStudioInputStore{
-		root:           root,
-		maxFileBytes:   maxFileBytes,
-		syncTempFile:   (*os.File).Sync,
-		closeTempFile:  (*os.File).Close,
-		renameTempFile: os.Rename,
+		root:            root,
+		maxFileBytes:    maxFileBytes,
+		syncTempFile:    (*os.File).Sync,
+		closeTempFile:   (*os.File).Close,
+		renameTempFile:  os.Rename,
+		removeAllInRoot: (*os.Root).RemoveAll,
 	}
 }
 
@@ -149,9 +156,12 @@ func (s *ImageStudioInputStore) StageEditInputs(ctx context.Context, images []Up
 	if err != nil {
 		return nil, inputStorageError(err)
 	}
+	uploadRelativeDir := filepath.ToSlash(filepath.Join("inputs", filepath.Base(uploadDir)))
 	defer func() {
 		if retErr != nil {
-			_ = os.RemoveAll(uploadDir)
+			if cleanupErr := s.removeRootPath(uploadRelativeDir); cleanupErr != nil {
+				retErr = inputStorageError(errors.Join(retErr, cleanupErr))
+			}
 		}
 	}()
 
@@ -191,6 +201,9 @@ func (s *ImageStudioInputStore) stageOne(ctx context.Context, uploadDir, baseNam
 	if upload.Reader == nil {
 		return nil, inputInvalidError(ErrImageStudioInputInvalid)
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, inputStorageError(err)
+	}
 	declaredType, _, err := mime.ParseMediaType(strings.TrimSpace(upload.ContentType))
 	if err != nil || !supportedImageStudioContentType(declaredType) {
 		return nil, inputInvalidError(ErrImageStudioInputInvalid)
@@ -214,7 +227,7 @@ func (s *ImageStudioInputStore) stageOne(ctx context.Context, uploadDir, baseNam
 		return nil, inputStorageError(err)
 	}
 
-	validated, err := validateImageStudioFile(tempPath, declaredType, mask, expectedBounds)
+	validated, err := validateImageStudioFile(ctx, tempPath, declaredType, mask, expectedBounds)
 	if err != nil {
 		_ = s.closeTempFile(tempFile)
 		return nil, err
@@ -234,36 +247,44 @@ func (s *ImageStudioInputStore) stageOne(ctx context.Context, uploadDir, baseNam
 	return validated, nil
 }
 
-func (s *ImageStudioInputStore) OpenInputs(paths []string, maskPath *string) (*OpenedEditInputs, error) {
+func (s *ImageStudioInputStore) OpenInputs(paths []string, maskPath *string) (retOpened *OpenedEditInputs, retErr error) {
 	if s == nil || len(paths) < 1 || len(paths) > 4 {
 		return nil, inputInvalidError(ErrImageStudioInputInvalid)
 	}
+	root, err := s.openRoot()
+	if err != nil {
+		return nil, inputStorageError(err)
+	}
 	opened := &OpenedEditInputs{Images: make([]OpenedEditInput, 0, len(paths))}
+	defer func() {
+		if closeErr := root.Close(); closeErr != nil {
+			_ = opened.Close()
+			retOpened = nil
+			retErr = inputStorageError(errors.Join(retErr, closeErr))
+		}
+	}()
 	fail := func(err error) (*OpenedEditInputs, error) {
 		_ = opened.Close()
 		return nil, err
 	}
 
 	var firstBounds image.Rectangle
-	var uploadDir string
+	var uploadID string
 	for i, path := range paths {
-		resolved, currentDir, err := s.resolveInputPath(path, fmt.Sprintf("image-%02d", i+1), true)
+		parts, err := validImageStudioRelativePath(path, fmt.Sprintf("image-%02d", i+1))
 		if err != nil {
 			return fail(err)
 		}
 		if i == 0 {
-			uploadDir = currentDir
-		} else if currentDir != uploadDir {
+			uploadID = parts[1]
+		} else if parts[1] != uploadID {
 			return fail(inputPathError(ErrImageStudioInputPathInvalid))
 		}
-		file, err := os.Open(resolved)
+		file, err := openImageStudioInput(root, path)
 		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				return fail(inputMissingError(err))
-			}
-			return fail(inputStorageError(err))
+			return fail(err)
 		}
-		validated, err := validateOpenImageStudioFile(file, s.maxFileBytes, false, image.Rectangle{})
+		validated, err := validateOpenImageStudioFile(context.Background(), file, s.maxFileBytes, false, image.Rectangle{})
 		if err != nil {
 			_ = file.Close()
 			return fail(err)
@@ -274,21 +295,18 @@ func (s *ImageStudioInputStore) OpenInputs(paths []string, maskPath *string) (*O
 		opened.Images = append(opened.Images, OpenedEditInput{File: file, Path: path, ContentType: validated.contentType})
 	}
 	if maskPath != nil {
-		resolved, currentDir, err := s.resolveInputPath(*maskPath, "mask", true)
+		parts, err := validImageStudioRelativePath(*maskPath, "mask")
 		if err != nil {
 			return fail(err)
 		}
-		if currentDir != uploadDir {
+		if parts[1] != uploadID {
 			return fail(inputPathError(ErrImageStudioInputPathInvalid))
 		}
-		file, err := os.Open(resolved)
+		file, err := openImageStudioInput(root, *maskPath)
 		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				return fail(inputMissingError(err))
-			}
-			return fail(inputStorageError(err))
+			return fail(err)
 		}
-		validated, err := validateOpenImageStudioFile(file, s.maxFileBytes, true, firstBounds)
+		validated, err := validateOpenImageStudioFile(context.Background(), file, s.maxFileBytes, true, firstBounds)
 		if err != nil {
 			_ = file.Close()
 			return fail(err)
@@ -308,119 +326,67 @@ func (s *ImageStudioInputStore) RemoveInputs(paths []string, maskPath *string) e
 	if len(paths) > 4 {
 		return inputPathError(ErrImageStudioInputPathInvalid)
 	}
-	var uploadDir string
+	var uploadID string
 	for i, path := range paths {
-		currentDir, err := s.resolveRemovalUploadDir(path, fmt.Sprintf("image-%02d", i+1))
+		parts, err := validImageStudioRelativePath(path, fmt.Sprintf("image-%02d", i+1))
 		if err != nil {
 			return err
 		}
-		if uploadDir == "" {
-			uploadDir = currentDir
-		} else if currentDir != uploadDir {
+		if uploadID == "" {
+			uploadID = parts[1]
+		} else if parts[1] != uploadID {
 			return inputPathError(ErrImageStudioInputPathInvalid)
 		}
 	}
 	if maskPath != nil {
-		currentDir, err := s.resolveRemovalUploadDir(*maskPath, "mask")
+		parts, err := validImageStudioRelativePath(*maskPath, "mask")
 		if err != nil {
 			return err
 		}
-		if uploadDir == "" {
-			uploadDir = currentDir
-		} else if currentDir != uploadDir {
+		if uploadID == "" {
+			uploadID = parts[1]
+		} else if parts[1] != uploadID {
 			return inputPathError(ErrImageStudioInputPathInvalid)
 		}
 	}
-	if uploadDir == "" || uploadDir == filepath.Join(s.root, "inputs") || uploadDir == s.root {
+	if uploadID == "" {
 		return inputPathError(ErrImageStudioInputPathInvalid)
 	}
-	if err := os.RemoveAll(uploadDir); err != nil {
+	uploadDir := filepath.ToSlash(filepath.Join("inputs", uploadID))
+	root, err := s.openRoot()
+	if err != nil {
 		return inputStorageError(err)
 	}
+	hasSymlink, err := rootPathContainsSymlink(root, uploadDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return root.Close()
+	}
+	if err != nil {
+		_ = root.Close()
+		return inputStorageError(err)
+	}
+	if hasSymlink {
+		_ = root.Close()
+		return inputPathError(ErrImageStudioInputPathInvalid)
+	}
+	info, err := root.Lstat(filepath.FromSlash(uploadDir))
+	if errors.Is(err, os.ErrNotExist) {
+		return root.Close()
+	}
+	if err != nil {
+		_ = root.Close()
+		return inputStorageError(err)
+	}
+	if !info.IsDir() {
+		_ = root.Close()
+		return inputPathError(ErrImageStudioInputPathInvalid)
+	}
+	removeErr := s.removeAllInRoot(root, filepath.FromSlash(uploadDir))
+	closeErr := root.Close()
+	if removeErr != nil || closeErr != nil {
+		return inputStorageError(errors.Join(removeErr, closeErr))
+	}
 	return nil
-}
-
-func (s *ImageStudioInputStore) resolveRemovalUploadDir(relativePath, expectedBase string) (string, error) {
-	parts, err := validImageStudioRelativePath(relativePath, expectedBase)
-	if err != nil {
-		return "", err
-	}
-	if err := os.MkdirAll(s.root, 0o700); err != nil {
-		return "", inputStorageError(err)
-	}
-	resolvedRoot, err := filepath.EvalSymlinks(s.root)
-	if err != nil {
-		return "", inputStorageError(err)
-	}
-	inputsDir := filepath.Join(resolvedRoot, parts[0])
-	info, err := os.Lstat(inputsDir)
-	if errors.Is(err, os.ErrNotExist) {
-		return filepath.Join(inputsDir, parts[1]), nil
-	}
-	if err != nil {
-		return "", inputStorageError(err)
-	}
-	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return "", inputPathError(ErrImageStudioInputPathInvalid)
-	}
-	uploadDir := filepath.Join(inputsDir, parts[1])
-	info, err = os.Lstat(uploadDir)
-	if errors.Is(err, os.ErrNotExist) {
-		return uploadDir, nil
-	}
-	if err != nil {
-		return "", inputStorageError(err)
-	}
-	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return "", inputPathError(ErrImageStudioInputPathInvalid)
-	}
-	return uploadDir, nil
-}
-
-func (s *ImageStudioInputStore) resolveInputPath(relativePath, expectedBase string, mustExist bool) (string, string, error) {
-	parts, err := validImageStudioRelativePath(relativePath, expectedBase)
-	if err != nil {
-		return "", "", err
-	}
-	if err := os.MkdirAll(s.root, 0o700); err != nil {
-		return "", "", inputStorageError(err)
-	}
-	resolvedRoot, err := filepath.EvalSymlinks(s.root)
-	if err != nil {
-		return "", "", inputStorageError(err)
-	}
-	fullPath := filepath.Join(s.root, filepath.FromSlash(relativePath))
-	resolvedPath, err := resolveImageStudioExistingPath(fullPath)
-	if err != nil {
-		if mustExist && errors.Is(err, os.ErrNotExist) {
-			return "", "", inputMissingError(err)
-		}
-		return "", "", inputStorageError(err)
-	}
-	if !imageStudioPathWithinRoot(resolvedRoot, resolvedPath) {
-		return "", "", inputPathError(ErrImageStudioInputPathInvalid)
-	}
-	if mustExist {
-		info, err := os.Stat(resolvedPath)
-		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				return "", "", inputMissingError(err)
-			}
-			return "", "", inputStorageError(err)
-		}
-		if !info.Mode().IsRegular() {
-			return "", "", inputPathError(ErrImageStudioInputPathInvalid)
-		}
-	}
-	uploadDir := filepath.Join(resolvedRoot, parts[0], parts[1])
-	resolvedUploadDir, err := resolveImageStudioExistingPath(uploadDir)
-	if err != nil {
-		return "", "", inputStorageError(err)
-	}
-	if !imageStudioPathWithinRoot(resolvedRoot, resolvedUploadDir) || resolvedUploadDir == resolvedRoot {
-		return "", "", inputPathError(ErrImageStudioInputPathInvalid)
-	}
-	return resolvedPath, resolvedUploadDir, nil
 }
 
 func validImageStudioRelativePath(path, expectedBase string) ([]string, error) {
@@ -454,48 +420,75 @@ func validImageStudioRelativePath(path, expectedBase string) ([]string, error) {
 	return parts, nil
 }
 
-func resolveImageStudioExistingPath(path string) (string, error) {
-	current := path
-	missing := make([]string, 0, 2)
-	for {
-		_, err := os.Lstat(current)
-		if err == nil {
-			resolved, err := filepath.EvalSymlinks(current)
-			if err != nil {
-				return "", err
-			}
-			for i := len(missing) - 1; i >= 0; i-- {
-				resolved = filepath.Join(resolved, missing[i])
-			}
-			return resolved, nil
-		}
-		if !errors.Is(err, os.ErrNotExist) {
-			return "", err
-		}
-		parent := filepath.Dir(current)
-		if parent == current {
-			return "", err
-		}
-		missing = append(missing, filepath.Base(current))
-		current = parent
+func (s *ImageStudioInputStore) openRoot() (*os.Root, error) {
+	if err := os.MkdirAll(s.root, 0o700); err != nil {
+		return nil, err
 	}
+	return os.OpenRoot(s.root)
 }
 
-func imageStudioPathWithinRoot(root, path string) bool {
-	rel, err := filepath.Rel(root, path)
+func (s *ImageStudioInputStore) removeRootPath(relativePath string) (retErr error) {
+	root, err := s.openRoot()
 	if err != nil {
-		return false
+		return err
 	}
-	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
+	defer func() {
+		retErr = errors.Join(retErr, root.Close())
+	}()
+	return s.removeAllInRoot(root, filepath.FromSlash(relativePath))
 }
 
-func validateImageStudioFile(path, declaredType string, mask bool, expectedBounds image.Rectangle) (*validatedImageStudioInput, error) {
+func openImageStudioInput(root *os.Root, relativePath string) (*os.File, error) {
+	hasSymlink, err := rootPathContainsSymlink(root, relativePath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, inputMissingError(err)
+		}
+		return nil, inputStorageError(err)
+	}
+	if hasSymlink {
+		return nil, inputPathError(ErrImageStudioInputPathInvalid)
+	}
+	file, err := root.Open(filepath.FromSlash(relativePath))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, inputMissingError(err)
+		}
+		return nil, inputStorageError(err)
+	}
+	info, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return nil, inputStorageError(err)
+	}
+	if !info.Mode().IsRegular() {
+		_ = file.Close()
+		return nil, inputPathError(ErrImageStudioInputPathInvalid)
+	}
+	return file, nil
+}
+
+func rootPathContainsSymlink(root *os.Root, relativePath string) (bool, error) {
+	parts := strings.Split(filepath.ToSlash(relativePath), "/")
+	for i := range parts {
+		info, err := root.Lstat(filepath.FromSlash(strings.Join(parts[:i+1], "/")))
+		if err != nil {
+			return false, err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func validateImageStudioFile(ctx context.Context, path, declaredType string, mask bool, expectedBounds image.Rectangle) (*validatedImageStudioInput, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, inputStorageError(err)
 	}
 	defer file.Close()
-	validated, err := validateOpenImageStudioFile(file, 0, mask, expectedBounds)
+	validated, err := validateOpenImageStudioFile(ctx, file, 0, mask, expectedBounds)
 	if err != nil {
 		return nil, err
 	}
@@ -505,7 +498,7 @@ func validateImageStudioFile(path, declaredType string, mask bool, expectedBound
 	return validated, nil
 }
 
-func validateOpenImageStudioFile(file *os.File, maxFileBytes int64, mask bool, expectedBounds image.Rectangle) (*validatedImageStudioInput, error) {
+func validateOpenImageStudioFile(ctx context.Context, file *os.File, maxFileBytes int64, mask bool, expectedBounds image.Rectangle) (*validatedImageStudioInput, error) {
 	if maxFileBytes > 0 {
 		info, err := file.Stat()
 		if err != nil {
@@ -534,6 +527,12 @@ func validateOpenImageStudioFile(file *os.File, maxFileBytes int64, mask bool, e
 	if err != nil || imageStudioContentTypeForFormat(format) != contentType {
 		return nil, inputInvalidError(ErrImageStudioInputInvalid)
 	}
+	if config.Width <= 0 || config.Height <= 0 || config.Width > maxImageStudioInputDimension || config.Height > maxImageStudioInputDimension || config.Width > maxImageStudioInputPixels/config.Height {
+		return nil, inputInvalidError(ErrImageStudioInputDimensionsTooLarge)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, inputStorageError(err)
+	}
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return nil, inputStorageError(err)
 	}
@@ -545,8 +544,15 @@ func validateOpenImageStudioFile(file *os.File, maxFileBytes int64, mask bool, e
 	if bounds.Dx() != config.Width || bounds.Dy() != config.Height || bounds.Empty() {
 		return nil, inputInvalidError(ErrImageStudioInputInvalid)
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, inputStorageError(err)
+	}
 	if mask {
-		if bounds.Dx() != expectedBounds.Dx() || bounds.Dy() != expectedBounds.Dy() || !imageStudioHasUsableAlpha(decoded) {
+		hasAlpha, err := imageStudioHasUsableAlpha(ctx, decoded)
+		if err != nil {
+			return nil, inputStorageError(err)
+		}
+		if bounds.Dx() != expectedBounds.Dx() || bounds.Dy() != expectedBounds.Dy() || !hasAlpha {
 			return nil, inputInvalidError(ErrImageStudioInputInvalid)
 		}
 	}
@@ -556,17 +562,20 @@ func validateOpenImageStudioFile(file *os.File, maxFileBytes int64, mask bool, e
 	return &validatedImageStudioInput{contentType: contentType, bounds: bounds}, nil
 }
 
-func imageStudioHasUsableAlpha(img image.Image) bool {
+func imageStudioHasUsableAlpha(ctx context.Context, img image.Image) (bool, error) {
 	bounds := img.Bounds()
 	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
 		for x := bounds.Min.X; x < bounds.Max.X; x++ {
 			_, _, _, alpha := img.At(x, y).RGBA()
 			if alpha < 0xffff {
-				return true
+				return true, nil
 			}
 		}
 	}
-	return false
+	return false, nil
 }
 
 func supportedImageStudioContentType(contentType string) bool {
@@ -613,9 +622,9 @@ func inputPathError(err error) error {
 }
 
 func inputMissingError(err error) error {
-	return &ImageStudioInputError{Code: ImageStudioInputCodeMissing, Err: fmt.Errorf("%w: %v", ErrImageStudioInputMissing, err)}
+	return &ImageStudioInputError{Code: ImageStudioInputCodeMissing, Err: fmt.Errorf("%w: %w", ErrImageStudioInputMissing, err)}
 }
 
 func inputStorageError(err error) error {
-	return &ImageStudioInputError{Code: ImageStudioInputCodeStorageUnavailable, Err: fmt.Errorf("%w: %v", ErrImageStudioInputStorageUnavailable, err)}
+	return &ImageStudioInputError{Code: ImageStudioInputCodeStorageUnavailable, Err: fmt.Errorf("%w: %w", ErrImageStudioInputStorageUnavailable, err)}
 }

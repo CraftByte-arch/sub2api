@@ -3,7 +3,9 @@ package service
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
+	"hash/crc32"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -120,6 +122,33 @@ func TestImageStudioInputStoreClassifiesEmptyAndShortFilesAsInvalid(t *testing.T
 			require.ErrorAs(t, err, &inputErr)
 			require.Equal(t, ImageStudioInputCodeInvalid, inputErr.Code)
 			require.ErrorIs(t, err, ErrImageStudioInputInvalid)
+			require.Empty(t, imageStudioInputDirs(t, store.Root()))
+		})
+	}
+}
+
+func TestImageStudioInputStoreRejectsOversizedPixelDimensionsBeforeDecode(t *testing.T) {
+	tests := []struct {
+		name   string
+		width  uint32
+		height uint32
+	}{
+		{name: "width", width: maxImageStudioInputDimension + 1, height: 1},
+		{name: "height", width: 1, height: maxImageStudioInputDimension + 1},
+		{name: "total pixels", width: 10_000, height: maxImageStudioInputPixels/10_000 + 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := NewImageStudioInputStore(t.TempDir(), 1<<20)
+			configOnlyPNG := imageStudioTestPNGConfigOnly(tt.width, tt.height)
+
+			staged, err := store.StageEditInputs(context.Background(), []UploadedFile{{
+				Reader: bytes.NewReader(configOnlyPNG), ContentType: "image/png",
+			}}, nil)
+
+			require.Nil(t, staged)
+			require.ErrorIs(t, err, ErrImageStudioInputDimensionsTooLarge)
 			require.Empty(t, imageStudioInputDirs(t, store.Root()))
 		})
 	}
@@ -288,14 +317,66 @@ func TestImageStudioInputStoreRollsBackDirectoryOnMidStreamFailure(t *testing.T)
 	require.Empty(t, imageStudioInputDirs(t, store.Root()))
 }
 
+func TestImageStudioInputStoreReportsRollbackFailureAndPreservesBothCauses(t *testing.T) {
+	store := NewImageStudioInputStore(t.TempDir(), 1<<20)
+	stageFailure := errors.New("rename failed")
+	cleanupFailure := errors.New("cleanup failed")
+	store.renameTempFile = func(string, string) error { return stageFailure }
+	store.removeAllInRoot = func(*os.Root, string) error { return cleanupFailure }
+
+	staged, err := store.StageEditInputs(context.Background(), []UploadedFile{{
+		Reader: bytes.NewReader(imageStudioTestPNG(t, 2, 2, false)), ContentType: "image/png",
+	}}, nil)
+
+	require.Nil(t, staged)
+	require.ErrorIs(t, err, ErrImageStudioInputStorageUnavailable)
+	require.ErrorIs(t, err, stageFailure)
+	require.ErrorIs(t, err, cleanupFailure)
+	var inputErr *ImageStudioInputError
+	require.ErrorAs(t, err, &inputErr)
+	require.Equal(t, ImageStudioInputCodeStorageUnavailable, inputErr.Code)
+}
+
+func TestImageStudioInputStoreChecksContextBeforeEachFileCopy(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	store := NewImageStudioInputStore(t.TempDir(), 1<<20)
+	validPNG := imageStudioTestPNG(t, 2, 2, false)
+	secondReader := &imageStudioReadTrackingReader{err: errors.New("second reader must not be read")}
+	store.renameTempFile = func(oldPath, newPath string) error {
+		if err := os.Rename(oldPath, newPath); err != nil {
+			return err
+		}
+		cancel()
+		return nil
+	}
+
+	staged, err := store.StageEditInputs(ctx, []UploadedFile{
+		{Reader: bytes.NewReader(validPNG), ContentType: "image/png"},
+		{Reader: secondReader, ContentType: "image/png"},
+	}, nil)
+
+	require.Nil(t, staged)
+	require.ErrorIs(t, err, context.Canceled)
+	require.False(t, secondReader.read)
+}
+
+func TestImageStudioInputStoreErrorWrappersPreserveUnderlyingCause(t *testing.T) {
+	cause := errors.New("underlying failure")
+
+	require.ErrorIs(t, inputMissingError(cause), ErrImageStudioInputMissing)
+	require.ErrorIs(t, inputMissingError(cause), cause)
+	require.ErrorIs(t, inputStorageError(cause), ErrImageStudioInputStorageUnavailable)
+	require.ErrorIs(t, inputStorageError(cause), cause)
+}
+
 func TestImageStudioInputStoreOpenRejectsUnsafePaths(t *testing.T) {
 	dataDir := t.TempDir()
 	store := NewImageStudioInputStore(dataDir, 1<<20)
 	root := store.Root()
-	require.NoError(t, os.MkdirAll(filepath.Join(root, "inputs", "upload"), 0o700))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "inputs", "upload-static"), 0o700))
 	outside := filepath.Join(t.TempDir(), "outside.png")
 	require.NoError(t, os.WriteFile(outside, imageStudioTestPNG(t, 2, 2, false), 0o600))
-	require.NoError(t, os.Symlink(outside, filepath.Join(root, "inputs", "upload", "image-01.png")))
+	require.NoError(t, os.Symlink(outside, filepath.Join(root, "inputs", "upload-static", "image-01.png")))
 
 	tests := []struct {
 		name string
@@ -304,7 +385,7 @@ func TestImageStudioInputStoreOpenRejectsUnsafePaths(t *testing.T) {
 		{name: "empty", path: ""},
 		{name: "absolute", path: outside},
 		{name: "parent traversal", path: "inputs/../outside.png"},
-		{name: "symlink escape", path: "inputs/upload/image-01.png"},
+		{name: "symlink escape", path: "inputs/upload-static/image-01.png"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -396,7 +477,8 @@ func TestImageStudioInputStoreRemoveRejectsNonGeneratedUploadDirectory(t *testin
 func TestImageStudioInputStoreRemoveRejectsUploadDirectorySymlink(t *testing.T) {
 	store := NewImageStudioInputStore(t.TempDir(), 1<<20)
 	inputsRoot := filepath.Join(store.Root(), "inputs")
-	targetDir := filepath.Join(inputsRoot, "upload-b")
+	require.NoError(t, os.MkdirAll(inputsRoot, 0o700))
+	targetDir := filepath.Join(t.TempDir(), "upload-target")
 	require.NoError(t, os.MkdirAll(targetDir, 0o700))
 	targetPath := filepath.Join(targetDir, "image-01.png")
 	require.NoError(t, os.WriteFile(targetPath, imageStudioTestPNG(t, 2, 2, false), 0o600))
@@ -412,6 +494,19 @@ func TestImageStudioInputStoreRemoveRejectsUploadDirectorySymlink(t *testing.T) 
 		require.NotZero(t, info.Mode()&os.ModeSymlink)
 		require.FileExists(t, targetPath)
 	}
+}
+
+func imageStudioTestPNGConfigOnly(width, height uint32) []byte {
+	data := make([]byte, 8+4+4+13+4)
+	copy(data, []byte("\x89PNG\r\n\x1a\n"))
+	binary.BigEndian.PutUint32(data[8:12], 13)
+	copy(data[12:16], "IHDR")
+	binary.BigEndian.PutUint32(data[16:20], width)
+	binary.BigEndian.PutUint32(data[20:24], height)
+	data[24] = 8
+	data[25] = 6
+	binary.BigEndian.PutUint32(data[29:33], crc32.ChecksumIEEE(data[12:29]))
+	return data
 }
 
 func imageStudioTestPNG(t *testing.T, width, height int, transparent bool) []byte {
@@ -464,6 +559,16 @@ type imageStudioFailingReader struct{}
 
 func (*imageStudioFailingReader) Read([]byte) (int, error) {
 	return 0, errors.New("read failed")
+}
+
+type imageStudioReadTrackingReader struct {
+	err  error
+	read bool
+}
+
+func (r *imageStudioReadTrackingReader) Read([]byte) (int, error) {
+	r.read = true
+	return 0, r.err
 }
 
 type imageStudioBlockingReader struct {
