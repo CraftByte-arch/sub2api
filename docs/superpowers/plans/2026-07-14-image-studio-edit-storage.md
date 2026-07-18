@@ -294,19 +294,19 @@ git commit -m "feat: materialize legacy image studio edits"
 - Modify: `backend/internal/service/image_studio_job_worker.go`
 - Modify: `backend/internal/service/image_studio_job_worker_test.go`
 
-- [ ] **Step 1: 写 RED 分类测试**
+- [x] **Step 1: 写 RED 分类测试**
 
 注入 recording upstream，分别制造 expired、missing、corrupt、unsafe path；断言 upstream 调用为 0，错误码为 `input_expired`、`input_missing`、`input_invalid`、`input_path_invalid`，且不进入 retry。
 
-- [ ] **Step 2: 在上游前加载文件**
+- [x] **Step 2: 在上游前加载文件**
 
 edit job 在成功 `MarkRunning` 后、账号选择/调用上游前比较 TTL 并 `OpenInputs`，defer 关闭句柄；generation 不经过 store。
 
-- [ ] **Step 3: 保持 provider retry 语义**
+- [x] **Step 3: 保持 provider retry 语义**
 
 稳定输入错误直接 `MarkFailed`。429、retryable 5xx 和 transport error 继续走现有 `MarkRetryable`，且 TTL 前不删除输入。
 
-- [ ] **Step 4: GREEN 并提交**
+- [x] **Step 4: GREEN 并提交**
 
 ```bash
 cd backend

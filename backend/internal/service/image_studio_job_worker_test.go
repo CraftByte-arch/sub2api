@@ -1,17 +1,529 @@
 package service
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/stretchr/testify/require"
 )
+
+func TestImageStudioJobServiceRejectsInvalidStoredEditInputsBeforeExecution(t *testing.T) {
+	now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
+	validUntil := now.Add(time.Hour)
+	expiredAt := now.Add(-time.Second)
+	deletedAt := now.Add(-time.Minute)
+	png := imageStudioTestPNG(t, 2, 2, false)
+	jpeg := imageStudioTestJPEG(t, 2, 2)
+	mask := imageStudioTestPNG(t, 2, 2, true)
+
+	tests := []struct {
+		name     string
+		prepare  func(t *testing.T) (ImageStudioInputStorage, ImageStudioJob)
+		wantCode string
+	}{
+		{
+			name: "expired",
+			prepare: func(t *testing.T) (ImageStudioInputStorage, ImageStudioJob) {
+				store, staged := stageImageStudioWorkerInputs(t, [][]byte{png}, nil, 1<<20)
+				return store, storedImageStudioEditJob(staged, &expiredAt)
+			},
+			wantCode: ImageStudioInputCodeExpired,
+		},
+		{
+			name: "deleted",
+			prepare: func(t *testing.T) (ImageStudioInputStorage, ImageStudioJob) {
+				store, staged := stageImageStudioWorkerInputs(t, [][]byte{png}, nil, 1<<20)
+				job := storedImageStudioEditJob(staged, &validUntil)
+				job.InputDeletedAt = &deletedAt
+				return store, job
+			},
+			wantCode: ImageStudioInputCodeMissing,
+		},
+		{
+			name: "missing expiration metadata",
+			prepare: func(t *testing.T) (ImageStudioInputStorage, ImageStudioJob) {
+				store, staged := stageImageStudioWorkerInputs(t, [][]byte{png}, nil, 1<<20)
+				return store, storedImageStudioEditJob(staged, nil)
+			},
+			wantCode: ImageStudioInputCodeInvalid,
+		},
+		{
+			name: "zero paths",
+			prepare: func(t *testing.T) (ImageStudioInputStorage, ImageStudioJob) {
+				return NewImageStudioInputStore(t.TempDir(), 1<<20), ImageStudioJob{
+					ID: 39, UserID: 42, APIKeyID: 41, Mode: ImageStudioJobModeEdit,
+					Status: ImageStudioJobStatusQueued, InputExpiresAt: &validUntil,
+					RequestPayload: json.RawMessage(`{"model":"gpt-image-2","prompt":"edit"}`),
+				}
+			},
+			wantCode: ImageStudioInputCodeInvalid,
+		},
+		{
+			name: "five paths",
+			prepare: func(t *testing.T) (ImageStudioInputStorage, ImageStudioJob) {
+				paths := []string{
+					"inputs/upload-five/image-01.png", "inputs/upload-five/image-02.png",
+					"inputs/upload-five/image-03.png", "inputs/upload-five/image-04.png",
+					"inputs/upload-five/image-05.png",
+				}
+				return NewImageStudioInputStore(t.TempDir(), 1<<20), ImageStudioJob{
+					ID: 39, UserID: 42, APIKeyID: 41, Mode: ImageStudioJobModeEdit,
+					Status: ImageStudioJobStatusQueued, InputImagePaths: paths, InputExpiresAt: &validUntil,
+					RequestPayload: json.RawMessage(`{"model":"gpt-image-2","prompt":"edit"}`),
+				}
+			},
+			wantCode: ImageStudioInputCodeInvalid,
+		},
+		{
+			name: "missing file",
+			prepare: func(t *testing.T) (ImageStudioInputStorage, ImageStudioJob) {
+				store, staged := stageImageStudioWorkerInputs(t, [][]byte{png}, nil, 1<<20)
+				require.NoError(t, os.Remove(filepath.Join(store.Root(), filepath.FromSlash(staged.ImagePaths[0]))))
+				return store, storedImageStudioEditJob(staged, &validUntil)
+			},
+			wantCode: ImageStudioInputCodeMissing,
+		},
+		{
+			name: "corrupt file",
+			prepare: func(t *testing.T) (ImageStudioInputStorage, ImageStudioJob) {
+				store, staged := stageImageStudioWorkerInputs(t, [][]byte{png}, nil, 1<<20)
+				require.NoError(t, os.WriteFile(filepath.Join(store.Root(), filepath.FromSlash(staged.ImagePaths[0])), []byte("not an image"), 0o600))
+				return store, storedImageStudioEditJob(staged, &validUntil)
+			},
+			wantCode: ImageStudioInputCodeInvalid,
+		},
+		{
+			name: "detected mime changed after staging",
+			prepare: func(t *testing.T) (ImageStudioInputStorage, ImageStudioJob) {
+				store, staged := stageImageStudioWorkerInputs(t, [][]byte{png}, nil, 1<<20)
+				require.NoError(t, os.WriteFile(filepath.Join(store.Root(), filepath.FromSlash(staged.ImagePaths[0])), jpeg, 0o600))
+				return store, storedImageStudioEditJob(staged, &validUntil)
+			},
+			wantCode: ImageStudioInputCodeInvalid,
+		},
+		{
+			name: "oversized after staging",
+			prepare: func(t *testing.T) (ImageStudioInputStorage, ImageStudioJob) {
+				dataDir := t.TempDir()
+				stagingStore := NewImageStudioInputStore(dataDir, 1<<20)
+				staged, err := stagingStore.StageEditInputs(context.Background(), []UploadedFile{{Reader: bytes.NewReader(png), ContentType: "image/png"}}, nil)
+				require.NoError(t, err)
+				return NewImageStudioInputStore(dataDir, int64(len(png)-1)), storedImageStudioEditJob(staged, &validUntil)
+			},
+			wantCode: ImageStudioInputCodeInvalid,
+		},
+		{
+			name: "unsafe path",
+			prepare: func(t *testing.T) (ImageStudioInputStorage, ImageStudioJob) {
+				store, staged := stageImageStudioWorkerInputs(t, [][]byte{png}, nil, 1<<20)
+				staged.ImagePaths[0] = "../outside/image-01.png"
+				return store, storedImageStudioEditJob(staged, &validUntil)
+			},
+			wantCode: ImageStudioInputCodePathInvalid,
+		},
+		{
+			name: "mixed upload directories",
+			prepare: func(t *testing.T) (ImageStudioInputStorage, ImageStudioJob) {
+				dataDir := t.TempDir()
+				store := NewImageStudioInputStore(dataDir, 1<<20)
+				first, err := store.StageEditInputs(context.Background(), []UploadedFile{{Reader: bytes.NewReader(png), ContentType: "image/png"}}, nil)
+				require.NoError(t, err)
+				second, err := store.StageEditInputs(context.Background(), []UploadedFile{{Reader: bytes.NewReader(png), ContentType: "image/png"}}, nil)
+				require.NoError(t, err)
+				first.ImagePaths = append(first.ImagePaths, second.ImagePaths[0])
+				return store, storedImageStudioEditJob(first, &validUntil)
+			},
+			wantCode: ImageStudioInputCodePathInvalid,
+		},
+		{
+			name: "mask dimensions changed after staging",
+			prepare: func(t *testing.T) (ImageStudioInputStorage, ImageStudioJob) {
+				store, staged := stageImageStudioWorkerInputs(t, [][]byte{png}, mask, 1<<20)
+				mismatched := imageStudioTestPNG(t, 3, 2, true)
+				require.NoError(t, os.WriteFile(filepath.Join(store.Root(), filepath.FromSlash(*staged.MaskPath)), mismatched, 0o600))
+				return store, storedImageStudioEditJob(staged, &validUntil)
+			},
+			wantCode: ImageStudioInputCodeInvalid,
+		},
+		{
+			name: "unknown storage failure",
+			prepare: func(t *testing.T) (ImageStudioInputStorage, ImageStudioJob) {
+				path := "inputs/upload-unavailable/image-01.png"
+				return &imageStudioWorkerStorageStub{openErr: errors.New("mount unavailable")}, storedImageStudioEditJob(&StagedEditInputs{ImagePaths: []string{path}}, &validUntil)
+			},
+			wantCode: ImageStudioInputCodeStorageUnavailable,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store, job := tt.prepare(t)
+			repo := &imageStudioWorkerRepoStub{}
+			apiKeys := &imageStudioAPIKeyRepoStub{apiKey: validImageStudioWorkerAPIKey()}
+			executor := &recordingImageStudioJobExecutor{err: errors.New("executor should not run")}
+			svc := newImageStudioWorkerTestService(repo, store, apiKeys, executor, now)
+
+			svc.processJob(context.Background(), job)
+
+			require.Equal(t, 1, repo.markFailedCalls)
+			require.Equal(t, tt.wantCode, repo.failedErrorCode)
+			require.Zero(t, repo.markRetryableCalls)
+			require.True(t, repo.retryAt.IsZero(), "terminal input errors must not set next_attempt_at")
+			require.Zero(t, apiKeys.calls, "input validation must happen before API key/account selection")
+			require.Zero(t, executor.calls, "invalid input must never reach account selection or upstream execution")
+		})
+	}
+}
+
+func TestImageStudioJobServicePassesOpenedStoredInputsToExecutorInOrder(t *testing.T) {
+	now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
+	expiresAt := now.Add(time.Hour)
+	first := imageStudioTestPNG(t, 2, 2, false)
+	mask := imageStudioTestPNG(t, 2, 2, true)
+
+	for _, tt := range []struct {
+		count    int
+		withMask bool
+	}{{count: 1}, {count: 4, withMask: true}} {
+		t.Run(fmt.Sprintf("%d images mask=%t", tt.count, tt.withMask), func(t *testing.T) {
+			images := make([][]byte, tt.count)
+			for i := range images {
+				images[i] = first
+			}
+			var optionalMask []byte
+			if tt.withMask {
+				optionalMask = mask
+			}
+			store, staged := stageImageStudioWorkerInputs(t, images, optionalMask, 1<<20)
+			repo := &imageStudioWorkerRepoStub{}
+			apiKeys := &imageStudioAPIKeyRepoStub{apiKey: validImageStudioWorkerAPIKey()}
+			executor := &recordingImageStudioJobExecutor{err: errors.New("stop after capture")}
+			svc := newImageStudioWorkerTestService(repo, store, apiKeys, executor, now)
+
+			svc.processJob(context.Background(), storedImageStudioEditJob(staged, &expiresAt))
+
+			require.Equal(t, 1, executor.calls)
+			require.Equal(t, staged.ImagePaths, executor.imagePaths)
+			require.Equal(t, staged.MaskPath, executor.maskPath)
+			require.Len(t, executor.openFiles, tt.count+boolToInt(tt.withMask))
+			require.True(t, executor.handlesLive, "executor must receive live handles")
+			for _, file := range executor.openFiles {
+				_, err := file.Stat()
+				require.Error(t, err, "worker must close every handle after execution")
+			}
+			require.Equal(t, 1, repo.markFailedCalls)
+			require.Equal(t, "upstream_failed", repo.failedErrorCode)
+		})
+	}
+}
+
+func TestImageStudioJobServiceClosesInputsWithoutOverwritingCompletedUpstreamResult(t *testing.T) {
+	now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
+	expiresAt := now.Add(time.Hour)
+	path := "inputs/upload-close/image-01.png"
+
+	t.Run("close failure before executor is terminal storage unavailable", func(t *testing.T) {
+		file := openImageStudioWorkerTestFile(t)
+		require.NoError(t, file.Close())
+		store := &imageStudioWorkerStorageStub{opened: &OpenedEditInputs{Images: []OpenedEditInput{{File: file, Path: path, ContentType: "image/png"}}}}
+		repo := &imageStudioWorkerRepoStub{}
+		apiKeys := &imageStudioAPIKeyRepoStub{err: errors.New("api key database unavailable")}
+		executor := &recordingImageStudioJobExecutor{}
+		svc := newImageStudioWorkerTestService(repo, store, apiKeys, executor, now)
+
+		svc.processJob(context.Background(), storedImageStudioEditJob(&StagedEditInputs{ImagePaths: []string{path}}, &expiresAt))
+
+		require.Equal(t, 1, repo.markFailedCalls)
+		require.Equal(t, ImageStudioInputCodeStorageUnavailable, repo.failedErrorCode)
+		require.Zero(t, repo.markRetryableCalls)
+		require.Zero(t, executor.calls)
+	})
+
+	t.Run("close failure after retryable executor error preserves retry", func(t *testing.T) {
+		store, staged := stageImageStudioWorkerInputs(t, [][]byte{imageStudioTestPNG(t, 2, 2, false)}, nil, 1<<20)
+		repo := &imageStudioWorkerRepoStub{}
+		apiKeys := &imageStudioAPIKeyRepoStub{apiKey: validImageStudioWorkerAPIKey()}
+		executor := &recordingImageStudioJobExecutor{err: &UpstreamFailoverError{StatusCode: 429}, closeBeforeReturn: true}
+		svc := newImageStudioWorkerTestService(repo, store, apiKeys, executor, now)
+
+		svc.processJob(context.Background(), storedImageStudioEditJob(staged, &expiresAt))
+
+		require.Zero(t, repo.markFailedCalls)
+		require.Equal(t, 1, repo.markRetryableCalls)
+		require.Equal(t, "upstream_failed", repo.retryErrorCode)
+		require.Contains(t, repo.retryErrorMessage, "file already closed")
+		require.FileExists(t, filepath.Join(store.Root(), filepath.FromSlash(staged.ImagePaths[0])))
+	})
+
+	t.Run("close failure after successful executor does not replace result", func(t *testing.T) {
+		t.Setenv("DATA_DIR", t.TempDir())
+		file := openImageStudioWorkerTestFile(t)
+		store := &imageStudioWorkerStorageStub{opened: &OpenedEditInputs{Images: []OpenedEditInput{{File: file, Path: path, ContentType: "image/png"}}}}
+		repo := &imageStudioWorkerRepoStub{}
+		apiKeys := &imageStudioAPIKeyRepoStub{apiKey: validImageStudioWorkerAPIKey()}
+		resultImage := imageStudioTestPNG(t, 2, 2, false)
+		executor := &recordingImageStudioJobExecutor{
+			closeBeforeReturn: true,
+			outcome: &imageStudioForwardOutcome{
+				result:    &OpenAIForwardResult{Model: "gpt-image-2", ImageCount: 1, ImageSize: "1024x1024"},
+				rawBody:   []byte(`{"data":[{"b64_json":"` + base64.StdEncoding.EncodeToString(resultImage) + `"}]}`),
+				accountID: 77,
+			},
+		}
+		svc := newImageStudioWorkerTestService(repo, store, apiKeys, executor, now)
+		job := storedImageStudioEditJob(&StagedEditInputs{ImagePaths: []string{path}}, &expiresAt)
+		job.OutputFormat = "png"
+
+		svc.processJob(context.Background(), job)
+
+		require.Zero(t, repo.markFailedCalls, "a close error must not replace a completed upstream result")
+		require.Equal(t, 1, repo.markSettlingCalls)
+		require.Equal(t, 1, repo.markSettlementRetryableCalls)
+	})
+}
+
+func TestImageStudioJobServiceStoredEditProviderFailureStillRetries(t *testing.T) {
+	now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
+	expiresAt := now.Add(time.Hour)
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{name: "429", err: &UpstreamFailoverError{StatusCode: http.StatusTooManyRequests}},
+		{name: "503", err: &UpstreamFailoverError{StatusCode: http.StatusServiceUnavailable}},
+		{name: "transport", err: errors.New("connection reset by peer")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store, staged := stageImageStudioWorkerInputs(t, [][]byte{imageStudioTestPNG(t, 2, 2, false)}, nil, 1<<20)
+			repo := &imageStudioWorkerRepoStub{}
+			apiKeys := &imageStudioAPIKeyRepoStub{apiKey: validImageStudioWorkerAPIKey()}
+			executor := &recordingImageStudioJobExecutor{err: tt.err}
+			svc := newImageStudioWorkerTestService(repo, store, apiKeys, executor, now)
+
+			svc.processJob(context.Background(), storedImageStudioEditJob(staged, &expiresAt))
+
+			require.Equal(t, 1, repo.markRetryableCalls)
+			require.Equal(t, "upstream_failed", repo.retryErrorCode)
+			require.False(t, repo.retryAt.IsZero())
+			require.Zero(t, repo.markFailedCalls)
+			require.Equal(t, 1, executor.calls)
+			for _, file := range executor.openFiles {
+				_, err := file.Stat()
+				require.Error(t, err)
+			}
+			for _, relativePath := range staged.ImagePaths {
+				require.FileExists(t, filepath.Join(store.Root(), filepath.FromSlash(relativePath)), "retryable provider errors must retain inputs")
+			}
+		})
+	}
+}
+
+func boolToInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
+}
+
+func openImageStudioWorkerTestFile(t *testing.T) *os.File {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "input.png")
+	require.NoError(t, os.WriteFile(path, imageStudioTestPNG(t, 2, 2, false), 0o600))
+	file, err := os.Open(path)
+	require.NoError(t, err)
+	return file
+}
+
+func stageImageStudioWorkerInputs(t *testing.T, images [][]byte, mask []byte, maxBytes int64) (*ImageStudioInputStore, *StagedEditInputs) {
+	t.Helper()
+	store := NewImageStudioInputStore(t.TempDir(), maxBytes)
+	uploads := make([]UploadedFile, len(images))
+	for i := range images {
+		uploads[i] = UploadedFile{Reader: bytes.NewReader(images[i]), ContentType: "image/png"}
+	}
+	var maskUpload *UploadedFile
+	if mask != nil {
+		maskUpload = &UploadedFile{Reader: bytes.NewReader(mask), ContentType: "image/png"}
+	}
+	staged, err := store.StageEditInputs(context.Background(), uploads, maskUpload)
+	require.NoError(t, err)
+	return store, staged
+}
+
+func storedImageStudioEditJob(staged *StagedEditInputs, expiresAt *time.Time) ImageStudioJob {
+	return ImageStudioJob{
+		ID: 39, UserID: 42, APIKeyID: 41, Mode: ImageStudioJobModeEdit, Status: ImageStudioJobStatusQueued,
+		RequestPayload:  json.RawMessage(`{"model":"gpt-image-2","prompt":"edit"}`),
+		InputImagePaths: append([]string(nil), staged.ImagePaths...),
+		InputMaskPath:   cloneImageStudioString(staged.MaskPath),
+		InputExpiresAt:  expiresAt,
+		MaxAttempts:     3,
+	}
+}
+
+func validImageStudioWorkerAPIKey() *APIKey {
+	groupID := int64(12)
+	return &APIKey{
+		ID: 41, UserID: 42, Status: StatusAPIKeyActive, GroupID: &groupID,
+		Group: &Group{ID: groupID, Platform: PlatformOpenAI, AllowImageGeneration: true, RateMultiplier: 1},
+		User:  &User{ID: 42, Status: StatusActive},
+	}
+}
+
+func newImageStudioWorkerTestService(
+	repo ImageStudioJobRepository,
+	store ImageStudioInputStorage,
+	apiKeys *imageStudioAPIKeyRepoStub,
+	executor imageStudioJobExecutor,
+	now time.Time,
+) *ImageStudioJobService {
+	settings := NewSettingService(&imageStudioCreateSettingRepoStub{values: map[string]string{
+		SettingKeyImageStudioAvailableGroupIDs: `[12]`,
+	}}, &config.Config{})
+	svc := NewImageStudioJobService(repo, settings, store, func() time.Time { return now })
+	svc.SetRuntimeDependencies(nil, NewAPIKeyService(apiKeys, nil, nil, nil, nil, nil, nil), nil, nil)
+	svc.executor = executor
+	return svc
+}
+
+type imageStudioWorkerStorageStub struct {
+	ImageStudioInputStorage
+	opened    *OpenedEditInputs
+	openErr   error
+	openCalls int
+}
+
+func (s *imageStudioWorkerStorageStub) OpenInputs([]string, *string) (*OpenedEditInputs, error) {
+	s.openCalls++
+	return s.opened, s.openErr
+}
+
+type recordingImageStudioJobExecutor struct {
+	err               error
+	outcome           *imageStudioForwardOutcome
+	closeBeforeReturn bool
+	calls             int
+	editInputs        *OpenedEditInputs
+	imagePaths        []string
+	maskPath          *string
+	openFiles         []*os.File
+	handlesLive       bool
+	payload           []byte
+}
+
+func (e *recordingImageStudioJobExecutor) Execute(_ context.Context, _ ImageStudioJob, _ *APIKey, input *imageStudioExecutionInput) (*imageStudioForwardOutcome, error) {
+	e.calls++
+	e.editInputs = input.EditInputs
+	e.payload = append([]byte(nil), input.Payload...)
+	e.handlesLive = true
+	if input.EditInputs != nil {
+		for i := range input.EditInputs.Images {
+			opened := input.EditInputs.Images[i]
+			e.imagePaths = append(e.imagePaths, opened.Path)
+			e.openFiles = append(e.openFiles, opened.File)
+			if _, err := opened.File.Stat(); err != nil {
+				e.handlesLive = false
+			}
+		}
+		if input.EditInputs.Mask != nil {
+			e.maskPath = cloneImageStudioString(&input.EditInputs.Mask.Path)
+			e.openFiles = append(e.openFiles, input.EditInputs.Mask.File)
+			if _, err := input.EditInputs.Mask.File.Stat(); err != nil {
+				e.handlesLive = false
+			}
+		}
+	}
+	if e.closeBeforeReturn && input.EditInputs != nil {
+		_ = input.EditInputs.Close()
+	}
+	return e.outcome, e.err
+}
+
+func TestImageStudioJobServiceGenerationBypassesInputStorage(t *testing.T) {
+	now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
+	store := &imageStudioWorkerStorageStub{openErr: errors.New("must not open generation input")}
+	repo := &imageStudioWorkerRepoStub{}
+	apiKeys := &imageStudioAPIKeyRepoStub{apiKey: validImageStudioWorkerAPIKey()}
+	executor := &recordingImageStudioJobExecutor{err: errors.New("stop after capture")}
+	svc := newImageStudioWorkerTestService(repo, store, apiKeys, executor, now)
+
+	svc.processJob(context.Background(), ImageStudioJob{
+		ID: 39, UserID: 42, APIKeyID: 41, Mode: ImageStudioJobModeGenerate, Status: ImageStudioJobStatusQueued,
+		RequestPayload: json.RawMessage(`{"model":"gpt-image-2","prompt":"draw"}`),
+	})
+
+	require.Zero(t, store.openCalls)
+	require.Equal(t, 1, executor.calls)
+	require.Nil(t, executor.editInputs)
+}
+
+func TestImageStudioJobServiceMaterializedLegacyInputsEnterStoredExecutionPath(t *testing.T) {
+	now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
+	store := NewImageStudioInputStore(t.TempDir(), 1<<20)
+	repo := &imageStudioWorkerRepoStub{}
+	apiKeys := &imageStudioAPIKeyRepoStub{apiKey: validImageStudioWorkerAPIKey()}
+	executor := &recordingImageStudioJobExecutor{err: errors.New("stop after capture")}
+	svc := newImageStudioWorkerTestService(repo, store, apiKeys, executor, now)
+	dataURL := imageStudioLegacyDataURL("image/png", imageStudioTestPNG(t, 2, 2, false))
+
+	svc.processJob(context.Background(), ImageStudioJob{
+		ID: 39, UserID: 42, APIKeyID: 41, Mode: ImageStudioJobModeEdit, Status: ImageStudioJobStatusQueued,
+		RequestPayload: json.RawMessage(`{"model":"gpt-image-2","prompt":"edit","images":[{"image_url":"` + dataURL + `"}]}`),
+	})
+
+	require.Equal(t, 1, repo.persistLegacyCalls)
+	require.Equal(t, 1, executor.calls)
+	require.Equal(t, repo.legacyPaths, executor.imagePaths)
+	require.NotEmpty(t, executor.imagePaths)
+	require.NotContains(t, string(executor.payload), "data:image/")
+	require.NotContains(t, string(executor.payload), `"images"`)
+}
+
+func TestImageStudioJobServiceLegacyStorageFailureIsTerminalBeforeExecution(t *testing.T) {
+	now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
+	store := &imageStudioLegacyStorageStub{materializeErr: inputStorageError(errors.New("shared storage unavailable"))}
+	repo := &imageStudioWorkerRepoStub{}
+	apiKeys := &imageStudioAPIKeyRepoStub{apiKey: validImageStudioWorkerAPIKey()}
+	executor := &recordingImageStudioJobExecutor{}
+	svc := newImageStudioWorkerTestService(repo, store, apiKeys, executor, now)
+	dataURL := imageStudioLegacyDataURL("image/png", imageStudioTestPNG(t, 2, 2, false))
+
+	svc.processJob(context.Background(), ImageStudioJob{
+		ID: 39, UserID: 42, APIKeyID: 41, Mode: ImageStudioJobModeEdit, Status: ImageStudioJobStatusQueued,
+		RequestPayload: json.RawMessage(`{"model":"gpt-image-2","images":[{"image_url":"` + dataURL + `"}]}`),
+	})
+
+	require.Equal(t, 1, repo.markFailedCalls)
+	require.Equal(t, ImageStudioInputCodeStorageUnavailable, repo.failedErrorCode)
+	require.Zero(t, repo.markRetryableCalls)
+	require.Zero(t, apiKeys.calls)
+	require.Zero(t, executor.calls)
+}
+
+func TestClassifyImageStudioInputFailureDoesNotReclassifyLegacyOrProviderErrors(t *testing.T) {
+	code, classified := classifyImageStudioInputFailure(legacyInputInvalidError(ErrImageStudioInputInvalid))
+	require.False(t, classified)
+	require.Empty(t, code)
+
+	code, classified = classifyImageStudioInputFailure(&UpstreamFailoverError{StatusCode: http.StatusServiceUnavailable})
+	require.False(t, classified)
+	require.Empty(t, code)
+
+	code, classified = classifyImageStudioInputFailure(inputMissingError(os.ErrNotExist))
+	require.True(t, classified)
+	require.Equal(t, ImageStudioInputCodeMissing, code)
+}
 
 func TestImageStudioJobServiceMaterializesLegacyInputsAndContinuesWithRedactedJob(t *testing.T) {
 	now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
@@ -583,12 +1095,14 @@ type imageStudioWorkerRepoStub struct {
 	markSettlementRetryableCalls int
 	chargedAmountUSD             float64
 	retryErrorCode               string
+	retryErrorMessage            string
 	markStaleRunningChanged      bool
 	markStaleRunningCalls        int
 	heartbeatCalls               int
 	heartbeatCh                  chan struct{}
 	markSettlementFailedCalls    int
 	failedErrorCode              string
+	failedErrorMessage           string
 	persistLegacyCalls           int
 	persistLegacyErr             error
 	legacyPaths                  []string
@@ -599,6 +1113,8 @@ type imageStudioWorkerRepoStub struct {
 	failLegacyCode               string
 	failLegacyRedacted           json.RawMessage
 	markFailedCalls              int
+	markRetryableCalls           int
+	retryAt                      time.Time
 }
 
 func (r *imageStudioWorkerRepoStub) PersistLegacyInputs(_ context.Context, _ int64, paths []string, mask *string, redacted json.RawMessage, expiresAt time.Time) error {
@@ -617,8 +1133,18 @@ func (r *imageStudioWorkerRepoStub) FailLegacyInputs(_ context.Context, _ int64,
 	return nil
 }
 
-func (r *imageStudioWorkerRepoStub) MarkFailed(context.Context, int64, time.Time, string, string) error {
+func (r *imageStudioWorkerRepoStub) MarkFailed(_ context.Context, _ int64, _ time.Time, code, message string) error {
 	r.markFailedCalls++
+	r.failedErrorCode = code
+	r.failedErrorMessage = message
+	return nil
+}
+
+func (r *imageStudioWorkerRepoStub) MarkRetryable(_ context.Context, _ int64, nextAttemptAt time.Time, code, message string) error {
+	r.markRetryableCalls++
+	r.retryAt = nextAttemptAt
+	r.retryErrorCode = code
+	r.retryErrorMessage = message
 	return nil
 }
 
@@ -710,9 +1236,11 @@ type imageStudioAPIKeyRepoStub struct {
 	APIKeyRepository
 	apiKey *APIKey
 	err    error
+	calls  int
 }
 
 func (r *imageStudioAPIKeyRepoStub) GetByID(context.Context, int64) (*APIKey, error) {
+	r.calls++
 	return r.apiKey, r.err
 }
 

@@ -20,6 +20,7 @@ import (
 
 const (
 	ImageStudioInputCodeInvalid            = "input_invalid"
+	ImageStudioInputCodeExpired            = "input_expired"
 	ImageStudioInputCodeLegacyInvalid      = "legacy_input_invalid"
 	ImageStudioInputCodePathInvalid        = "input_path_invalid"
 	ImageStudioInputCodeMissing            = "input_missing"
@@ -34,6 +35,7 @@ const (
 
 var (
 	ErrImageStudioInputInvalid            = errors.New("image studio input is invalid")
+	ErrImageStudioInputExpired            = errors.New("image studio input has expired")
 	ErrImageStudioLegacyInputInvalid      = errors.New("legacy image studio input is invalid")
 	ErrImageStudioInputTooLarge           = fmt.Errorf("%w: file exceeds size limit", ErrImageStudioInputInvalid)
 	ErrImageStudioInputDimensionsTooLarge = fmt.Errorf("%w: pixel dimensions exceed limit", ErrImageStudioInputInvalid)
@@ -373,6 +375,10 @@ func (s *ImageStudioInputStore) OpenInputs(paths []string, maskPath *string) (re
 			_ = file.Close()
 			return fail(err)
 		}
+		if imageStudioExtension(validated.contentType) != strings.ToLower(filepath.Ext(path)) {
+			_ = file.Close()
+			return fail(inputInvalidError(ErrImageStudioInputInvalid))
+		}
 		if i == 0 {
 			firstBounds = validated.bounds
 		}
@@ -394,6 +400,10 @@ func (s *ImageStudioInputStore) OpenInputs(paths []string, maskPath *string) (re
 		if err != nil {
 			_ = file.Close()
 			return fail(err)
+		}
+		if imageStudioExtension(validated.contentType) != strings.ToLower(filepath.Ext(*maskPath)) {
+			_ = file.Close()
+			return fail(inputInvalidError(ErrImageStudioInputInvalid))
 		}
 		opened.Mask = &OpenedEditInput{File: file, Path: *maskPath, ContentType: validated.contentType}
 	}
@@ -699,6 +709,10 @@ func imageStudioExtension(contentType string) string {
 
 func inputInvalidError(err error) error {
 	return &ImageStudioInputError{Code: ImageStudioInputCodeInvalid, Err: err}
+}
+
+func inputExpiredError() error {
+	return &ImageStudioInputError{Code: ImageStudioInputCodeExpired, Err: ErrImageStudioInputExpired}
 }
 
 func inputPathError(err error) error {

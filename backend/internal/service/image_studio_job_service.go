@@ -27,6 +27,7 @@ type ImageStudioJobService struct {
 	repo                 ImageStudioJobRepository
 	settingService       *SettingService
 	inputStore           ImageStudioInputStorage
+	executor             imageStudioJobExecutor
 	openAIGateway        *OpenAIGatewayService
 	apiKeyService        *APIKeyService
 	billingCacheService  *BillingCacheService

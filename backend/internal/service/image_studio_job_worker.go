@@ -78,6 +78,35 @@ type imageStudioSettlementResult struct {
 	VideoDurationSeconds int            `json:"video_duration_seconds"`
 }
 
+// imageStudioExecutionInput carries short-lived opened edit files to the
+// protocol-specific executor without copying image bytes into persisted data.
+type imageStudioExecutionInput struct {
+	Payload    []byte
+	EditInputs *OpenedEditInputs
+}
+
+func (i *imageStudioExecutionInput) Close() error {
+	if i == nil || i.EditInputs == nil {
+		return nil
+	}
+	return i.EditInputs.Close()
+}
+
+type imageStudioJobExecutor interface {
+	Execute(ctx context.Context, job ImageStudioJob, apiKey *APIKey, input *imageStudioExecutionInput) (*imageStudioForwardOutcome, error)
+}
+
+type imageStudioGatewayJobExecutor struct {
+	service *ImageStudioJobService
+}
+
+func (e *imageStudioGatewayJobExecutor) Execute(ctx context.Context, job ImageStudioJob, apiKey *APIKey, input *imageStudioExecutionInput) (*imageStudioForwardOutcome, error) {
+	if e == nil || e.service == nil || input == nil {
+		return nil, fmt.Errorf("image studio executor is not configured")
+	}
+	return e.service.forwardJob(ctx, job, apiKey, input.Payload)
+}
+
 func marshalImageStudioSettlementPayload(accountID int64, result *OpenAIForwardResult, fields ChannelUsageFields, inboundEndpoint, upstreamEndpoint string) (json.RawMessage, error) {
 	return marshalImageStudioSettlementPayloadWithSubscription(accountID, result, fields, inboundEndpoint, upstreamEndpoint, nil)
 }
@@ -235,46 +264,76 @@ func (s *ImageStudioJobService) processJob(ctx context.Context, job ImageStudioJ
 	stopHeartbeat := s.startImageStudioJobHeartbeat(ctx, job.ID, imageStudioHeartbeatInterval)
 	defer stopHeartbeat()
 	_, terminal, err := s.materializeLegacyJobInputs(ctx, &job)
-	if err != nil || terminal {
+	if terminal {
 		return
+	}
+	if err != nil {
+		if _, classified := classifyImageStudioInputFailure(err); classified {
+			s.failImageStudioInput(ctx, job.ID, err)
+		}
+		return
+	}
+	execution, err := s.prepareImageStudioExecution(job)
+	if err != nil {
+		s.failImageStudioInput(ctx, job.ID, err)
+		return
+	}
+	executionClosed := false
+	defer func() {
+		if !executionClosed {
+			_ = execution.Close()
+		}
+	}()
+	failBeforeExecution := func(code string, cause error) {
+		closeErr := execution.Close()
+		executionClosed = true
+		if closeErr != nil {
+			s.failImageStudioInput(ctx, job.ID, inputStorageError(errors.Join(cause, closeErr)))
+			return
+		}
+		s.failJob(ctx, job.ID, code, cause)
 	}
 
 	apiKey, err := s.apiKeyService.GetByID(ctx, job.APIKeyID)
 	if err != nil {
-		s.failJob(ctx, job.ID, "api_key_not_found", err)
+		failBeforeExecution("api_key_not_found", err)
 		return
 	}
 	if apiKey.UserID != job.UserID {
-		s.failJob(ctx, job.ID, "api_key_owner_mismatch", ErrImageStudioJobInvalid)
+		failBeforeExecution("api_key_owner_mismatch", ErrImageStudioJobInvalid)
 		return
 	}
 	if !apiKey.IsActive() {
-		s.failJob(ctx, job.ID, "api_key_inactive", fmt.Errorf("api key is inactive"))
+		failBeforeExecution("api_key_inactive", fmt.Errorf("api key is inactive"))
 		return
 	}
 	if !GroupAllowsImageGeneration(apiKey.Group) {
-		s.failJob(ctx, job.ID, "image_generation_disabled", fmt.Errorf("%s", ImageGenerationPermissionMessage()))
+		failBeforeExecution("image_generation_disabled", fmt.Errorf("%s", ImageGenerationPermissionMessage()))
 		return
 	}
 	if err := s.ValidateAPIKeyAvailableForImageStudio(ctx, apiKey); err != nil {
-		s.failJob(ctx, job.ID, "image_studio_group_not_available", err)
+		failBeforeExecution("image_studio_group_not_available", err)
 		return
 	}
 	subscription, err := s.resolveImageStudioSubscription(ctx, apiKey)
 	if err != nil {
-		s.failJob(ctx, job.ID, "subscription_unavailable", err)
+		failBeforeExecution("subscription_unavailable", err)
 		return
 	}
 	if s.billingCacheService != nil {
 		if err := s.billingCacheService.CheckBillingEligibility(ctx, apiKey.User, apiKey, apiKey.Group, subscription, QuotaPlatform(ctx, apiKey)); err != nil {
-			s.failJob(ctx, job.ID, "billing_ineligible", err)
+			failBeforeExecution("billing_ineligible", err)
 			return
 		}
 	}
 
-	body := append([]byte(nil), job.RequestPayload...)
-	forwarded, err := s.forwardJob(ctx, job, apiKey, body)
+	forwarded, err := s.executeImageStudioJob(ctx, job, apiKey, execution)
+	closeErr := execution.Close()
+	executionClosed = true
 	if err != nil {
+		if closeErr != nil {
+			err = errors.Join(err, inputStorageError(closeErr))
+		}
 		s.handleJobError(ctx, job, "upstream_failed", err)
 		return
 	}
@@ -320,6 +379,80 @@ func (s *ImageStudioJobService) processJob(ctx context.Context, job ImageStudioJ
 	job.Height = height
 	if err := s.settleJob(ctx, job, apiKey); err != nil {
 		s.handleImageStudioSettlementError(ctx, job, err)
+	}
+}
+
+func (s *ImageStudioJobService) prepareImageStudioExecution(job ImageStudioJob) (*imageStudioExecutionInput, error) {
+	execution := &imageStudioExecutionInput{Payload: append([]byte(nil), job.RequestPayload...)}
+	if job.Mode != ImageStudioJobModeEdit {
+		return execution, nil
+	}
+	if job.InputDeletedAt != nil {
+		return nil, inputMissingError(ErrImageStudioInputMissing)
+	}
+	if job.InputExpiresAt == nil {
+		return nil, inputInvalidError(ErrImageStudioInputInvalid)
+	}
+	if !job.InputExpiresAt.After(s.now()) {
+		return nil, inputExpiredError()
+	}
+	if s.inputStore == nil {
+		return nil, inputStorageError(errors.New("image studio input store is not configured"))
+	}
+	opened, err := s.inputStore.OpenInputs(job.InputImagePaths, job.InputMaskPath)
+	if err != nil {
+		if _, classified := classifyImageStudioInputFailure(err); !classified {
+			err = inputStorageError(err)
+		}
+		return nil, err
+	}
+	if opened == nil {
+		return nil, inputStorageError(errors.New("image studio input store returned no inputs"))
+	}
+	execution.EditInputs = opened
+	return execution, nil
+}
+
+func (s *ImageStudioJobService) executeImageStudioJob(ctx context.Context, job ImageStudioJob, apiKey *APIKey, input *imageStudioExecutionInput) (*imageStudioForwardOutcome, error) {
+	if s.executor != nil {
+		return s.executor.Execute(ctx, job, apiKey, input)
+	}
+	return (&imageStudioGatewayJobExecutor{service: s}).Execute(ctx, job, apiKey, input)
+}
+
+func (s *ImageStudioJobService) failImageStudioInput(ctx context.Context, jobID int64, err error) {
+	code, ok := classifyImageStudioInputFailure(err)
+	if !ok {
+		code = ImageStudioInputCodeStorageUnavailable
+		err = inputStorageError(err)
+	}
+	s.failJob(ctx, jobID, code, err)
+}
+
+func classifyImageStudioInputFailure(err error) (string, bool) {
+	var inputErr *ImageStudioInputError
+	if errors.As(err, &inputErr) && inputErr != nil {
+		switch inputErr.Code {
+		case ImageStudioInputCodeLegacyInvalid:
+			return "", false
+		case ImageStudioInputCodeExpired, ImageStudioInputCodeMissing, ImageStudioInputCodeInvalid,
+			ImageStudioInputCodePathInvalid, ImageStudioInputCodeStorageUnavailable:
+			return inputErr.Code, true
+		}
+	}
+	switch {
+	case errors.Is(err, ErrImageStudioInputExpired):
+		return ImageStudioInputCodeExpired, true
+	case errors.Is(err, ErrImageStudioInputMissing):
+		return ImageStudioInputCodeMissing, true
+	case errors.Is(err, ErrImageStudioInputPathInvalid):
+		return ImageStudioInputCodePathInvalid, true
+	case errors.Is(err, ErrImageStudioInputInvalid), errors.Is(err, ErrImageStudioInputTooLarge), errors.Is(err, ErrImageStudioInputDimensionsTooLarge):
+		return ImageStudioInputCodeInvalid, true
+	case errors.Is(err, ErrImageStudioInputStorageUnavailable):
+		return ImageStudioInputCodeStorageUnavailable, true
+	default:
+		return "", false
 	}
 }
 
