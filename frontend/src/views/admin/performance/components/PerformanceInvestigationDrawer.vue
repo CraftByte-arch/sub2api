@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import PlatformTypeBadge from '@/components/common/PlatformTypeBadge.vue'
-import { performanceMetricsFromCounters, type PerformanceAccountItem as PerformanceAccount, type PerformanceInvestigation } from '@/api/admin/performance'
+import { performanceMetricsFromCounters, performanceMetricsFromTimePoint, type PerformanceAccountItem as PerformanceAccount, type PerformanceInvestigation } from '@/api/admin/performance'
 import PerformanceFailureDistribution from './PerformanceFailureDistribution.vue'
 import PerformanceMetricCard from './PerformanceMetricCard.vue'
 import PerformanceTrendChart, { type PerformanceSeriesDefinition } from './PerformanceTrendChart.vue'
@@ -23,11 +23,19 @@ const dialogTitle = computed(() => {
   return `${name} · #${props.account.account_id}`
 })
 
-const metrics = computed(() => props.account ? performanceMetricsFromCounters(props.account.counters) : null)
+const metrics = computed(() => {
+  if (!props.account) return null
+  const bucketed = performanceMetricsFromCounters(props.account.counters)
+  return {
+    ...bucketed,
+    p95_ttft_ms: props.account.p95_ttft_ms > 0 ? props.account.p95_ttft_ms : bucketed.p95_ttft_ms,
+    p95_duration_ms: props.account.p95_duration_ms > 0 ? props.account.p95_duration_ms : bucketed.p95_duration_ms
+  }
+})
 const trendSeries: PerformanceSeriesDefinition[] = [
-  { label: '可用率', color: '#10b981', selector: (point) => performanceMetricsFromCounters(point.counters).availability * 100, formatter: (value) => `${value.toFixed(2)}%` },
-  { label: '失败率', color: '#ef4444', selector: (point) => performanceMetricsFromCounters(point.counters).failure_rate * 100, formatter: (value) => `${value.toFixed(2)}%`, fill: false },
-  { label: 'P95 TTFT', color: '#0ea5e9', selector: (point) => performanceMetricsFromCounters(point.counters).p95_ttft_ms, formatter: (value) => `${Math.round(value)} ms`, fill: false }
+  { label: '可用率', color: '#10b981', selector: (point) => performanceMetricsFromTimePoint(point).availability * 100, formatter: (value) => `${value.toFixed(2)}%` },
+  { label: '失败率', color: '#ef4444', selector: (point) => performanceMetricsFromTimePoint(point).failure_rate * 100, formatter: (value) => `${value.toFixed(2)}%`, fill: false },
+  { label: 'P95 TTFT', color: '#0ea5e9', selector: (point) => performanceMetricsFromTimePoint(point).p95_ttft_ms, formatter: (value) => `${Math.round(value)} ms`, fill: false }
 ]
 
 const hasInvestigation = computed(() => Boolean(props.investigation?.time_points.length || props.investigation?.failures.length))

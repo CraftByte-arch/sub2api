@@ -7,6 +7,8 @@ import (
 
 const accountPerformanceLowSampleThreshold = 20
 
+const accountPerformanceExactQueryTimeout = 2 * time.Second
+
 // AccountPerformanceService applies stable metric definitions to the raw
 // aggregate repository. It does not participate in gateway request handling.
 type AccountPerformanceService struct {
@@ -71,9 +73,17 @@ func (s *AccountPerformanceService) Overview(ctx context.Context, filter Account
 	if err != nil {
 		return nil, err
 	}
+	summary := accountPerformanceSummary(overview.Counters)
+	trend := overview.TimePoints
+	if overview.Counters.AttemptCount > 0 {
+		if exact := s.queryExactOverviewLatency(ctx, filter); exact != nil {
+			applyExactSummaryLatency(&summary, &exact.Summary)
+			applyExactTrendLatency(trend, exact.Trend)
+		}
+	}
 	return &AccountPerformanceOverviewResult{
-		Summary:          accountPerformanceSummary(overview.Counters),
-		Trend:            overview.TimePoints,
+		Summary:          summary,
+		Trend:            trend,
 		CollectionHealth: s.collectionHealth(),
 		CoverageStart:    filter.Start.UTC(),
 		CoverageEnd:      filter.End.UTC(),
@@ -88,11 +98,25 @@ func (s *AccountPerformanceService) Accounts(ctx context.Context, filter Account
 	if err != nil {
 		return nil, err
 	}
+	var exact map[int64]AccountPerformanceExactLatency
+	if len(page.Rows) > 0 {
+		exact = s.queryExactAccountsLatency(ctx, filter)
+	}
 	items := make([]AccountPerformanceAccountResult, 0, len(page.Rows))
 	for _, row := range page.Rows {
+		p95TTFT := row.Counters.TTFTLatency.Percentile(0.95)
+		p95Duration := row.Counters.DurationLatency.Percentile(0.95)
+		if latency, ok := exact[row.AccountID]; ok {
+			if latency.TTFTSampleCount > 0 {
+				p95TTFT = latency.P95TTFTMS
+			}
+			if latency.DurationSamples > 0 {
+				p95Duration = latency.P95DurationMS
+			}
+		}
 		items = append(items, AccountPerformanceAccountResult{
 			AccountPerformanceAccount: row,
-			P95TTFTMS:                 row.Counters.TTFTLatency.Percentile(0.95), P95DurationMS: row.Counters.DurationLatency.Percentile(0.95),
+			P95TTFTMS:                 p95TTFT, P95DurationMS: p95Duration,
 			LowSample: row.Counters.AttemptCount < accountPerformanceLowSampleThreshold,
 		})
 	}
@@ -107,7 +131,112 @@ func (s *AccountPerformanceService) Investigation(ctx context.Context, filter Ac
 	if err != nil {
 		return nil, err
 	}
+	if len(result.TimePoints) > 0 {
+		s.applyExactInvestigationLatency(ctx, result, filter)
+	}
 	return &AccountPerformanceInvestigationResult{AccountPerformanceInvestigation: *result, CollectionHealth: s.collectionHealth()}, nil
+}
+
+func (s *AccountPerformanceService) exactLatencyRepository() (accountPerformanceExactLatencyRepository, bool) {
+	if s == nil || s.repo == nil {
+		return nil, false
+	}
+	repo, ok := s.repo.(accountPerformanceExactLatencyRepository)
+	return repo, ok && repo != nil
+}
+
+func exactLatencyContext(parent context.Context) (context.Context, context.CancelFunc) {
+	if parent == nil {
+		parent = context.Background()
+	}
+	return context.WithTimeout(parent, accountPerformanceExactQueryTimeout)
+}
+
+func (s *AccountPerformanceService) queryExactOverviewLatency(ctx context.Context, filter AccountPerformanceOverviewFilter) *AccountPerformanceExactOverview {
+	repo, ok := s.exactLatencyRepository()
+	if !ok {
+		return nil
+	}
+	queryCtx, cancel := exactLatencyContext(ctx)
+	defer cancel()
+	exact, err := repo.QueryExactOverviewLatency(queryCtx, filter)
+	if err != nil || exact == nil {
+		return nil
+	}
+	return exact
+}
+
+func (s *AccountPerformanceService) queryExactAccountsLatency(ctx context.Context, filter AccountPerformanceAccountFilter) map[int64]AccountPerformanceExactLatency {
+	repo, ok := s.exactLatencyRepository()
+	if !ok {
+		return nil
+	}
+	queryCtx, cancel := exactLatencyContext(ctx)
+	defer cancel()
+	exact, err := repo.QueryExactAccountsLatency(queryCtx, filter)
+	if err != nil {
+		return nil
+	}
+	return exact
+}
+
+func (s *AccountPerformanceService) queryExactInvestigationLatency(ctx context.Context, filter AccountPerformanceInvestigationFilter) map[time.Time]AccountPerformanceExactLatency {
+	repo, ok := s.exactLatencyRepository()
+	if !ok {
+		return nil
+	}
+	queryCtx, cancel := exactLatencyContext(ctx)
+	defer cancel()
+	exact, err := repo.QueryExactInvestigationLatency(queryCtx, filter)
+	if err != nil {
+		return nil
+	}
+	return exact
+}
+
+func (s *AccountPerformanceService) applyExactInvestigationLatency(ctx context.Context, investigation *AccountPerformanceInvestigation, filter AccountPerformanceInvestigationFilter) {
+	if investigation == nil {
+		return
+	}
+	exact := s.queryExactInvestigationLatency(ctx, filter)
+	applyExactTrendLatency(investigation.TimePoints, exact)
+}
+
+func applyExactSummaryLatency(summary *AccountPerformanceSummary, exact *AccountPerformanceExactLatency) {
+	if summary == nil || exact == nil {
+		return
+	}
+	if exact.TTFTSampleCount > 0 {
+		summary.P50TTFTMS = exact.P50TTFTMS
+		summary.P95TTFTMS = exact.P95TTFTMS
+	}
+	if exact.DurationSamples > 0 {
+		summary.P95DurationMS = exact.P95DurationMS
+	}
+}
+
+func applyExactTrendLatency(points []AccountPerformanceTimePoint, exact map[time.Time]AccountPerformanceExactLatency) {
+	if len(points) == 0 || len(exact) == 0 {
+		return
+	}
+	for i := range points {
+		latency, ok := exact[points[i].BucketStart.UTC()]
+		if !ok {
+			// Repositories may return a timestamp with sub-minute precision; the
+			// aggregate trend is minute/hour aligned, so try the normalized key.
+			latency, ok = exact[points[i].BucketStart.UTC().Truncate(time.Minute)]
+		}
+		if !ok {
+			continue
+		}
+		if latency.TTFTSampleCount > 0 {
+			points[i].P50TTFTMS = latency.P50TTFTMS
+			points[i].P95TTFTMS = latency.P95TTFTMS
+		}
+		if latency.DurationSamples > 0 {
+			points[i].P95DurationMS = latency.P95DurationMS
+		}
+	}
 }
 
 func (s *AccountPerformanceService) collectionHealth() AccountPerformanceCollectionHealth {

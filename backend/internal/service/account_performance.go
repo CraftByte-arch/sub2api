@@ -87,14 +87,42 @@ type AccountPerformanceOverviewFilter struct {
 	AccountID int64
 }
 
+// AccountPerformanceExactLatency contains percentile values calculated from
+// the request-level usage log. The bounded aggregate histogram remains the
+// fallback when the raw-log query is unavailable or has no samples.
+type AccountPerformanceExactLatency struct {
+	P50TTFTMS       int64
+	P95TTFTMS       int64
+	P95DurationMS   int64
+	TTFTSampleCount int64
+	DurationSamples int64
+}
+
+type AccountPerformanceExactOverview struct {
+	Summary AccountPerformanceExactLatency
+	Trend   map[time.Time]AccountPerformanceExactLatency
+}
+
+// accountPerformanceExactLatencyRepository is intentionally optional. This
+// keeps the aggregate repository contract and existing test doubles stable;
+// callers fall back to bucket percentiles if a repository does not implement it.
+type accountPerformanceExactLatencyRepository interface {
+	QueryExactOverviewLatency(context.Context, AccountPerformanceOverviewFilter) (*AccountPerformanceExactOverview, error)
+	QueryExactAccountsLatency(context.Context, AccountPerformanceAccountFilter) (map[int64]AccountPerformanceExactLatency, error)
+	QueryExactInvestigationLatency(context.Context, AccountPerformanceInvestigationFilter) (map[time.Time]AccountPerformanceExactLatency, error)
+}
+
 type AccountPerformanceOverview struct {
 	Counters   AccountPerformanceCounters
 	TimePoints []AccountPerformanceTimePoint
 }
 
 type AccountPerformanceTimePoint struct {
-	BucketStart time.Time                  `json:"bucket_start"`
-	Counters    AccountPerformanceCounters `json:"counters"`
+	BucketStart   time.Time                  `json:"bucket_start"`
+	Counters      AccountPerformanceCounters `json:"counters"`
+	P50TTFTMS     int64                      `json:"p50_ttft_ms,omitempty"`
+	P95TTFTMS     int64                      `json:"p95_ttft_ms,omitempty"`
+	P95DurationMS int64                      `json:"p95_duration_ms,omitempty"`
 }
 
 const (

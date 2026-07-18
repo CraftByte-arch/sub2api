@@ -49,6 +49,9 @@ export interface PerformanceCounters {
 export interface PerformanceTimePoint {
   bucket_start: string
   counters: PerformanceCounters
+  p50_ttft_ms?: number
+  p95_ttft_ms?: number
+  p95_duration_ms?: number
 }
 
 export interface PerformanceOverview {
@@ -142,19 +145,29 @@ export function performancePercentile(histogram: PerformanceLatencyHistogram, pe
   return rank <= histogram.LE30000MS + histogram.GT30000MS ? 30001 : 0
 }
 
-export function performanceMetricsFromCounters(counters: PerformanceCounters): PerformanceMetrics {
+export function performanceMetricsFromCounters(counters: PerformanceCounters, exact?: Pick<PerformanceTimePoint, 'p50_ttft_ms' | 'p95_ttft_ms' | 'p95_duration_ms'>): PerformanceMetrics {
   const denominator = counters.attempt_count - counters.client_canceled_count
   const rate = (numerator: number, divisor: number) => divisor > 0 ? numerator / divisor : 0
+  const exactValue = (value: number | undefined, fallback: number) => typeof value === 'number' && value > 0 ? value : fallback
+  const bucketed = {
+    p50_ttft_ms: performancePercentile(counters.ttft_latency, 0.5),
+    p95_ttft_ms: performancePercentile(counters.ttft_latency, 0.95),
+    p95_duration_ms: performancePercentile(counters.duration_latency, 0.95)
+  }
 
   return {
     availability: rate(counters.success_count, denominator),
     failure_rate: rate(denominator - counters.success_count, denominator),
     ttft_timeout_rate: rate(counters.ttft_timeout_count, denominator),
     failover_rate: rate(counters.failover_count, counters.attempt_count),
-    p50_ttft_ms: performancePercentile(counters.ttft_latency, 0.5),
-    p95_ttft_ms: performancePercentile(counters.ttft_latency, 0.95),
-    p95_duration_ms: performancePercentile(counters.duration_latency, 0.95)
+    p50_ttft_ms: exactValue(exact?.p50_ttft_ms, bucketed.p50_ttft_ms),
+    p95_ttft_ms: exactValue(exact?.p95_ttft_ms, bucketed.p95_ttft_ms),
+    p95_duration_ms: exactValue(exact?.p95_duration_ms, bucketed.p95_duration_ms)
   }
+}
+
+export function performanceMetricsFromTimePoint(point: PerformanceTimePoint): PerformanceMetrics {
+  return performanceMetricsFromCounters(point.counters, point)
 }
 
 export async function getOverview(params: PerformanceParams = {}): Promise<PerformanceOverview> {

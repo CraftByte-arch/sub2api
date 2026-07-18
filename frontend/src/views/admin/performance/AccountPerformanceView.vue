@@ -5,6 +5,7 @@ import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
 import performanceAPI, {
   performanceMetricsFromCounters,
+  performanceMetricsFromTimePoint,
   type PerformanceAccountItem,
   type PerformanceAccountPage,
   type PerformanceCounters,
@@ -67,7 +68,7 @@ const overviewMetrics = computed(() => overview.value ? {
   p95TTFT: overview.value.summary.p95_ttft_ms,
   p95Duration: overview.value.summary.p95_duration_ms
 } : null)
-const trendMetrics = computed(() => overview.value?.trend.map((point) => performanceMetricsFromCounters(point.counters)) ?? [])
+const trendMetrics = computed(() => overview.value?.trend.map(performanceMetricsFromTimePoint) ?? [])
 const aggregateTrendMetrics = computed(() => performanceMetricsFromCounters(
   overview.value?.trend.reduce(sumCounters, emptyCounters()) ?? emptyCounters()
 ))
@@ -97,9 +98,9 @@ const ratesSeries: PerformanceSeriesDefinition[] = [
   { label: '切换率', color: '#6366f1', selector: (point) => performanceMetricsFromCounters(point.counters).failover_rate, formatter: percent, fill: false }
 ]
 const latencySeries: PerformanceSeriesDefinition[] = [
-  { label: 'P50 TTFT', color: '#0ea5e9', selector: (point) => performanceMetricsFromCounters(point.counters).p50_ttft_ms, formatter: milliseconds },
-  { label: 'P95 TTFT', color: '#8b5cf6', selector: (point) => performanceMetricsFromCounters(point.counters).p95_ttft_ms, formatter: milliseconds, fill: false },
-  { label: 'P95 总耗时', color: '#f97316', selector: (point) => performanceMetricsFromCounters(point.counters).p95_duration_ms, formatter: milliseconds, fill: false }
+  { label: 'P50 TTFT', color: '#0ea5e9', selector: (point) => performanceMetricsFromTimePoint(point).p50_ttft_ms, formatter: milliseconds },
+  { label: 'P95 TTFT', color: '#8b5cf6', selector: (point) => performanceMetricsFromTimePoint(point).p95_ttft_ms, formatter: milliseconds, fill: false },
+  { label: 'P95 总耗时', color: '#f97316', selector: (point) => performanceMetricsFromTimePoint(point).p95_duration_ms, formatter: milliseconds, fill: false }
 ]
 
 function percent(value: number) { return `${(value * 100).toFixed(2)}%` }

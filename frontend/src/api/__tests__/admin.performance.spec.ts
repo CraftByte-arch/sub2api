@@ -111,4 +111,31 @@ describe('admin performance API', () => {
       p95_duration_ms: 0
     })
   })
+
+  it('prefers request-level percentile fields when the aggregate bucket is open ended', () => {
+    const counters = {
+      attempt_count: 10,
+      success_count: 10,
+      client_canceled_count: 0,
+      ttft_timeout_count: 0,
+      rate_limit_count: 0,
+      auth_count: 0,
+      upstream_4xx_count: 0,
+      upstream_5xx_count: 0,
+      transport_count: 0,
+      protocol_count: 0,
+      other_failure_count: 0,
+      failover_count: 0,
+      ttft_sum_ms: 0,
+      duration_sum_ms: 0,
+      ttft_latency: { Samples: 10, LE1000MS: 0, LE2500MS: 0, LE5000MS: 9, LE10000MS: 9, LE30000MS: 9, GT30000MS: 1 },
+      duration_latency: { Samples: 10, LE1000MS: 0, LE2500MS: 0, LE5000MS: 0, LE10000MS: 8, LE30000MS: 9, GT30000MS: 1 }
+    }
+
+    expect(performanceMetricsFromCounters(counters, {
+      p50_ttft_ms: 3516,
+      p95_ttft_ms: 31454,
+      p95_duration_ms: 62768
+    })).toMatchObject({ p50_ttft_ms: 3516, p95_ttft_ms: 31454, p95_duration_ms: 62768 })
+  })
 })
