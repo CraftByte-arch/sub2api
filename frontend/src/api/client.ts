@@ -56,6 +56,12 @@ const getUserTimezone = (): string => {
 
 apiClient.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
+    // The instance defaults to JSON, which makes Axios serialize FormData before
+    // the browser adapter can attach the multipart boundary.
+    if (typeof FormData !== 'undefined' && config.data instanceof FormData) {
+      config.headers.delete('Content-Type')
+    }
+
     // Attach token from localStorage
     const token = localStorage.getItem('auth_token')
     if (token && config.headers) {

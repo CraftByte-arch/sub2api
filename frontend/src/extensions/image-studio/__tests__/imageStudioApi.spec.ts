@@ -221,9 +221,7 @@ describe('imageStudioApi', () => {
       style: undefined,
       moderation: undefined,
       input_fidelity: undefined,
-      output_compression: undefined,
-      image_data_urls: undefined,
-      mask_data_url: undefined
+      output_compression: undefined
     })
     expect(job).toMatchObject({
       id: 12,
@@ -232,6 +230,63 @@ describe('imageStudioApi', () => {
       attemptCount: 1,
       maxAttempts: 3,
       nextAttemptAt: '2026-06-11T00:00:10Z'
+    })
+  })
+
+  it('creates edit jobs as ordered multipart without setting a content type header', async () => {
+    vi.mocked(apiClient.post).mockResolvedValue({
+      data: {
+        id: 13,
+        mode: 'edit',
+        status: 'queued',
+        prompt: 'edit',
+        model: 'gpt-image-2',
+        size: '1024x1024',
+        output_format: 'webp',
+        queued_at: '2026-06-11T00:00:00Z'
+      }
+    })
+    const images = Array.from({ length: 4 }, (_, index) =>
+      new File([String(index)], `reference-${index + 1}.webp`, { type: 'image/webp' })
+    )
+    const mask = new File(['mask'], 'mask.png', { type: 'image/png' })
+
+    await createImageStudioJob({
+      apiKeyId: 9,
+      mode: 'edit',
+      prompt: 'edit',
+      model: 'gpt-image-2',
+      size: '1024x1024',
+      outputFormat: 'webp',
+      quality: 'high',
+      background: 'transparent',
+      inputFidelity: 'high',
+      responseFormat: 'b64_json',
+      outputCompression: 72,
+      images,
+      mask
+    })
+
+    expect(apiClient.post).toHaveBeenCalledTimes(1)
+    const [url, body, config] = vi.mocked(apiClient.post).mock.calls[0]
+    expect(url).toBe('/image-studio/jobs')
+    expect(body).toBeInstanceOf(FormData)
+    expect(config).toBeUndefined()
+    const formData = body as FormData
+    expect(formData.getAll('image')).toEqual(images)
+    expect(formData.get('mask')).toBe(mask)
+    expect(Object.fromEntries([...formData.entries()].filter(([key]) => key !== 'image' && key !== 'mask'))).toEqual({
+      api_key_id: '9',
+      mode: 'edit',
+      prompt: 'edit',
+      model: 'gpt-image-2',
+      size: '1024x1024',
+      output_format: 'webp',
+      quality: 'high',
+      background: 'transparent',
+      input_fidelity: 'high',
+      response_format: 'b64_json',
+      output_compression: '72'
     })
   })
 

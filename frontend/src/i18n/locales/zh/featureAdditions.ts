@@ -70,7 +70,17 @@ export default {
   },
   "imageStudio": {
     "title": "生图体验",
-    "description": "使用当前账号的 API Key 调用 Sub2API 生图能力。"
+    "description": "使用当前账号的 API Key 调用 Sub2API 生图能力。",
+    "addMask": "添加蒙版",
+    "removeMask": "移除蒙版",
+    "remove": "移除",
+    "referenceLimit": "最多添加 {count} 张参考图",
+    "compressionErrors": {
+      "canvasUnsupported": "当前浏览器不支持压缩参考图",
+      "decodeFailed": "参考图无法解码",
+      "encodeFailed": "参考图无法转换为 WebP",
+      "invalidDimensions": "参考图尺寸无效"
+    }
   },
   "admin": {
     "usageCards": {

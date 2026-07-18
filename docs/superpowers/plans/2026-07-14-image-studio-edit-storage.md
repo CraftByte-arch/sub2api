@@ -237,19 +237,19 @@ git commit -m "feat: accept multipart image studio edits"
 - Modify: `frontend/src/extensions/image-studio/ImageStudioView.vue`
 - Modify: `frontend/src/extensions/image-studio/__tests__/ImageStudioView.spec.ts`
 
-- [ ] **Step 1: 写 RED 压缩/API/UI 测试**
+- [x] **Step 1: 写 RED 压缩/API/UI 测试**
 
 mock `createImageBitmap` 和 canvas，断言宽高不变、`toBlob('image/webp', 0.72)`、确定性文件名。断言 FormData 中四个 `image` 顺序不变、mask 与原 File 同一对象、未手工设置 Content-Type。任一压缩失败时 API 调用次数为 0。
 
-- [ ] **Step 2: 实现 `compressReferenceImage(file, index)`**
+- [x] **Step 2: 实现 `compressReferenceImage(file, index)`**
 
 解码原图，canvas 设为 bitmap 原宽高，绘制后输出 WebP 0.72；`toBlob` 返回 null 或解码失败时 reject，并确保 bitmap 关闭。
 
-- [ ] **Step 3: 改造 API 和 View**
+- [x] **Step 3: 改造 API 和 View**
 
 `ImageStudioJobCreateInput` 使用 `imageFiles?: File[]`、`maskFile?: File`。generation 保持 JSON；edit 创建 FormData、按显示顺序重复 append `image`，可选 append `mask`。View 在网络调用前用 `Promise.all` 压缩全部 1 到 4 张参考图，mask 不经过 canvas。
 
-- [ ] **Step 4: GREEN、typecheck 和提交**
+- [x] **Step 4: GREEN、typecheck 和提交**
 
 ```bash
 cd frontend
