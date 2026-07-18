@@ -3,12 +3,15 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
 
 const (
@@ -23,6 +26,7 @@ const (
 type ImageStudioJobService struct {
 	repo                 ImageStudioJobRepository
 	settingService       *SettingService
+	inputStore           ImageStudioInputStorage
 	openAIGateway        *OpenAIGatewayService
 	apiKeyService        *APIKeyService
 	billingCacheService  *BillingCacheService
@@ -31,6 +35,7 @@ type ImageStudioJobService struct {
 	stopOnce             sync.Once
 	wg                   sync.WaitGroup
 	running              int32
+	now                  func() time.Time
 }
 
 type imageStudioSubscriptionResolver interface {
@@ -38,11 +43,16 @@ type imageStudioSubscriptionResolver interface {
 	GetActiveSubscription(ctx context.Context, userID, groupID int64) (*UserSubscription, error)
 }
 
-func NewImageStudioJobService(repo ImageStudioJobRepository, settingService *SettingService) *ImageStudioJobService {
+func NewImageStudioJobService(repo ImageStudioJobRepository, settingService *SettingService, inputStore ImageStudioInputStorage, now func() time.Time) *ImageStudioJobService {
+	if now == nil {
+		now = time.Now
+	}
 	return &ImageStudioJobService{
 		repo:           repo,
 		settingService: settingService,
+		inputStore:     inputStore,
 		stopCh:         make(chan struct{}),
+		now:            now,
 	}
 }
 
@@ -82,6 +92,116 @@ func (s *ImageStudioJobService) CreateJob(ctx context.Context, input ImageStudio
 		return nil, fmt.Errorf("request payload must be valid json")
 	}
 	return s.repo.Create(ctx, input)
+}
+
+func (s *ImageStudioJobService) CreateEditJob(ctx context.Context, input ImageStudioJobCreateInput, images []UploadedFile, mask *UploadedFile) (*ImageStudioJob, error) {
+	if s == nil || s.repo == nil {
+		return nil, fmt.Errorf("image studio job service is not configured")
+	}
+	if input.UserID <= 0 || input.APIKeyID <= 0 {
+		return nil, infraerrors.BadRequest("IMAGE_STUDIO_JOB_INVALID", "user_id and api_key_id are required")
+	}
+	if strings.TrimSpace(input.Mode) != ImageStudioJobModeEdit {
+		return nil, infraerrors.BadRequest("IMAGE_STUDIO_JOB_INVALID", "multipart image studio jobs must use edit mode")
+	}
+	if strings.TrimSpace(input.OutputFormat) == "" {
+		input.OutputFormat = "png"
+	}
+	if s.inputStore == nil {
+		return nil, imageStudioInputCreateError(inputStorageError(errors.New("image studio input store is not configured")))
+	}
+
+	staged, err := s.inputStore.StageEditInputs(ctx, images, mask)
+	if err != nil {
+		return nil, imageStudioInputCreateError(err)
+	}
+	rollback := func(cause error) error {
+		if cleanupErr := s.inputStore.RemoveInputs(staged.ImagePaths, staged.MaskPath); cleanupErr != nil {
+			return errors.Join(cause, cleanupErr)
+		}
+		return cause
+	}
+
+	sanitized, err := sanitizeImageStudioEditPayload(input.RequestPayload)
+	if err != nil {
+		return nil, rollback(infraerrors.BadRequest("IMAGE_STUDIO_JOB_INVALID", "image studio edit metadata is invalid").WithCause(err))
+	}
+	now := s.now()
+	inputExpiresAt := now.Add(time.Duration(s.InputRetentionHours(ctx)) * time.Hour)
+	input.RequestPayload = sanitized
+	input.InputImagePaths = append([]string(nil), staged.ImagePaths...)
+	input.InputMaskPath = cloneImageStudioString(staged.MaskPath)
+	input.InputExpiresAt = &inputExpiresAt
+	input.InputDeletedAt = nil
+
+	job, err := s.repo.Create(ctx, input)
+	if err != nil {
+		return nil, rollback(err)
+	}
+	return job, nil
+}
+
+func (s *ImageStudioJobService) InputRetentionHours(ctx context.Context) int {
+	if s == nil || s.settingService == nil {
+		return DefaultImageStudioInputRetentionHours
+	}
+	settings, err := s.settingService.GetAllSettings(ctx)
+	if err != nil || settings == nil || settings.ImageStudioInputRetentionHours <= 0 {
+		return DefaultImageStudioInputRetentionHours
+	}
+	return settings.ImageStudioInputRetentionHours
+}
+
+func sanitizeImageStudioEditPayload(raw json.RawMessage) (json.RawMessage, error) {
+	if !json.Valid(raw) {
+		return nil, fmt.Errorf("request payload must be valid json")
+	}
+	var source map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &source); err != nil || source == nil {
+		return nil, fmt.Errorf("request payload must be a json object")
+	}
+	allowedStrings := []string{
+		"model", "prompt", "size", "quality", "background", "style", "moderation",
+		"input_fidelity", "output_format", "response_format",
+	}
+	sanitized := make(map[string]any, len(allowedStrings)+1)
+	for _, key := range allowedStrings {
+		value, ok := source[key]
+		if !ok {
+			continue
+		}
+		var scalar string
+		if err := json.Unmarshal(value, &scalar); err != nil {
+			return nil, fmt.Errorf("%s must be a string", key)
+		}
+		sanitized[key] = scalar
+	}
+	if value, ok := source["output_compression"]; ok {
+		var scalar int
+		if err := json.Unmarshal(value, &scalar); err != nil {
+			return nil, fmt.Errorf("output_compression must be an integer")
+		}
+		sanitized["output_compression"] = scalar
+	}
+	return json.Marshal(sanitized)
+}
+
+func imageStudioInputCreateError(err error) error {
+	if errors.Is(err, ErrImageStudioInputStorageUnavailable) {
+		return infraerrors.ServiceUnavailable(
+			"IMAGE_STUDIO_INPUT_STORAGE_UNAVAILABLE",
+			"image studio input storage is unavailable",
+		).WithCause(err)
+	}
+	return infraerrors.BadRequest("IMAGE_STUDIO_INPUT_INVALID", "image studio edit input is invalid").WithCause(err)
+}
+
+func cloneImageStudioString(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
 }
 
 func (s *ImageStudioJobService) ListJobs(ctx context.Context, userID int64, page, pageSize int) (*ImageStudioJobList, error) {

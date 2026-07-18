@@ -206,19 +206,19 @@ git commit -m "feat: configure image studio input retention"
 - Modify: `backend/internal/service/image_studio_job_service.go`
 - Modify: `backend/internal/service/image_studio_job_service_test.go`
 
-- [ ] **Step 1: 写 RED 创建测试**
+- [x] **Step 1: 写 RED 创建测试**
 
 覆盖重复有序 `image` 的 1/4 张、零图、第五张、第二个 mask、文件校验失败不建 row、repo Create 失败删目录、JSON generation 不变、JSON edit data URL 返回兼容错误、storage unavailable 返回 503。
 
-- [ ] **Step 2: 分派 Content-Type 并净化 payload**
+- [x] **Step 2: 分派 Content-Type 并净化 payload**
 
 `application/json` 只走 generation；`multipart/form-data` 只走 edit。使用 `MultipartReader` 顺序流式读取 part，不用 `ParseMultipartForm`。edit 的 `request_payload` 只保留模型、prompt、size、quality、background、style、moderation、input_fidelity、output_format/compression 和 response_format，禁止 `images`、`mask`、data URL/base64。
 
-- [ ] **Step 3: 文件优先创建和回滚**
+- [x] **Step 3: 文件优先创建和回滚**
 
 新增 `CreateEditJob`：先 `StageEditInputs`，计算 `InputExpiresAt = now + inputRetentionHours`，再 `repo.Create`；DB 失败调用 `RemoveInputs`。generation 继续调用现有 `CreateJob`。
 
-- [ ] **Step 4: GREEN 并提交**
+- [x] **Step 4: GREEN 并提交**
 
 ```bash
 cd backend

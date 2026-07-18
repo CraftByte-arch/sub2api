@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"database/sql"
+	"os"
 	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
@@ -207,15 +208,20 @@ func ProvideUsageCleanupService(repo UsageCleanupRepository, timingWheel *Timing
 }
 
 // ProvideImageStudioJobService creates and starts the async image studio job service.
+func ProvideImageStudioInputStorage() ImageStudioInputStorage {
+	return NewImageStudioInputStore(os.Getenv("DATA_DIR"), 0)
+}
+
 func ProvideImageStudioJobService(
 	repo ImageStudioJobRepository,
 	settingService *SettingService,
+	inputStore ImageStudioInputStorage,
 	openAIGateway *OpenAIGatewayService,
 	apiKeyService *APIKeyService,
 	billingCacheService *BillingCacheService,
 	subscriptionService *SubscriptionService,
 ) *ImageStudioJobService {
-	svc := NewImageStudioJobService(repo, settingService)
+	svc := NewImageStudioJobService(repo, settingService, inputStore, time.Now)
 	svc.SetRuntimeDependencies(openAIGateway, apiKeyService, billingCacheService, subscriptionService)
 	svc.Start()
 	return svc
@@ -664,6 +670,7 @@ var ProviderSet = wire.NewSet(
 	ProvideTimingWheelService,
 	ProvideDashboardAggregationService,
 	ProvideUsageCleanupService,
+	ProvideImageStudioInputStorage,
 	ProvideImageStudioJobService,
 	ProvideDeferredService,
 	NewAntigravityQuotaFetcher,

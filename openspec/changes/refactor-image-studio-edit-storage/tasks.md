@@ -7,8 +7,8 @@
 
 ## 2. Multipart Job Creation And Frontend Upload
 
-- [ ] 2.1 Accept multipart edit job creation with repeated ordered `image` fields, an optional `mask`, metadata fields, and full rollback on validation or database failure.
-- [ ] 2.2 Keep JSON generation job creation behavior unchanged and reject new edit-job data URL payloads with a clear compatibility error.
+- [x] 2.1 Accept multipart edit job creation with repeated ordered `image` fields, an optional `mask`, metadata fields, and full rollback on validation or database failure.
+- [x] 2.2 Keep JSON generation job creation behavior unchanged and reject new edit-job data URL payloads with a clear compatibility error.
 - [ ] 2.3 Update Image Studio to support one to four references, compress each reference to same-dimension WebP at quality 0.72, and upload compressed Files through multipart without data URL conversion.
 - [ ] 2.4 Preserve the mask binary and transparency, stop submission on any compression failure, and cover frontend cardinality, ordering, compression, and multipart behavior with tests.
 
