@@ -325,23 +325,23 @@ git commit -m "feat: validate image studio inputs before forwarding"
 - Modify: `backend/internal/service/image_studio_job_worker.go`
 - Modify: `backend/internal/service/image_studio_job_worker_test.go`
 
-- [ ] **Step 1: 写 RED multipart 测试**
+- [x] **Step 1: 写 RED multipart 测试**
 
 解析 spool，断言 1/4 个 repeated `image` 的顺序、至多一个 mask、全部 edit 标量、正确 boundary 和 Content-Length。分别模拟成功、上游失败、取消、响应解析失败，断言 spool 均已删除。
 
-- [ ] **Step 2: 实现 spool builder**
+- [x] **Step 2: 实现 spool builder**
 
 在受控 upload directory 创建 `.spool-<random>.multipart`，用 `multipart.NewWriter(*os.File)` 和 `io.Copy` 写入；返回 path/content-type/content-length。任意构建错误立即删除。
 
-- [ ] **Step 3: 增加 gateway 流式 API Key edit 入口**
+- [x] **Step 3: 增加 gateway 流式 API Key edit 入口**
 
 接收 `io.ReadSeeker`、content type 和 content length，直接构造上游 request，不把 multipart 重写进 `[]byte`。映射后的 model 由 builder 写入；复用现有 API Key images 响应、failover、ops 和 billing 处理。
 
-- [ ] **Step 4: Worker 分派并 defer 清理**
+- [x] **Step 4: Worker 分派并 defer 清理**
 
 仅 `AccountTypeAPIKey` 构建 spool，创建成功后立即 `defer os.Remove(path)`，endpoint 固定 `/v1/images/edits`。
 
-- [ ] **Step 5: GREEN 并提交**
+- [x] **Step 5: GREEN 并提交**
 
 ```bash
 cd backend

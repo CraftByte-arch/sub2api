@@ -7,13 +7,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
 
@@ -223,6 +227,104 @@ func TestImageStudioJobServicePassesOpenedStoredInputsToExecutorInOrder(t *testi
 			}
 			require.Equal(t, 1, repo.markFailedCalls)
 			require.Equal(t, "upstream_failed", repo.failedErrorCode)
+		})
+	}
+}
+
+func TestImageStudioJobServiceForwardSelectedAPIKeyEditAlwaysCleansMultipartSpool(t *testing.T) {
+	imageBytes := imageStudioTestPNG(t, 2, 2, false)
+	maskBytes := imageStudioTestPNG(t, 2, 2, true)
+
+	for _, tt := range []struct {
+		name        string
+		cancel      bool
+		upstream    *http.Response
+		upstreamErr error
+		wantErr     bool
+		parseImage  bool
+	}{
+		{
+			name: "success",
+			upstream: &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(
+				`{"data":[{"b64_json":"` + base64.StdEncoding.EncodeToString(imageBytes) + `"}]}`,
+			))},
+		},
+		{
+			name:        "transport error",
+			upstreamErr: errors.New("connection reset"),
+			wantErr:     true,
+		},
+		{
+			name: "failover response",
+			upstream: &http.Response{StatusCode: http.StatusTooManyRequests, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(
+				`{"error":{"message":"rate limited"}}`,
+			))},
+			wantErr: true,
+		},
+		{
+			name:        "canceled",
+			cancel:      true,
+			upstreamErr: context.Canceled,
+			wantErr:     true,
+		},
+		{
+			name: "response image parse failure after provider success",
+			upstream: &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(
+				`{"data":[{"b64_json":"not-base64"}]}`,
+			))},
+			parseImage: true,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			store, staged := stageImageStudioWorkerInputs(t, [][]byte{imageBytes}, maskBytes, 1<<20)
+			opened, err := store.OpenInputs(staged.ImagePaths, staged.MaskPath)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = opened.Close() })
+			input := &imageStudioExecutionInput{
+				Payload:    []byte(`{"model":"gpt-image-1","prompt":"edit","output_format":"png"}`),
+				EditInputs: opened,
+			}
+			parsed := &OpenAIImagesRequest{
+				Endpoint: openAIImagesEditsEndpoint, Model: "gpt-image-1", Prompt: "edit", N: 1,
+				SizeTier: "1024x1024", Multipart: true, HasMask: true, RequiredCapability: OpenAIImagesCapabilityNative,
+			}
+			upstream := &httpUpstreamRecorder{resp: tt.upstream, err: tt.upstreamErr}
+			gateway := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+			svc := &ImageStudioJobService{inputStore: store, openAIGateway: gateway}
+			account := &Account{
+				ID: 81, Name: "image-apikey", Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+				Credentials: map[string]any{"api_key": "test-api-key", "base_url": "https://image-upstream.example/v1"},
+			}
+			recorder := httptest.NewRecorder()
+			ginCtx, _ := gin.CreateTestContext(recorder)
+			ginCtx.Request = httptest.NewRequest(http.MethodPost, openAIImagesEditsEndpoint, nil)
+			ctx := context.Background()
+			if tt.cancel {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithCancel(ctx)
+				cancel()
+			}
+
+			result, err := svc.forwardSelectedAPIKeyEdit(ctx, ginCtx, account, input, parsed, "")
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				require.NotNil(t, result)
+			}
+			if tt.parseImage {
+				_, _, decodeErr := decodeImageStudioResponseImage(recorder.Body.Bytes(), "png")
+				require.Error(t, decodeErr)
+			}
+			uploadDir := filepath.Dir(filepath.Join(store.Root(), filepath.FromSlash(staged.ImagePaths[0])))
+			matches, globErr := filepath.Glob(filepath.Join(uploadDir, ".spool-*.multipart"))
+			require.NoError(t, globErr)
+			require.Empty(t, matches)
+			if upstream.lastReq != nil {
+				require.Equal(t, openAIImagesEditsEndpoint, upstream.lastReq.URL.Path)
+				require.Contains(t, upstream.lastReq.Header.Get("Content-Type"), "multipart/form-data")
+				require.Positive(t, upstream.lastReq.ContentLength)
+			}
 		})
 	}
 }

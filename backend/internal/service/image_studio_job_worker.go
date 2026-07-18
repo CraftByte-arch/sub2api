@@ -12,6 +12,7 @@ import (
 	stddraw "image/draw"
 	"image/jpeg"
 	_ "image/png"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -104,7 +105,7 @@ func (e *imageStudioGatewayJobExecutor) Execute(ctx context.Context, job ImageSt
 	if e == nil || e.service == nil || input == nil {
 		return nil, fmt.Errorf("image studio executor is not configured")
 	}
-	return e.service.forwardJob(ctx, job, apiKey, input.Payload)
+	return e.service.forwardExecutionJob(ctx, job, apiKey, input)
 }
 
 func marshalImageStudioSettlementPayload(accountID int64, result *OpenAIForwardResult, fields ChannelUsageFields, inboundEndpoint, upstreamEndpoint string) (json.RawMessage, error) {
@@ -606,17 +607,30 @@ type imageStudioForwardOutcome struct {
 }
 
 func (s *ImageStudioJobService) forwardJob(ctx context.Context, job ImageStudioJob, apiKey *APIKey, body []byte) (*imageStudioForwardOutcome, error) {
+	return s.forwardExecutionJob(ctx, job, apiKey, &imageStudioExecutionInput{Payload: body})
+}
+
+func (s *ImageStudioJobService) forwardExecutionJob(ctx context.Context, job ImageStudioJob, apiKey *APIKey, input *imageStudioExecutionInput) (*imageStudioForwardOutcome, error) {
 	if s == nil || s.openAIGateway == nil {
 		return nil, fmt.Errorf("openai gateway service is not configured")
 	}
+	if input == nil {
+		return nil, fmt.Errorf("image studio execution input is required")
+	}
+	body := input.Payload
 
 	endpoint := openAIImagesGenerationsEndpoint
 	if job.Mode == ImageStudioJobModeEdit {
 		endpoint = openAIImagesEditsEndpoint
 	}
+	parseEndpoint := endpoint
+	storedEdit := job.Mode == ImageStudioJobModeEdit && input.EditInputs != nil
+	if storedEdit {
+		parseEndpoint = openAIImagesGenerationsEndpoint
+	}
 	recorder := httptest.NewRecorder()
 	ginCtx, _ := gin.CreateTestContext(recorder)
-	req := httptest.NewRequest("POST", endpoint, bytes.NewReader(body))
+	req := httptest.NewRequest("POST", parseEndpoint, bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	ginCtx.Request = req
 	ginCtx.Set("api_key", apiKey)
@@ -627,6 +641,13 @@ func (s *ImageStudioJobService) forwardJob(ctx context.Context, job ImageStudioJ
 			return s.forwardResponsesJob(ctx, job, apiKey, body)
 		}
 		return nil, err
+	}
+	if storedEdit {
+		parsed.Endpoint = openAIImagesEditsEndpoint
+		parsed.Multipart = true
+		parsed.HasMask = input.EditInputs.Mask != nil
+		parsed.RequiredCapability = OpenAIImagesCapabilityNative
+		ginCtx.Request.URL.Path = openAIImagesEditsEndpoint
 	}
 	requestModel := parsed.Model
 	channelMapping, _ := s.openAIGateway.ResolveChannelMappingAndRestrict(ctx, apiKey.GroupID, requestModel)
@@ -649,7 +670,12 @@ func (s *ImageStudioJobService) forwardJob(ctx context.Context, job ImageStudioJ
 		defer selection.ReleaseFunc()
 	}
 
-	result, err := s.openAIGateway.ForwardImages(requestCtx, ginCtx, selection.Account, body, parsed, channelMapping.MappedModel)
+	var result *OpenAIForwardResult
+	if storedEdit && selection.Account.Type == AccountTypeAPIKey {
+		result, err = s.forwardSelectedAPIKeyEdit(requestCtx, ginCtx, selection.Account, input, parsed, channelMapping.MappedModel)
+	} else {
+		result, err = s.openAIGateway.ForwardImages(requestCtx, ginCtx, selection.Account, body, parsed, channelMapping.MappedModel)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -664,6 +690,39 @@ func (s *ImageStudioJobService) forwardJob(ctx context.Context, job ImageStudioJ
 		inboundEndpoint:    endpoint,
 		upstreamEndpoint:   endpoint,
 	}, nil
+}
+
+func (s *ImageStudioJobService) forwardSelectedAPIKeyEdit(
+	ctx context.Context,
+	ginCtx *gin.Context,
+	account *Account,
+	input *imageStudioExecutionInput,
+	parsed *OpenAIImagesRequest,
+	channelMappedModel string,
+) (*OpenAIForwardResult, error) {
+	if s == nil || s.openAIGateway == nil || input == nil || input.EditInputs == nil {
+		return nil, fmt.Errorf("image studio API Key edit executor is not configured")
+	}
+	builder, ok := s.inputStore.(imageStudioEditMultipartSpoolBuilder)
+	if !ok || builder == nil {
+		return nil, inputStorageError(errors.New("image studio multipart spool builder is not configured"))
+	}
+	_, upstreamModel, err := resolveOpenAIImagesAPIKeyModels(account, parsed, channelMappedModel)
+	if err != nil {
+		return nil, err
+	}
+	spool, err := builder.BuildEditMultipartSpool(input.EditInputs, input.Payload, upstreamModel)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if cleanupErr := spool.Cleanup(); cleanupErr != nil {
+			slog.Warn("image_studio_multipart_spool_cleanup_failed", "error_kind", imageStudioMultipartCleanupLogValue(cleanupErr))
+		}
+	}()
+	return s.openAIGateway.ForwardImagesAPIKeyEdit(
+		ctx, ginCtx, account, spool.Reader, spool.ContentType, spool.ContentLength, parsed, channelMappedModel,
+	)
 }
 
 func imageStudioPayloadLooksLikeResponses(body []byte) bool {
