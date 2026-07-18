@@ -177,19 +177,19 @@ git commit -m "feat: add image studio input lifecycle queries"
 - Test: `backend/internal/handler/admin/setting_handler_platform_quota_test.go`
 - Test: `frontend/src/views/admin/__tests__/SettingsView.spec.ts`
 
-- [ ] **Step 1: 写 RED 默认值/API/UI 测试**
+- [x] **Step 1: 写 RED 默认值/API/UI 测试**
 
 断言缺失、0、负数均读取为 24，合法正整数保存；admin GET/PUT 和表单使用 `image_studio_input_retention_hours`，不改变输出 retention。
 
-- [ ] **Step 2: 实现后端设置链**
+- [x] **Step 2: 实现后端设置链**
 
 新增 `SettingKeyImageStudioInputRetentionHours` 和默认 24；解析/更新将非正值归一为 24，DTO 和 admin handler 完整透传。
 
-- [ ] **Step 3: 实现管理员输入**
+- [x] **Step 3: 实现管理员输入**
 
 在 Image Studio 设置区增加 `min=1 step=1` 数字输入；提交值为 `Math.max(1, Math.floor(Number(value) || 24))`，补齐中英文文案。
 
-- [ ] **Step 4: GREEN 并提交**
+- [x] **Step 4: GREEN 并提交**
 
 ```bash
 cd backend && go test ./internal/service ./internal/handler/admin -run 'ImageStudio|Setting' -count=1
