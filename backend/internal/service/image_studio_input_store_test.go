@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/binary"
 	"errors"
 	"hash/crc32"
@@ -19,6 +20,138 @@ import (
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestImageStudioInputStoreMaterializesLegacyInputsInOrderWithMask(t *testing.T) {
+	first := imageStudioTestPNG(t, 4, 3, false)
+	second := imageStudioTestJPEG(t, 5, 4)
+	third := imageStudioTestPNG(t, 2, 2, false)
+	fourth := imageStudioTestJPEG(t, 3, 3)
+	mask := imageStudioTestPNG(t, 4, 3, true)
+	tests := []struct {
+		name   string
+		images [][]byte
+		mimes  []string
+	}{
+		{name: "one reference", images: [][]byte{first}, mimes: []string{"image/png"}},
+		{name: "four references", images: [][]byte{first, second, third, fourth}, mimes: []string{"image/png", "image/jpeg", "image/png", "image/jpeg"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := NewImageStudioInputStore(t.TempDir(), 1<<20)
+			urls := make([]string, len(tt.images))
+			for i := range tt.images {
+				urls[i] = imageStudioLegacyDataURL(tt.mimes[i], tt.images[i])
+			}
+			var maskURL *string
+			if len(tt.images) == 1 {
+				value := imageStudioLegacyDataURL("image/png", mask)
+				maskURL = &value
+			}
+
+			staged, err := store.MaterializeLegacy(context.Background(), urls, maskURL)
+
+			require.NoError(t, err)
+			require.Len(t, staged.ImagePaths, len(tt.images))
+			for i, path := range staged.ImagePaths {
+				stored, readErr := os.ReadFile(filepath.Join(store.Root(), filepath.FromSlash(path)))
+				require.NoError(t, readErr)
+				require.Equal(t, tt.images[i], stored)
+			}
+			if maskURL != nil {
+				require.NotNil(t, staged.MaskPath)
+				stored, readErr := os.ReadFile(filepath.Join(store.Root(), filepath.FromSlash(*staged.MaskPath)))
+				require.NoError(t, readErr)
+				require.Equal(t, mask, stored)
+			}
+		})
+	}
+}
+
+func TestImageStudioInputStoreMaterializeLegacyRejectsInvalidDataURLs(t *testing.T) {
+	pngBytes := imageStudioTestPNG(t, 3, 2, false)
+	jpegBytes := imageStudioTestJPEG(t, 3, 2)
+	valid := imageStudioLegacyDataURL("image/png", pngBytes)
+	encoded := base64.StdEncoding.EncodeToString(pngBytes)
+	tests := []struct {
+		name   string
+		images []string
+	}{
+		{name: "zero references"},
+		{name: "five references", images: []string{valid, valid, valid, valid, valid}},
+		{name: "not a data URL", images: []string{base64.StdEncoding.EncodeToString(pngBytes)}},
+		{name: "bad base64", images: []string{"data:image/png;base64,%%%"}},
+		{name: "base64 with newline", images: []string{"data:image/png;base64," + encoded[:4] + "\n" + encoded[4:]}},
+		{name: "unsupported MIME", images: []string{imageStudioLegacyDataURL("image/gif", pngBytes)}},
+		{name: "extra media parameter", images: []string{"data:image/png;charset=utf-8;base64," + base64.StdEncoding.EncodeToString(pngBytes)}},
+		{name: "MIME spoof", images: []string{imageStudioLegacyDataURL("image/png", jpegBytes)}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := NewImageStudioInputStore(t.TempDir(), 1<<20)
+
+			staged, err := store.MaterializeLegacy(context.Background(), tt.images, nil)
+
+			require.Nil(t, staged)
+			require.ErrorIs(t, err, ErrImageStudioLegacyInputInvalid)
+			require.ErrorIs(t, err, ErrImageStudioInputInvalid)
+			var inputErr *ImageStudioInputError
+			require.ErrorAs(t, err, &inputErr)
+			require.Equal(t, ImageStudioInputCodeLegacyInvalid, inputErr.Code)
+			require.Empty(t, imageStudioInputDirs(t, store.Root()))
+		})
+	}
+}
+
+func TestImageStudioInputStoreMaterializeLegacyRejectsOversizedEncodingBeforeDecode(t *testing.T) {
+	pngBytes := imageStudioTestPNG(t, 3, 2, false)
+	store := NewImageStudioInputStore(t.TempDir(), int64(len(pngBytes)-1))
+
+	staged, err := store.MaterializeLegacy(context.Background(), []string{
+		imageStudioLegacyDataURL("image/png", pngBytes),
+	}, nil)
+
+	require.Nil(t, staged)
+	require.ErrorIs(t, err, ErrImageStudioLegacyInputInvalid)
+	require.ErrorIs(t, err, ErrImageStudioInputTooLarge)
+	require.Empty(t, imageStudioInputDirs(t, store.Root()))
+}
+
+func TestImageStudioInputStoreMaterializeLegacyHonorsContextAndRollsBack(t *testing.T) {
+	pngBytes := imageStudioTestPNG(t, 3, 2, false)
+	valid := imageStudioLegacyDataURL("image/png", pngBytes)
+
+	t.Run("canceled before decode", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		store := NewImageStudioInputStore(t.TempDir(), 1<<20)
+
+		staged, err := store.MaterializeLegacy(ctx, []string{valid}, nil)
+
+		require.Nil(t, staged)
+		require.ErrorIs(t, err, context.Canceled)
+		require.ErrorIs(t, err, ErrImageStudioInputStorageUnavailable)
+		require.Empty(t, imageStudioInputDirs(t, store.Root()))
+	})
+
+	t.Run("bad second reference", func(t *testing.T) {
+		store := NewImageStudioInputStore(t.TempDir(), 1<<20)
+
+		staged, err := store.MaterializeLegacy(context.Background(), []string{
+			valid,
+			"data:image/png;base64,%%%",
+		}, nil)
+
+		require.Nil(t, staged)
+		require.ErrorIs(t, err, ErrImageStudioLegacyInputInvalid)
+		require.Empty(t, imageStudioInputDirs(t, store.Root()))
+	})
+}
+
+func imageStudioLegacyDataURL(contentType string, data []byte) string {
+	return "data:" + contentType + ";base64," + base64.StdEncoding.EncodeToString(data)
+}
 
 func TestImageStudioInputStoreStagesReferenceCardinality(t *testing.T) {
 	validPNG := imageStudioTestPNG(t, 3, 2, false)

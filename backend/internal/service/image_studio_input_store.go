@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"image"
@@ -19,6 +20,7 @@ import (
 
 const (
 	ImageStudioInputCodeInvalid            = "input_invalid"
+	ImageStudioInputCodeLegacyInvalid      = "legacy_input_invalid"
 	ImageStudioInputCodePathInvalid        = "input_path_invalid"
 	ImageStudioInputCodeMissing            = "input_missing"
 	ImageStudioInputCodeStorageUnavailable = "input_storage_unavailable"
@@ -32,6 +34,7 @@ const (
 
 var (
 	ErrImageStudioInputInvalid            = errors.New("image studio input is invalid")
+	ErrImageStudioLegacyInputInvalid      = errors.New("legacy image studio input is invalid")
 	ErrImageStudioInputTooLarge           = fmt.Errorf("%w: file exceeds size limit", ErrImageStudioInputInvalid)
 	ErrImageStudioInputDimensionsTooLarge = fmt.Errorf("%w: pixel dimensions exceed limit", ErrImageStudioInputInvalid)
 	ErrImageStudioInputPathInvalid        = errors.New("image studio input path is invalid")
@@ -83,8 +86,86 @@ type OpenedEditInputs struct {
 
 type ImageStudioInputStorage interface {
 	StageEditInputs(ctx context.Context, images []UploadedFile, mask *UploadedFile) (*StagedEditInputs, error)
+	MaterializeLegacy(ctx context.Context, images []string, mask *string) (*StagedEditInputs, error)
 	OpenInputs(paths []string, maskPath *string) (*OpenedEditInputs, error)
 	RemoveInputs(paths []string, maskPath *string) error
+}
+
+func (s *ImageStudioInputStore) MaterializeLegacy(ctx context.Context, images []string, mask *string) (*StagedEditInputs, error) {
+	if s == nil || len(images) < 1 || len(images) > 4 {
+		return nil, legacyInputInvalidError(ErrImageStudioInputInvalid)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, inputStorageError(err)
+	}
+	uploads := make([]UploadedFile, len(images))
+	for i := range images {
+		upload, err := s.legacyDataURLUpload(images[i])
+		if err != nil {
+			return nil, err
+		}
+		uploads[i] = upload
+	}
+	var maskUpload *UploadedFile
+	if mask != nil {
+		upload, err := s.legacyDataURLUpload(*mask)
+		if err != nil {
+			return nil, err
+		}
+		maskUpload = &upload
+	}
+	staged, err := s.StageEditInputs(ctx, uploads, maskUpload)
+	if err != nil && errors.Is(err, ErrImageStudioInputInvalid) {
+		return nil, legacyInputInvalidError(err)
+	}
+	return staged, err
+}
+
+var errImageStudioLegacyBase64Invalid = errors.New("legacy image studio base64 is invalid")
+
+func (s *ImageStudioInputStore) legacyDataURLUpload(value string) (UploadedFile, error) {
+	header, encoded, ok := strings.Cut(value, ",")
+	if !ok || !strings.HasPrefix(header, "data:") || !strings.HasSuffix(header, ";base64") {
+		return UploadedFile{}, legacyInputInvalidError(ErrImageStudioInputInvalid)
+	}
+	contentType := strings.TrimPrefix(strings.TrimSuffix(header, ";base64"), "data:")
+	if !supportedImageStudioContentType(contentType) || header != "data:"+contentType+";base64" {
+		return UploadedFile{}, legacyInputInvalidError(ErrImageStudioInputInvalid)
+	}
+	if int64(len(encoded)) > maxImageStudioLegacyEncodedBytes(s.maxFileBytes) {
+		return UploadedFile{}, legacyInputInvalidError(ErrImageStudioInputTooLarge)
+	}
+	if strings.ContainsAny(encoded, "\r\n") {
+		return UploadedFile{}, legacyInputInvalidError(ErrImageStudioInputInvalid)
+	}
+	return UploadedFile{
+		Reader:      &imageStudioLegacyBase64Reader{reader: base64.NewDecoder(base64.StdEncoding.Strict(), strings.NewReader(encoded))},
+		ContentType: contentType,
+	}, nil
+}
+
+func maxImageStudioLegacyEncodedBytes(decodedBytes int64) int64 {
+	const maxInt64 = int64(^uint64(0) >> 1)
+	if decodedBytes > maxInt64-2 {
+		return maxInt64
+	}
+	groups := (decodedBytes + 2) / 3
+	if groups > maxInt64/4 {
+		return maxInt64
+	}
+	return groups * 4
+}
+
+type imageStudioLegacyBase64Reader struct {
+	reader io.Reader
+}
+
+func (r *imageStudioLegacyBase64Reader) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	if err != nil && err != io.EOF {
+		return n, fmt.Errorf("%w: %v", errImageStudioLegacyBase64Invalid, err)
+	}
+	return n, err
 }
 
 func (o *OpenedEditInputs) Close() error {
@@ -216,6 +297,9 @@ func (s *ImageStudioInputStore) stageOne(ctx context.Context, uploadDir, baseNam
 	written, copyErr := io.Copy(tempFile, io.LimitReader(upload.Reader, s.maxFileBytes+1))
 	if copyErr != nil {
 		_ = s.closeTempFile(tempFile)
+		if errors.Is(copyErr, errImageStudioLegacyBase64Invalid) {
+			return nil, inputInvalidError(errors.Join(ErrImageStudioInputInvalid, copyErr))
+		}
 		return nil, inputStorageError(copyErr)
 	}
 	if written > s.maxFileBytes {
@@ -627,4 +711,8 @@ func inputMissingError(err error) error {
 
 func inputStorageError(err error) error {
 	return &ImageStudioInputError{Code: ImageStudioInputCodeStorageUnavailable, Err: fmt.Errorf("%w: %w", ErrImageStudioInputStorageUnavailable, err)}
+}
+
+func legacyInputInvalidError(err error) error {
+	return &ImageStudioInputError{Code: ImageStudioInputCodeLegacyInvalid, Err: errors.Join(ErrImageStudioLegacyInputInvalid, err)}
 }

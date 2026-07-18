@@ -555,6 +555,44 @@ func TestImageStudioJobRepositoryPersistLegacyInputsRejectsInvalidMetadataBefore
 	}
 }
 
+func TestImageStudioJobRepositoryFailLegacyInputsAtomicallyRedactsAndTerminatesRunningEdit(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	completedAt := time.Now()
+	redacted := json.RawMessage(`{"model":"gpt-image-2","prompt":"restore"}`)
+	mock.ExpectExec("UPDATE image_studio_jobs[\\s\\S]*status = \\$2[\\s\\S]*error_code = 'legacy_input_invalid'[\\s\\S]*request_payload = \\$4[\\s\\S]*WHERE id = \\$1[\\s\\S]*mode = \\$5[\\s\\S]*status = \\$6[\\s\\S]*input_image_paths = '\\[\\]'::jsonb[\\s\\S]*input_mask_path IS NULL").
+		WithArgs(int64(39), service.ImageStudioJobStatusFailed, completedAt, []byte(redacted), service.ImageStudioJobModeEdit, service.ImageStudioJobStatusRunning).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	repo := NewImageStudioJobRepository(nil, db)
+	err = repo.FailLegacyInputs(context.Background(), 39, redacted, completedAt)
+
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestImageStudioJobRepositoryFailLegacyInputsRejectsUnsafeRedactionBeforeUpdate(t *testing.T) {
+	tests := []json.RawMessage{
+		json.RawMessage(`null`),
+		json.RawMessage(`[]`),
+		json.RawMessage(`{"images":[]}`),
+		json.RawMessage(`{"mask":null}`),
+	}
+	for _, redacted := range tests {
+		db, mock, err := sqlmock.New()
+		require.NoError(t, err)
+		repo := NewImageStudioJobRepository(nil, db)
+
+		err = repo.FailLegacyInputs(context.Background(), 39, redacted, time.Now())
+
+		require.Error(t, err)
+		require.NoError(t, mock.ExpectationsWereMet())
+		_ = db.Close()
+	}
+}
+
 func TestImageStudioJobRepositoryMarkInputsDeletedKeepsFirstTimestamp(t *testing.T) {
 	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
 	require.NoError(t, err)

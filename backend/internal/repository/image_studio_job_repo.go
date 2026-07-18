@@ -229,9 +229,8 @@ func (r *imageStudioJobRepository) PersistLegacyInputs(ctx context.Context, id i
 	if _, err := referencedImageStudioInputDir(paths, maskPath); err != nil {
 		return err
 	}
-	var redactedObject map[string]json.RawMessage
-	if err := json.Unmarshal(redacted, &redactedObject); err != nil || redactedObject == nil {
-		return errors.New("image studio redacted request payload must be a JSON object")
+	if err := validateImageStudioLegacyRedaction(redacted); err != nil {
+		return err
 	}
 	encodedPaths, err := encodeImageStudioInputPaths(paths)
 	if err != nil {
@@ -257,6 +256,49 @@ func (r *imageStudioJobRepository) PersistLegacyInputs(ctx context.Context, id i
 	}
 	if rowsAffected == 0 {
 		return service.ErrImageStudioJobInvalid
+	}
+	return nil
+}
+
+func (r *imageStudioJobRepository) FailLegacyInputs(ctx context.Context, id int64, redacted json.RawMessage, completedAt time.Time) error {
+	if err := validateImageStudioLegacyRedaction(redacted); err != nil {
+		return err
+	}
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE image_studio_jobs
+		SET status = $2, completed_at = $3, error_code = 'legacy_input_invalid',
+			error_message = 'legacy image studio input is invalid', request_payload = $4,
+			next_attempt_at = NULL, heartbeat_at = NULL, updated_at = NOW()
+		WHERE id = $1
+			AND mode = $5
+			AND status = $6
+			AND input_image_paths = '[]'::jsonb
+			AND input_mask_path IS NULL
+			AND input_deleted_at IS NULL
+	`, id, service.ImageStudioJobStatusFailed, completedAt, []byte(redacted), service.ImageStudioJobModeEdit, service.ImageStudioJobStatusRunning)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return service.ErrImageStudioJobInvalid
+	}
+	return nil
+}
+
+func validateImageStudioLegacyRedaction(redacted json.RawMessage) error {
+	var redactedObject map[string]json.RawMessage
+	if err := json.Unmarshal(redacted, &redactedObject); err != nil || redactedObject == nil {
+		return errors.New("image studio redacted request payload must be a JSON object")
+	}
+	if _, ok := redactedObject["images"]; ok {
+		return errors.New("image studio redacted request payload must not contain images")
+	}
+	if _, ok := redactedObject["mask"]; ok {
+		return errors.New("image studio redacted request payload must not contain mask")
 	}
 	return nil
 }

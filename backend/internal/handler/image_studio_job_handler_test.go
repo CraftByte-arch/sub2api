@@ -735,6 +735,9 @@ func (r *imageStudioHandlerJobRepoStub) MarkRunning(ctx context.Context, id int6
 func (r *imageStudioHandlerJobRepoStub) PersistLegacyInputs(context.Context, int64, []string, *string, json.RawMessage, time.Time) error {
 	panic("unexpected PersistLegacyInputs call")
 }
+func (r *imageStudioHandlerJobRepoStub) FailLegacyInputs(context.Context, int64, json.RawMessage, time.Time) error {
+	panic("unexpected FailLegacyInputs call")
+}
 func (r *imageStudioHandlerJobRepoStub) ExpireQueuedInputs(context.Context, time.Time, int) ([]service.ImageStudioJob, error) {
 	panic("unexpected ExpireQueuedInputs call")
 }

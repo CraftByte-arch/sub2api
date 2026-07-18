@@ -110,6 +110,7 @@ type ImageStudioJobRepository interface {
 	ListRunnableJobs(ctx context.Context, limit int) ([]ImageStudioJob, error)
 	MarkRunning(ctx context.Context, id int64, startedAt time.Time) (bool, error)
 	PersistLegacyInputs(ctx context.Context, id int64, paths []string, maskPath *string, redacted json.RawMessage, expiresAt time.Time) error
+	FailLegacyInputs(ctx context.Context, id int64, redacted json.RawMessage, completedAt time.Time) error
 	ExpireQueuedInputs(ctx context.Context, now time.Time, limit int) ([]ImageStudioJob, error)
 	ListExpiredInputs(ctx context.Context, now time.Time, limit int) ([]ImageStudioJob, error)
 	MarkInputsDeleted(ctx context.Context, id int64, deletedAt time.Time) error

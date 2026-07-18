@@ -13,6 +13,142 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestImageStudioJobServiceMaterializesLegacyInputsAndContinuesWithRedactedJob(t *testing.T) {
+	now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
+	maskPath := "inputs/upload-legacy/mask.png"
+	storage := &imageStudioLegacyStorageStub{staged: &StagedEditInputs{
+		UploadID: "upload-legacy",
+		ImagePaths: []string{
+			"inputs/upload-legacy/image-01.png",
+			"inputs/upload-legacy/image-02.webp",
+		},
+		MaskPath: &maskPath,
+	}}
+	repo := &imageStudioWorkerRepoStub{}
+	svc := NewImageStudioJobService(repo, nil, storage, func() time.Time { return now })
+	job := ImageStudioJob{
+		ID:     39,
+		Mode:   ImageStudioJobModeEdit,
+		Status: ImageStudioJobStatusRunning,
+		RequestPayload: json.RawMessage(`{
+			"model":"gpt-image-2","prompt":"restore",
+			"images":[{"image_url":"data:image/png;base64,first"},{"image_url":"data:image/webp;base64,second"}],
+			"mask":{"image_url":"data:image/png;base64,mask"}
+		}`),
+	}
+
+	materialized, terminal, err := svc.materializeLegacyJobInputs(context.Background(), &job)
+
+	require.NoError(t, err)
+	require.True(t, materialized)
+	require.False(t, terminal, "successful materialization must continue normal worker execution")
+	require.Equal(t, []string{"data:image/png;base64,first", "data:image/webp;base64,second"}, storage.images)
+	require.NotNil(t, storage.mask)
+	require.Equal(t, "data:image/png;base64,mask", *storage.mask)
+	require.Equal(t, storage.staged.ImagePaths, repo.legacyPaths)
+	require.Equal(t, storage.staged.MaskPath, repo.legacyMaskPath)
+	require.Equal(t, now.Add(DefaultImageStudioInputRetentionHours*time.Hour), repo.legacyExpiresAt)
+	require.JSONEq(t, `{"model":"gpt-image-2","prompt":"restore"}`, string(repo.legacyRedacted))
+	require.Equal(t, storage.staged.ImagePaths, job.InputImagePaths)
+	require.Equal(t, storage.staged.MaskPath, job.InputMaskPath)
+	require.Equal(t, repo.legacyExpiresAt, *job.InputExpiresAt)
+	require.JSONEq(t, string(repo.legacyRedacted), string(job.RequestPayload))
+}
+
+func TestImageStudioJobServiceLegacyPersistFailureRemovesMaterializedInputsAndJoinsCleanupError(t *testing.T) {
+	persistFailure := errors.New("persist failed")
+	removeFailure := errors.New("remove failed")
+	valid := imageStudioLegacyDataURL("image/png", imageStudioTestPNG(t, 2, 2, false))
+	tests := []struct {
+		name      string
+		removeErr error
+	}{
+		{name: "remove succeeds"},
+		{name: "remove fails", removeErr: removeFailure},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			storage := NewImageStudioInputStore(t.TempDir(), 1<<20)
+			if tt.removeErr != nil {
+				storage.removeAllInRoot = func(*os.Root, string) error { return tt.removeErr }
+			}
+			repo := &imageStudioWorkerRepoStub{persistLegacyErr: persistFailure}
+			svc := NewImageStudioJobService(repo, nil, storage, time.Now)
+			job := ImageStudioJob{
+				ID: 39, Mode: ImageStudioJobModeEdit, Status: ImageStudioJobStatusRunning,
+				RequestPayload: json.RawMessage(`{"images":[{"image_url":"` + valid + `"}]}`),
+			}
+
+			materialized, terminal, err := svc.materializeLegacyJobInputs(context.Background(), &job)
+
+			require.False(t, materialized)
+			require.False(t, terminal)
+			require.ErrorIs(t, err, persistFailure)
+			if tt.removeErr != nil {
+				require.ErrorIs(t, err, removeFailure)
+				require.Len(t, imageStudioInputDirs(t, storage.Root()), 1)
+			} else {
+				require.Empty(t, imageStudioInputDirs(t, storage.Root()))
+			}
+		})
+	}
+}
+
+func TestImageStudioJobServiceInvalidLegacyInputFailsAtomicallyBeforeUpstream(t *testing.T) {
+	valid := imageStudioLegacyDataURL("image/png", imageStudioTestPNG(t, 2, 2, false))
+	tests := []struct {
+		name    string
+		payload json.RawMessage
+	}{
+		{name: "zero images", payload: json.RawMessage(`{"model":"gpt-image-2","images":[],"mask":{"image_url":"` + valid + `"}}`)},
+		{name: "five images", payload: json.RawMessage(`{"images":[{"image_url":"` + valid + `"},{"image_url":"` + valid + `"},{"image_url":"` + valid + `"},{"image_url":"` + valid + `"},{"image_url":"` + valid + `"}]}`)},
+		{name: "non string image URL", payload: json.RawMessage(`{"images":[{"image_url":42}]}`)},
+		{name: "non data URL", payload: json.RawMessage(`{"images":[{"image_url":"plain-base64"}]}`)},
+		{name: "bad base64", payload: json.RawMessage(`{"images":[{"image_url":"data:image/png;base64,%%%"}]}`)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &imageStudioWorkerRepoStub{}
+			store := NewImageStudioInputStore(t.TempDir(), 1<<20)
+			svc := NewImageStudioJobService(repo, nil, store, time.Now)
+
+			svc.processJob(context.Background(), ImageStudioJob{
+				ID: 39, Mode: ImageStudioJobModeEdit, Status: ImageStudioJobStatusQueued,
+				RequestPayload: tt.payload,
+			})
+
+			require.Equal(t, 1, repo.failLegacyCalls)
+			require.Equal(t, ImageStudioInputCodeLegacyInvalid, repo.failLegacyCode)
+			require.NotContains(t, string(repo.failLegacyRedacted), `"images"`)
+			require.NotContains(t, string(repo.failLegacyRedacted), `"mask"`)
+			require.Zero(t, repo.markFailedCalls, "invalid legacy input must use the atomic terminal update")
+			require.Empty(t, imageStudioInputDirs(t, store.Root()))
+		})
+	}
+}
+
+func TestImageStudioJobServiceIgnoresNonLegacyAndAlreadyMaterializedJobs(t *testing.T) {
+	storage := &imageStudioLegacyStorageStub{}
+	repo := &imageStudioWorkerRepoStub{}
+	svc := NewImageStudioJobService(repo, nil, storage, time.Now)
+	jobs := []ImageStudioJob{
+		{ID: 1, Mode: ImageStudioJobModeGenerate, RequestPayload: json.RawMessage(`{"images":[]}`)},
+		{ID: 2, Mode: ImageStudioJobModeEdit, RequestPayload: json.RawMessage(`{"model":"gpt-image-2"}`)},
+		{ID: 3, Mode: ImageStudioJobModeEdit, InputImagePaths: []string{"inputs/upload-ready/image-01.png"}, RequestPayload: json.RawMessage(`{"images":[]}`)},
+	}
+
+	for i := range jobs {
+		materialized, terminal, err := svc.materializeLegacyJobInputs(context.Background(), &jobs[i])
+		require.NoError(t, err)
+		require.False(t, materialized)
+		require.False(t, terminal)
+	}
+	require.Zero(t, storage.materializeCalls)
+	require.Zero(t, repo.persistLegacyCalls)
+}
+
 func TestImageStudioJobServiceSettleUsesUnifiedUsageAndActualCost(t *testing.T) {
 	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
 	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true}}
@@ -453,6 +589,37 @@ type imageStudioWorkerRepoStub struct {
 	heartbeatCh                  chan struct{}
 	markSettlementFailedCalls    int
 	failedErrorCode              string
+	persistLegacyCalls           int
+	persistLegacyErr             error
+	legacyPaths                  []string
+	legacyMaskPath               *string
+	legacyRedacted               json.RawMessage
+	legacyExpiresAt              time.Time
+	failLegacyCalls              int
+	failLegacyCode               string
+	failLegacyRedacted           json.RawMessage
+	markFailedCalls              int
+}
+
+func (r *imageStudioWorkerRepoStub) PersistLegacyInputs(_ context.Context, _ int64, paths []string, mask *string, redacted json.RawMessage, expiresAt time.Time) error {
+	r.persistLegacyCalls++
+	r.legacyPaths = append([]string(nil), paths...)
+	r.legacyMaskPath = cloneImageStudioString(mask)
+	r.legacyRedacted = append(json.RawMessage(nil), redacted...)
+	r.legacyExpiresAt = expiresAt
+	return r.persistLegacyErr
+}
+
+func (r *imageStudioWorkerRepoStub) FailLegacyInputs(_ context.Context, _ int64, redacted json.RawMessage, _ time.Time) error {
+	r.failLegacyCalls++
+	r.failLegacyCode = ImageStudioInputCodeLegacyInvalid
+	r.failLegacyRedacted = append(json.RawMessage(nil), redacted...)
+	return nil
+}
+
+func (r *imageStudioWorkerRepoStub) MarkFailed(context.Context, int64, time.Time, string, string) error {
+	r.markFailedCalls++
+	return nil
 }
 
 func (r *imageStudioWorkerRepoStub) UpdateHeartbeat(context.Context, int64, time.Time) error {
@@ -464,6 +631,31 @@ func (r *imageStudioWorkerRepoStub) UpdateHeartbeat(context.Context, int64, time
 		}
 	}
 	return nil
+}
+
+type imageStudioLegacyStorageStub struct {
+	ImageStudioInputStorage
+	staged           *StagedEditInputs
+	materializeErr   error
+	removeErr        error
+	materializeCalls int
+	images           []string
+	mask             *string
+	removedPaths     []string
+	removedMask      *string
+}
+
+func (s *imageStudioLegacyStorageStub) MaterializeLegacy(_ context.Context, images []string, mask *string) (*StagedEditInputs, error) {
+	s.materializeCalls++
+	s.images = append([]string(nil), images...)
+	s.mask = cloneImageStudioString(mask)
+	return s.staged, s.materializeErr
+}
+
+func (s *imageStudioLegacyStorageStub) RemoveInputs(paths []string, mask *string) error {
+	s.removedPaths = append([]string(nil), paths...)
+	s.removedMask = cloneImageStudioString(mask)
+	return s.removeErr
 }
 
 func (r *imageStudioWorkerRepoStub) MarkStaleRunningFailed(context.Context, int64, time.Time, time.Time) (bool, error) {

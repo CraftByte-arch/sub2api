@@ -241,6 +241,10 @@ func (s *imageStudioCreateStorageStub) StageEditInputs(_ context.Context, images
 	return s.staged, s.stageErr
 }
 
+func (s *imageStudioCreateStorageStub) MaterializeLegacy(context.Context, []string, *string) (*StagedEditInputs, error) {
+	panic("unexpected MaterializeLegacy call")
+}
+
 func (s *imageStudioCreateStorageStub) OpenInputs([]string, *string) (*OpenedEditInputs, error) {
 	panic("unexpected OpenInputs call")
 }
@@ -339,6 +343,10 @@ func (r *imageStudioJobDeleteRepoStub) MarkRunning(context.Context, int64, time.
 
 func (r *imageStudioJobDeleteRepoStub) PersistLegacyInputs(context.Context, int64, []string, *string, json.RawMessage, time.Time) error {
 	panic("unexpected PersistLegacyInputs call")
+}
+
+func (r *imageStudioJobDeleteRepoStub) FailLegacyInputs(context.Context, int64, json.RawMessage, time.Time) error {
+	panic("unexpected FailLegacyInputs call")
 }
 
 func (r *imageStudioJobDeleteRepoStub) ExpireQueuedInputs(context.Context, time.Time, int) ([]ImageStudioJob, error) {

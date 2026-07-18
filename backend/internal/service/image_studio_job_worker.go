@@ -228,11 +228,16 @@ func (s *ImageStudioJobService) processJob(ctx context.Context, job ImageStudioJ
 	if !acquired {
 		return
 	}
+	job.Status = ImageStudioJobStatusRunning
 	if err := s.repo.UpdateHeartbeat(ctx, job.ID, startedAt); err != nil {
 		return
 	}
 	stopHeartbeat := s.startImageStudioJobHeartbeat(ctx, job.ID, imageStudioHeartbeatInterval)
 	defer stopHeartbeat()
+	_, terminal, err := s.materializeLegacyJobInputs(ctx, &job)
+	if err != nil || terminal {
+		return
+	}
 
 	apiKey, err := s.apiKeyService.GetByID(ctx, job.APIKeyID)
 	if err != nil {
@@ -316,6 +321,108 @@ func (s *ImageStudioJobService) processJob(ctx context.Context, job ImageStudioJ
 	if err := s.settleJob(ctx, job, apiKey); err != nil {
 		s.handleImageStudioSettlementError(ctx, job, err)
 	}
+}
+
+func (s *ImageStudioJobService) materializeLegacyJobInputs(ctx context.Context, job *ImageStudioJob) (materialized, terminal bool, retErr error) {
+	if s == nil || job == nil || job.Mode != ImageStudioJobModeEdit || len(job.InputImagePaths) != 0 || job.InputMaskPath != nil {
+		return false, false, nil
+	}
+	images, mask, redacted, present, err := parseImageStudioLegacyPayload(job.RequestPayload)
+	if !present {
+		return false, false, err
+	}
+	failInvalid := func(invalidErr error) (bool, bool, error) {
+		if failErr := s.repo.FailLegacyInputs(ctx, job.ID, redacted, s.now()); failErr != nil {
+			return false, true, errors.Join(invalidErr, failErr)
+		}
+		return false, true, nil
+	}
+	if err != nil {
+		return failInvalid(err)
+	}
+	if s.inputStore == nil {
+		return false, false, inputStorageError(errors.New("image studio input store is not configured"))
+	}
+	staged, err := s.inputStore.MaterializeLegacy(ctx, images, mask)
+	if err != nil {
+		if errors.Is(err, ErrImageStudioLegacyInputInvalid) {
+			return failInvalid(err)
+		}
+		return false, false, err
+	}
+	if staged == nil || len(staged.ImagePaths) == 0 {
+		return false, false, inputStorageError(errors.New("legacy image studio materialization returned no inputs"))
+	}
+	expiresAt := s.now().Add(time.Duration(s.InputRetentionHours(ctx)) * time.Hour)
+	if err := s.repo.PersistLegacyInputs(ctx, job.ID, staged.ImagePaths, staged.MaskPath, redacted, expiresAt); err != nil {
+		cleanupErr := s.inputStore.RemoveInputs(staged.ImagePaths, staged.MaskPath)
+		return false, false, errors.Join(err, cleanupErr)
+	}
+	job.InputImagePaths = append([]string(nil), staged.ImagePaths...)
+	job.InputMaskPath = cloneImageStudioString(staged.MaskPath)
+	job.InputExpiresAt = &expiresAt
+	job.InputDeletedAt = nil
+	job.RequestPayload = append(json.RawMessage(nil), redacted...)
+	return true, false, nil
+}
+
+func parseImageStudioLegacyPayload(raw json.RawMessage) (images []string, mask *string, redacted json.RawMessage, present bool, retErr error) {
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &payload); err != nil || payload == nil {
+		return nil, nil, nil, false, legacyInputInvalidError(ErrImageStudioInputInvalid)
+	}
+	rawImages, hasImages := payload["images"]
+	rawMask, hasMask := payload["mask"]
+	present = hasImages || hasMask
+	if !present {
+		return nil, nil, nil, false, nil
+	}
+	delete(payload, "images")
+	delete(payload, "mask")
+	redactedBytes, err := json.Marshal(payload)
+	if err != nil {
+		return nil, nil, nil, true, legacyInputInvalidError(ErrImageStudioInputInvalid)
+	}
+	redacted = json.RawMessage(redactedBytes)
+	if !hasImages {
+		return nil, nil, redacted, true, legacyInputInvalidError(ErrImageStudioInputInvalid)
+	}
+	var entries []json.RawMessage
+	if err := json.Unmarshal(rawImages, &entries); err != nil {
+		return nil, nil, redacted, true, legacyInputInvalidError(ErrImageStudioInputInvalid)
+	}
+	images = make([]string, len(entries))
+	for i := range entries {
+		value, err := imageStudioLegacyImageURL(entries[i])
+		if err != nil {
+			return nil, nil, redacted, true, err
+		}
+		images[i] = value
+	}
+	if hasMask {
+		value, err := imageStudioLegacyImageURL(rawMask)
+		if err != nil {
+			return nil, nil, redacted, true, err
+		}
+		mask = &value
+	}
+	return images, mask, redacted, true, nil
+}
+
+func imageStudioLegacyImageURL(raw json.RawMessage) (string, error) {
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &object); err != nil || object == nil {
+		return "", legacyInputInvalidError(ErrImageStudioInputInvalid)
+	}
+	rawURL, ok := object["image_url"]
+	if !ok {
+		return "", legacyInputInvalidError(ErrImageStudioInputInvalid)
+	}
+	var value string
+	if err := json.Unmarshal(rawURL, &value); err != nil {
+		return "", legacyInputInvalidError(ErrImageStudioInputInvalid)
+	}
+	return value, nil
 }
 
 func (s *ImageStudioJobService) markImageStudioSettling(ctx context.Context, jobID int64, settlementPayload json.RawMessage, originalPath, thumbnailPath, mimeType string, fileSizeBytes int64, width, height int, leaseAt time.Time) error {

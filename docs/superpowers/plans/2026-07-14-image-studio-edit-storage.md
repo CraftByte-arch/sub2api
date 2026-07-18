@@ -267,19 +267,19 @@ git commit -m "feat: upload compressed image studio references"
 - Modify: `backend/internal/service/image_studio_job_worker.go`
 - Modify: `backend/internal/service/image_studio_job_worker_test.go`
 
-- [ ] **Step 1: 写 RED 遗留测试**
+- [x] **Step 1: 写 RED 遗留测试**
 
 覆盖 1/4 张有序 data URL、可选 mask、零/五张、坏 base64、repo 更新失败删除新目录，以及成功时路径写入与 payload redaction 同时发生。
 
-- [ ] **Step 2: 实现 `MaterializeLegacy`**
+- [x] **Step 2: 实现 `MaterializeLegacy`**
 
 只接受受支持的 image data URL，使用 bounded base64 decoder 并复用 Task 2 的内容/mask 校验。不得记录 bytes 或完整 data URL。
 
-- [ ] **Step 3: Worker 首次领取后原子替换**
+- [x] **Step 3: Worker 首次领取后原子替换**
 
 edit job 无路径但 payload 含 `images` 时 materialize，构建去掉 `images`/`mask` 的 JSON，再调用 `PersistLegacyInputs`。更新失败删除目录；无效遗留输入标记 `legacy_input_invalid` 且清除可安全 redaction 的二进制字段，避免重复解码。
 
-- [ ] **Step 4: GREEN 并提交**
+- [x] **Step 4: GREEN 并提交**
 
 ```bash
 cd backend
