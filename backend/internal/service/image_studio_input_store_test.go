@@ -98,6 +98,33 @@ func TestImageStudioInputStoreValidatesDeclaredAndDetectedMIME(t *testing.T) {
 	}
 }
 
+func TestImageStudioInputStoreClassifiesEmptyAndShortFilesAsInvalid(t *testing.T) {
+	tests := []struct {
+		name string
+		data []byte
+	}{
+		{name: "empty", data: nil},
+		{name: "short", data: []byte("not an image")},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := NewImageStudioInputStore(t.TempDir(), 1<<20)
+
+			staged, err := store.StageEditInputs(context.Background(), []UploadedFile{{
+				Reader: bytes.NewReader(tt.data), ContentType: "image/png",
+			}}, nil)
+
+			require.Nil(t, staged)
+			var inputErr *ImageStudioInputError
+			require.ErrorAs(t, err, &inputErr)
+			require.Equal(t, ImageStudioInputCodeInvalid, inputErr.Code)
+			require.ErrorIs(t, err, ErrImageStudioInputInvalid)
+			require.Empty(t, imageStudioInputDirs(t, store.Root()))
+		})
+	}
+}
+
 func TestImageStudioInputStoreValidatesMask(t *testing.T) {
 	reference := imageStudioTestPNG(t, 4, 3, false)
 	tests := []struct {
@@ -168,6 +195,82 @@ func TestImageStudioInputStoreStagesWithAtomicFinalize(t *testing.T) {
 	require.Equal(t, "image-01.png", entries[0].Name())
 }
 
+func TestImageStudioInputStoreSyncsBeforeCloseAndRename(t *testing.T) {
+	store := NewImageStudioInputStore(t.TempDir(), 1<<20)
+	events := make([]string, 0, 3)
+	store.syncTempFile = func(file *os.File) error {
+		events = append(events, "sync")
+		return file.Sync()
+	}
+	store.closeTempFile = func(file *os.File) error {
+		events = append(events, "close")
+		return file.Close()
+	}
+	store.renameTempFile = func(oldPath, newPath string) error {
+		events = append(events, "rename")
+		return os.Rename(oldPath, newPath)
+	}
+
+	staged, err := store.StageEditInputs(context.Background(), []UploadedFile{{
+		Reader: bytes.NewReader(imageStudioTestPNG(t, 2, 2, false)), ContentType: "image/png",
+	}}, nil)
+
+	require.NoError(t, err)
+	require.NotNil(t, staged)
+	require.Equal(t, []string{"sync", "close", "rename"}, events)
+}
+
+func TestImageStudioInputStoreRollsBackOnFinalizeFailure(t *testing.T) {
+	tests := []struct {
+		name      string
+		configure func(*ImageStudioInputStore, error)
+	}{
+		{
+			name: "sync",
+			configure: func(store *ImageStudioInputStore, failure error) {
+				store.syncTempFile = func(*os.File) error { return failure }
+			},
+		},
+		{
+			name: "close",
+			configure: func(store *ImageStudioInputStore, failure error) {
+				store.closeTempFile = func(file *os.File) error {
+					if err := file.Close(); err != nil {
+						return err
+					}
+					return failure
+				}
+			},
+		},
+		{
+			name: "rename",
+			configure: func(store *ImageStudioInputStore, failure error) {
+				store.renameTempFile = func(string, string) error { return failure }
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := NewImageStudioInputStore(t.TempDir(), 1<<20)
+			failure := errors.New(tt.name + " failed")
+			tt.configure(store, failure)
+
+			staged, err := store.StageEditInputs(context.Background(), []UploadedFile{{
+				Reader: bytes.NewReader(imageStudioTestPNG(t, 2, 2, false)), ContentType: "image/png",
+			}}, nil)
+
+			require.Nil(t, staged)
+			var inputErr *ImageStudioInputError
+			require.ErrorAs(t, err, &inputErr)
+			require.Equal(t, ImageStudioInputCodeStorageUnavailable, inputErr.Code)
+			require.ErrorIs(t, err, ErrImageStudioInputStorageUnavailable)
+			require.ErrorContains(t, err, failure.Error())
+			require.Empty(t, imageStudioInputDirs(t, store.Root()))
+		})
+	}
+}
+
 func TestImageStudioInputStoreRollsBackDirectoryOnMidStreamFailure(t *testing.T) {
 	store := NewImageStudioInputStore(t.TempDir(), 1<<20)
 	validPNG := imageStudioTestPNG(t, 3, 2, false)
@@ -178,6 +281,9 @@ func TestImageStudioInputStoreRollsBackDirectoryOnMidStreamFailure(t *testing.T)
 	}, nil)
 
 	require.ErrorIs(t, err, ErrImageStudioInputStorageUnavailable)
+	var inputErr *ImageStudioInputError
+	require.ErrorAs(t, err, &inputErr)
+	require.Equal(t, ImageStudioInputCodeStorageUnavailable, inputErr.Code)
 	require.Nil(t, staged)
 	require.Empty(t, imageStudioInputDirs(t, store.Root()))
 }
@@ -285,6 +391,27 @@ func TestImageStudioInputStoreRemoveRejectsNonGeneratedUploadDirectory(t *testin
 	require.ErrorIs(t, err, ErrImageStudioInputPathInvalid)
 	_, statErr := os.Stat(keepPath)
 	require.NoError(t, statErr)
+}
+
+func TestImageStudioInputStoreRemoveRejectsUploadDirectorySymlink(t *testing.T) {
+	store := NewImageStudioInputStore(t.TempDir(), 1<<20)
+	inputsRoot := filepath.Join(store.Root(), "inputs")
+	targetDir := filepath.Join(inputsRoot, "upload-b")
+	require.NoError(t, os.MkdirAll(targetDir, 0o700))
+	targetPath := filepath.Join(targetDir, "image-01.png")
+	require.NoError(t, os.WriteFile(targetPath, imageStudioTestPNG(t, 2, 2, false), 0o600))
+	symlinkDir := filepath.Join(inputsRoot, "upload-a")
+	require.NoError(t, os.Symlink(targetDir, symlinkDir))
+
+	for range 2 {
+		err := store.RemoveInputs([]string{"inputs/upload-a/image-01.png"}, nil)
+
+		require.ErrorIs(t, err, ErrImageStudioInputPathInvalid)
+		info, statErr := os.Lstat(symlinkDir)
+		require.NoError(t, statErr)
+		require.NotZero(t, info.Mode()&os.ModeSymlink)
+		require.FileExists(t, targetPath)
+	}
 }
 
 func imageStudioTestPNG(t *testing.T, width, height int, transparent bool) []byte {

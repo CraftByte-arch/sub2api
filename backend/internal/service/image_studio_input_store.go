@@ -99,8 +99,11 @@ func (o *OpenedEditInputs) Close() error {
 }
 
 type ImageStudioInputStore struct {
-	root         string
-	maxFileBytes int64
+	root           string
+	maxFileBytes   int64
+	syncTempFile   func(*os.File) error
+	closeTempFile  func(*os.File) error
+	renameTempFile func(string, string) error
 }
 
 func NewImageStudioInputStore(dataDir string, maxFileBytes int64) *ImageStudioInputStore {
@@ -115,7 +118,13 @@ func NewImageStudioInputStore(dataDir string, maxFileBytes int64) *ImageStudioIn
 	if maxFileBytes <= 0 {
 		maxFileBytes = defaultImageStudioInputMaxFileBytes
 	}
-	return &ImageStudioInputStore{root: root, maxFileBytes: maxFileBytes}
+	return &ImageStudioInputStore{
+		root:           root,
+		maxFileBytes:   maxFileBytes,
+		syncTempFile:   (*os.File).Sync,
+		closeTempFile:  (*os.File).Close,
+		renameTempFile: os.Rename,
+	}
 }
 
 func (s *ImageStudioInputStore) Root() string {
@@ -192,26 +201,34 @@ func (s *ImageStudioInputStore) stageOne(ctx context.Context, uploadDir, baseNam
 		return nil, inputStorageError(err)
 	}
 	written, copyErr := io.Copy(tempFile, io.LimitReader(upload.Reader, s.maxFileBytes+1))
-	closeErr := tempFile.Close()
 	if copyErr != nil {
+		_ = s.closeTempFile(tempFile)
 		return nil, inputStorageError(copyErr)
 	}
-	if closeErr != nil {
-		return nil, inputStorageError(closeErr)
-	}
 	if written > s.maxFileBytes {
+		_ = s.closeTempFile(tempFile)
 		return nil, inputInvalidError(ErrImageStudioInputTooLarge)
 	}
 	if err := ctx.Err(); err != nil {
+		_ = s.closeTempFile(tempFile)
 		return nil, inputStorageError(err)
 	}
 
 	validated, err := validateImageStudioFile(tempPath, declaredType, mask, expectedBounds)
 	if err != nil {
+		_ = s.closeTempFile(tempFile)
 		return nil, err
 	}
+	syncErr := s.syncTempFile(tempFile)
+	closeErr := s.closeTempFile(tempFile)
+	if syncErr != nil {
+		return nil, inputStorageError(syncErr)
+	}
+	if closeErr != nil {
+		return nil, inputStorageError(closeErr)
+	}
 	validated.finalName = baseName + imageStudioExtension(validated.contentType)
-	if err := os.Rename(tempPath, filepath.Join(uploadDir, validated.finalName)); err != nil {
+	if err := s.renameTempFile(tempPath, filepath.Join(uploadDir, validated.finalName)); err != nil {
 		return nil, inputStorageError(err)
 	}
 	return validated, nil
@@ -293,7 +310,7 @@ func (s *ImageStudioInputStore) RemoveInputs(paths []string, maskPath *string) e
 	}
 	var uploadDir string
 	for i, path := range paths {
-		_, currentDir, err := s.resolveInputPath(path, fmt.Sprintf("image-%02d", i+1), false)
+		currentDir, err := s.resolveRemovalUploadDir(path, fmt.Sprintf("image-%02d", i+1))
 		if err != nil {
 			return err
 		}
@@ -304,7 +321,7 @@ func (s *ImageStudioInputStore) RemoveInputs(paths []string, maskPath *string) e
 		}
 	}
 	if maskPath != nil {
-		_, currentDir, err := s.resolveInputPath(*maskPath, "mask", false)
+		currentDir, err := s.resolveRemovalUploadDir(*maskPath, "mask")
 		if err != nil {
 			return err
 		}
@@ -321,6 +338,43 @@ func (s *ImageStudioInputStore) RemoveInputs(paths []string, maskPath *string) e
 		return inputStorageError(err)
 	}
 	return nil
+}
+
+func (s *ImageStudioInputStore) resolveRemovalUploadDir(relativePath, expectedBase string) (string, error) {
+	parts, err := validImageStudioRelativePath(relativePath, expectedBase)
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(s.root, 0o700); err != nil {
+		return "", inputStorageError(err)
+	}
+	resolvedRoot, err := filepath.EvalSymlinks(s.root)
+	if err != nil {
+		return "", inputStorageError(err)
+	}
+	inputsDir := filepath.Join(resolvedRoot, parts[0])
+	info, err := os.Lstat(inputsDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return filepath.Join(inputsDir, parts[1]), nil
+	}
+	if err != nil {
+		return "", inputStorageError(err)
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return "", inputPathError(ErrImageStudioInputPathInvalid)
+	}
+	uploadDir := filepath.Join(inputsDir, parts[1])
+	info, err = os.Lstat(uploadDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return uploadDir, nil
+	}
+	if err != nil {
+		return "", inputStorageError(err)
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return "", inputPathError(ErrImageStudioInputPathInvalid)
+	}
+	return uploadDir, nil
 }
 
 func (s *ImageStudioInputStore) resolveInputPath(relativePath, expectedBase string, mustExist bool) (string, string, error) {
@@ -466,7 +520,7 @@ func validateOpenImageStudioFile(file *os.File, maxFileBytes int64, mask bool, e
 	}
 	header := make([]byte, 512)
 	n, err := io.ReadFull(file, header)
-	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) {
+	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
 		return nil, inputStorageError(err)
 	}
 	contentType := http.DetectContentType(header[:n])
