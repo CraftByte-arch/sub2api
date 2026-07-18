@@ -115,11 +115,15 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 		settings.ImageStudioRetentionValue = defaultImageStudioRetentionValue
 	}
 	settings.ImageStudioRetentionUnit = normalizeImageStudioRetentionUnit(settings.ImageStudioRetentionUnit)
+	if settings.ImageStudioInputRetentionHours <= 0 {
+		settings.ImageStudioInputRetentionHours = DefaultImageStudioInputRetentionHours
+	}
 
 	updates := make(map[string]string)
 	updates[SettingKeyImageStudioAsyncConcurrency] = strconv.Itoa(settings.ImageStudioAsyncConcurrency)
 	updates[SettingKeyImageStudioRetentionValue] = strconv.Itoa(settings.ImageStudioRetentionValue)
 	updates[SettingKeyImageStudioRetentionUnit] = settings.ImageStudioRetentionUnit
+	updates[SettingKeyImageStudioInputRetentionHours] = strconv.Itoa(settings.ImageStudioInputRetentionHours)
 	updates[SettingKeyImageStudioAvailableGroupIDs] = marshalInt64ListSetting(settings.ImageStudioAvailableGroupIDs)
 	updates[SettingKeyImageGenerationToolDeclarationPolicy] = NormalizeImageGenerationToolDeclarationPolicy(settings.ImageGenerationToolDeclarationPolicy)
 	updates[SettingKeyOpenAILongContextBillingEnabled] = strconv.FormatBool(settings.OpenAILongContextBillingEnabled)

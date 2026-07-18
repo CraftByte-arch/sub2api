@@ -297,8 +297,10 @@ const (
 	SettingKeyImageStudioAsyncConcurrency          = "image_studio_async_concurrency"
 	SettingKeyImageStudioRetentionValue            = "image_studio_retention_value"
 	SettingKeyImageStudioRetentionUnit             = "image_studio_retention_unit"
+	SettingKeyImageStudioInputRetentionHours       = "image_studio_input_retention_hours"
 	SettingKeyImageStudioAvailableGroupIDs         = "image_studio_available_group_ids"
 	SettingKeyImageGenerationToolDeclarationPolicy = "image_generation_tool_declaration_policy"
+	DefaultImageStudioInputRetentionHours          = 24
 
 	ImageGenerationToolDeclarationPolicyStrip  = "strip"
 	ImageGenerationToolDeclarationPolicyAllow  = "allow"

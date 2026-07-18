@@ -197,6 +197,8 @@ vi.mock("vue-i18n", async () => {
     "admin.settings.imageStudio.availableGroups": "生图体验可用分组",
     "admin.settings.imageStudio.availableGroupsHint": "只有选中分组下的 API Key 才能在生图体验中创建任务。",
     "admin.settings.imageStudio.availableGroupsEmpty": "暂无可选分组",
+    "admin.settings.imageStudio.inputRetentionHours": "输入文件保留时长",
+    "admin.settings.imageStudio.inputRetentionHoursHint": "失败或排队任务的输入文件最多保留此时长。",
     "admin.settings.imageStudio.toolDeclarationPolicy": "image_generation 工具声明策略",
     "admin.settings.imageStudio.toolDeclarationPolicyHint": "控制客户端仅声明 image_generation 工具但未实际选择时的处理方式。",
     "admin.settings.imageStudio.toolDeclarationPolicyStrip": "移除被动声明并继续",
@@ -927,6 +929,45 @@ describe("admin SettingsView payment visible method controls", () => {
       .findAll("select.select-stub")
       .find((select) => select.text().includes("移除被动声明并继续"));
     expect(policySelect).toBeDefined();
+  });
+
+  it("defaults image studio input retention to 24 hours", async () => {
+    const wrapper = mountView();
+
+    await flushPromises();
+    await openImageStudioTab(wrapper);
+
+    const input = wrapper.get('[data-testid="image-studio-input-retention-hours"]');
+    expect((input.element as HTMLInputElement).value).toBe("24");
+    expect(input.attributes("min")).toBe("1");
+    expect(input.attributes("step")).toBe("1");
+  });
+
+  it("loads and normalizes image studio input retention without changing output retention", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      image_studio_input_retention_hours: 36,
+      image_studio_retention_value: 72,
+      image_studio_retention_unit: "hour",
+    });
+    const wrapper = mountView();
+
+    await flushPromises();
+    await openImageStudioTab(wrapper);
+
+    const input = wrapper.get('[data-testid="image-studio-input-retention-hours"]');
+    expect((input.element as HTMLInputElement).value).toBe("36");
+    await input.setValue("0");
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        image_studio_input_retention_hours: 24,
+        image_studio_retention_value: 72,
+        image_studio_retention_unit: "hour",
+      }),
+    );
   });
 
   it("normalizes null supported_types from API so provider card stays visible", async () => {

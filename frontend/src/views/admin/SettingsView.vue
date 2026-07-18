@@ -3854,6 +3854,23 @@
                 </div>
                 <div>
                   <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ t("admin.settings.imageStudio.inputRetentionHours") }}
+                  </label>
+                  <input
+                    v-model.number="form.image_studio_input_retention_hours"
+                    data-testid="image-studio-input-retention-hours"
+                    type="number"
+                    min="1"
+                    step="1"
+                    class="input max-w-40"
+                    placeholder="24"
+                  />
+                  <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                    {{ t("admin.settings.imageStudio.inputRetentionHoursHint") }}
+                  </p>
+                </div>
+                <div>
+                  <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
                     {{ t("admin.settings.imageStudio.availableGroups") }}
                   </label>
                   <div
@@ -8475,6 +8492,7 @@ const form = reactive<SettingsForm>({
   image_studio_async_concurrency: 2,
   image_studio_retention_value: 0,
   image_studio_retention_unit: "day",
+  image_studio_input_retention_hours: 24,
   image_studio_available_group_ids: [] as number[],
   image_generation_tool_declaration_policy: "strip",
   openai_long_context_billing_enabled: true,
@@ -9527,6 +9545,10 @@ async function loadSettings() {
           .map((id) => Number(id))
           .filter((id) => Number.isFinite(id) && id > 0)
       : [];
+    form.image_studio_input_retention_hours = Math.max(
+      1,
+      Math.floor(Number(settings.image_studio_input_retention_hours) || 24),
+    );
     form.image_generation_tool_declaration_policy = ["strip", "allow", "reject"].includes(
       settings.image_generation_tool_declaration_policy,
     )
@@ -9959,6 +9981,10 @@ async function saveSettings() {
       ),
       image_studio_retention_unit:
         form.image_studio_retention_unit === "hour" ? "hour" : "day",
+      image_studio_input_retention_hours: Math.max(
+        1,
+        Math.floor(Number(form.image_studio_input_retention_hours) || 24),
+      ),
       image_studio_available_group_ids: Array.from(
         new Set(
           (form.image_studio_available_group_ids || [])

@@ -245,6 +245,34 @@ func TestSettingService_GetAllSettings_ParsesImageStudioAsyncSettings(t *testing
 	require.Equal(t, ImageStudioRetentionUnitDay, settings.ImageStudioRetentionUnit)
 }
 
+func TestSettingService_GetAllSettings_ParsesImageStudioInputRetentionHours(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want int64
+	}{
+		{name: "missing", want: 24},
+		{name: "invalid", raw: "not-a-number", want: 24},
+		{name: "zero", raw: "0", want: 24},
+		{name: "negative", raw: "-8", want: 24},
+		{name: "positive", raw: "48", want: 48},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			values := map[string]string{}
+			if tt.raw != "" {
+				values[SettingKeyImageStudioInputRetentionHours] = tt.raw
+			}
+			svc := NewSettingService(&settingHandlerStyleRepoStub{values: values}, &config.Config{})
+
+			settings, err := svc.GetAllSettings(context.Background())
+			require.NoError(t, err)
+			require.Equal(t, int(tt.want), settings.ImageStudioInputRetentionHours)
+		})
+	}
+}
+
 func TestSettingService_GetAllSettings_ParsesImageStudioAdminControls(t *testing.T) {
 	repo := &settingHandlerStyleRepoStub{
 		values: map[string]string{
