@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -153,42 +154,54 @@ func validImageStudioEditCreateInput() ImageStudioJobCreateInput {
 }
 
 func TestImageStudioJobServiceDeleteJobRemovesAssetsAndRecord(t *testing.T) {
-	dir := t.TempDir()
+	dataDir := t.TempDir()
+	t.Setenv("DATA_DIR", dataDir)
+	dir := filepath.Join(dataDir, imageStudioAssetBaseDir, "44")
+	require.NoError(t, os.MkdirAll(dir, 0o700))
 	originalPath := filepath.Join(dir, "original.png")
 	thumbnailPath := filepath.Join(dir, "thumbnail.jpg")
 	require.NoError(t, os.WriteFile(originalPath, []byte("original"), 0o600))
 	require.NoError(t, os.WriteFile(thumbnailPath, []byte("thumbnail"), 0o600))
+	inputPath := "inputs/upload-delete/image-01.png"
+	events := make([]string, 0, 2)
+	store := &imageStudioDeleteStorageStub{events: &events}
 
 	repo := &imageStudioJobDeleteRepoStub{
 		job: &ImageStudioJob{
-			ID:            44,
-			UserID:        7,
-			OriginalPath:  originalPath,
-			ThumbnailPath: thumbnailPath,
+			ID:              44,
+			UserID:          7,
+			InputImagePaths: []string{inputPath},
+			OriginalPath:    originalPath,
+			ThumbnailPath:   thumbnailPath,
 		},
+		events:            &events,
+		pathsExpectedGone: []string{originalPath, thumbnailPath},
 	}
-	svc := NewImageStudioJobService(repo, nil, nil, time.Now)
+	svc := NewImageStudioJobService(repo, nil, store, time.Now)
 
 	err := svc.DeleteJob(context.Background(), 7, 44)
 
 	require.NoError(t, err)
 	require.Equal(t, int64(44), repo.deletedID)
 	require.Equal(t, int64(7), repo.deletedUserID)
+	require.Equal(t, []string{inputPath}, store.removedPaths)
 	require.NoFileExists(t, originalPath)
 	require.NoFileExists(t, thumbnailPath)
+	require.NoDirExists(t, dir)
+	require.Equal(t, []string{"inputs", "row"}, events)
 }
 
 func TestImageStudioJobServiceDeleteJobDoesNotDeleteRecordWhenAssetRemovalFails(t *testing.T) {
-	dir := t.TempDir()
-	nonEmptyDir := filepath.Join(dir, "asset-dir")
-	require.NoError(t, os.Mkdir(nonEmptyDir, 0o700))
-	require.NoError(t, os.WriteFile(filepath.Join(nonEmptyDir, "child"), []byte("x"), 0o600))
+	dataDir := t.TempDir()
+	t.Setenv("DATA_DIR", dataDir)
+	outside := filepath.Join(t.TempDir(), "must-remain.png")
+	require.NoError(t, os.WriteFile(outside, []byte("x"), 0o600))
 
 	repo := &imageStudioJobDeleteRepoStub{
 		job: &ImageStudioJob{
 			ID:           44,
 			UserID:       7,
-			OriginalPath: nonEmptyDir,
+			OriginalPath: outside,
 		},
 	}
 	svc := NewImageStudioJobService(repo, nil, nil, time.Now)
@@ -197,6 +210,62 @@ func TestImageStudioJobServiceDeleteJobDoesNotDeleteRecordWhenAssetRemovalFails(
 
 	require.Error(t, err)
 	require.Zero(t, repo.deletedID)
+	require.FileExists(t, outside, "database path pollution must not delete outside the job output directory")
+}
+
+func TestImageStudioJobServiceDeleteJobKeepsRowWhenInputRemovalFails(t *testing.T) {
+	repo := &imageStudioJobDeleteRepoStub{job: &ImageStudioJob{
+		ID: 44, UserID: 7, InputImagePaths: []string{"inputs/upload-delete/image-01.png"},
+	}}
+	store := &imageStudioDeleteStorageStub{removeErr: errors.New("input io failed")}
+	svc := NewImageStudioJobService(repo, nil, store, time.Now)
+
+	err := svc.DeleteJob(context.Background(), 7, 44)
+
+	require.ErrorContains(t, err, "input io failed")
+	require.Zero(t, repo.deletedID)
+}
+
+func TestImageStudioJobServiceDeleteJobRejectsRunningOwnership(t *testing.T) {
+	repo := &imageStudioJobDeleteRepoStub{claimErr: ErrImageStudioJobBusy}
+	store := &imageStudioDeleteStorageStub{}
+	svc := NewImageStudioJobService(repo, nil, store, time.Now)
+
+	err := svc.DeleteJob(context.Background(), 7, 44)
+
+	require.ErrorIs(t, err, ErrImageStudioJobBusy)
+	require.Empty(t, store.removedPaths)
+	require.Zero(t, repo.deletedID)
+}
+
+func TestImageStudioJobServiceCleanupInputsIsBoundedAndIsolatesFailures(t *testing.T) {
+	now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
+	repo := &imageStudioLifecycleRepoStub{
+		expiredQueued: []ImageStudioJob{{ID: 1, InputImagePaths: []string{"inputs/upload-one/image-01.png"}}, {ID: 2, InputImagePaths: []string{"inputs/upload-two/image-01.png"}}},
+		expiredTerminal: []ImageStudioJob{
+			{ID: 3, Status: ImageStudioJobStatusFailed, InputImagePaths: []string{"inputs/upload-three/image-01.png"}},
+			{ID: 4, Status: ImageStudioJobStatusRunning, InputImagePaths: []string{"inputs/upload-running/image-01.png"}},
+		},
+	}
+	store := &imageStudioLifecycleStorageStub{removeErrByDir: map[string]error{"upload-one": errors.New("first remove failed")}}
+	svc := NewImageStudioJobService(repo, nil, store, func() time.Time { return now })
+
+	svc.cleanupExpiredInputs(context.Background())
+
+	require.Equal(t, 50, repo.expireLimit)
+	require.Equal(t, 50, repo.listLimit)
+	require.Equal(t, []int64{2, 3}, repo.markedInputIDs, "a single filesystem failure must not stop the batch")
+	require.Equal(t, []string{"upload-one", "upload-two", "upload-three"}, store.removedDirs)
+}
+
+func TestImageStudioJobServiceCleanupSkipsOrphansWhenReferenceQueryFails(t *testing.T) {
+	repo := &imageStudioLifecycleRepoStub{referencesErr: errors.New("database unavailable")}
+	store := &imageStudioLifecycleStorageStub{}
+	svc := NewImageStudioJobService(repo, nil, store, time.Now)
+
+	svc.cleanupExpiredInputs(context.Background())
+
+	require.Zero(t, store.cleanupCalls)
 }
 
 func TestImageStudioJobServiceEstimateCostUsesGatewayDefaultImagePrice(t *testing.T) {
@@ -255,6 +324,78 @@ func (s *imageStudioCreateStorageStub) RemoveInputs(paths []string, mask *string
 	return s.removeErr
 }
 
+type imageStudioDeleteStorageStub struct {
+	ImageStudioInputStorage
+	removeErr    error
+	removedPaths []string
+	events       *[]string
+}
+
+func (s *imageStudioDeleteStorageStub) RemoveInputs(paths []string, _ *string) error {
+	s.removedPaths = append([]string(nil), paths...)
+	if s.events != nil {
+		*s.events = append(*s.events, "inputs")
+	}
+	return s.removeErr
+}
+
+type imageStudioLifecycleRepoStub struct {
+	ImageStudioJobRepository
+	expiredQueued   []ImageStudioJob
+	expiredTerminal []ImageStudioJob
+	references      map[string]struct{}
+	running         map[string]struct{}
+	referencesErr   error
+	runningErr      error
+	expireLimit     int
+	listLimit       int
+	markedInputIDs  []int64
+}
+
+func (r *imageStudioLifecycleRepoStub) ExpireQueuedInputs(_ context.Context, _ time.Time, limit int) ([]ImageStudioJob, error) {
+	r.expireLimit = limit
+	return r.expiredQueued, nil
+}
+
+func (r *imageStudioLifecycleRepoStub) ListExpiredInputs(_ context.Context, _ time.Time, limit int) ([]ImageStudioJob, error) {
+	r.listLimit = limit
+	return r.expiredTerminal, nil
+}
+
+func (r *imageStudioLifecycleRepoStub) MarkInputsDeleted(_ context.Context, id int64, _ time.Time) error {
+	r.markedInputIDs = append(r.markedInputIDs, id)
+	return nil
+}
+
+func (r *imageStudioLifecycleRepoStub) ListReferencedInputDirs(context.Context) (map[string]struct{}, error) {
+	return r.references, r.referencesErr
+}
+
+func (r *imageStudioLifecycleRepoStub) ListRunningInputDirs(context.Context) (map[string]struct{}, error) {
+	return r.running, r.runningErr
+}
+
+type imageStudioLifecycleStorageStub struct {
+	ImageStudioInputStorage
+	removeErrByDir map[string]error
+	removedDirs    []string
+	cleanupCalls   int
+}
+
+func (s *imageStudioLifecycleStorageStub) RemoveInputs(paths []string, _ *string) error {
+	dir := ""
+	if len(paths) > 0 {
+		dir = strings.Split(paths[0], "/")[1]
+	}
+	s.removedDirs = append(s.removedDirs, dir)
+	return s.removeErrByDir[dir]
+}
+
+func (s *imageStudioLifecycleStorageStub) CleanupOrphans(ImageStudioInputCleanupOptions) (ImageStudioInputCleanupResult, error) {
+	s.cleanupCalls++
+	return ImageStudioInputCleanupResult{}, nil
+}
+
 type imageStudioCreateSettingRepoStub struct {
 	values map[string]string
 }
@@ -293,11 +434,14 @@ func (r *imageStudioCreateSettingRepoStub) GetAll(context.Context) (map[string]s
 func (r *imageStudioCreateSettingRepoStub) Delete(context.Context, string) error { return nil }
 
 type imageStudioJobDeleteRepoStub struct {
-	job             *ImageStudioJob
-	deletedID       int64
-	deletedUserID   int64
-	createErr       error
-	lastCreateInput ImageStudioJobCreateInput
+	job               *ImageStudioJob
+	deletedID         int64
+	deletedUserID     int64
+	createErr         error
+	lastCreateInput   ImageStudioJobCreateInput
+	events            *[]string
+	pathsExpectedGone []string
+	claimErr          error
 }
 
 func (r *imageStudioJobDeleteRepoStub) Create(_ context.Context, input ImageStudioJobCreateInput) (*ImageStudioJob, error) {
@@ -319,6 +463,13 @@ func (r *imageStudioJobDeleteRepoStub) GetByIDForUser(_ context.Context, id, use
 	return r.job, nil
 }
 
+func (r *imageStudioJobDeleteRepoStub) ClaimDeletingByIDForUser(ctx context.Context, id, userID int64) (*ImageStudioJob, error) {
+	if r.claimErr != nil {
+		return nil, r.claimErr
+	}
+	return r.GetByIDForUser(ctx, id, userID)
+}
+
 func (r *imageStudioJobDeleteRepoStub) ListByUser(context.Context, int64, int, int) (*ImageStudioJobList, error) {
 	panic("unexpected ListByUser call")
 }
@@ -328,6 +479,14 @@ func (r *imageStudioJobDeleteRepoStub) CountStatusByUser(context.Context, int64)
 }
 
 func (r *imageStudioJobDeleteRepoStub) DeleteByIDForUser(_ context.Context, id, userID int64) error {
+	for _, path := range r.pathsExpectedGone {
+		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("asset still exists before row delete: %s", filepath.Base(path))
+		}
+	}
+	if r.events != nil {
+		*r.events = append(*r.events, "row")
+	}
 	r.deletedID = id
 	r.deletedUserID = userID
 	return nil
@@ -361,8 +520,16 @@ func (r *imageStudioJobDeleteRepoStub) MarkInputsDeleted(context.Context, int64,
 	panic("unexpected MarkInputsDeleted call")
 }
 
+func (r *imageStudioJobDeleteRepoStub) FailExpiredRunningInputs(context.Context, int64, time.Time) (bool, error) {
+	panic("unexpected FailExpiredRunningInputs call")
+}
+
 func (r *imageStudioJobDeleteRepoStub) ListReferencedInputDirs(context.Context) (map[string]struct{}, error) {
 	panic("unexpected ListReferencedInputDirs call")
+}
+
+func (r *imageStudioJobDeleteRepoStub) ListRunningInputDirs(context.Context) (map[string]struct{}, error) {
+	panic("unexpected ListRunningInputDirs call")
 }
 
 func (r *imageStudioJobDeleteRepoStub) MarkStaleRunningFailed(context.Context, int64, time.Time, time.Time) (bool, error) {

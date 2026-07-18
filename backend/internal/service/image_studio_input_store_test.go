@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -738,4 +739,162 @@ func (r *imageStudioBlockingReader) Read(p []byte) (int, error) {
 	r.position += n
 	r.once.Do(func() { close(r.firstRead) })
 	return n, nil
+}
+
+func TestImageStudioInputStoreCleanupOrphansAndStaleSpools(t *testing.T) {
+	now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
+	store := NewImageStudioInputStore(t.TempDir(), 1<<20)
+	inputsRoot := filepath.Join(store.Root(), "inputs")
+	require.NoError(t, os.MkdirAll(inputsRoot, 0o700))
+
+	oldOrphan := "upload-aaaaaaaaaa"
+	youngOrphan := "upload-bbbbbbbbbb"
+	referenced := "upload-cccccccccc"
+	running := "upload-dddddddddd"
+	for _, name := range []string{oldOrphan, youngOrphan, referenced, running} {
+		require.NoError(t, os.Mkdir(filepath.Join(inputsRoot, name), 0o700))
+	}
+	require.NoError(t, os.Chtimes(filepath.Join(inputsRoot, oldOrphan), now.Add(-2*time.Hour), now.Add(-2*time.Hour)))
+	require.NoError(t, os.Chtimes(filepath.Join(inputsRoot, youngOrphan), now.Add(-10*time.Minute), now.Add(-10*time.Minute)))
+	require.NoError(t, os.Chtimes(filepath.Join(inputsRoot, referenced), now.Add(-2*time.Hour), now.Add(-2*time.Hour)))
+	require.NoError(t, os.Chtimes(filepath.Join(inputsRoot, running), now.Add(-2*time.Hour), now.Add(-2*time.Hour)))
+
+	oldSpool := filepath.Join(inputsRoot, referenced, ".spool-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.multipart")
+	youngSpool := filepath.Join(inputsRoot, referenced, ".spool-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.multipart")
+	activeSpool := filepath.Join(inputsRoot, running, ".spool-cccccccccccccccccccccccccccccccc.multipart")
+	for _, path := range []string{oldSpool, youngSpool, activeSpool} {
+		require.NoError(t, os.WriteFile(path, []byte("spool"), 0o600))
+	}
+	require.NoError(t, os.Chtimes(oldSpool, now.Add(-20*time.Minute), now.Add(-20*time.Minute)))
+	require.NoError(t, os.Chtimes(youngSpool, now.Add(-time.Minute), now.Add(-time.Minute)))
+	require.NoError(t, os.Chtimes(activeSpool, now.Add(-20*time.Minute), now.Add(-20*time.Minute)))
+
+	result, err := store.CleanupOrphans(ImageStudioInputCleanupOptions{
+		Now: now, OrphanGrace: time.Hour, SpoolGrace: 5 * time.Minute, Limit: 50,
+		ReferencedDirs: map[string]struct{}{"inputs/" + referenced: {}, "inputs/" + running: {}},
+		RunningDirs:    map[string]struct{}{"inputs/" + running: {}},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 1, result.OrphanDirsDeleted)
+	require.Equal(t, 1, result.StaleSpoolsDeleted)
+	require.NoDirExists(t, filepath.Join(inputsRoot, oldOrphan))
+	require.DirExists(t, filepath.Join(inputsRoot, youngOrphan))
+	require.DirExists(t, filepath.Join(inputsRoot, referenced))
+	require.DirExists(t, filepath.Join(inputsRoot, running))
+	require.NoFileExists(t, oldSpool)
+	require.FileExists(t, youngSpool)
+	require.FileExists(t, activeSpool)
+}
+
+func TestImageStudioInputStoreCleanupOrphansSkipsSymlinksAndContinuesAfterFailure(t *testing.T) {
+	now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
+	store := NewImageStudioInputStore(t.TempDir(), 1<<20)
+	inputsRoot := filepath.Join(store.Root(), "inputs")
+	require.NoError(t, os.MkdirAll(inputsRoot, 0o700))
+	first := "upload-aaaaaaaaaa"
+	second := "upload-bbbbbbbbbb"
+	for _, name := range []string{first, second} {
+		require.NoError(t, os.Mkdir(filepath.Join(inputsRoot, name), 0o700))
+		require.NoError(t, os.Chtimes(filepath.Join(inputsRoot, name), now.Add(-2*time.Hour), now.Add(-2*time.Hour)))
+	}
+	target := filepath.Join(t.TempDir(), "outside")
+	require.NoError(t, os.Mkdir(target, 0o700))
+	require.NoError(t, os.Symlink(target, filepath.Join(inputsRoot, "upload-cccccccccc")))
+
+	originalRemove := store.removeAllInRoot
+	store.removeAllInRoot = func(root *os.Root, path string) error {
+		if filepath.Base(path) == first {
+			return errors.New("remove first failed")
+		}
+		return originalRemove(root, path)
+	}
+
+	result, err := store.CleanupOrphans(ImageStudioInputCleanupOptions{Now: now, OrphanGrace: time.Hour, SpoolGrace: 5 * time.Minute, Limit: 50})
+
+	require.ErrorContains(t, err, "remove first failed")
+	require.Equal(t, 1, result.OrphanDirsDeleted)
+	require.DirExists(t, filepath.Join(inputsRoot, first))
+	require.NoDirExists(t, filepath.Join(inputsRoot, second))
+	require.DirExists(t, target, "cleanup must never follow direct-child symlinks")
+}
+
+func TestImageStudioInputStoreCleanupStaleSpoolsContinuesAfterFailure(t *testing.T) {
+	now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
+	store := NewImageStudioInputStore(t.TempDir(), 1<<20)
+	uploadDir := "upload-aaaaaaaaaa"
+	absoluteDir := filepath.Join(store.Root(), "inputs", uploadDir)
+	require.NoError(t, os.MkdirAll(absoluteDir, 0o700))
+	firstName := ".spool-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.multipart"
+	secondName := ".spool-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.multipart"
+	for _, name := range []string{firstName, secondName} {
+		path := filepath.Join(absoluteDir, name)
+		require.NoError(t, os.WriteFile(path, []byte("spool"), 0o600))
+		require.NoError(t, os.Chtimes(path, now.Add(-20*time.Minute), now.Add(-20*time.Minute)))
+	}
+	originalRemove := store.removeInRoot
+	store.removeInRoot = func(root *os.Root, path string) error {
+		if filepath.Base(path) == firstName {
+			return errors.New("remove first spool failed")
+		}
+		return originalRemove(root, path)
+	}
+
+	result, err := store.CleanupOrphans(ImageStudioInputCleanupOptions{
+		Now: now, OrphanGrace: time.Hour, SpoolGrace: 5 * time.Minute, Limit: 50,
+		ReferencedDirs: map[string]struct{}{"inputs/" + uploadDir: {}},
+	})
+
+	require.ErrorContains(t, err, "remove first spool failed")
+	require.Equal(t, 1, result.StaleSpoolsDeleted)
+	require.FileExists(t, filepath.Join(absoluteDir, firstName))
+	require.NoFileExists(t, filepath.Join(absoluteDir, secondName))
+}
+
+func TestImageStudioInputStoreCleanupOrphansRotatesAcrossBoundedBatches(t *testing.T) {
+	now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
+	store := NewImageStudioInputStore(t.TempDir(), 1<<20)
+	inputsRoot := filepath.Join(store.Root(), "inputs")
+	require.NoError(t, os.MkdirAll(inputsRoot, 0o700))
+	for _, name := range []string{"upload-aaaaaaaaaa", "upload-bbbbbbbbbb"} {
+		path := filepath.Join(inputsRoot, name)
+		require.NoError(t, os.Mkdir(path, 0o700))
+		require.NoError(t, os.Chtimes(path, now.Add(-2*time.Hour), now.Add(-2*time.Hour)))
+	}
+
+	first, err := store.CleanupOrphans(ImageStudioInputCleanupOptions{Now: now, OrphanGrace: time.Hour, Limit: 1})
+	require.NoError(t, err)
+	second, err := store.CleanupOrphans(ImageStudioInputCleanupOptions{Now: now, OrphanGrace: time.Hour, Limit: 1})
+	require.NoError(t, err)
+
+	require.Equal(t, 1, first.Scanned)
+	require.Equal(t, 1, second.Scanned)
+	require.Equal(t, 2, first.OrphanDirsDeleted+second.OrphanDirsDeleted)
+	require.Empty(t, imageStudioInputDirs(t, store.Root()))
+}
+
+func TestImageStudioInputStoreSpoolScanDoesNotSkipFetchedOrphan(t *testing.T) {
+	now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
+	store := NewImageStudioInputStore(t.TempDir(), 1<<20)
+	inputsRoot := filepath.Join(store.Root(), "inputs")
+	referenced := "upload-aaaaaaaaaa"
+	orphan := "upload-bbbbbbbbbb"
+	for _, name := range []string{referenced, orphan} {
+		path := filepath.Join(inputsRoot, name)
+		require.NoError(t, os.MkdirAll(path, 0o700))
+		require.NoError(t, os.Chtimes(path, now.Add(-2*time.Hour), now.Add(-2*time.Hour)))
+	}
+	spool := filepath.Join(inputsRoot, referenced, ".spool-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.multipart")
+	require.NoError(t, os.WriteFile(spool, []byte("spool"), 0o600))
+	require.NoError(t, os.Chtimes(spool, now.Add(-20*time.Minute), now.Add(-20*time.Minute)))
+
+	result, err := store.CleanupOrphans(ImageStudioInputCleanupOptions{
+		Now: now, OrphanGrace: time.Hour, SpoolGrace: 5 * time.Minute, Limit: 2,
+		ReferencedDirs: map[string]struct{}{"inputs/" + referenced: {}},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 1, result.StaleSpoolsDeleted)
+	require.Equal(t, 1, result.OrphanDirsDeleted)
+	require.NoDirExists(t, filepath.Join(inputsRoot, orphan))
 }

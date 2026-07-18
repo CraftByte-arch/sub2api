@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"database/sql/driver"
 	"encoding/json"
 	"regexp"
@@ -180,8 +181,8 @@ func TestImageStudioJobRepositoryDeleteByIDForUser(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
 
-	mock.ExpectExec(regexp.QuoteMeta("DELETE FROM image_studio_jobs WHERE id = $1 AND user_id = $2")).
-		WithArgs(int64(39), int64(1)).
+	mock.ExpectExec(regexp.QuoteMeta("DELETE FROM image_studio_jobs WHERE id = $1 AND user_id = $2 AND status = $3")).
+		WithArgs(int64(39), int64(1), service.ImageStudioJobStatusDeleting).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	repo := NewImageStudioJobRepository(nil, db)
@@ -195,13 +196,47 @@ func TestImageStudioJobRepositoryDeleteByIDForUserReturnsNotFound(t *testing.T) 
 	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
 
-	mock.ExpectExec(regexp.QuoteMeta("DELETE FROM image_studio_jobs WHERE id = $1 AND user_id = $2")).
-		WithArgs(int64(39), int64(1)).
+	mock.ExpectExec(regexp.QuoteMeta("DELETE FROM image_studio_jobs WHERE id = $1 AND user_id = $2 AND status = $3")).
+		WithArgs(int64(39), int64(1), service.ImageStudioJobStatusDeleting).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 
 	repo := NewImageStudioJobRepository(nil, db)
 	err = repo.DeleteByIDForUser(context.Background(), 39, 1)
 	require.ErrorIs(t, err, service.ErrImageStudioJobNotFound)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestImageStudioJobRepositoryClaimDeletingRejectsRunningJobAsBusy(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	mock.ExpectQuery("UPDATE image_studio_jobs[\\s\\S]*status = \\$3[\\s\\S]*status IN \\(\\$4, \\$5, \\$6, \\$3\\)[\\s\\S]*RETURNING").
+		WithArgs(int64(39), int64(7), service.ImageStudioJobStatusDeleting, service.ImageStudioJobStatusQueued, service.ImageStudioJobStatusSucceeded, service.ImageStudioJobStatusFailed).
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery("SELECT status FROM image_studio_jobs WHERE id = \\$1 AND user_id = \\$2").
+		WithArgs(int64(39), int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{"status"}).AddRow(service.ImageStudioJobStatusRunning))
+
+	repo := NewImageStudioJobRepository(nil, db)
+	_, err = repo.ClaimDeletingByIDForUser(context.Background(), 39, 7)
+
+	require.ErrorIs(t, err, service.ErrImageStudioJobBusy)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestImageStudioJobRepositoryDeleteRequiresDeletingOwnership(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	mock.ExpectExec("DELETE FROM image_studio_jobs WHERE id = \\$1 AND user_id = \\$2 AND status = \\$3").
+		WithArgs(int64(39), int64(1), service.ImageStudioJobStatusDeleting).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	repo := NewImageStudioJobRepository(nil, db)
+	err = repo.DeleteByIDForUser(context.Background(), 39, 1)
+	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -427,6 +462,24 @@ func TestImageStudioJobRepositoryListExpiredInputsExcludesQueuedAndRunning(t *te
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestImageStudioJobRepositoryFailExpiredRunningInputsIsAtomic(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+	now := time.Now()
+
+	mock.ExpectExec("UPDATE image_studio_jobs[\\s\\S]*status = \\$2[\\s\\S]*error_code = 'input_expired'[\\s\\S]*WHERE id = \\$1 AND status = \\$4[\\s\\S]*input_expires_at <= \\$3").
+		WithArgs(int64(39), service.ImageStudioJobStatusFailed, now, service.ImageStudioJobStatusRunning).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	repo := NewImageStudioJobRepository(nil, db)
+	changed, err := repo.FailExpiredRunningInputs(context.Background(), 39, now)
+
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestImageStudioJobRepositoryListExpiredInputsPropagatesRowsError(t *testing.T) {
 	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
 	require.NoError(t, err)
@@ -644,6 +697,24 @@ func TestImageStudioJobRepositoryListReferencedInputDirsReturnsUndeletedUploadDi
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestImageStudioJobRepositoryListRunningInputDirsReturnsOnlyRunningUndeletedDirs(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	mock.ExpectQuery("SELECT id, input_image_paths, input_mask_path[\\s\\S]*FROM image_studio_jobs[\\s\\S]*status = \\$1[\\s\\S]*input_deleted_at IS NULL").
+		WithArgs(service.ImageStudioJobStatusRunning).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "input_image_paths", "input_mask_path"}).
+			AddRow(int64(39), json.RawMessage(`["inputs/upload-running/image-01.webp"]`), nil))
+
+	repo := NewImageStudioJobRepository(nil, db)
+	dirs, err := repo.ListRunningInputDirs(context.Background())
+
+	require.NoError(t, err)
+	require.Equal(t, map[string]struct{}{"inputs/upload-running": {}}, dirs)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestImageStudioJobRepositoryListReferencedInputDirsRejectsInvalidPathJSON(t *testing.T) {
 	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
 	require.NoError(t, err)
@@ -847,6 +918,24 @@ func TestImageStudioJobRepositoryMarkSucceededRejectsStaleWorker(t *testing.T) {
 	err = repo.MarkSucceeded(context.Background(), 39, completedAt, 0.25, "", "", "", 0, 0, 0, nil)
 
 	require.ErrorIs(t, err, service.ErrImageStudioJobInvalid)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestImageStudioJobRepositoryOutputRetentionIgnoresInputDeletionState(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+	now := time.Now()
+
+	mock.ExpectQuery("SELECT[\\s\\S]*FROM image_studio_jobs[\\s\\S]*status = \\$1[\\s\\S]*assets_deleted_at IS NULL[\\s\\S]*expires_at <= \\$2[\\s\\S]*LIMIT \\$3").
+		WithArgs(service.ImageStudioJobStatusSucceeded, now, 50).
+		WillReturnRows(sqlmock.NewRows(imageStudioJobColumnNames()))
+
+	repo := NewImageStudioJobRepository(nil, db)
+	items, err := repo.ListExpiredAssets(context.Background(), now, 50)
+
+	require.NoError(t, err)
+	require.Empty(t, items)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

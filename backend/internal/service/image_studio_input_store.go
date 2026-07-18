@@ -14,6 +14,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
 	_ "golang.org/x/image/webp"
 )
@@ -29,8 +31,11 @@ const (
 	defaultImageStudioInputMaxFileBytes = int64(20 << 20)
 	// These limits comfortably cover current GPT images and high-resolution uploads
 	// while bounding a single decoded RGBA image to about 160 MiB.
-	maxImageStudioInputDimension = 16_384
-	maxImageStudioInputPixels    = 40_000_000
+	maxImageStudioInputDimension   = 16_384
+	maxImageStudioInputPixels      = 40_000_000
+	defaultImageStudioCleanupLimit = 50
+	maxImageStudioCleanupLimit     = 500
+	maxImageStudioSpoolsPerDirScan = 10
 )
 
 var (
@@ -91,6 +96,25 @@ type ImageStudioInputStorage interface {
 	MaterializeLegacy(ctx context.Context, images []string, mask *string) (*StagedEditInputs, error)
 	OpenInputs(paths []string, maskPath *string) (*OpenedEditInputs, error)
 	RemoveInputs(paths []string, maskPath *string) error
+}
+
+type ImageStudioInputCleanupOptions struct {
+	Now            time.Time
+	OrphanGrace    time.Duration
+	SpoolGrace     time.Duration
+	Limit          int
+	ReferencedDirs map[string]struct{}
+	RunningDirs    map[string]struct{}
+}
+
+type ImageStudioInputCleanupResult struct {
+	Scanned            int
+	OrphanDirsDeleted  int
+	StaleSpoolsDeleted int
+}
+
+type imageStudioInputOrphanCleaner interface {
+	CleanupOrphans(options ImageStudioInputCleanupOptions) (ImageStudioInputCleanupResult, error)
 }
 
 func (s *ImageStudioInputStore) MaterializeLegacy(ctx context.Context, images []string, mask *string) (*StagedEditInputs, error) {
@@ -193,6 +217,9 @@ type ImageStudioInputStore struct {
 	closeTempFile   func(*os.File) error
 	renameTempFile  func(string, string) error
 	removeAllInRoot func(*os.Root, string) error
+	removeInRoot    func(*os.Root, string) error
+	cleanupMu       sync.Mutex
+	cleanupDir      *os.File
 }
 
 func NewImageStudioInputStore(dataDir string, maxFileBytes int64) *ImageStudioInputStore {
@@ -214,6 +241,7 @@ func NewImageStudioInputStore(dataDir string, maxFileBytes int64) *ImageStudioIn
 		closeTempFile:   (*os.File).Close,
 		renameTempFile:  os.Rename,
 		removeAllInRoot: (*os.Root).RemoveAll,
+		removeInRoot:    (*os.Root).Remove,
 	}
 }
 
@@ -481,6 +509,188 @@ func (s *ImageStudioInputStore) RemoveInputs(paths []string, maskPath *string) e
 		return inputStorageError(errors.Join(removeErr, closeErr))
 	}
 	return nil
+}
+
+func (s *ImageStudioInputStore) CleanupOrphans(options ImageStudioInputCleanupOptions) (result ImageStudioInputCleanupResult, retErr error) {
+	if s == nil {
+		return result, inputStorageError(errors.New("image studio input store is nil"))
+	}
+	if options.Now.IsZero() {
+		options.Now = time.Now()
+	}
+	if options.OrphanGrace <= 0 {
+		options.OrphanGrace = time.Hour
+	}
+	if options.SpoolGrace <= 0 {
+		options.SpoolGrace = 10 * time.Minute
+	}
+	options.Limit = normalizeImageStudioCleanupLimit(options.Limit)
+	s.cleanupMu.Lock()
+	defer s.cleanupMu.Unlock()
+
+	root, err := s.openRoot()
+	if err != nil {
+		return result, inputStorageError(err)
+	}
+	defer func() { retErr = errors.Join(retErr, root.Close()) }()
+	entries, readErr := s.nextImageStudioCleanupEntries(root, options.Limit)
+	if readErr != nil && !errors.Is(readErr, io.EOF) {
+		return result, inputStorageError(readErr)
+	}
+
+	errs := make([]error, 0)
+	for _, entry := range entries {
+		result.Scanned++
+		name := entry.Name()
+		if !validImageStudioUploadDirName(name) {
+			continue
+		}
+		relativeDir := filepath.ToSlash(filepath.Join("inputs", name))
+		info, err := root.Lstat(filepath.FromSlash(relativeDir))
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			continue
+		}
+		if _, running := options.RunningDirs[relativeDir]; running {
+			continue
+		}
+		if _, referenced := options.ReferencedDirs[relativeDir]; !referenced && !info.ModTime().After(options.Now.Add(-options.OrphanGrace)) {
+			if err := s.removeAllInRoot(root, filepath.FromSlash(relativeDir)); err != nil && !errors.Is(err, os.ErrNotExist) {
+				errs = append(errs, err)
+				continue
+			}
+			result.OrphanDirsDeleted++
+			continue
+		}
+		spoolResult, spoolErr := s.cleanupStaleImageStudioSpools(root, relativeDir, options, maxImageStudioSpoolsPerDirScan)
+		result.Scanned += spoolResult.Scanned
+		result.StaleSpoolsDeleted += spoolResult.StaleSpoolsDeleted
+		if spoolErr != nil {
+			errs = append(errs, spoolErr)
+		}
+	}
+	if err := errors.Join(errs...); err != nil {
+		return result, inputStorageError(err)
+	}
+	return result, nil
+}
+
+func (s *ImageStudioInputStore) nextImageStudioCleanupEntries(root *os.Root, limit int) ([]os.DirEntry, error) {
+	if s.cleanupDir == nil {
+		dir, err := root.Open("inputs")
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return nil, nil
+			}
+			return nil, err
+		}
+		s.cleanupDir = dir
+	}
+	entries, err := s.cleanupDir.ReadDir(limit)
+	if errors.Is(err, io.EOF) || len(entries) < limit {
+		closeErr := s.cleanupDir.Close()
+		s.cleanupDir = nil
+		if errors.Is(err, io.EOF) {
+			err = nil
+		}
+		return entries, errors.Join(err, closeErr)
+	}
+	if err != nil {
+		closeErr := s.cleanupDir.Close()
+		s.cleanupDir = nil
+		return nil, errors.Join(err, closeErr)
+	}
+	return entries, nil
+}
+
+func (s *ImageStudioInputStore) cleanupStaleImageStudioSpools(root *os.Root, relativeDir string, options ImageStudioInputCleanupOptions, limit int) (result ImageStudioInputCleanupResult, retErr error) {
+	if limit <= 0 {
+		return result, nil
+	}
+	dir, err := root.Open(filepath.FromSlash(relativeDir))
+	if errors.Is(err, os.ErrNotExist) {
+		return result, nil
+	}
+	if err != nil {
+		return result, err
+	}
+	defer func() { retErr = errors.Join(retErr, dir.Close()) }()
+	entries, readErr := dir.ReadDir(limit)
+	if readErr != nil && !errors.Is(readErr, io.EOF) {
+		return result, readErr
+	}
+	errs := make([]error, 0)
+	for _, entry := range entries {
+		result.Scanned++
+		if !validImageStudioSpoolName(entry.Name()) {
+			continue
+		}
+		relativePath := filepath.ToSlash(filepath.Join(relativeDir, entry.Name()))
+		info, err := root.Lstat(filepath.FromSlash(relativePath))
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() || info.ModTime().After(options.Now.Add(-options.SpoolGrace)) {
+			continue
+		}
+		if err := s.removeInRoot(root, filepath.FromSlash(relativePath)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			errs = append(errs, err)
+			continue
+		}
+		result.StaleSpoolsDeleted++
+	}
+	return result, errors.Join(errs...)
+}
+
+func normalizeImageStudioCleanupLimit(limit int) int {
+	if limit <= 0 {
+		return defaultImageStudioCleanupLimit
+	}
+	if limit > maxImageStudioCleanupLimit {
+		return maxImageStudioCleanupLimit
+	}
+	return limit
+}
+
+func validImageStudioUploadDirName(name string) bool {
+	const prefix = "upload-"
+	if !strings.HasPrefix(name, prefix) || len(name) == len(prefix) {
+		return false
+	}
+	for _, char := range name[len(prefix):] {
+		if (char < 'a' || char > 'z') && (char < 'A' || char > 'Z') && (char < '0' || char > '9') {
+			return false
+		}
+	}
+	return true
+}
+
+func validImageStudioSpoolName(name string) bool {
+	const prefix = ".spool-"
+	const suffix = ".multipart"
+	if !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, suffix) {
+		return false
+	}
+	id := strings.TrimSuffix(strings.TrimPrefix(name, prefix), suffix)
+	if len(id) != 32 {
+		return false
+	}
+	for _, char := range id {
+		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func validImageStudioRelativePath(path, expectedBase string) ([]string, error) {

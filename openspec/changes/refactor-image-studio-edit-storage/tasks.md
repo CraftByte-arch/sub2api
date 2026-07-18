@@ -21,10 +21,10 @@
 
 ## 4. Input Lifecycle And Cleanup
 
-- [ ] 4.1 Delete input files idempotently after result assets and settlement recovery data are durable, while retaining output history under the existing output retention policy.
-- [ ] 4.2 Retain inputs for retryable failures, expire queued/failed inputs at the configured safe TTL, mark queued jobs `input_expired`, and never delete files from an actively running job.
-- [ ] 4.3 Extend user task deletion to remove input and output directories before deleting the database record.
-- [ ] 4.4 Add bounded orphan-directory scanning and cleanup with root confinement, grace periods, and repository/filesystem failure tests.
+- [x] 4.1 Delete input files idempotently after result assets and settlement recovery data are durable, while retaining output history under the existing output retention policy.
+- [x] 4.2 Retain inputs for retryable failures, expire queued/failed inputs at the configured safe TTL, mark queued jobs `input_expired`, and never delete files from an actively running job.
+- [x] 4.3 Extend user task deletion to remove input and output directories before deleting the database record.
+- [x] 4.4 Add bounded orphan-directory scanning and cleanup with root confinement, grace periods, and repository/filesystem failure tests.
 
 ## 5. Verification And Operational Readiness
 

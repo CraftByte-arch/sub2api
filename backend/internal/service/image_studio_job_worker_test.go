@@ -172,15 +172,21 @@ func TestImageStudioJobServiceRejectsInvalidStoredEditInputsBeforeExecution(t *t
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			store, job := tt.prepare(t)
-			repo := &imageStudioWorkerRepoStub{}
+			repo := &imageStudioWorkerRepoStub{failExpiredRunningChanged: tt.name == "expired"}
 			apiKeys := &imageStudioAPIKeyRepoStub{apiKey: validImageStudioWorkerAPIKey()}
 			executor := &recordingImageStudioJobExecutor{err: errors.New("executor should not run")}
 			svc := newImageStudioWorkerTestService(repo, store, apiKeys, executor, now)
 
 			svc.processJob(context.Background(), job)
 
-			require.Equal(t, 1, repo.markFailedCalls)
-			require.Equal(t, tt.wantCode, repo.failedErrorCode)
+			if tt.name == "expired" {
+				require.Zero(t, repo.markFailedCalls)
+				require.Equal(t, 1, repo.failExpiredRunningCalls)
+				require.Equal(t, 1, repo.markInputsDeletedCalls)
+			} else {
+				require.Equal(t, 1, repo.markFailedCalls)
+				require.Equal(t, tt.wantCode, repo.failedErrorCode)
+			}
 			require.Zero(t, repo.markRetryableCalls)
 			require.True(t, repo.retryAt.IsZero(), "terminal input errors must not set next_attempt_at")
 			require.Zero(t, apiKeys.calls, "input validation must happen before API key/account selection")
@@ -431,6 +437,128 @@ func TestImageStudioJobServiceStoredEditProviderFailureStillRetries(t *testing.T
 	}
 }
 
+func TestImageStudioJobServiceExpiredRunningFailureBecomesTerminalAndDeletesInputs(t *testing.T) {
+	now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
+	expiresAt := now.Add(-time.Second)
+	store := &imageStudioWorkerStorageStub{}
+	repo := &imageStudioWorkerRepoStub{failExpiredRunningChanged: true}
+	svc := &ImageStudioJobService{repo: repo, inputStore: store, now: func() time.Time { return now }}
+	job := ImageStudioJob{ID: 39, Status: ImageStudioJobStatusRunning, Mode: ImageStudioJobModeEdit,
+		InputImagePaths: []string{"inputs/upload-expired/image-01.png"}, InputExpiresAt: &expiresAt, MaxAttempts: 3}
+
+	svc.handleJobError(context.Background(), job, "upstream_failed", &UpstreamFailoverError{StatusCode: 429})
+
+	require.Equal(t, 1, repo.failExpiredRunningCalls)
+	require.Zero(t, repo.markRetryableCalls)
+	require.Equal(t, 1, store.removeCalls)
+	require.Equal(t, 1, repo.markInputsDeletedCalls)
+}
+
+func TestImageStudioJobServicePersistAssetsRequiresDurableSyncBeforeReturning(t *testing.T) {
+	t.Setenv("DATA_DIR", t.TempDir())
+	svc := &ImageStudioJobService{syncAssetFile: func(*os.File) error { return errors.New("sync failed") }}
+
+	_, _, _, _, _, err := svc.persistAssets(39, imageStudioTestPNG(t, 2, 2, false), "image/png")
+
+	require.ErrorContains(t, err, "sync failed")
+	require.NoDirExists(t, filepath.Join(os.Getenv("DATA_DIR"), imageStudioAssetBaseDir, "39"))
+}
+
+func TestImageStudioJobServiceDeletesInputsOnlyAfterSettlingIsDurable(t *testing.T) {
+	now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
+	expiresAt := now.Add(time.Hour)
+	resultImage := imageStudioTestPNG(t, 2, 2, false)
+
+	t.Run("mark settling succeeds", func(t *testing.T) {
+		t.Setenv("DATA_DIR", t.TempDir())
+		store, staged := stageImageStudioWorkerInputs(t, [][]byte{resultImage}, nil, 1<<20)
+		repo := &imageStudioWorkerRepoStub{}
+		executor := successfulImageStudioWorkerExecutor(resultImage)
+		svc := newImageStudioWorkerTestService(repo, store, &imageStudioAPIKeyRepoStub{apiKey: validImageStudioWorkerAPIKey()}, executor, now)
+
+		svc.processJob(context.Background(), storedImageStudioEditJob(staged, &expiresAt))
+
+		require.Equal(t, 1, repo.markSettlingCalls)
+		require.Equal(t, 1, repo.markInputsDeletedCalls)
+		require.NoFileExists(t, filepath.Join(store.Root(), filepath.FromSlash(staged.ImagePaths[0])))
+	})
+
+	t.Run("mark settling fails", func(t *testing.T) {
+		t.Setenv("DATA_DIR", t.TempDir())
+		store, staged := stageImageStudioWorkerInputs(t, [][]byte{resultImage}, nil, 1<<20)
+		repo := &imageStudioWorkerRepoStub{markSettlingErr: errors.New("database unavailable")}
+		executor := successfulImageStudioWorkerExecutor(resultImage)
+		svc := newImageStudioWorkerTestService(repo, store, &imageStudioAPIKeyRepoStub{apiKey: validImageStudioWorkerAPIKey()}, executor, now)
+
+		svc.processJob(context.Background(), storedImageStudioEditJob(staged, &expiresAt))
+
+		require.Equal(t, 1, repo.markSettlingCalls)
+		require.Zero(t, repo.markInputsDeletedCalls)
+		require.FileExists(t, filepath.Join(store.Root(), filepath.FromSlash(staged.ImagePaths[0])))
+	})
+
+	t.Run("input timestamp failure keeps durable assets and settlement", func(t *testing.T) {
+		dataDir := t.TempDir()
+		t.Setenv("DATA_DIR", dataDir)
+		store, staged := stageImageStudioWorkerInputs(t, [][]byte{resultImage}, nil, 1<<20)
+		repo := &imageStudioWorkerRepoStub{markInputsDeletedErr: errors.New("mark deleted unavailable")}
+		executor := successfulImageStudioWorkerExecutor(resultImage)
+		svc := newImageStudioWorkerTestService(repo, store, &imageStudioAPIKeyRepoStub{apiKey: validImageStudioWorkerAPIKey()}, executor, now)
+
+		svc.processJob(context.Background(), storedImageStudioEditJob(staged, &expiresAt))
+
+		require.Equal(t, 1, executor.calls)
+		require.Equal(t, 1, repo.markSettlingCalls)
+		require.Equal(t, 1, repo.markInputsDeletedCalls)
+		require.Equal(t, 1, repo.markSettlementRetryableCalls, "input timestamp failure must not block settlement")
+		require.FileExists(t, filepath.Join(dataDir, imageStudioAssetBaseDir, "39", "original.png"))
+	})
+
+	t.Run("input remove failure keeps settlement and does not resend upstream", func(t *testing.T) {
+		t.Setenv("DATA_DIR", t.TempDir())
+		actualStore, staged := stageImageStudioWorkerInputs(t, [][]byte{resultImage}, nil, 1<<20)
+		store := &imageStudioRemoveFailStorage{ImageStudioInputStorage: actualStore, err: errors.New("remove unavailable")}
+		repo := &imageStudioWorkerRepoStub{}
+		executor := successfulImageStudioWorkerExecutor(resultImage)
+		svc := newImageStudioWorkerTestService(repo, store, &imageStudioAPIKeyRepoStub{apiKey: validImageStudioWorkerAPIKey()}, executor, now)
+
+		svc.processJob(context.Background(), storedImageStudioEditJob(staged, &expiresAt))
+
+		require.Equal(t, 1, executor.calls)
+		require.Equal(t, 1, repo.markSettlingCalls)
+		require.Zero(t, repo.markInputsDeletedCalls)
+		require.Equal(t, 1, repo.markSettlementRetryableCalls)
+		require.FileExists(t, filepath.Join(actualStore.Root(), filepath.FromSlash(staged.ImagePaths[0])))
+	})
+}
+
+func TestImageStudioJobServiceSettlingRetryNeverOpensInputs(t *testing.T) {
+	now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
+	store := &imageStudioWorkerStorageStub{}
+	repo := &imageStudioWorkerRepoStub{claimSettling: true}
+	svc := &ImageStudioJobService{
+		repo: repo, inputStore: store, now: func() time.Time { return now },
+		apiKeyService: NewAPIKeyService(&imageStudioAPIKeyRepoStub{err: ErrAPIKeyNotFound}, nil, nil, nil, nil, nil, nil),
+	}
+
+	svc.processJob(context.Background(), ImageStudioJob{
+		ID: 39, Status: ImageStudioJobStatusSettling,
+		InputImagePaths: []string{"inputs/upload-retry/image-01.png"},
+	})
+
+	require.Zero(t, store.openCalls)
+	require.Equal(t, 1, store.removeCalls)
+	require.Equal(t, 1, repo.markInputsDeletedCalls)
+}
+
+func successfulImageStudioWorkerExecutor(imageBytes []byte) *recordingImageStudioJobExecutor {
+	return &recordingImageStudioJobExecutor{outcome: &imageStudioForwardOutcome{
+		result:    &OpenAIForwardResult{Model: "gpt-image-2", ImageCount: 1, ImageSize: "1024x1024"},
+		rawBody:   []byte(`{"data":[{"b64_json":"` + base64.StdEncoding.EncodeToString(imageBytes) + `"}]}`),
+		accountID: 77,
+	}}
+}
+
 func boolToInt(value bool) int {
 	if value {
 		return 1
@@ -501,14 +629,30 @@ func newImageStudioWorkerTestService(
 
 type imageStudioWorkerStorageStub struct {
 	ImageStudioInputStorage
-	opened    *OpenedEditInputs
-	openErr   error
-	openCalls int
+	opened      *OpenedEditInputs
+	openErr     error
+	openCalls   int
+	removeErr   error
+	removeCalls int
+}
+
+type imageStudioRemoveFailStorage struct {
+	ImageStudioInputStorage
+	err error
+}
+
+func (s *imageStudioRemoveFailStorage) RemoveInputs([]string, *string) error {
+	return s.err
 }
 
 func (s *imageStudioWorkerStorageStub) OpenInputs([]string, *string) (*OpenedEditInputs, error) {
 	s.openCalls++
 	return s.opened, s.openErr
+}
+
+func (s *imageStudioWorkerStorageStub) RemoveInputs([]string, *string) error {
+	s.removeCalls++
+	return s.removeErr
 }
 
 type recordingImageStudioJobExecutor struct {
@@ -1217,6 +1361,20 @@ type imageStudioWorkerRepoStub struct {
 	markFailedCalls              int
 	markRetryableCalls           int
 	retryAt                      time.Time
+	markInputsDeletedCalls       int
+	markInputsDeletedErr         error
+	failExpiredRunningChanged    bool
+	failExpiredRunningCalls      int
+}
+
+func (r *imageStudioWorkerRepoStub) FailExpiredRunningInputs(context.Context, int64, time.Time) (bool, error) {
+	r.failExpiredRunningCalls++
+	return r.failExpiredRunningChanged, nil
+}
+
+func (r *imageStudioWorkerRepoStub) MarkInputsDeleted(context.Context, int64, time.Time) error {
+	r.markInputsDeletedCalls++
+	return r.markInputsDeletedErr
 }
 
 func (r *imageStudioWorkerRepoStub) PersistLegacyInputs(_ context.Context, _ int64, paths []string, mask *string, redacted json.RawMessage, expiresAt time.Time) error {

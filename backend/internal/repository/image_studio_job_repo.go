@@ -75,6 +75,31 @@ func (r *imageStudioJobRepository) GetByIDForUser(ctx context.Context, id, userI
 	return r.getOne(ctx, `SELECT `+imageStudioJobColumns+` FROM image_studio_jobs WHERE id = $1 AND user_id = $2`, id, userID)
 }
 
+func (r *imageStudioJobRepository) ClaimDeletingByIDForUser(ctx context.Context, id, userID int64) (*service.ImageStudioJob, error) {
+	row := r.db.QueryRowContext(ctx, `
+		UPDATE image_studio_jobs
+		SET status = $3, next_attempt_at = NULL, heartbeat_at = NULL, updated_at = NOW()
+		WHERE id = $1 AND user_id = $2
+			AND status IN ($4, $5, $6, $3)
+		RETURNING `+imageStudioJobColumns+`
+	`, id, userID, service.ImageStudioJobStatusDeleting, service.ImageStudioJobStatusQueued, service.ImageStudioJobStatusSucceeded, service.ImageStudioJobStatusFailed)
+	job, err := scanImageStudioJob(row)
+	if err == nil {
+		return job, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	var status string
+	if err := r.db.QueryRowContext(ctx, `SELECT status FROM image_studio_jobs WHERE id = $1 AND user_id = $2`, id, userID).Scan(&status); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, service.ErrImageStudioJobNotFound
+		}
+		return nil, err
+	}
+	return nil, service.ErrImageStudioJobBusy
+}
+
 func (r *imageStudioJobRepository) ListByUser(ctx context.Context, userID int64, page, pageSize int) (*service.ImageStudioJobList, error) {
 	if r == nil || r.db == nil {
 		return nil, errors.New("image studio job repository db is nil")
@@ -122,7 +147,7 @@ func (r *imageStudioJobRepository) DeleteByIDForUser(ctx context.Context, id, us
 	if r == nil || r.db == nil {
 		return errors.New("image studio job repository db is nil")
 	}
-	result, err := r.db.ExecContext(ctx, `DELETE FROM image_studio_jobs WHERE id = $1 AND user_id = $2`, id, userID)
+	result, err := r.db.ExecContext(ctx, `DELETE FROM image_studio_jobs WHERE id = $1 AND user_id = $2 AND status = $3`, id, userID, service.ImageStudioJobStatusDeleting)
 	if err != nil {
 		return err
 	}
@@ -394,6 +419,22 @@ func (r *imageStudioJobRepository) MarkInputsDeleted(ctx context.Context, id int
 	return nil
 }
 
+func (r *imageStudioJobRepository) FailExpiredRunningInputs(ctx context.Context, id int64, completedAt time.Time) (bool, error) {
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE image_studio_jobs
+		SET status = $2, completed_at = $3, error_code = 'input_expired',
+			error_message = 'image studio input files expired during execution',
+			next_attempt_at = NULL, heartbeat_at = NULL, updated_at = NOW()
+		WHERE id = $1 AND status = $4
+			AND input_expires_at IS NOT NULL AND input_expires_at <= $3
+	`, id, service.ImageStudioJobStatusFailed, completedAt, service.ImageStudioJobStatusRunning)
+	if err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	return rows > 0, err
+}
+
 func (r *imageStudioJobRepository) ListReferencedInputDirs(ctx context.Context) (map[string]struct{}, error) {
 	if r == nil || r.db == nil {
 		return nil, errors.New("image studio job repository db is nil")
@@ -405,6 +446,53 @@ func (r *imageStudioJobRepository) ListReferencedInputDirs(ctx context.Context) 
 			AND (input_image_paths <> '[]'::jsonb OR input_mask_path IS NOT NULL)
 		ORDER BY id ASC
 	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	dirs := make(map[string]struct{})
+	for rows.Next() {
+		var (
+			id       int64
+			rawPaths []byte
+			maskPath sql.NullString
+		)
+		if err := rows.Scan(&id, &rawPaths, &maskPath); err != nil {
+			return nil, err
+		}
+		paths, err := decodeImageStudioInputPaths(rawPaths)
+		if err != nil {
+			return nil, fmt.Errorf("image studio job %d: %w", id, err)
+		}
+		var mask *string
+		if maskPath.Valid {
+			mask = &maskPath.String
+		}
+		dir, err := referencedImageStudioInputDir(paths, mask)
+		if err != nil {
+			return nil, fmt.Errorf("image studio job %d: %w", id, err)
+		}
+		dirs[dir] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return dirs, nil
+}
+
+func (r *imageStudioJobRepository) ListRunningInputDirs(ctx context.Context) (map[string]struct{}, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("image studio job repository db is nil")
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, input_image_paths, input_mask_path
+		FROM image_studio_jobs
+		WHERE status = $1
+			AND input_deleted_at IS NULL
+			AND (input_image_paths <> '[]'::jsonb OR input_mask_path IS NOT NULL)
+		ORDER BY id ASC
+	`, service.ImageStudioJobStatusRunning)
 	if err != nil {
 		return nil, err
 	}

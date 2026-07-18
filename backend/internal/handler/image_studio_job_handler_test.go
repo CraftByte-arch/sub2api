@@ -717,6 +717,10 @@ func (r *imageStudioHandlerJobRepoStub) GetByID(ctx context.Context, id int64) (
 func (r *imageStudioHandlerJobRepoStub) GetByIDForUser(ctx context.Context, id, userID int64) (*service.ImageStudioJob, error) {
 	panic("unexpected GetByIDForUser call")
 }
+
+func (r *imageStudioHandlerJobRepoStub) ClaimDeletingByIDForUser(context.Context, int64, int64) (*service.ImageStudioJob, error) {
+	panic("unexpected ClaimDeletingByIDForUser call")
+}
 func (r *imageStudioHandlerJobRepoStub) ListByUser(ctx context.Context, userID int64, page, pageSize int) (*service.ImageStudioJobList, error) {
 	panic("unexpected ListByUser call")
 }
@@ -747,8 +751,16 @@ func (r *imageStudioHandlerJobRepoStub) ListExpiredInputs(context.Context, time.
 func (r *imageStudioHandlerJobRepoStub) MarkInputsDeleted(context.Context, int64, time.Time) error {
 	panic("unexpected MarkInputsDeleted call")
 }
+
+func (r *imageStudioHandlerJobRepoStub) FailExpiredRunningInputs(context.Context, int64, time.Time) (bool, error) {
+	panic("unexpected FailExpiredRunningInputs call")
+}
 func (r *imageStudioHandlerJobRepoStub) ListReferencedInputDirs(context.Context) (map[string]struct{}, error) {
 	panic("unexpected ListReferencedInputDirs call")
+}
+
+func (r *imageStudioHandlerJobRepoStub) ListRunningInputDirs(context.Context) (map[string]struct{}, error) {
+	panic("unexpected ListRunningInputDirs call")
 }
 func (r *imageStudioHandlerJobRepoStub) MarkStaleRunningFailed(context.Context, int64, time.Time, time.Time) (bool, error) {
 	panic("unexpected MarkStaleRunningFailed call")

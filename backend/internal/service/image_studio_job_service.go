@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -21,6 +23,8 @@ const (
 	imageStudioWorkerTick              = 2 * time.Second
 	imageStudioCleanupTick             = 30 * time.Minute
 	imageStudioAssetBaseDir            = "image-studio"
+	imageStudioInputOrphanGrace        = time.Hour
+	imageStudioMultipartSpoolGrace     = 10 * time.Minute
 )
 
 type ImageStudioJobService struct {
@@ -37,6 +41,8 @@ type ImageStudioJobService struct {
 	wg                   sync.WaitGroup
 	running              int32
 	now                  func() time.Time
+	syncAssetFile        func(*os.File) error
+	renameAssetFile      func(string, string) error
 }
 
 type imageStudioSubscriptionResolver interface {
@@ -224,14 +230,19 @@ func (s *ImageStudioJobService) DeleteJob(ctx context.Context, userID, id int64)
 	if s == nil || s.repo == nil {
 		return fmt.Errorf("image studio job service is not configured")
 	}
-	job, err := s.repo.GetByIDForUser(ctx, id, userID)
+	job, err := s.repo.ClaimDeletingByIDForUser(ctx, id, userID)
 	if err != nil {
 		return err
 	}
-	if err := removeImageStudioAsset(job.OriginalPath); err != nil {
-		return err
+	if len(job.InputImagePaths) != 0 || job.InputMaskPath != nil {
+		if s.inputStore == nil {
+			return fmt.Errorf("image studio input store is not configured")
+		}
+		if err := s.inputStore.RemoveInputs(job.InputImagePaths, job.InputMaskPath); err != nil {
+			return fmt.Errorf("remove image studio job inputs: %w", err)
+		}
 	}
-	if err := removeImageStudioAsset(job.ThumbnailPath); err != nil {
+	if err := s.removeImageStudioJobAssets(*job); err != nil {
 		return err
 	}
 	return s.repo.DeleteByIDForUser(ctx, id, userID)
@@ -330,9 +341,113 @@ func (s *ImageStudioJobService) runCleanupLoop() {
 		case <-s.stopCh:
 			return
 		case <-ticker.C:
+			s.cleanupExpiredInputs(context.Background())
 			s.cleanupExpiredAssets(context.Background())
 		}
 	}
+}
+
+func (s *ImageStudioJobService) cleanupExpiredInputs(ctx context.Context) {
+	if s == nil || s.repo == nil || s.inputStore == nil {
+		return
+	}
+	now := s.now()
+	if queued, err := s.repo.ExpireQueuedInputs(ctx, now, 50); err != nil {
+		slog.Warn("image_studio_input_cleanup_query_failed", "phase", "expire_queued", "error_kind", imageStudioInputCleanupLogValue(err))
+	} else {
+		s.cleanupImageStudioInputJobs(ctx, queued, now)
+	}
+	if terminal, err := s.repo.ListExpiredInputs(ctx, now, 50); err != nil {
+		slog.Warn("image_studio_input_cleanup_query_failed", "phase", "list_terminal", "error_kind", imageStudioInputCleanupLogValue(err))
+	} else {
+		s.cleanupImageStudioInputJobs(ctx, terminal, now)
+	}
+
+	cleaner, ok := s.inputStore.(imageStudioInputOrphanCleaner)
+	if !ok || cleaner == nil {
+		return
+	}
+	referenced, err := s.repo.ListReferencedInputDirs(ctx)
+	if err != nil {
+		slog.Warn("image_studio_input_cleanup_query_failed", "phase", "list_references", "error_kind", imageStudioInputCleanupLogValue(err))
+		return
+	}
+	runningRepo, ok := s.repo.(interface {
+		ListRunningInputDirs(context.Context) (map[string]struct{}, error)
+	})
+	if !ok {
+		return
+	}
+	running, err := runningRepo.ListRunningInputDirs(ctx)
+	if err != nil {
+		slog.Warn("image_studio_input_cleanup_query_failed", "phase", "list_running", "error_kind", imageStudioInputCleanupLogValue(err))
+		return
+	}
+	result, err := cleaner.CleanupOrphans(ImageStudioInputCleanupOptions{
+		Now: now, OrphanGrace: imageStudioInputOrphanGrace, SpoolGrace: imageStudioMultipartSpoolGrace,
+		Limit: 50, ReferencedDirs: referenced, RunningDirs: running,
+	})
+	if err != nil {
+		slog.Warn("image_studio_input_orphan_cleanup_failed", "scanned", result.Scanned, "orphan_dirs_deleted", result.OrphanDirsDeleted, "stale_spools_deleted", result.StaleSpoolsDeleted, "error_kind", imageStudioInputCleanupLogValue(err))
+	}
+}
+
+func (s *ImageStudioJobService) cleanupImageStudioInputJobs(ctx context.Context, jobs []ImageStudioJob, deletedAt time.Time) {
+	for _, job := range jobs {
+		if job.Status == ImageStudioJobStatusRunning {
+			continue
+		}
+		if len(job.InputImagePaths) != 0 || job.InputMaskPath != nil {
+			if err := s.inputStore.RemoveInputs(job.InputImagePaths, job.InputMaskPath); err != nil {
+				slog.Warn("image_studio_input_cleanup_failed", "job_id", job.ID, "stage", "remove_expired", "error_kind", imageStudioInputCleanupLogValue(err))
+				continue
+			}
+		}
+		if err := s.repo.MarkInputsDeleted(ctx, job.ID, deletedAt); err != nil {
+			slog.Warn("image_studio_input_cleanup_failed", "job_id", job.ID, "stage", "mark_expired_deleted", "error_kind", imageStudioInputCleanupLogValue(err))
+		}
+	}
+}
+
+func (s *ImageStudioJobService) removeImageStudioJobAssets(job ImageStudioJob) error {
+	baseDir, err := filepath.Abs(s.AssetBaseDir())
+	if err != nil {
+		return fmt.Errorf("resolve image studio asset root: %w", err)
+	}
+	jobDir := filepath.Join(baseDir, strconv.FormatInt(job.ID, 10))
+	for _, assetPath := range []string{job.OriginalPath, job.ThumbnailPath} {
+		assetPath = strings.TrimSpace(assetPath)
+		if assetPath == "" {
+			continue
+		}
+		resolved, err := filepath.Abs(assetPath)
+		if err != nil || filepath.Dir(resolved) != jobDir {
+			return fmt.Errorf("image studio asset path is outside the job directory")
+		}
+	}
+	root, err := os.OpenRoot(baseDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("open image studio asset root: %w", err)
+	}
+	defer root.Close()
+	relativeDir := strconv.FormatInt(job.ID, 10)
+	info, err := root.Lstat(relativeDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect image studio job assets: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return fmt.Errorf("image studio job asset directory is unsafe")
+	}
+	if err := root.RemoveAll(relativeDir); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove image studio job assets: %w", err)
+	}
+	return nil
 }
 
 func (s *ImageStudioJobService) cleanupExpiredAssets(ctx context.Context) {
