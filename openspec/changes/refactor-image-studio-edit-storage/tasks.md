@@ -2,7 +2,7 @@
 
 - [x] 1.1 Add an image studio input-storage migration with ordered input paths, mask path, input expiration/deletion metadata, terminal legacy payload redaction, and migration regression coverage.
 - [x] 1.2 Extend the ImageStudio job domain model and repository reads/writes for input file metadata without exposing paths in user responses.
-- [ ] 1.3 Implement a root-confined input storage service with temporary files, atomic finalize, MIME/content/size validation, rollback, and idempotent directory removal.
+- [x] 1.3 Implement a root-confined input storage service with temporary files, atomic finalize, MIME/content/size validation, rollback, and idempotent directory removal.
 - [ ] 1.4 Implement active legacy data URL materialization and payload redaction for one to four references plus an optional mask.
 
 ## 2. Multipart Job Creation And Frontend Upload

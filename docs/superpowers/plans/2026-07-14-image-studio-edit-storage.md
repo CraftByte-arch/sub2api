@@ -84,7 +84,7 @@ git commit -m "feat: add image studio edit input metadata"
 - Create: `backend/internal/service/image_studio_input_store.go`
 - Create: `backend/internal/service/image_studio_input_store_test.go`
 
-- [ ] **Step 1: 写 RED 表格测试**
+- [x] **Step 1: 写 RED 表格测试**
 
 覆盖 1/4/5 张图、每文件超限、伪 MIME、不可解码、蒙版无有效 alpha、蒙版尺寸不匹配、绝对路径、`..`、symlink escape、原子 finalize、失败回滚和幂等删除。
 
@@ -95,7 +95,7 @@ go test ./internal/service -run ImageStudioInputStore -count=1
 
 预期：FAIL，存储类型不存在。
 
-- [ ] **Step 2: 定义明确接口**
+- [x] **Step 2: 定义明确接口**
 
 实现 `UploadedFile`、`StagedEditInputs`、`OpenedEditInputs`，以及：
 
@@ -108,13 +108,15 @@ Probe() error
 CleanupOrphans(ctx context.Context, referenced map[string]struct{}, now time.Time) error
 ```
 
-- [ ] **Step 3: 实现校验与落盘**
+本任务完成 `StageEditInputs`、`OpenInputs`、`RemoveInputs` 核心接口；`MaterializeLegacy`、`Probe`、`CleanupOrphans` 分别延后到对应的遗留兼容、可用性和清理任务，避免提前加入空壳实现。
+
+- [x] **Step 3: 实现校验与落盘**
 
 根为 `DATA_DIR/image-studio`。随机私有目录内先写 `.<name>.tmp`，用 bounded reader、`http.DetectContentType`、`image.DecodeConfig` 和 `image.Decode` 校验，再 `os.Rename` 为服务器命名。引用图最多 4 张；mask 必须透明格式、有可用 alpha、尺寸等于第一张图。任何失败 `RemoveAll(uploadDir)`。
 
 所有 open/remove 先拒绝绝对路径和 `..`，再解析 symlink 并用 `filepath.Rel` 保证仍在 root 下。
 
-- [ ] **Step 4: GREEN、race test 和提交**
+- [x] **Step 4: GREEN、race test 和提交**
 
 ```bash
 cd backend
