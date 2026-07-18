@@ -17,6 +17,11 @@ type imageStudioJobRepository struct {
 	db *sql.DB
 }
 
+const (
+	defaultImageStudioInputLifecycleLimit = 50
+	maxImageStudioInputLifecycleLimit     = 500
+)
+
 const imageStudioJobColumns = `
 	id, user_id, api_key_id, mode, status, request_payload, settlement_payload, prompt, model, size, output_format,
 	input_image_paths, input_mask_path, input_expires_at, input_deleted_at,
@@ -164,6 +169,7 @@ func (r *imageStudioJobRepository) ListRunnableJobs(ctx context.Context, limit i
 			WHERE (
 				status = $1
 				AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
+				AND (input_expires_at IS NULL OR input_expires_at > NOW())
 				) OR (
 					status = $2
 					AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
@@ -214,6 +220,19 @@ func (r *imageStudioJobRepository) MarkRunning(ctx context.Context, id int64, st
 }
 
 func (r *imageStudioJobRepository) PersistLegacyInputs(ctx context.Context, id int64, paths []string, maskPath *string, redacted json.RawMessage, expiresAt time.Time) error {
+	if len(paths) == 0 {
+		return errors.New("image studio input paths must contain at least one item")
+	}
+	if len(paths) > 4 {
+		return errors.New("image studio input paths must contain at most four items")
+	}
+	if _, err := referencedImageStudioInputDir(paths, maskPath); err != nil {
+		return err
+	}
+	var redactedObject map[string]json.RawMessage
+	if err := json.Unmarshal(redacted, &redactedObject); err != nil || redactedObject == nil {
+		return errors.New("image studio redacted request payload must be a JSON object")
+	}
 	encodedPaths, err := encodeImageStudioInputPaths(paths)
 	if err != nil {
 		return err
@@ -246,9 +265,7 @@ func (r *imageStudioJobRepository) ExpireQueuedInputs(ctx context.Context, now t
 	if r == nil || r.db == nil {
 		return nil, errors.New("image studio job repository db is nil")
 	}
-	if limit <= 0 {
-		limit = 50
-	}
+	limit = normalizeImageStudioInputLifecycleLimit(limit)
 	rows, err := r.db.QueryContext(ctx, `
 		WITH expired AS (
 			SELECT id
@@ -289,9 +306,7 @@ func (r *imageStudioJobRepository) ListExpiredInputs(ctx context.Context, now ti
 	if r == nil || r.db == nil {
 		return nil, errors.New("image studio job repository db is nil")
 	}
-	if limit <= 0 {
-		limit = 50
-	}
+	limit = normalizeImageStudioInputLifecycleLimit(limit)
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT `+imageStudioJobColumns+`
 		FROM image_studio_jobs
@@ -384,23 +399,26 @@ func (r *imageStudioJobRepository) ListReferencedInputDirs(ctx context.Context) 
 }
 
 func referencedImageStudioInputDir(paths []string, maskPath *string) (string, error) {
-	allPaths := make([]string, 0, len(paths)+1)
-	allPaths = append(allPaths, paths...)
-	if maskPath != nil {
-		allPaths = append(allPaths, *maskPath)
-	}
 	var uploadDir string
-	for _, inputPath := range allPaths {
-		parts := strings.Split(inputPath, "/")
-		if strings.TrimSpace(inputPath) != inputPath || strings.Contains(inputPath, "\\") || len(parts) != 3 ||
-			parts[0] != "inputs" || !strings.HasPrefix(parts[1], "upload-") || len(parts[1]) == len("upload-") ||
-			parts[2] == "" || parts[2] == "." || parts[2] == ".." {
-			return "", errors.New("image studio input path is invalid")
+	for i, inputPath := range paths {
+		dir, err := imageStudioInputDirForPath(inputPath, fmt.Sprintf("image-%02d", i+1), false)
+		if err != nil {
+			return "", err
 		}
-		dir := parts[0] + "/" + parts[1]
 		if uploadDir == "" {
 			uploadDir = dir
 		} else if dir != uploadDir {
+			return "", errors.New("image studio input paths must share one upload directory")
+		}
+	}
+	if maskPath != nil {
+		maskDir, err := imageStudioInputDirForPath(*maskPath, "mask", true)
+		if err != nil {
+			return "", errors.New("image studio input mask path is invalid")
+		}
+		if uploadDir == "" {
+			uploadDir = maskDir
+		} else if maskDir != uploadDir {
 			return "", errors.New("image studio input paths must share one upload directory")
 		}
 	}
@@ -408,6 +426,38 @@ func referencedImageStudioInputDir(paths []string, maskPath *string) (string, er
 		return "", errors.New("image studio input paths are empty")
 	}
 	return uploadDir, nil
+}
+
+func imageStudioInputDirForPath(inputPath, expectedBase string, mask bool) (string, error) {
+	parts := strings.Split(inputPath, "/")
+	if strings.TrimSpace(inputPath) != inputPath || strings.Contains(inputPath, "\\") || len(parts) != 3 ||
+		parts[0] != "inputs" || !strings.HasPrefix(parts[1], "upload-") || len(parts[1]) == len("upload-") {
+		return "", errors.New("image studio input path is invalid")
+	}
+	fileName := parts[2]
+	dot := strings.LastIndex(fileName, ".")
+	if dot <= 0 || fileName[:dot] != expectedBase {
+		return "", errors.New("image studio input path is invalid")
+	}
+	extension := strings.ToLower(fileName[dot:])
+	if mask {
+		if extension != ".png" && extension != ".webp" {
+			return "", errors.New("image studio input path is invalid")
+		}
+	} else if extension != ".png" && extension != ".jpg" && extension != ".webp" {
+		return "", errors.New("image studio input path is invalid")
+	}
+	return parts[0] + "/" + parts[1], nil
+}
+
+func normalizeImageStudioInputLifecycleLimit(limit int) int {
+	if limit <= 0 {
+		return defaultImageStudioInputLifecycleLimit
+	}
+	if limit > maxImageStudioInputLifecycleLimit {
+		return maxImageStudioInputLifecycleLimit
+	}
+	return limit
 }
 
 func (r *imageStudioJobRepository) MarkStaleRunningFailed(ctx context.Context, id int64, completedAt, staleBefore time.Time) (bool, error) {
