@@ -1,6 +1,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ref } from 'vue'
+import BaseDialog from '@/components/common/BaseDialog.vue'
 
 const { getOverview, getAccounts, getInvestigation } = vi.hoisted(() => ({
   getOverview: vi.fn(),
@@ -332,6 +333,48 @@ describe('AccountPerformanceView', () => {
 
     expect(getInvestigation).toHaveBeenCalledWith({ range: '24h', platform: undefined, account_id: 42 })
     wrapper.unmount()
+  })
+
+  it('restores page interaction after closing the real account investigation dialog', async () => {
+    const appRoot = document.createElement('div')
+    appRoot.id = 'app'
+    document.body.append(appRoot)
+    const wrapper = mount(AccountPerformanceView, {
+      attachTo: appRoot,
+      global: {
+        stubs: {
+          AppLayout: { template: '<main><slot /></main>' },
+          PerformanceMetricCard: { props: ['label', 'value', 'context'], template: '<div>{{ label }} {{ value }} {{ context }}</div>' },
+          PerformanceTrendChart: { template: '<div />' },
+          PerformanceFailureDistribution: { template: '<div />' },
+          PerformanceAccountTable: PerformanceAccountTableStub,
+          PlatformTypeBadge: true
+        }
+      }
+    })
+
+    try {
+      await flushPromises()
+      await wrapper.get('[data-testid="select-account"]').trigger('click')
+      await flushPromises()
+
+      expect(appRoot.hasAttribute('inert')).toBe(true)
+      expect(document.body.textContent).toContain('Codex Team')
+
+      wrapper.getComponent(BaseDialog).vm.$emit('close')
+      await flushPromises()
+
+      expect(appRoot.hasAttribute('inert')).toBe(false)
+      expect(document.body.style.overflow).toBe('')
+      getOverview.mockClear()
+      await wrapper.get('[aria-label="刷新性能数据"]').trigger('click')
+      await flushPromises()
+      expect(getOverview).toHaveBeenCalledTimes(1)
+    } finally {
+      wrapper.unmount()
+      appRoot.remove()
+      document.body.style.overflow = ''
+    }
   })
 
   it('uses the supported success key when the table requests successful-call sorting', async () => {

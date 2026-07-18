@@ -54,10 +54,48 @@ describe('modalBodyLock', () => {
     const drawer = mount(PerformanceInvestigationDrawer, {
       props: {
         open: true,
-        account: { account_id: 42, platform: 'openai', counters: { attempt_count: 1, success_count: 1, client_canceled_count: 0, ttft_timeout_count: 0, rate_limit_count: 0, auth_count: 0, upstream_4xx_count: 0, upstream_5xx_count: 0, transport_count: 0, protocol_count: 0, other_failure_count: 0, failover_count: 0, ttft_sum_ms: 0, duration_sum_ms: 0, ttft_latency: { Samples: 0, LE1000MS: 0, LE2500MS: 0, LE5000MS: 0, LE10000MS: 0, LE30000MS: 0, GT30000MS: 0 }, duration_latency: { Samples: 0, LE1000MS: 0, LE2500MS: 0, LE5000MS: 0, LE10000MS: 0, LE30000MS: 0, GT30000MS: 0 } }, availability: 1, failure_rate: 0, health_score: 1, p95_ttft_ms: 0, p95_duration_ms: 0, low_sample: false },
+        account: {
+          account_id: 42,
+          account_name: 'Shared dialog account',
+          account_type: 'oauth',
+          auth_mode: 'personalAccessToken',
+          platform: 'openai',
+          counters: {
+            attempt_count: 1,
+            success_count: 1,
+            client_canceled_count: 0,
+            ttft_timeout_count: 0,
+            rate_limit_count: 0,
+            auth_count: 0,
+            upstream_4xx_count: 0,
+            upstream_5xx_count: 0,
+            transport_count: 0,
+            protocol_count: 0,
+            other_failure_count: 0,
+            failover_count: 0,
+            ttft_sum_ms: 0,
+            duration_sum_ms: 0,
+            ttft_latency: { Samples: 0, LE1000MS: 0, LE2500MS: 0, LE5000MS: 0, LE10000MS: 0, LE30000MS: 0, GT30000MS: 0 },
+            duration_latency: { Samples: 0, LE1000MS: 0, LE2500MS: 0, LE5000MS: 0, LE10000MS: 0, LE30000MS: 0, GT30000MS: 0 }
+          },
+          availability: 1,
+          failure_rate: 0,
+          health_score: 1,
+          p95_ttft_ms: 0,
+          p95_duration_ms: 0,
+          low_sample: false
+        },
         investigation: null,
         loading: false,
         error: ''
+      },
+      global: {
+        stubs: {
+          PlatformTypeBadge: true,
+          PerformanceMetricCard: true,
+          PerformanceTrendChart: true,
+          PerformanceFailureDistribution: true
+        }
       }
     })
     await nextTick()
