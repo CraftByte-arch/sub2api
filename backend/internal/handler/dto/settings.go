@@ -169,6 +169,7 @@ type SystemSettings struct {
 	ImageStudioAsyncConcurrency          int                          `json:"image_studio_async_concurrency"`
 	ImageStudioRetentionValue            int                          `json:"image_studio_retention_value"`
 	ImageStudioRetentionUnit             string                       `json:"image_studio_retention_unit"`
+	ImageStudioInputRetentionHours       int                          `json:"image_studio_input_retention_hours"`
 	ImageStudioAvailableGroupIDs         []int64                      `json:"image_studio_available_group_ids"`
 	ImageGenerationToolDeclarationPolicy string                       `json:"image_generation_tool_declaration_policy"`
 

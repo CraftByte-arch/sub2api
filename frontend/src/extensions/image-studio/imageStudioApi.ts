@@ -16,9 +16,8 @@ interface FormRequestInput {
   body: FormData
 }
 
-interface ImageStudioJobCreateInput {
+interface ImageStudioJobCreateBaseInput {
   apiKeyId: number
-  mode: 'generate' | 'edit'
   prompt: string
   model: string
   size: string
@@ -29,9 +28,20 @@ interface ImageStudioJobCreateInput {
   moderation?: string
   inputFidelity?: string
   outputCompression?: number
-  imageDataUrls?: string[]
-  maskDataUrl?: string
 }
+
+interface ImageStudioGenerationJobCreateInput extends ImageStudioJobCreateBaseInput {
+  mode: 'generate'
+}
+
+interface ImageStudioEditJobCreateInput extends ImageStudioJobCreateBaseInput {
+  mode: 'edit'
+  images: File[]
+  mask?: File | null
+  responseFormat?: string
+}
+
+type ImageStudioJobCreateInput = ImageStudioGenerationJobCreateInput | ImageStudioEditJobCreateInput
 
 export interface ImageStudioJobStats {
   pendingCount: number
@@ -108,9 +118,17 @@ export async function listGatewayModels(apiKey: string): Promise<string[]> {
 }
 
 export async function createImageStudioJob(input: ImageStudioJobCreateInput): Promise<ImageStudioJob> {
-  const { data } = await apiClient.post<ImageStudioJob>('/image-studio/jobs', {
+  const requestBody = input.mode === 'edit'
+    ? buildEditJobFormData(input)
+    : buildGenerationJobBody(input)
+  const { data } = await apiClient.post<ImageStudioJob>('/image-studio/jobs', requestBody)
+  return normalizeJob(data)
+}
+
+function buildGenerationJobBody(input: ImageStudioGenerationJobCreateInput) {
+  return {
     api_key_id: input.apiKeyId,
-    mode: input.mode,
+    mode: 'generate',
     prompt: input.prompt,
     model: input.model,
     size: input.size,
@@ -120,11 +138,33 @@ export async function createImageStudioJob(input: ImageStudioJobCreateInput): Pr
     style: input.style,
     moderation: input.moderation,
     input_fidelity: input.inputFidelity,
-    output_compression: input.outputCompression,
-    image_data_urls: input.imageDataUrls,
-    mask_data_url: input.maskDataUrl
-  })
-  return normalizeJob(data)
+    output_compression: input.outputCompression
+  }
+}
+
+function buildEditJobFormData(input: ImageStudioEditJobCreateInput): FormData {
+  const formData = new FormData()
+  formData.append('api_key_id', String(input.apiKeyId))
+  formData.append('mode', 'edit')
+  formData.append('prompt', input.prompt)
+  formData.append('model', input.model)
+  formData.append('size', input.size)
+  formData.append('output_format', input.outputFormat)
+  appendOptionalFormField(formData, 'quality', input.quality)
+  appendOptionalFormField(formData, 'background', input.background)
+  appendOptionalFormField(formData, 'style', input.style)
+  appendOptionalFormField(formData, 'moderation', input.moderation)
+  appendOptionalFormField(formData, 'input_fidelity', input.inputFidelity)
+  appendOptionalFormField(formData, 'response_format', input.responseFormat)
+  appendOptionalFormField(formData, 'output_compression', input.outputCompression)
+  for (const image of input.images) formData.append('image', image)
+  if (input.mask) formData.append('mask', input.mask)
+  return formData
+}
+
+function appendOptionalFormField(formData: FormData, name: string, value?: string | number) {
+  if (value === undefined || value === '') return
+  formData.append(name, String(value))
 }
 
 export async function listImageStudioJobs(page = 1, pageSize = 20): Promise<PaginatedResponse<ImageStudioJob>> {

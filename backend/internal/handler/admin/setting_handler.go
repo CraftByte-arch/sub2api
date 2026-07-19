@@ -283,6 +283,7 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		ImageStudioAsyncConcurrency:                            settings.ImageStudioAsyncConcurrency,
 		ImageStudioRetentionValue:                              settings.ImageStudioRetentionValue,
 		ImageStudioRetentionUnit:                               settings.ImageStudioRetentionUnit,
+		ImageStudioInputRetentionHours:                         settings.ImageStudioInputRetentionHours,
 		ImageStudioAvailableGroupIDs:                           settings.ImageStudioAvailableGroupIDs,
 		ImageGenerationToolDeclarationPolicy:                   settings.ImageGenerationToolDeclarationPolicy,
 		EnableFingerprintUnification:                           settings.EnableFingerprintUnification,

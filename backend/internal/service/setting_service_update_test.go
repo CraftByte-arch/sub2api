@@ -331,6 +331,36 @@ func TestSettingService_UpdateSettings_ImageStudioAsyncSettings(t *testing.T) {
 	require.Equal(t, ImageStudioRetentionUnitHour, repo.updates[SettingKeyImageStudioRetentionUnit])
 }
 
+func TestSettingService_UpdateSettings_ImageStudioInputRetentionHours(t *testing.T) {
+	tests := []struct {
+		name  string
+		value int
+		want  string
+	}{
+		{name: "positive", value: 36, want: "36"},
+		{name: "zero", value: 0, want: "24"},
+		{name: "negative", value: -2, want: "24"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &settingUpdateRepoStub{}
+			svc := NewSettingService(repo, &config.Config{})
+			settings := &SystemSettings{
+				ImageStudioRetentionValue:      72,
+				ImageStudioRetentionUnit:       ImageStudioRetentionUnitHour,
+				ImageStudioInputRetentionHours: tt.value,
+			}
+
+			err := svc.UpdateSettings(context.Background(), settings)
+			require.NoError(t, err)
+			require.Equal(t, tt.want, repo.updates[SettingKeyImageStudioInputRetentionHours])
+			require.Equal(t, "72", repo.updates[SettingKeyImageStudioRetentionValue])
+			require.Equal(t, ImageStudioRetentionUnitHour, repo.updates[SettingKeyImageStudioRetentionUnit])
+		})
+	}
+}
+
 func TestSettingService_UpdateSettings_ImageStudioAdminControls(t *testing.T) {
 	repo := &settingUpdateRepoStub{}
 	svc := NewSettingService(repo, &config.Config{})

@@ -16,12 +16,21 @@ import {
   listImageStudioJobs,
   sendPromptPolishRequest
 } from '../imageStudioApi'
+import { ImageReferenceCompressionError, compressImageReferences } from '../imageCompression'
 
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({
     t: (key: string) => ({
       'imageStudio.title': '生图体验',
-      'imageStudio.description': '使用当前账号的 API Key 调用 Sub2API 生图能力。'
+      'imageStudio.description': '使用当前账号的 API Key 调用 Sub2API 生图能力。',
+      'imageStudio.addMask': '添加蒙版',
+      'imageStudio.removeMask': '移除蒙版',
+      'imageStudio.remove': '移除',
+      'imageStudio.referenceLimit': '最多添加 4 张参考图',
+      'imageStudio.compressionErrors.canvasUnsupported': '当前浏览器不支持压缩参考图',
+      'imageStudio.compressionErrors.decodeFailed': '参考图无法解码',
+      'imageStudio.compressionErrors.encodeFailed': '参考图无法转换为 WebP',
+      'imageStudio.compressionErrors.invalidDimensions': '参考图尺寸无效'
     }[key] ?? key)
   })
 }))
@@ -52,6 +61,14 @@ vi.mock('../imageStudioApi', () => ({
   sendPromptPolishRequest: vi.fn()
 }))
 
+vi.mock('../imageCompression', async () => {
+  const actual = await vi.importActual<typeof import('../imageCompression')>('../imageCompression')
+  return {
+    ...actual,
+    compressImageReferences: vi.fn()
+  }
+})
+
 vi.mock('../imageStudioCache', () => ({
   clearImageStudioAssetCache: vi.fn(async () => 0),
   deleteImageStudioAssetCache: vi.fn(async () => undefined),
@@ -80,6 +97,13 @@ describe('ImageStudioView', () => {
     vi.mocked(fetchImageStudioOriginal).mockReset()
     vi.mocked(fetchImageStudioThumbnail).mockReset()
     vi.mocked(sendPromptPolishRequest).mockReset()
+    vi.mocked(compressImageReferences).mockReset()
+    vi.mocked(compressImageReferences).mockImplementation(async (files: File[]) =>
+      files.map((file, index) => new File([file], `compressed-${index + 1}.webp`, {
+        type: 'image/webp',
+        lastModified: 0
+      }))
+    )
     vi.mocked(getPublicSettings).mockReset()
     vi.mocked(imageStudioCache.clearImageStudioAssetCache).mockReset()
     vi.mocked(imageStudioCache.deleteImageStudioAssetCache).mockReset()
@@ -842,7 +866,7 @@ describe('ImageStudioView', () => {
     expect(anchorClick).toHaveBeenCalledTimes(1)
   })
 
-  it('accepts reference images and submits an edit job', async () => {
+  it('accepts one reference image and submits its compressed File', async () => {
     const wrapper = mountView()
     await flushPromises()
 
@@ -866,8 +890,142 @@ describe('ImageStudioView', () => {
       apiKeyId: 1,
       mode: 'edit',
       prompt: '保留构图，改成雨夜电影感',
-      imageDataUrls: expect.any(Array)
+      images: [expect.objectContaining({ name: 'compressed-1.webp', type: 'image/webp' })]
     }))
+  })
+
+  it('keeps four references ordered, removes one, and clearly rejects a fifth', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('[data-testid="tab-edit"]').trigger('click')
+    const input = wrapper.get('[data-testid="reference-input"]')
+    const firstBatch = ['one.png', 'two.png', 'three.png', 'four.png', 'five.png'].map((name) =>
+      new File([name], name, { type: 'image/png' })
+    )
+    Object.defineProperty(input.element, 'files', { value: firstBatch, configurable: true })
+    await input.trigger('change')
+
+    expect(wrapper.text()).toContain('参考图4/4')
+    expect(wrapper.text()).toContain('one.png')
+    expect(wrapper.text()).toContain('four.png')
+    await wrapper.findAll('.reference-compact-remove')[1].trigger('click')
+    expect(wrapper.text()).not.toContain('two.png')
+
+    expect(wrapper.text()).toContain('最多添加 4 张参考图')
+
+    await wrapper.get('[data-testid="prompt-input"]').setValue('ordered edit')
+    await wrapper.get('[data-testid="generate-button"]').trigger('click')
+    await flushPromises()
+
+    expect(compressImageReferences).toHaveBeenCalledWith([firstBatch[0], firstBatch[2], firstBatch[3]])
+    expect(createImageStudioJob).toHaveBeenCalledWith(expect.objectContaining({
+      images: [
+        expect.objectContaining({ name: 'compressed-1.webp' }),
+        expect.objectContaining({ name: 'compressed-2.webp' }),
+        expect.objectContaining({ name: 'compressed-3.webp' })
+      ]
+    }))
+  })
+
+  it('shows the reference limit when the add control is clicked at four files', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('[data-testid="tab-edit"]').trigger('click')
+    const input = wrapper.get('[data-testid="reference-input"]')
+    const files = Array.from({ length: 4 }, (_, index) =>
+      new File([String(index)], `reference-${index + 1}.png`, { type: 'image/png' })
+    )
+    Object.defineProperty(input.element, 'files', { value: files, configurable: true })
+    await input.trigger('change')
+    expect(wrapper.text()).not.toContain('最多添加 4 张参考图')
+
+    await wrapper.get('[data-testid="reference-upload"]').trigger('click')
+
+    expect(wrapper.text()).toContain('最多添加 4 张参考图')
+  })
+
+  it('does not create an edit job when any reference compression fails', async () => {
+    vi.mocked(compressImageReferences).mockRejectedValueOnce(
+      new ImageReferenceCompressionError('decodeFailed')
+    )
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('[data-testid="tab-edit"]').trigger('click')
+    const input = wrapper.get('[data-testid="reference-input"]')
+    Object.defineProperty(input.element, 'files', {
+      value: [new File(['broken'], 'broken.png', { type: 'image/png' })],
+      configurable: true
+    })
+    await input.trigger('change')
+    await wrapper.get('[data-testid="generate-button"]').trigger('click')
+    await flushPromises()
+
+    expect(createImageStudioJob).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('参考图无法解码')
+  })
+
+  it('uploads the selected mask as the original File object', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('[data-testid="tab-edit"]').trigger('click')
+    const reference = new File(['reference'], 'reference.png', { type: 'image/png' })
+    const mask = new File(['transparent-mask'], 'mask.png', { type: 'image/png' })
+    const referenceInput = wrapper.get('[data-testid="reference-input"]')
+    Object.defineProperty(referenceInput.element, 'files', { value: [reference], configurable: true })
+    await referenceInput.trigger('change')
+    const maskInput = wrapper.get('[data-testid="mask-input"]')
+    Object.defineProperty(maskInput.element, 'files', { value: [mask], configurable: true })
+    await maskInput.trigger('change')
+    expect(wrapper.find('[data-testid="reference-upload"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="mask-selected"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="mask-upload"]').exists()).toBe(false)
+    await wrapper.get('[data-testid="generate-button"]').trigger('click')
+    await flushPromises()
+
+    expect(createImageStudioJob).toHaveBeenCalledWith(expect.objectContaining({ mask }))
+  })
+
+  it('revokes reference preview URLs when references are removed and on unmount', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('[data-testid="tab-edit"]').trigger('click')
+    const files = [
+      new File(['one'], 'one.png', { type: 'image/png' }),
+      new File(['two'], 'two.png', { type: 'image/png' })
+    ]
+    const input = wrapper.get('[data-testid="reference-input"]')
+    Object.defineProperty(input.element, 'files', { value: files, configurable: true })
+    await input.trigger('change')
+
+    await wrapper.findAll('.reference-compact-remove')[0].trigger('click')
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:one.png')
+
+    wrapper.unmount()
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:two.png')
+  })
+
+  it('revokes a broken reference preview URL after replacing it with a data URL', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('[data-testid="tab-edit"]').trigger('click')
+    const file = new File(['preview'], 'preview.png', { type: 'image/png' })
+    const input = wrapper.get('[data-testid="reference-input"]')
+    Object.defineProperty(input.element, 'files', { value: [file], configurable: true })
+    await input.trigger('change')
+    const readAsDataUrl = vi.spyOn(FileReader.prototype, 'readAsDataURL').mockImplementation(function () {
+      Object.defineProperty(this, 'result', {
+        value: 'data:image/png;base64,cHJldmlldw==',
+        configurable: true
+      })
+      queueMicrotask(() => this.onload?.(new ProgressEvent('load')))
+    })
+
+    await wrapper.get('[data-testid="reference-preview"]').trigger('error')
+    await flushPromises()
+
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:preview.png')
+    expect(wrapper.get('[data-testid="reference-preview"]').attributes('src')).toMatch(/^data:image\/png;base64,/)
+    readAsDataUrl.mockRestore()
   })
 
   it('renders backend job history with thumbnails and opens original image lazily', async () => {

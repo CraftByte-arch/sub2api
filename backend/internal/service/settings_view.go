@@ -173,6 +173,7 @@ type SystemSettings struct {
 	ImageStudioAsyncConcurrency          int
 	ImageStudioRetentionValue            int
 	ImageStudioRetentionUnit             string
+	ImageStudioInputRetentionHours       int
 	ImageStudioAvailableGroupIDs         []int64
 	ImageGenerationToolDeclarationPolicy string
 

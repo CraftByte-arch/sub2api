@@ -235,6 +235,7 @@ type UpdateSettingsRequest struct {
 	ImageStudioAsyncConcurrency          *int     `json:"image_studio_async_concurrency"`
 	ImageStudioRetentionValue            *int     `json:"image_studio_retention_value"`
 	ImageStudioRetentionUnit             *string  `json:"image_studio_retention_unit"`
+	ImageStudioInputRetentionHours       *int     `json:"image_studio_input_retention_hours"`
 	ImageStudioAvailableGroupIDs         *[]int64 `json:"image_studio_available_group_ids"`
 	ImageGenerationToolDeclarationPolicy *string  `json:"image_generation_tool_declaration_policy"`
 
@@ -493,6 +494,10 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 	imageStudioRetentionUnit := previousSettings.ImageStudioRetentionUnit
 	if req.ImageStudioRetentionUnit != nil {
 		imageStudioRetentionUnit = *req.ImageStudioRetentionUnit
+	}
+	imageStudioInputRetentionHours := previousSettings.ImageStudioInputRetentionHours
+	if req.ImageStudioInputRetentionHours != nil {
+		imageStudioInputRetentionHours = *req.ImageStudioInputRetentionHours
 	}
 	imageStudioAvailableGroupIDs := previousSettings.ImageStudioAvailableGroupIDs
 	if req.ImageStudioAvailableGroupIDs != nil {
@@ -1492,6 +1497,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		ImageStudioAsyncConcurrency:            imageStudioAsyncConcurrency,
 		ImageStudioRetentionValue:              imageStudioRetentionValue,
 		ImageStudioRetentionUnit:               imageStudioRetentionUnit,
+		ImageStudioInputRetentionHours:         imageStudioInputRetentionHours,
 		ImageStudioAvailableGroupIDs:           imageStudioAvailableGroupIDs,
 		ImageGenerationToolDeclarationPolicy:   service.NormalizeImageGenerationToolDeclarationPolicy(imageGenerationToolDeclarationPolicy),
 		AllowUserViewErrorRequests: func() bool {
@@ -2048,6 +2054,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		ImageStudioAsyncConcurrency:                            updatedSettings.ImageStudioAsyncConcurrency,
 		ImageStudioRetentionValue:                              updatedSettings.ImageStudioRetentionValue,
 		ImageStudioRetentionUnit:                               updatedSettings.ImageStudioRetentionUnit,
+		ImageStudioInputRetentionHours:                         updatedSettings.ImageStudioInputRetentionHours,
 		ImageStudioAvailableGroupIDs:                           updatedSettings.ImageStudioAvailableGroupIDs,
 		ImageGenerationToolDeclarationPolicy:                   updatedSettings.ImageGenerationToolDeclarationPolicy,
 		EnableFingerprintUnification:                           updatedSettings.EnableFingerprintUnification,

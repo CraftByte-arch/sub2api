@@ -110,6 +110,30 @@ func TestSettingHandler_GetPublicSettings_ExposesImageStudioAvailableGroupIDs(t 
 	require.Equal(t, []int64{10, 12}, resp.Data.ImageStudioAvailableGroupIDs)
 }
 
+func TestSettingHandler_GetPublicSettings_DoesNotExposeImageStudioInputRetentionHours(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	repo := &settingHandlerPublicRepoStub{
+		values: map[string]string{
+			service.SettingKeyImageStudioInputRetentionHours: "48",
+		},
+	}
+	h := NewSettingHandler(service.NewSettingService(repo, &config.Config{}), "test-version")
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/settings/public", nil)
+
+	h.GetPublicSettings(c)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var resp struct {
+		Data map[string]any `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &resp))
+	require.NotContains(t, resp.Data, "image_studio_input_retention_hours")
+}
+
 func TestSettingHandler_GetPublicSettings_ExposesHomepageVariant(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	t.Setenv("HOMEPAGE_VARIANT", "aixw")

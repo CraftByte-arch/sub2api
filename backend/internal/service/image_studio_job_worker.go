@@ -12,6 +12,7 @@ import (
 	stddraw "image/draw"
 	"image/jpeg"
 	_ "image/png"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -76,6 +77,35 @@ type imageStudioSettlementResult struct {
 	VideoCount           int            `json:"video_count"`
 	VideoResolution      string         `json:"video_resolution"`
 	VideoDurationSeconds int            `json:"video_duration_seconds"`
+}
+
+// imageStudioExecutionInput carries short-lived opened edit files to the
+// protocol-specific executor without copying image bytes into persisted data.
+type imageStudioExecutionInput struct {
+	Payload    []byte
+	EditInputs *OpenedEditInputs
+}
+
+func (i *imageStudioExecutionInput) Close() error {
+	if i == nil || i.EditInputs == nil {
+		return nil
+	}
+	return i.EditInputs.Close()
+}
+
+type imageStudioJobExecutor interface {
+	Execute(ctx context.Context, job ImageStudioJob, apiKey *APIKey, input *imageStudioExecutionInput) (*imageStudioForwardOutcome, error)
+}
+
+type imageStudioGatewayJobExecutor struct {
+	service *ImageStudioJobService
+}
+
+func (e *imageStudioGatewayJobExecutor) Execute(ctx context.Context, job ImageStudioJob, apiKey *APIKey, input *imageStudioExecutionInput) (*imageStudioForwardOutcome, error) {
+	if e == nil || e.service == nil || input == nil {
+		return nil, fmt.Errorf("image studio executor is not configured")
+	}
+	return e.service.forwardExecutionJob(ctx, job, apiKey, input)
 }
 
 func marshalImageStudioSettlementPayload(accountID int64, result *OpenAIForwardResult, fields ChannelUsageFields, inboundEndpoint, upstreamEndpoint string) (json.RawMessage, error) {
@@ -186,6 +216,9 @@ func (s *ImageStudioJobService) drainQueueOnce(ctx context.Context) {
 	if s == nil || s.repo == nil {
 		return
 	}
+	if !s.InputStorageAvailable() {
+		return
+	}
 	maxConcurrency := s.AsyncConcurrency(ctx)
 	running := int(atomic.LoadInt32(&s.running))
 	available := maxConcurrency - running
@@ -219,6 +252,9 @@ func (s *ImageStudioJobService) processJob(ctx context.Context, job ImageStudioJ
 		s.processSettlingJob(ctx, job)
 		return
 	}
+	if !s.InputStorageAvailable() {
+		return
+	}
 
 	startedAt := time.Now()
 	acquired, err := s.repo.MarkRunning(ctx, job.ID, startedAt)
@@ -228,48 +264,88 @@ func (s *ImageStudioJobService) processJob(ctx context.Context, job ImageStudioJ
 	if !acquired {
 		return
 	}
+	job.Status = ImageStudioJobStatusRunning
 	if err := s.repo.UpdateHeartbeat(ctx, job.ID, startedAt); err != nil {
 		return
 	}
 	stopHeartbeat := s.startImageStudioJobHeartbeat(ctx, job.ID, imageStudioHeartbeatInterval)
 	defer stopHeartbeat()
+	_, terminal, err := s.materializeLegacyJobInputs(ctx, &job)
+	if terminal {
+		return
+	}
+	if err != nil {
+		if _, classified := classifyImageStudioInputFailure(err); classified {
+			s.failImageStudioInput(ctx, job, err)
+		}
+		return
+	}
+	execution, err := s.prepareImageStudioExecution(job)
+	if err != nil {
+		s.failImageStudioInput(ctx, job, err)
+		return
+	}
+	executionClosed := false
+	defer func() {
+		if !executionClosed {
+			_ = execution.Close()
+		}
+	}()
+	failBeforeExecution := func(code string, cause error) {
+		closeErr := execution.Close()
+		executionClosed = true
+		if closeErr != nil {
+			s.failImageStudioInput(ctx, job, inputStorageError(errors.Join(cause, closeErr)))
+			return
+		}
+		s.failJob(ctx, job, code, cause)
+	}
 
 	apiKey, err := s.apiKeyService.GetByID(ctx, job.APIKeyID)
 	if err != nil {
-		s.failJob(ctx, job.ID, "api_key_not_found", err)
+		failBeforeExecution("api_key_not_found", err)
 		return
 	}
 	if apiKey.UserID != job.UserID {
-		s.failJob(ctx, job.ID, "api_key_owner_mismatch", ErrImageStudioJobInvalid)
+		failBeforeExecution("api_key_owner_mismatch", ErrImageStudioJobInvalid)
 		return
 	}
 	if !apiKey.IsActive() {
-		s.failJob(ctx, job.ID, "api_key_inactive", fmt.Errorf("api key is inactive"))
+		failBeforeExecution("api_key_inactive", fmt.Errorf("api key is inactive"))
 		return
 	}
 	if !GroupAllowsImageGeneration(apiKey.Group) {
-		s.failJob(ctx, job.ID, "image_generation_disabled", fmt.Errorf("%s", ImageGenerationPermissionMessage()))
+		failBeforeExecution("image_generation_disabled", fmt.Errorf("%s", ImageGenerationPermissionMessage()))
 		return
 	}
 	if err := s.ValidateAPIKeyAvailableForImageStudio(ctx, apiKey); err != nil {
-		s.failJob(ctx, job.ID, "image_studio_group_not_available", err)
+		failBeforeExecution("image_studio_group_not_available", err)
 		return
 	}
 	subscription, err := s.resolveImageStudioSubscription(ctx, apiKey)
 	if err != nil {
-		s.failJob(ctx, job.ID, "subscription_unavailable", err)
+		failBeforeExecution("subscription_unavailable", err)
 		return
 	}
 	if s.billingCacheService != nil {
 		if err := s.billingCacheService.CheckBillingEligibility(ctx, apiKey.User, apiKey, apiKey.Group, subscription, QuotaPlatform(ctx, apiKey)); err != nil {
-			s.failJob(ctx, job.ID, "billing_ineligible", err)
+			failBeforeExecution("billing_ineligible", err)
 			return
 		}
 	}
 
-	body := append([]byte(nil), job.RequestPayload...)
-	forwarded, err := s.forwardJob(ctx, job, apiKey, body)
+	forwarded, err := s.executeImageStudioJob(ctx, job, apiKey, execution)
+	closeErr := execution.Close()
+	executionClosed = true
 	if err != nil {
+		executionErr := err
+		if closeErr != nil {
+			err = errors.Join(err, inputStorageError(closeErr))
+		}
+		if _, classified := classifyImageStudioInputFailure(executionErr); classified {
+			s.failImageStudioInput(ctx, job, err)
+			return
+		}
 		s.handleJobError(ctx, job, "upstream_failed", err)
 		return
 	}
@@ -304,6 +380,7 @@ func (s *ImageStudioJobService) processJob(ctx context.Context, job ImageStudioJ
 		s.handleJobError(ctx, job, "settlement_persist_failed", err)
 		return
 	}
+	s.cleanupDurableImageStudioInputs(ctx, job)
 
 	job.Status = ImageStudioJobStatusSettling
 	job.SettlementPayload = settlementPayload
@@ -318,6 +395,182 @@ func (s *ImageStudioJobService) processJob(ctx context.Context, job ImageStudioJ
 	}
 }
 
+func (s *ImageStudioJobService) prepareImageStudioExecution(job ImageStudioJob) (*imageStudioExecutionInput, error) {
+	execution := &imageStudioExecutionInput{Payload: append([]byte(nil), job.RequestPayload...)}
+	if job.Mode != ImageStudioJobModeEdit {
+		return execution, nil
+	}
+	if job.InputDeletedAt != nil {
+		return nil, inputMissingError(ErrImageStudioInputMissing)
+	}
+	if job.InputExpiresAt == nil {
+		return nil, inputInvalidError(ErrImageStudioInputInvalid)
+	}
+	if !job.InputExpiresAt.After(s.now()) {
+		return nil, inputExpiredError()
+	}
+	if s.inputStore == nil {
+		return nil, inputStorageError(errors.New("image studio input store is not configured"))
+	}
+	opened, err := s.inputStore.OpenInputs(job.InputImagePaths, job.InputMaskPath)
+	if err != nil {
+		if _, classified := classifyImageStudioInputFailure(err); !classified {
+			err = inputStorageError(err)
+		}
+		return nil, err
+	}
+	if opened == nil {
+		return nil, inputStorageError(errors.New("image studio input store returned no inputs"))
+	}
+	execution.EditInputs = opened
+	return execution, nil
+}
+
+func (s *ImageStudioJobService) executeImageStudioJob(ctx context.Context, job ImageStudioJob, apiKey *APIKey, input *imageStudioExecutionInput) (*imageStudioForwardOutcome, error) {
+	if s.executor != nil {
+		return s.executor.Execute(ctx, job, apiKey, input)
+	}
+	return (&imageStudioGatewayJobExecutor{service: s}).Execute(ctx, job, apiKey, input)
+}
+
+func (s *ImageStudioJobService) failImageStudioInput(ctx context.Context, job ImageStudioJob, err error) {
+	code, ok := classifyImageStudioInputFailure(err)
+	if !ok {
+		code = ImageStudioInputCodeStorageUnavailable
+		err = inputStorageError(err)
+	}
+	s.failJob(ctx, job, code, err)
+}
+
+func classifyImageStudioInputFailure(err error) (string, bool) {
+	var inputErr *ImageStudioInputError
+	if errors.As(err, &inputErr) && inputErr != nil {
+		switch inputErr.Code {
+		case ImageStudioInputCodeLegacyInvalid:
+			return "", false
+		case ImageStudioInputCodeExpired, ImageStudioInputCodeMissing, ImageStudioInputCodeInvalid,
+			ImageStudioInputCodePathInvalid, ImageStudioInputCodeStorageUnavailable:
+			return inputErr.Code, true
+		}
+	}
+	switch {
+	case errors.Is(err, ErrImageStudioInputExpired):
+		return ImageStudioInputCodeExpired, true
+	case errors.Is(err, ErrImageStudioInputMissing):
+		return ImageStudioInputCodeMissing, true
+	case errors.Is(err, ErrImageStudioInputPathInvalid):
+		return ImageStudioInputCodePathInvalid, true
+	case errors.Is(err, ErrImageStudioInputInvalid), errors.Is(err, ErrImageStudioInputTooLarge), errors.Is(err, ErrImageStudioInputDimensionsTooLarge):
+		return ImageStudioInputCodeInvalid, true
+	case errors.Is(err, ErrImageStudioInputStorageUnavailable):
+		return ImageStudioInputCodeStorageUnavailable, true
+	default:
+		return "", false
+	}
+}
+
+func (s *ImageStudioJobService) materializeLegacyJobInputs(ctx context.Context, job *ImageStudioJob) (materialized, terminal bool, retErr error) {
+	if s == nil || job == nil || job.Mode != ImageStudioJobModeEdit || len(job.InputImagePaths) != 0 || job.InputMaskPath != nil {
+		return false, false, nil
+	}
+	images, mask, redacted, present, err := parseImageStudioLegacyPayload(job.RequestPayload)
+	if !present {
+		return false, false, err
+	}
+	failInvalid := func(invalidErr error) (bool, bool, error) {
+		if failErr := s.repo.FailLegacyInputs(ctx, job.ID, redacted, s.now()); failErr != nil {
+			return false, true, errors.Join(invalidErr, failErr)
+		}
+		return false, true, nil
+	}
+	if err != nil {
+		return failInvalid(err)
+	}
+	if s.inputStore == nil {
+		return false, false, inputStorageError(errors.New("image studio input store is not configured"))
+	}
+	staged, err := s.inputStore.MaterializeLegacy(ctx, images, mask)
+	if err != nil {
+		if errors.Is(err, ErrImageStudioLegacyInputInvalid) {
+			return failInvalid(err)
+		}
+		return false, false, err
+	}
+	if staged == nil || len(staged.ImagePaths) == 0 {
+		return false, false, inputStorageError(errors.New("legacy image studio materialization returned no inputs"))
+	}
+	expiresAt := s.now().Add(time.Duration(s.InputRetentionHours(ctx)) * time.Hour)
+	if err := s.repo.PersistLegacyInputs(ctx, job.ID, staged.ImagePaths, staged.MaskPath, redacted, expiresAt); err != nil {
+		cleanupErr := s.inputStore.RemoveInputs(staged.ImagePaths, staged.MaskPath)
+		return false, false, errors.Join(err, cleanupErr)
+	}
+	job.InputImagePaths = append([]string(nil), staged.ImagePaths...)
+	job.InputMaskPath = cloneImageStudioString(staged.MaskPath)
+	job.InputExpiresAt = &expiresAt
+	job.InputDeletedAt = nil
+	job.RequestPayload = append(json.RawMessage(nil), redacted...)
+	return true, false, nil
+}
+
+func parseImageStudioLegacyPayload(raw json.RawMessage) (images []string, mask *string, redacted json.RawMessage, present bool, retErr error) {
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &payload); err != nil || payload == nil {
+		return nil, nil, nil, false, legacyInputInvalidError(ErrImageStudioInputInvalid)
+	}
+	rawImages, hasImages := payload["images"]
+	rawMask, hasMask := payload["mask"]
+	present = hasImages || hasMask
+	if !present {
+		return nil, nil, nil, false, nil
+	}
+	delete(payload, "images")
+	delete(payload, "mask")
+	redactedBytes, err := json.Marshal(payload)
+	if err != nil {
+		return nil, nil, nil, true, legacyInputInvalidError(ErrImageStudioInputInvalid)
+	}
+	redacted = json.RawMessage(redactedBytes)
+	if !hasImages {
+		return nil, nil, redacted, true, legacyInputInvalidError(ErrImageStudioInputInvalid)
+	}
+	var entries []json.RawMessage
+	if err := json.Unmarshal(rawImages, &entries); err != nil {
+		return nil, nil, redacted, true, legacyInputInvalidError(ErrImageStudioInputInvalid)
+	}
+	images = make([]string, len(entries))
+	for i := range entries {
+		value, err := imageStudioLegacyImageURL(entries[i])
+		if err != nil {
+			return nil, nil, redacted, true, err
+		}
+		images[i] = value
+	}
+	if hasMask {
+		value, err := imageStudioLegacyImageURL(rawMask)
+		if err != nil {
+			return nil, nil, redacted, true, err
+		}
+		mask = &value
+	}
+	return images, mask, redacted, true, nil
+}
+
+func imageStudioLegacyImageURL(raw json.RawMessage) (string, error) {
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &object); err != nil || object == nil {
+		return "", legacyInputInvalidError(ErrImageStudioInputInvalid)
+	}
+	rawURL, ok := object["image_url"]
+	if !ok {
+		return "", legacyInputInvalidError(ErrImageStudioInputInvalid)
+	}
+	var value string
+	if err := json.Unmarshal(rawURL, &value); err != nil {
+		return "", legacyInputInvalidError(ErrImageStudioInputInvalid)
+	}
+	return value, nil
+}
+
 func (s *ImageStudioJobService) markImageStudioSettling(ctx context.Context, jobID int64, settlementPayload json.RawMessage, originalPath, thumbnailPath, mimeType string, fileSizeBytes int64, width, height int, leaseAt time.Time) error {
 	if err := s.repo.MarkSettling(ctx, jobID, settlementPayload, originalPath, thumbnailPath, mimeType, fileSizeBytes, width, height, leaseAt); err != nil {
 		removeUncommittedImageStudioAssets(originalPath, thumbnailPath)
@@ -327,6 +580,9 @@ func (s *ImageStudioJobService) markImageStudioSettling(ctx context.Context, job
 }
 
 func (s *ImageStudioJobService) recoverStaleRunningJob(ctx context.Context, job ImageStudioJob) {
+	if s.expireRunningImageStudioInputs(ctx, job) {
+		return
+	}
 	now := time.Now()
 	_, _ = s.repo.MarkStaleRunningFailed(ctx, job.ID, now, now.Add(-imageStudioHeartbeatStaleAfter))
 }
@@ -365,18 +621,27 @@ type imageStudioForwardOutcome struct {
 	upstreamEndpoint   string
 }
 
-func (s *ImageStudioJobService) forwardJob(ctx context.Context, job ImageStudioJob, apiKey *APIKey, body []byte) (*imageStudioForwardOutcome, error) {
+func (s *ImageStudioJobService) forwardExecutionJob(ctx context.Context, job ImageStudioJob, apiKey *APIKey, input *imageStudioExecutionInput) (*imageStudioForwardOutcome, error) {
 	if s == nil || s.openAIGateway == nil {
 		return nil, fmt.Errorf("openai gateway service is not configured")
 	}
+	if input == nil {
+		return nil, fmt.Errorf("image studio execution input is required")
+	}
+	body := input.Payload
 
 	endpoint := openAIImagesGenerationsEndpoint
 	if job.Mode == ImageStudioJobModeEdit {
 		endpoint = openAIImagesEditsEndpoint
 	}
+	parseEndpoint := endpoint
+	storedEdit := job.Mode == ImageStudioJobModeEdit && input.EditInputs != nil
+	if storedEdit {
+		parseEndpoint = openAIImagesGenerationsEndpoint
+	}
 	recorder := httptest.NewRecorder()
 	ginCtx, _ := gin.CreateTestContext(recorder)
-	req := httptest.NewRequest("POST", endpoint, bytes.NewReader(body))
+	req := httptest.NewRequest("POST", parseEndpoint, bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	ginCtx.Request = req
 	ginCtx.Set("api_key", apiKey)
@@ -387,6 +652,13 @@ func (s *ImageStudioJobService) forwardJob(ctx context.Context, job ImageStudioJ
 			return s.forwardResponsesJob(ctx, job, apiKey, body)
 		}
 		return nil, err
+	}
+	if storedEdit {
+		parsed.Endpoint = openAIImagesEditsEndpoint
+		parsed.Multipart = true
+		parsed.HasMask = input.EditInputs.Mask != nil
+		parsed.RequiredCapability = OpenAIImagesCapabilityNative
+		ginCtx.Request.URL.Path = openAIImagesEditsEndpoint
 	}
 	requestModel := parsed.Model
 	channelMapping, _ := s.openAIGateway.ResolveChannelMappingAndRestrict(ctx, apiKey.GroupID, requestModel)
@@ -409,12 +681,25 @@ func (s *ImageStudioJobService) forwardJob(ctx context.Context, job ImageStudioJ
 		defer selection.ReleaseFunc()
 	}
 
-	result, err := s.openAIGateway.ForwardImages(requestCtx, ginCtx, selection.Account, body, parsed, channelMapping.MappedModel)
+	var result *OpenAIForwardResult
+	if storedEdit && selection.Account.Type == AccountTypeAPIKey {
+		result, err = s.forwardSelectedAPIKeyEdit(requestCtx, ginCtx, selection.Account, input, parsed, channelMapping.MappedModel)
+	} else if storedEdit && selection.Account.Type == AccountTypeOAuth {
+		result, err = s.openAIGateway.ForwardImagesOAuthEdit(
+			requestCtx, ginCtx, selection.Account, parsed, input.EditInputs, channelMapping.MappedModel,
+		)
+	} else {
+		result, err = s.openAIGateway.ForwardImages(requestCtx, ginCtx, selection.Account, body, parsed, channelMapping.MappedModel)
+	}
 	if err != nil {
 		return nil, err
 	}
 	if recorder.Code >= 400 {
 		return nil, fmt.Errorf("upstream request failed with status %d", recorder.Code)
+	}
+	upstreamEndpoint := endpoint
+	if storedEdit && selection.Account.Type == AccountTypeOAuth {
+		upstreamEndpoint = openAIResponsesEndpoint
 	}
 	return &imageStudioForwardOutcome{
 		result:             result,
@@ -422,8 +707,41 @@ func (s *ImageStudioJobService) forwardJob(ctx context.Context, job ImageStudioJ
 		accountID:          selection.Account.ID,
 		channelUsageFields: channelMapping.ToUsageFields(requestModel, result.UpstreamModel),
 		inboundEndpoint:    endpoint,
-		upstreamEndpoint:   endpoint,
+		upstreamEndpoint:   upstreamEndpoint,
 	}, nil
+}
+
+func (s *ImageStudioJobService) forwardSelectedAPIKeyEdit(
+	ctx context.Context,
+	ginCtx *gin.Context,
+	account *Account,
+	input *imageStudioExecutionInput,
+	parsed *OpenAIImagesRequest,
+	channelMappedModel string,
+) (*OpenAIForwardResult, error) {
+	if s == nil || s.openAIGateway == nil || input == nil || input.EditInputs == nil {
+		return nil, fmt.Errorf("image studio API Key edit executor is not configured")
+	}
+	builder, ok := s.inputStore.(imageStudioEditMultipartSpoolBuilder)
+	if !ok || builder == nil {
+		return nil, inputStorageError(errors.New("image studio multipart spool builder is not configured"))
+	}
+	_, upstreamModel, err := resolveOpenAIImagesAPIKeyModels(account, parsed, channelMappedModel)
+	if err != nil {
+		return nil, err
+	}
+	spool, err := builder.BuildEditMultipartSpool(input.EditInputs, input.Payload, upstreamModel)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if cleanupErr := spool.Cleanup(); cleanupErr != nil {
+			slog.Warn("image_studio_multipart_spool_cleanup_failed", "error_kind", imageStudioMultipartCleanupLogValue(cleanupErr))
+		}
+	}()
+	return s.openAIGateway.ForwardImagesAPIKeyEdit(
+		ctx, ginCtx, account, spool.Reader, spool.ContentType, spool.ContentLength, parsed, channelMappedModel,
+	)
 }
 
 func imageStudioPayloadLooksLikeResponses(body []byte) bool {
@@ -495,11 +813,15 @@ func (s *ImageStudioJobService) forwardResponsesJob(ctx context.Context, job Ima
 }
 
 func (s *ImageStudioJobService) processSettlingJob(ctx context.Context, job ImageStudioJob) {
+	if !s.InputStorageAvailable() {
+		return
+	}
 	leaseAt := time.Now()
 	claimed, err := s.repo.ClaimSettling(ctx, job.ID, leaseAt, leaseAt.Add(-5*time.Minute))
 	if err != nil || !claimed {
 		return
 	}
+	s.cleanupDurableImageStudioInputs(ctx, job)
 	if receipt, err := s.findImageStudioUsageReceipt(ctx, job); err == nil {
 		if err := s.markImageStudioSucceeded(ctx, job, receipt.ActualCost); err != nil {
 			s.handleImageStudioSettlementError(ctx, job, err)
@@ -521,6 +843,40 @@ func (s *ImageStudioJobService) processSettlingJob(ctx context.Context, job Imag
 	if err := s.settleJob(ctx, job, apiKey); err != nil {
 		s.handleImageStudioSettlementError(ctx, job, err)
 	}
+}
+
+func (s *ImageStudioJobService) cleanupDurableImageStudioInputs(ctx context.Context, job ImageStudioJob) {
+	if len(job.InputImagePaths) == 0 && job.InputMaskPath == nil {
+		return
+	}
+	if job.InputDeletedAt != nil {
+		return
+	}
+	if s == nil || s.inputStore == nil {
+		slog.Warn("image_studio_input_cleanup_failed", "job_id", job.ID, "stage", "remove", "error_kind", "store_unavailable")
+		return
+	}
+	if err := s.inputStore.RemoveInputs(job.InputImagePaths, job.InputMaskPath); err != nil {
+		slog.Warn("image_studio_input_cleanup_failed", "job_id", job.ID, "stage", "remove", "error_kind", imageStudioInputCleanupLogValue(err))
+		return
+	}
+	if err := s.repo.MarkInputsDeleted(ctx, job.ID, time.Now()); err != nil {
+		slog.Warn("image_studio_input_cleanup_failed", "job_id", job.ID, "stage", "mark_deleted", "error_kind", imageStudioInputCleanupLogValue(err))
+	}
+}
+
+func imageStudioInputCleanupLogValue(err error) string {
+	var inputErr *ImageStudioInputError
+	if errors.As(err, &inputErr) && inputErr != nil && strings.TrimSpace(inputErr.Code) != "" {
+		return inputErr.Code
+	}
+	if errors.Is(err, context.Canceled) {
+		return "context_canceled"
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "context_deadline_exceeded"
+	}
+	return "operation_failed"
 }
 
 func (s *ImageStudioJobService) settleJob(ctx context.Context, job ImageStudioJob, apiKey *APIKey) error {
@@ -670,19 +1026,24 @@ func removeUncommittedImageStudioAssets(originalPath, thumbnailPath string) {
 	_ = removeImageStudioAsset(thumbnailPath)
 }
 
-func (s *ImageStudioJobService) persistAssets(jobID int64, imageBytes []byte, mimeType string) (string, string, int64, int, int, error) {
+func (s *ImageStudioJobService) persistAssets(jobID int64, imageBytes []byte, mimeType string) (originalPath, thumbnailPath string, fileSize int64, width, height int, retErr error) {
 	baseDir := filepath.Join(s.AssetBaseDir(), fmt.Sprintf("%d", jobID))
 	if err := os.MkdirAll(baseDir, 0o755); err != nil {
 		return "", "", 0, 0, 0, err
 	}
+	defer func() {
+		if retErr != nil {
+			_ = os.RemoveAll(baseDir)
+		}
+	}()
 
 	cfg, _, err := image.DecodeConfig(bytes.NewReader(imageBytes))
 	if err != nil {
 		return "", "", 0, 0, 0, err
 	}
 
-	originalPath := filepath.Join(baseDir, "original"+imageStudioFileExtFromMIME(mimeType))
-	if err := os.WriteFile(originalPath, imageBytes, 0o644); err != nil {
+	originalPath = filepath.Join(baseDir, "original"+imageStudioFileExtFromMIME(mimeType))
+	if err := s.writeDurableImageStudioAsset(baseDir, originalPath, imageBytes); err != nil {
 		return "", "", 0, 0, 0, err
 	}
 
@@ -690,29 +1051,99 @@ func (s *ImageStudioJobService) persistAssets(jobID int64, imageBytes []byte, mi
 	if err != nil {
 		return "", "", 0, 0, 0, err
 	}
-	thumbnailPath := filepath.Join(baseDir, "thumbnail.jpg")
-	if err := os.WriteFile(thumbnailPath, thumbnailBytes, 0o644); err != nil {
+	thumbnailPath = filepath.Join(baseDir, "thumbnail.jpg")
+	if err := s.writeDurableImageStudioAsset(baseDir, thumbnailPath, thumbnailBytes); err != nil {
+		return "", "", 0, 0, 0, err
+	}
+	if err := syncImageStudioAssetDirectory(baseDir); err != nil {
+		return "", "", 0, 0, 0, err
+	}
+	if err := syncImageStudioAssetDirectory(filepath.Dir(baseDir)); err != nil {
 		return "", "", 0, 0, 0, err
 	}
 
 	return originalPath, thumbnailPath, int64(len(imageBytes)), cfg.Width, cfg.Height, nil
 }
 
-func (s *ImageStudioJobService) failJob(ctx context.Context, jobID int64, code string, err error) {
+func (s *ImageStudioJobService) writeDurableImageStudioAsset(dir, finalPath string, data []byte) (retErr error) {
+	temp, err := os.CreateTemp(dir, ".asset-*")
+	if err != nil {
+		return err
+	}
+	tempPath := temp.Name()
+	defer func() {
+		_ = temp.Close()
+		if retErr != nil {
+			_ = os.Remove(tempPath)
+		}
+	}()
+	if err := temp.Chmod(0o644); err != nil {
+		return err
+	}
+	if _, err := temp.Write(data); err != nil {
+		return err
+	}
+	syncFile := s.syncAssetFile
+	if syncFile == nil {
+		syncFile = (*os.File).Sync
+	}
+	if err := syncFile(temp); err != nil {
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	rename := s.renameAssetFile
+	if rename == nil {
+		rename = os.Rename
+	}
+	return rename(tempPath, finalPath)
+}
+
+func syncImageStudioAssetDirectory(path string) error {
+	dir, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	return errors.Join(dir.Sync(), dir.Close())
+}
+
+func (s *ImageStudioJobService) failJob(ctx context.Context, job ImageStudioJob, code string, err error) {
 	message := ""
 	if err != nil {
 		message = err.Error()
 	}
-	_ = s.repo.MarkFailed(ctx, jobID, time.Now(), strings.TrimSpace(code), message)
+	if s.expireRunningImageStudioInputs(ctx, job) {
+		return
+	}
+	_ = s.repo.MarkFailed(ctx, job.ID, time.Now(), strings.TrimSpace(code), message)
 }
 
 func (s *ImageStudioJobService) handleJobError(ctx context.Context, job ImageStudioJob, code string, err error) {
+	if s.expireRunningImageStudioInputs(ctx, job) {
+		return
+	}
 	if s.shouldRetryImageStudioJob(job, err) {
 		nextAttemptAt := time.Now().Add(imageStudioRetryDelay(job.AttemptCount + 1))
 		_ = s.repo.MarkRetryable(ctx, job.ID, nextAttemptAt, strings.TrimSpace(code), err.Error())
 		return
 	}
-	s.failJob(ctx, job.ID, code, err)
+	s.failJob(ctx, job, code, err)
+}
+
+func (s *ImageStudioJobService) expireRunningImageStudioInputs(ctx context.Context, job ImageStudioJob) bool {
+	if job.InputExpiresAt == nil || job.InputExpiresAt.After(s.now()) {
+		return false
+	}
+	changed, err := s.repo.FailExpiredRunningInputs(ctx, job.ID, s.now())
+	if err != nil {
+		slog.Warn("image_studio_input_expiry_transition_failed", "job_id", job.ID, "error_kind", imageStudioInputCleanupLogValue(err))
+		return true
+	}
+	if changed {
+		s.cleanupDurableImageStudioInputs(ctx, job)
+	}
+	return true
 }
 
 func (s *ImageStudioJobService) shouldRetryImageStudioJob(job ImageStudioJob, err error) bool {
@@ -755,7 +1186,11 @@ func isImageStudioRetryableError(err error) bool {
 		}
 	}
 	var netErr net.Error
-	if errors.As(err, &netErr) && (netErr.Timeout() || netErr.Temporary()) {
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	var temporaryErr interface{ Temporary() bool }
+	if errors.As(err, &temporaryErr) && temporaryErr.Temporary() {
 		return true
 	}
 	msg := strings.ToLower(err.Error())

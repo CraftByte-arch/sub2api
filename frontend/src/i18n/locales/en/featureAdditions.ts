@@ -70,7 +70,17 @@ export default {
   },
   "imageStudio": {
     "title": "Image Studio",
-    "description": "Use your API keys to generate and edit images through Sub2API."
+    "description": "Use your API keys to generate and edit images through Sub2API.",
+    "addMask": "Add mask",
+    "removeMask": "Remove mask",
+    "remove": "Remove",
+    "referenceLimit": "You can add up to {count} reference images",
+    "compressionErrors": {
+      "canvasUnsupported": "This browser cannot compress reference images",
+      "decodeFailed": "A reference image could not be decoded",
+      "encodeFailed": "A reference image could not be converted to WebP",
+      "invalidDimensions": "A reference image has invalid dimensions"
+    }
   },
   "admin": {
     "usageCards": {

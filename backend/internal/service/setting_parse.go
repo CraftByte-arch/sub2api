@@ -241,6 +241,7 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyImageStudioAsyncConcurrency:                        strconv.Itoa(defaultImageStudioAsyncConcurrency),
 		SettingKeyImageStudioRetentionValue:                          strconv.Itoa(defaultImageStudioRetentionValue),
 		SettingKeyImageStudioRetentionUnit:                           defaultImageStudioRetentionUnit,
+		SettingKeyImageStudioInputRetentionHours:                     strconv.Itoa(DefaultImageStudioInputRetentionHours),
 		SettingKeyImageStudioAvailableGroupIDs:                       "[]",
 		SettingKeyImageGenerationToolDeclarationPolicy:               ImageGenerationToolDeclarationPolicyStrip,
 		SettingKeyOpenAILongContextBillingEnabled:                    "true",
@@ -865,6 +866,7 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	result.ImageStudioAsyncConcurrency = parsePositiveIntSetting(settings[SettingKeyImageStudioAsyncConcurrency], defaultImageStudioAsyncConcurrency)
 	result.ImageStudioRetentionValue = parseNonNegativeIntSetting(settings[SettingKeyImageStudioRetentionValue], defaultImageStudioRetentionValue)
 	result.ImageStudioRetentionUnit = normalizeImageStudioRetentionUnit(settings[SettingKeyImageStudioRetentionUnit])
+	result.ImageStudioInputRetentionHours = parsePositiveIntSetting(settings[SettingKeyImageStudioInputRetentionHours], DefaultImageStudioInputRetentionHours)
 	result.ImageStudioAvailableGroupIDs = parseInt64ListSetting(settings[SettingKeyImageStudioAvailableGroupIDs])
 	result.ImageGenerationToolDeclarationPolicy = NormalizeImageGenerationToolDeclarationPolicy(settings[SettingKeyImageGenerationToolDeclarationPolicy])
 

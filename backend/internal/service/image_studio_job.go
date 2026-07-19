@@ -17,6 +17,7 @@ const (
 	ImageStudioJobStatusSettling  = "settling"
 	ImageStudioJobStatusSucceeded = "succeeded"
 	ImageStudioJobStatusFailed    = "failed"
+	ImageStudioJobStatusDeleting  = "deleting"
 )
 
 const (
@@ -27,6 +28,7 @@ const (
 var (
 	ErrImageStudioJobNotFound       = infraerrors.NotFound("IMAGE_STUDIO_JOB_NOT_FOUND", "image studio job not found")
 	ErrImageStudioJobInvalid        = infraerrors.BadRequest("IMAGE_STUDIO_JOB_INVALID", "image studio job payload is invalid")
+	ErrImageStudioJobBusy           = infraerrors.Conflict("IMAGE_STUDIO_JOB_BUSY", "image studio job is currently running")
 	ErrImageStudioGroupNotAvailable = infraerrors.Forbidden("IMAGE_STUDIO_GROUP_NOT_AVAILABLE", "API key group is not available for image studio")
 )
 
@@ -38,6 +40,10 @@ type ImageStudioJob struct {
 	Status                 string
 	RequestPayload         json.RawMessage
 	SettlementPayload      json.RawMessage
+	InputImagePaths        []string
+	InputMaskPath          *string
+	InputExpiresAt         *time.Time
+	InputDeletedAt         *time.Time
 	Prompt                 string
 	Model                  string
 	Size                   string
@@ -90,17 +96,30 @@ type ImageStudioJobCreateInput struct {
 	EstimatedCostUSD float64
 	BillingPriority  string
 	RequestPayload   json.RawMessage
+	InputImagePaths  []string
+	InputMaskPath    *string
+	InputExpiresAt   *time.Time
+	InputDeletedAt   *time.Time
 }
 
 type ImageStudioJobRepository interface {
 	Create(ctx context.Context, input ImageStudioJobCreateInput) (*ImageStudioJob, error)
 	GetByID(ctx context.Context, id int64) (*ImageStudioJob, error)
 	GetByIDForUser(ctx context.Context, id, userID int64) (*ImageStudioJob, error)
+	ClaimDeletingByIDForUser(ctx context.Context, id, userID int64) (*ImageStudioJob, error)
 	ListByUser(ctx context.Context, userID int64, page, pageSize int) (*ImageStudioJobList, error)
 	CountStatusByUser(ctx context.Context, userID int64) (*ImageStudioJobStats, error)
 	DeleteByIDForUser(ctx context.Context, id, userID int64) error
 	ListRunnableJobs(ctx context.Context, limit int) ([]ImageStudioJob, error)
 	MarkRunning(ctx context.Context, id int64, startedAt time.Time) (bool, error)
+	PersistLegacyInputs(ctx context.Context, id int64, paths []string, maskPath *string, redacted json.RawMessage, expiresAt time.Time) error
+	FailLegacyInputs(ctx context.Context, id int64, redacted json.RawMessage, completedAt time.Time) error
+	ExpireQueuedInputs(ctx context.Context, now time.Time, limit int) ([]ImageStudioJob, error)
+	ListExpiredInputs(ctx context.Context, now time.Time, limit int) ([]ImageStudioJob, error)
+	MarkInputsDeleted(ctx context.Context, id int64, deletedAt time.Time) error
+	FailExpiredRunningInputs(ctx context.Context, id int64, completedAt time.Time) (bool, error)
+	ListReferencedInputDirs(ctx context.Context) (map[string]struct{}, error)
+	ListRunningInputDirs(ctx context.Context) (map[string]struct{}, error)
 	MarkStaleRunningFailed(ctx context.Context, id int64, completedAt, staleBefore time.Time) (bool, error)
 	MarkSettling(ctx context.Context, id int64, settlementPayload json.RawMessage, originalPath, thumbnailPath, mimeType string, fileSizeBytes int64, width, height int, leaseAt time.Time) error
 	ClaimSettling(ctx context.Context, id int64, leaseAt, staleBefore time.Time) (bool, error)

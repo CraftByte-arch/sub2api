@@ -351,6 +351,7 @@ func TestOpenAIGatewayServiceForward_CodexBridgeCanonicalizesImageGenNamespace(t
 	require.True(t, gjson.GetBytes(upstream.lastBody, `tools.#(type=="image_generation")`).Exists())
 	require.False(t, gjson.GetBytes(upstream.lastBody, `tools.#(name=="image_gen")`).Exists())
 	require.False(t, gjson.GetBytes(upstream.lastBody, `input.#(type=="additional_tools").tools.#(name=="image_gen")`).Exists())
+	require.Contains(t, gjson.GetBytes(upstream.lastBody, "instructions").String(), codexImageGenerationBridgeMarker)
 }
 
 func TestOpenAIGatewayServiceForward_CodexBridgePreservesImageGenFunction(t *testing.T) {

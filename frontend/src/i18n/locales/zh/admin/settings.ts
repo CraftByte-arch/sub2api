@@ -13,6 +13,10 @@ export default {
         backup: '数据备份',
         payment: '支付设置',
       },
+      imageStudio: {
+        inputRetentionHours: '输入文件保留时长（小时）',
+        inputRetentionHoursHint: '排队或可重试失败任务的输入文件最多保留此时长，默认 24 小时；生成结果仍使用上方独立的保留策略。',
+      },
       features: {
         channelMonitor: {
           title: '渠道监控',
