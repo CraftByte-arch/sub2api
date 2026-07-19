@@ -182,9 +182,9 @@ git commit -m "feat(payment): define personal order statistics aggregation"
 **Files:**
 - Modify: `backend/internal/service/payment_order_statistics.go`
 - Modify: `backend/internal/service/payment_order_statistics_test.go`
-- Modify: `openspec/changes/add-my-orders-payment-statistics/tasks.md`（映射 1.5、2.3–2.5）
+- Modify: `openspec/changes/add-my-orders-payment-statistics/tasks.md`（映射 1.5、2.3、2.5）
 
-- [ ] **Step 1: 建立 SQLite fixture 并写查询失败测试**
+- [x] **Step 1: 建立 SQLite fixture 并写查询失败测试**
 
 使用 `enttest.NewClient`、唯一的内存 DSN 和两个用户，写入：三个成功状态、无 `paid_at`、退款状态、第四类型、范围外订单和同一 `paid_at` 的多行。断言汇总只含当前用户和合法行：
 
@@ -199,13 +199,13 @@ require.Equal(t, 3, stats.Summary.OrderCount)
 
 为 details 写表驱动测试：类型条件、日期条件、两者都有、两者都无、非法类型、范围外日期、第二页和相同时间按 ID 倒序。
 
-- [ ] **Step 2: 运行 service 查询测试并确认 RED**
+- [x] **Step 2: 运行 service 查询测试并确认 RED**
 
 Run: `cd backend && go test -tags=unit ./internal/service -run 'TestPaymentServiceGetUserOrderStatistics' -count=1`
 
 Expected: FAIL，提示两个 service 方法或 details query 类型未定义。
 
-- [ ] **Step 3: 实现共享谓词与汇总查询**
+- [x] **Step 3: 实现共享谓词与汇总查询**
 
 定义共享基础谓词，两个端点必须调用同一 helper：
 
@@ -224,7 +224,7 @@ func paidOrderStatisticsPredicates(userID int64, w orderStatisticsWindow) []pred
 
 `GetUserOrderStatistics` 使用 `Select(FieldID, FieldPayAmount, FieldOrderType, FieldPaidAt)`，把结果转换成纯聚合输入，不读取 provider snapshot、退款字段或关联。
 
-- [ ] **Step 4: 实现 details 校验、Count 和固定分页**
+- [x] **Step 4: 实现 details 校验、Count 和固定分页**
 
 定义互斥 selector 和最小 DTO：
 
@@ -248,15 +248,15 @@ type OrderStatisticsDetail struct {
 
 `GetUserOrderStatisticsDetails` 严格校验 page > 0 和 selector 恰好一个；日期 selector 必须位于 window 内，再生成该日子窗口。先 `Clone().Count(ctx)`，再按 `dbent.Desc(paymentorder.FieldPaidAt), dbent.Desc(paymentorder.FieldID)`、`Limit(20)`、`Offset((page-1)*20)` 查询。
 
-- [ ] **Step 5: 运行查询和一致性测试**
+- [x] **Step 5: 运行查询和一致性测试**
 
 Run: `cd backend && go test -tags=unit ./internal/service -run 'TestPaymentServiceGetUserOrderStatistics' -count=1`
 
 Expected: PASS，包括每个 type/day 聚合 count 与对应 details total 相等。
 
-- [ ] **Step 6: 勾选映射任务并提交**
+- [x] **Step 6: 勾选映射任务并提交**
 
-勾选 OpenSpec `1.5`、`2.3`、`2.4`、`2.5`：
+勾选 OpenSpec `1.5`、`2.3`、`2.5`：
 
 ```bash
 git add backend/internal/service/payment_order_statistics.go backend/internal/service/payment_order_statistics_test.go openspec/changes/add-my-orders-payment-statistics/tasks.md
@@ -271,7 +271,7 @@ git commit -m "feat(payment): query personal statistics and drilldowns"
 - Create: `backend/internal/server/routes/payment_test.go`
 - Modify: `backend/internal/server/routes/payment.go`
 - Modify: `backend/internal/server/middleware/server_timing_test.go`
-- Modify: `openspec/changes/add-my-orders-payment-statistics/tasks.md`（映射 2.1、2.2）
+- Modify: `openspec/changes/add-my-orders-payment-statistics/tasks.md`（映射 2.1、2.2、2.4）
 
 - [ ] **Step 1: 写 handler RED 测试**
 
@@ -330,7 +330,7 @@ Expected: PASS。
 
 - [ ] **Step 6: 勾选映射任务并提交**
 
-勾选 OpenSpec `2.1`、`2.2`：
+勾选 OpenSpec `2.1`、`2.2`、`2.4`：
 
 ```bash
 git add backend/internal/handler/payment_statistics_handler.go backend/internal/handler/payment_statistics_handler_test.go backend/internal/server/routes/payment.go backend/internal/server/routes/payment_test.go backend/internal/server/middleware/server_timing_test.go openspec/changes/add-my-orders-payment-statistics/tasks.md

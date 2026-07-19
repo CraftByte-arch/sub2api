@@ -1,11 +1,16 @@
 package service
 
 import (
+	"context"
+	"fmt"
 	"math"
 	"sort"
 	"strings"
 	"time"
 
+	dbent "github.com/Wei-Shaw/sub2api/ent"
+	"github.com/Wei-Shaw/sub2api/ent/paymentorder"
+	"github.com/Wei-Shaw/sub2api/ent/predicate"
 	"github.com/Wei-Shaw/sub2api/internal/payment"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	appTimezone "github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
@@ -72,6 +77,22 @@ type OrderStatisticsResponse struct {
 	Summary   OrderStatisticsSummary `json:"summary"`
 	ByType    []OrderTypeStatistics  `json:"by_type"`
 	Daily     []DailyOrderStatistics `json:"daily"`
+}
+
+type OrderStatisticsDetailsQuery struct {
+	OrderStatisticsQuery
+	Page      int
+	OrderType string
+	Date      string
+}
+
+type OrderStatisticsDetail struct {
+	OutTradeNo  string    `json:"out_trade_no"`
+	OrderType   string    `json:"order_type"`
+	PayAmount   float64   `json:"pay_amount"`
+	Status      string    `json:"status"`
+	PaymentType string    `json:"payment_type"`
+	PaidAt      time.Time `json:"paid_at"`
 }
 
 type orderStatisticsRow struct {
@@ -235,4 +256,141 @@ func averageCents(totalCents int64, count int) int64 {
 		return 0
 	}
 	return int64(math.Round(float64(totalCents) / float64(count)))
+}
+
+func (s *PaymentService) GetUserOrderStatistics(ctx context.Context, userID int64, query OrderStatisticsQuery) (*OrderStatisticsResponse, error) {
+	window, err := parseOrderStatisticsWindow(query, time.Now())
+	if err != nil {
+		return nil, err
+	}
+
+	orders, err := s.entClient.PaymentOrder.Query().
+		Where(paidOrderStatisticsPredicates(userID, window)...).
+		Select(
+			paymentorder.FieldID,
+			paymentorder.FieldPayAmount,
+			paymentorder.FieldOrderType,
+			paymentorder.FieldPaidAt,
+		).
+		All(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("query user order statistics: %w", err)
+	}
+
+	rows := make([]orderStatisticsRow, 0, len(orders))
+	for _, order := range orders {
+		if order.PaidAt == nil {
+			continue
+		}
+		rows = append(rows, orderStatisticsRow{
+			ID:        order.ID,
+			PayAmount: order.PayAmount,
+			OrderType: order.OrderType,
+			PaidAt:    *order.PaidAt,
+		})
+	}
+
+	result := aggregateOrderStatistics(rows, window.Location)
+	result.StartDate = window.StartDate
+	result.EndDate = window.EndDate
+	result.Timezone = window.Timezone
+	return &result, nil
+}
+
+func (s *PaymentService) GetUserOrderStatisticsDetails(ctx context.Context, userID int64, query OrderStatisticsDetailsQuery) ([]OrderStatisticsDetail, int, error) {
+	if query.Page <= 0 {
+		return nil, 0, infraerrors.BadRequest(orderStatisticsRangeError, "page must be a positive integer")
+	}
+	window, err := parseOrderStatisticsWindow(query.OrderStatisticsQuery, time.Now())
+	if err != nil {
+		return nil, 0, err
+	}
+
+	orderType := strings.TrimSpace(query.OrderType)
+	date := strings.TrimSpace(query.Date)
+	if (orderType == "") == (date == "") {
+		return nil, 0, infraerrors.BadRequest(orderStatisticsRangeError, "exactly one of order_type or date is required")
+	}
+
+	predicates := paidOrderStatisticsPredicates(userID, window)
+	if orderType != "" {
+		if !isSupportedOrderStatisticsType(orderType) {
+			return nil, 0, infraerrors.BadRequest(orderStatisticsRangeError, "unsupported order_type")
+		}
+		predicates = append(predicates, paymentorder.OrderTypeEQ(orderType))
+	} else {
+		dateStart, parseErr := time.ParseInLocation(orderStatisticsDateLayout, date, window.Location)
+		if parseErr != nil {
+			return nil, 0, infraerrors.BadRequest(orderStatisticsRangeError, "invalid date, expected YYYY-MM-DD")
+		}
+		if dateStart.Before(window.StartLocal) || dateStart.After(window.EndLocal) {
+			return nil, 0, infraerrors.BadRequest(orderStatisticsRangeError, "date must be within the selected range")
+		}
+		predicates = paidOrderStatisticsPredicates(userID, orderStatisticsWindow{
+			StartInclusive: dateStart,
+			EndExclusive:   dateStart.AddDate(0, 0, 1),
+		})
+	}
+
+	baseQuery := s.entClient.PaymentOrder.Query().Where(predicates...)
+	total, err := baseQuery.Clone().Count(ctx)
+	if err != nil {
+		return nil, 0, fmt.Errorf("count user order statistics details: %w", err)
+	}
+	orders, err := baseQuery.
+		Select(
+			paymentorder.FieldID,
+			paymentorder.FieldOutTradeNo,
+			paymentorder.FieldOrderType,
+			paymentorder.FieldPayAmount,
+			paymentorder.FieldStatus,
+			paymentorder.FieldPaymentType,
+			paymentorder.FieldPaidAt,
+		).
+		Order(
+			dbent.Desc(paymentorder.FieldPaidAt),
+			dbent.Desc(paymentorder.FieldID),
+		).
+		Limit(OrderStatisticsDetailPageSize).
+		Offset((query.Page - 1) * OrderStatisticsDetailPageSize).
+		All(ctx)
+	if err != nil {
+		return nil, 0, fmt.Errorf("query user order statistics details: %w", err)
+	}
+
+	items := make([]OrderStatisticsDetail, 0, len(orders))
+	for _, order := range orders {
+		if order.PaidAt == nil {
+			continue
+		}
+		items = append(items, OrderStatisticsDetail{
+			OutTradeNo:  order.OutTradeNo,
+			OrderType:   order.OrderType,
+			PayAmount:   order.PayAmount,
+			Status:      order.Status,
+			PaymentType: order.PaymentType,
+			PaidAt:      *order.PaidAt,
+		})
+	}
+	return items, total, nil
+}
+
+func paidOrderStatisticsPredicates(userID int64, window orderStatisticsWindow) []predicate.PaymentOrder {
+	return []predicate.PaymentOrder{
+		paymentorder.UserIDEQ(userID),
+		paymentorder.StatusIn(OrderStatusPaid, OrderStatusRecharging, OrderStatusCompleted),
+		paymentorder.OrderTypeIn(orderStatisticsTypes...),
+		paymentorder.PaidAtNotNil(),
+		paymentorder.PaidAtGTE(window.StartInclusive.UTC()),
+		paymentorder.PaidAtLT(window.EndExclusive.UTC()),
+	}
+}
+
+func isSupportedOrderStatisticsType(orderType string) bool {
+	for _, supported := range orderStatisticsTypes {
+		if orderType == supported {
+			return true
+		}
+	}
+	return false
 }
