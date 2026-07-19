@@ -101,6 +101,10 @@ The system SHALL retain input files only while they are needed for execution or 
 - **WHEN** the upstream result, output assets, and settlement recovery payload have been durably persisted
 - **THEN** the system deletes all reference images and the mask and records the input deletion time
 
+#### Scenario: Durable cleanup retries before input expiration
+- **WHEN** input removal or deletion timestamp persistence fails after a job reaches durable settling or succeeded state
+- **THEN** the next cleanup run retries the idempotent input deletion without waiting for input TTL and without replaying the upstream request
+
 #### Scenario: Retryable failure retains inputs
 - **WHEN** an edit attempt fails with a retryable error before the input expiration time
 - **THEN** the system retains the input files for the next attempt
@@ -135,6 +139,10 @@ The system SHALL remove embedded image content from terminal legacy jobs and SHA
 #### Scenario: Materialize an active legacy task
 - **WHEN** a Worker claims an active legacy edit job with valid data URLs and no stored input paths
 - **THEN** it writes up to four ordered reference images and the optional mask to managed storage, updates the path fields, removes the embedded image fields, and continues execution
+
+#### Scenario: Legacy path persistence fails before stale recovery
+- **WHEN** managed legacy files were written but the atomic path and redacted payload update fails
+- **THEN** the system preserves the transient recovery window, attempts to remove the unreferenced files, atomically removes `images` and `mask` if stale recovery later makes the row terminal, and leaves any failed directory rollback eligible for orphan cleanup
 
 #### Scenario: Reject invalid legacy cardinality
 - **WHEN** an active legacy task has zero or more than four reference images

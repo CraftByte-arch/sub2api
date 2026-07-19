@@ -495,6 +495,47 @@ git add docs/operations/image-studio-edit-input-storage.md openspec/changes/refa
 git commit -m "docs: document image studio edit storage rollout"
 ```
 
+### Task 14: 终审失败收敛加固（OpenSpec 6.1、6.2）
+
+**Files:**
+- Modify: `backend/internal/repository/image_studio_job_repo.go`
+- Modify: `backend/internal/repository/image_studio_job_repo_test.go`
+- Modify: `backend/internal/repository/image_studio_edit_storage_integration_test.go`
+- Modify: `backend/internal/service/image_studio_job_worker_test.go`
+- Modify: `openspec/changes/refactor-image-studio-edit-storage/design.md`
+- Modify: `openspec/changes/refactor-image-studio-edit-storage/specs/image-studio-edit-jobs/spec.md`
+- Modify: `openspec/changes/refactor-image-studio-edit-storage/tasks.md`
+
+- [x] **Step 1: RED durable completion 清理重试**
+
+真实 PostgreSQL 场景将未来 TTL 的 edit 推进到 succeeded 并保留输入，触发下一轮 production
+cleanup，断言旧实现不会删除。
+
+- [x] **Step 2: 让 durable row 下一轮立即收敛**
+
+`ListExpiredInputs` 优先返回仍有输入引用的 settling/succeeded row，不受 input TTL 限制；
+failed 等其他终态仍按 TTL，queued/running 继续排除。
+
+- [x] **Step 3: RED stale legacy payload redaction**
+
+真实 PostgreSQL 场景创建无 path 的 legacy running edit，执行 stale recovery，断言旧实现虽
+进入 worker_interrupted 终态但仍保留 `images`、`mask` 和 data URL。
+
+- [x] **Step 4: 原子 redaction 与目录最终收敛**
+
+`MarkStaleRunningFailed` 只对无 path legacy edit 原子删除 binary fields；persist failure 不
+提前终态化，首次目录回滚失败时由 orphan cleanup 在 grace period 后删除。
+
+- [x] **Step 5: 全量验证、双复审并提交**
+
+运行 focused/full backend、真实 integration、vet、change-scoped lint、diff check 和 OpenSpec
+strict validate；依次取得 spec review、quality review APPROVE 后提交独立 commit。
+
+P2 残余风险：`ListExpiredInputs` 的 `OR + ORDER BY CASE` 可能无法利用现有索引完成排序；
+若前 50 条 durable row 因永久 I/O 故障持续失败，也可能让后续 durable/TTL row 跨轮饥饿。
+后续可拆成 durable/TTL 双 query 与独立 quota，或增加 durable partial index；当前 30 分钟周期
+和可恢复 I/O 故障模型下不阻塞本次验收。
+
 ## OpenSpec 覆盖索引
 
 | OpenSpec | 实施任务 |
@@ -519,3 +560,5 @@ git commit -m "docs: document image studio edit storage rollout"
 | 5.2 | Task 13 Step 2 |
 | 5.3 | Task 13 Step 3 |
 | 5.4 | Task 12、13 Step 4 |
+| 6.1 | Task 14 Step 1、2 |
+| 6.2 | Task 14 Step 3、4 |

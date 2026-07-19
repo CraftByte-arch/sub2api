@@ -957,9 +957,17 @@ func TestImageStudioJobServiceLegacyPersistFailureRemovesMaterializedInputsAndJo
 		t.Run(tt.name, func(t *testing.T) {
 			storage := NewImageStudioInputStore(t.TempDir(), 1<<20)
 			if tt.removeErr != nil {
-				storage.removeAllInRoot = func(*os.Root, string) error { return tt.removeErr }
+				originalRemove := storage.removeAllInRoot
+				removeCalls := 0
+				storage.removeAllInRoot = func(root *os.Root, path string) error {
+					removeCalls++
+					if removeCalls == 1 {
+						return tt.removeErr
+					}
+					return originalRemove(root, path)
+				}
 			}
-			repo := &imageStudioWorkerRepoStub{persistLegacyErr: persistFailure}
+			repo := &imageStudioWorkerRepoStub{persistLegacyErr: persistFailure, markStaleRunningChanged: true}
 			svc := NewImageStudioJobService(repo, nil, storage, time.Now)
 			job := ImageStudioJob{
 				ID: 39, Mode: ImageStudioJobModeEdit, Status: ImageStudioJobStatusRunning,
@@ -971,10 +979,22 @@ func TestImageStudioJobServiceLegacyPersistFailureRemovesMaterializedInputsAndJo
 			require.False(t, materialized)
 			require.False(t, terminal)
 			require.ErrorIs(t, err, persistFailure)
+			require.Zero(t, repo.failLegacyCalls, "transient persistence failure must remain recoverable until stale")
 			if tt.removeErr != nil {
 				require.ErrorIs(t, err, removeFailure)
 				require.Len(t, imageStudioInputDirs(t, storage.Root()), 1)
 			} else {
+				require.Empty(t, imageStudioInputDirs(t, storage.Root()))
+			}
+
+			svc.recoverStaleRunningJob(context.Background(), job)
+			require.Equal(t, 1, repo.markStaleRunningCalls)
+			if tt.removeErr != nil {
+				result, cleanupErr := storage.CleanupOrphans(ImageStudioInputCleanupOptions{
+					Now: time.Now().Add(2 * time.Hour), OrphanGrace: time.Hour, SpoolGrace: 5 * time.Minute, Limit: 50,
+				})
+				require.NoError(t, cleanupErr)
+				require.Equal(t, 1, result.OrphanDirsDeleted)
 				require.Empty(t, imageStudioInputDirs(t, storage.Root()))
 			}
 		})

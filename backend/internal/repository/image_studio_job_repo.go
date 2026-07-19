@@ -375,15 +375,22 @@ func (r *imageStudioJobRepository) ListExpiredInputs(ctx context.Context, now ti
 	}
 	limit = normalizeImageStudioInputLifecycleLimit(limit)
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT `+imageStudioJobColumns+`
-		FROM image_studio_jobs
-		WHERE input_deleted_at IS NULL
-			AND input_expires_at IS NOT NULL
-			AND input_expires_at <= $1
-			AND status NOT IN ($2, $3)
-		ORDER BY input_expires_at ASC, id ASC
-		LIMIT $4
-	`, now, service.ImageStudioJobStatusQueued, service.ImageStudioJobStatusRunning, limit)
+			SELECT `+imageStudioJobColumns+`
+			FROM image_studio_jobs
+			WHERE input_deleted_at IS NULL
+				AND (
+					(status IN ($2, $3) AND (input_image_paths <> '[]'::jsonb OR input_mask_path IS NOT NULL))
+					OR (
+						input_expires_at IS NOT NULL
+						AND input_expires_at <= $1
+						AND status NOT IN ($4, $5)
+					)
+				)
+			ORDER BY CASE WHEN status IN ($2, $3) THEN 0 ELSE 1 END,
+				input_expires_at ASC NULLS LAST, id ASC
+			LIMIT $6
+		`, now, service.ImageStudioJobStatusSettling, service.ImageStudioJobStatusSucceeded,
+		service.ImageStudioJobStatusQueued, service.ImageStudioJobStatusRunning, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -595,11 +602,17 @@ func (r *imageStudioJobRepository) MarkStaleRunningFailed(ctx context.Context, i
 		UPDATE image_studio_jobs
 		SET status = $2, completed_at = $3, error_code = 'worker_interrupted',
 			error_message = 'image generation worker was interrupted', next_attempt_at = NULL,
-			heartbeat_at = NULL, updated_at = NOW()
+			heartbeat_at = NULL,
+			request_payload = CASE
+				WHEN mode = $6 AND input_image_paths = '[]'::jsonb AND input_mask_path IS NULL
+				THEN request_payload - 'images' - 'mask'
+				ELSE request_payload
+			END,
+			updated_at = NOW()
 		WHERE id = $1
 			AND status = $4
 			AND (heartbeat_at IS NULL OR heartbeat_at <= $5)
-	`, id, service.ImageStudioJobStatusFailed, completedAt, service.ImageStudioJobStatusRunning, staleBefore)
+	`, id, service.ImageStudioJobStatusFailed, completedAt, service.ImageStudioJobStatusRunning, staleBefore, service.ImageStudioJobModeEdit)
 	if err != nil {
 		return false, err
 	}

@@ -332,13 +332,14 @@ func TestImageStudioJobRepositoryMarkStaleRunningFailedUsesHeartbeatGuard(t *tes
 
 	completedAt := time.Now()
 	staleBefore := completedAt.Add(-5 * time.Minute)
-	mock.ExpectExec("UPDATE image_studio_jobs[\\s\\S]*status = \\$2[\\s\\S]*error_code = 'worker_interrupted'[\\s\\S]*WHERE id = \\$1[\\s\\S]*status = \\$4[\\s\\S]*heartbeat_at IS NULL OR heartbeat_at <= \\$5").
+	mock.ExpectExec("UPDATE image_studio_jobs[\\s\\S]*status = \\$2[\\s\\S]*error_code = 'worker_interrupted'[\\s\\S]*request_payload = CASE[\\s\\S]*mode = \\$6[\\s\\S]*input_image_paths = '\\[\\]'::jsonb[\\s\\S]*input_mask_path IS NULL[\\s\\S]*request_payload - 'images' - 'mask'[\\s\\S]*WHERE id = \\$1[\\s\\S]*status = \\$4[\\s\\S]*heartbeat_at IS NULL OR heartbeat_at <= \\$5").
 		WithArgs(
 			int64(39),
 			service.ImageStudioJobStatusFailed,
 			completedAt,
 			service.ImageStudioJobStatusRunning,
 			staleBefore,
+			service.ImageStudioJobModeEdit,
 		).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
@@ -449,8 +450,8 @@ func TestImageStudioJobRepositoryListExpiredInputsExcludesQueuedAndRunning(t *te
 
 	now := time.Now()
 	paths := []string{"inputs/upload-failed/image-01.webp"}
-	mock.ExpectQuery("SELECT[\\s\\S]*FROM image_studio_jobs[\\s\\S]*input_deleted_at IS NULL[\\s\\S]*input_expires_at <= \\$1[\\s\\S]*status NOT IN \\(\\$2, \\$3\\)[\\s\\S]*ORDER BY input_expires_at ASC, id ASC[\\s\\S]*LIMIT \\$4").
-		WithArgs(now, service.ImageStudioJobStatusQueued, service.ImageStudioJobStatusRunning, 3).
+	mock.ExpectQuery("SELECT[\\s\\S]*FROM image_studio_jobs[\\s\\S]*input_deleted_at IS NULL[\\s\\S]*status IN \\(\\$2, \\$3\\)[\\s\\S]*input_expires_at <= \\$1[\\s\\S]*status NOT IN \\(\\$4, \\$5\\)[\\s\\S]*ORDER BY CASE WHEN status IN \\(\\$2, \\$3\\) THEN 0 ELSE 1 END[\\s\\S]*LIMIT \\$6").
+		WithArgs(now, service.ImageStudioJobStatusSettling, service.ImageStudioJobStatusSucceeded, service.ImageStudioJobStatusQueued, service.ImageStudioJobStatusRunning, 3).
 		WillReturnRows(sqlmock.NewRows(imageStudioJobColumnNames()).AddRow(imageStudioJobRowValues(now, paths, nil, &now, nil)...))
 
 	repo := NewImageStudioJobRepository(nil, db)
@@ -489,8 +490,8 @@ func TestImageStudioJobRepositoryListExpiredInputsPropagatesRowsError(t *testing
 	rows := sqlmock.NewRows(imageStudioJobColumnNames()).
 		AddRow(imageStudioJobRowValues(now, []string{"inputs/upload-failed/image-01.webp"}, nil, &now, nil)...).
 		RowError(0, context.Canceled)
-	mock.ExpectQuery("SELECT[\\s\\S]*input_expires_at <= \\$1[\\s\\S]*LIMIT \\$4").
-		WithArgs(now, service.ImageStudioJobStatusQueued, service.ImageStudioJobStatusRunning, 50).
+	mock.ExpectQuery("SELECT[\\s\\S]*input_expires_at <= \\$1[\\s\\S]*LIMIT \\$6").
+		WithArgs(now, service.ImageStudioJobStatusSettling, service.ImageStudioJobStatusSucceeded, service.ImageStudioJobStatusQueued, service.ImageStudioJobStatusRunning, 50).
 		WillReturnRows(rows)
 
 	repo := NewImageStudioJobRepository(nil, db)
@@ -506,8 +507,8 @@ func TestImageStudioJobRepositoryListExpiredInputsCapsLargeLimit(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	now := time.Now()
-	mock.ExpectQuery("SELECT[\\s\\S]*input_expires_at <= \\$1[\\s\\S]*LIMIT \\$4").
-		WithArgs(now, service.ImageStudioJobStatusQueued, service.ImageStudioJobStatusRunning, 500).
+	mock.ExpectQuery("SELECT[\\s\\S]*input_expires_at <= \\$1[\\s\\S]*LIMIT \\$6").
+		WithArgs(now, service.ImageStudioJobStatusSettling, service.ImageStudioJobStatusSucceeded, service.ImageStudioJobStatusQueued, service.ImageStudioJobStatusRunning, 500).
 		WillReturnRows(sqlmock.NewRows(imageStudioJobColumnNames()))
 
 	repo := NewImageStudioJobRepository(nil, db)

@@ -196,6 +196,81 @@ func TestImageStudioEditStorageRealLifecycleCleanupAndDelete(t *testing.T) {
 	require.NoDirExists(t, assetDir)
 }
 
+func TestImageStudioEditStorageRealDurableCleanupRetryBeforeTTL(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	fixture := newImageStudioEditIntegrationFixture(t, service.AccountTypeAPIKey)
+	ctx := context.Background()
+	imageBytes := imageStudioIntegrationPNG(t, color.NRGBA{R: 0x31, G: 0x72, A: 0xff})
+
+	job, err := fixture.jobService.CreateEditJob(ctx, service.ImageStudioJobCreateInput{
+		UserID: fixture.userID, APIKeyID: fixture.apiKeyID, Mode: service.ImageStudioJobModeEdit,
+		Prompt: "durable cleanup retry", Model: "gpt-image-2", Size: "1024x1024", OutputFormat: "png",
+		RequestPayload: json.RawMessage(`{"model":"gpt-image-2","prompt":"durable cleanup retry","output_format":"png"}`),
+	}, []service.UploadedFile{{Reader: bytes.NewReader(imageBytes), ContentType: "image/png"}}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, job.InputExpiresAt)
+	require.True(t, job.InputExpiresAt.After(time.Now().Add(23*time.Hour)))
+	inputPath := imageStudioIntegrationStoredPath(fixture.store, job.InputImagePaths[0])
+	require.FileExists(t, inputPath)
+
+	running, err := fixture.repo.MarkRunning(ctx, job.ID, time.Now())
+	require.NoError(t, err)
+	require.True(t, running)
+	assetDir := filepath.Join(fixture.dataDir, "image-studio", strconv.FormatInt(job.ID, 10))
+	require.NoError(t, os.MkdirAll(assetDir, 0o755))
+	originalPath := filepath.Join(assetDir, "original.png")
+	thumbnailPath := filepath.Join(assetDir, "thumbnail.jpg")
+	require.NoError(t, os.WriteFile(originalPath, imageBytes, 0o644))
+	require.NoError(t, os.WriteFile(thumbnailPath, []byte("thumbnail"), 0o644))
+	require.NoError(t, fixture.repo.MarkSettling(ctx, job.ID, json.RawMessage(`{"version":1}`), originalPath, thumbnailPath, "image/png", int64(len(imageBytes)), 2, 2, time.Now()))
+	outputExpiresAt := time.Now().Add(time.Hour)
+	require.NoError(t, fixture.repo.MarkSucceeded(ctx, job.ID, time.Now(), 0, originalPath, thumbnailPath, "image/png", int64(len(imageBytes)), 2, 2, &outputExpiresAt))
+
+	// This is the durable state left behind when the first RemoveInputs attempt fails.
+	fixture.startWorker(t)
+	fixture.triggerCleanup()
+	cleaned := fixture.waitForInputsDeleted(t, job.ID, 3*time.Second)
+	require.Equal(t, service.ImageStudioJobStatusSucceeded, cleaned.Status)
+	require.NoFileExists(t, inputPath)
+	require.True(t, cleaned.InputExpiresAt.After(*cleaned.InputDeletedAt), "durable cleanup retry must not wait for input TTL")
+}
+
+func TestImageStudioEditStorageRealStaleLegacyRecoveryRedactsPayload(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	fixture := newImageStudioEditIntegrationFixture(t, service.AccountTypeAPIKey)
+	ctx := context.Background()
+	imageDataURL := "data:image/png;base64," + base64.StdEncoding.EncodeToString(imageStudioIntegrationPNG(t, color.NRGBA{B: 0x91, A: 0xff}))
+	maskDataURL := "data:image/png;base64," + base64.StdEncoding.EncodeToString(imageStudioIntegrationMaskPNG(t))
+	legacyPayload, err := json.Marshal(map[string]any{
+		"model": "gpt-image-2", "prompt": "legacy recovery",
+		"images": []map[string]string{{"image_url": imageDataURL}},
+		"mask":   map[string]string{"image_url": maskDataURL},
+	})
+	require.NoError(t, err)
+
+	job, err := fixture.repo.Create(ctx, service.ImageStudioJobCreateInput{
+		UserID: fixture.userID, APIKeyID: fixture.apiKeyID, Mode: service.ImageStudioJobModeEdit,
+		Prompt: "legacy recovery", Model: "gpt-image-2", Size: "1024x1024", OutputFormat: "png",
+		RequestPayload: legacyPayload,
+	})
+	require.NoError(t, err)
+	running, err := fixture.repo.MarkRunning(ctx, job.ID, time.Now())
+	require.NoError(t, err)
+	require.True(t, running)
+	completedAt := time.Now()
+	changed, err := fixture.repo.MarkStaleRunningFailed(ctx, job.ID, completedAt, completedAt.Add(time.Minute))
+	require.NoError(t, err)
+	require.True(t, changed)
+
+	terminal, err := fixture.repo.GetByID(ctx, job.ID)
+	require.NoError(t, err)
+	require.Equal(t, service.ImageStudioJobStatusFailed, terminal.Status)
+	require.Equal(t, "worker_interrupted", terminal.ErrorCode)
+	require.NotContains(t, string(terminal.RequestPayload), `"images"`)
+	require.NotContains(t, string(terminal.RequestPayload), `"mask"`)
+	require.NotContains(t, string(terminal.RequestPayload), "data:image")
+}
+
 type imageStudioEditIntegrationFixture struct {
 	dataDir      string
 	userID       int64
