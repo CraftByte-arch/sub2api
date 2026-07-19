@@ -8,10 +8,10 @@
 
 ## 2. 用户统计与下钻 API
 
-- [ ] 2.1 为未认证请求、有效统计查询、用户 ID 强制取自认证主体、固定 CNY 响应和服务错误映射编写 handler 测试。
-- [ ] 2.2 新增 `GET /api/v1/payment/orders/statistics` handler 和认证静态路由，并验证其不受 `/:id` 路由影响。
+- [x] 2.1 为未认证请求、有效统计查询、用户 ID 强制取自认证主体、固定 CNY 响应和服务错误映射编写 handler 测试。
+- [x] 2.2 新增 `GET /api/v1/payment/orders/statistics` handler 和认证静态路由，并验证其不受 `/:id` 路由影响。
 - [x] 2.3 为下钻选择器互斥、非法类型/日期、范围外日期、固定每页 20 条和稳定排序编写失败测试。
-- [ ] 2.4 新增 `GET /api/v1/payment/orders/statistics/details`，使用数据库计数和分页并返回最小只读 DTO。
+- [x] 2.4 新增 `GET /api/v1/payment/orders/statistics/details`，使用数据库计数和分页并返回最小只读 DTO。
 - [x] 2.5 增加一致性测试，验证类型/日期聚合的 `order_count` 与对应下钻 `total` 相等且不会泄露其他用户数据。
 
 ## 3. 独立订单统计页面

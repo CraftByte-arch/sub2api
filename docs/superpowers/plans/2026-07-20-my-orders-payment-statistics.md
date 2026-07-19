@@ -273,7 +273,7 @@ git commit -m "feat(payment): query personal statistics and drilldowns"
 - Modify: `backend/internal/server/middleware/server_timing_test.go`
 - Modify: `openspec/changes/add-my-orders-payment-statistics/tasks.md`（映射 2.1、2.2、2.4）
 
-- [ ] **Step 1: 写 handler RED 测试**
+- [x] **Step 1: 写 handler RED 测试**
 
 复用 Task 2 的 SQLite fixture 构造真实 `PaymentService`。分别直接调用 handler，覆盖无 AuthSubject 返回 401、认证用户不能通过 query 覆盖 user ID、有效汇总、非法时区 400、details selector 错误 400 和分页 envelope：
 
@@ -287,13 +287,13 @@ require.Equal(t, http.StatusOK, recorder.Code)
 
 解析 JSON 后明确断言 details item 只有六个字段，不出现 `id`、`user_id`、`refund_amount` 或 provider snapshot。
 
-- [ ] **Step 2: 运行 handler 测试并确认 RED**
+- [x] **Step 2: 运行 handler 测试并确认 RED**
 
 Run: `cd backend && go test -tags=unit ./internal/handler -run 'TestPaymentStatistics' -count=1`
 
 Expected: FAIL，提示 handler 方法未定义。
 
-- [ ] **Step 3: 实现两个 handler**
+- [x] **Step 3: 实现两个 handler**
 
 两个方法先调用现有 `requireAuth`。汇总把三个范围 query 传给 service 并 `response.Success`；details 严格解析正整数 page，调用 service 后执行：
 
@@ -303,7 +303,7 @@ response.Paginated(c, items, int64(total), page, service.OrderStatisticsDetailPa
 
 不要调用会接受客户端 `page_size` 的 `response.ParsePagination`；handler 只解析正整数 `page`，并始终使用 service 导出的固定页大小常量。
 
-- [ ] **Step 4: 写路由顺序 RED 测试并注册路由**
+- [x] **Step 4: 写路由顺序 RED 测试并注册路由**
 
 `payment_test.go` 读取同目录 `payment.go`，断言两个静态注册文本存在且索引早于 `orders.GET("/:id"`：
 
@@ -322,13 +322,15 @@ require.Less(t, details, dynamic)
 
 在路由文件中按 `/statistics`、`/statistics/details`、`/my`、`/:id` 顺序注册。将两个路径加入 `TestIsUserTimingPath` 期望 `true` 的表。
 
-- [ ] **Step 5: 运行后端相关测试**
+- [x] **Step 5: 运行后端相关测试**
 
 Run: `cd backend && go test -tags=unit ./internal/handler ./internal/server/routes ./internal/server/middleware -run 'Test(PaymentStatistics|PaymentStatisticsRoutes|IsUserTimingPath)' -count=1`
 
 Expected: PASS。
 
-- [ ] **Step 6: 勾选映射任务并提交**
+执行记录（2026-07-20）：`internal/handler` 与 `internal/server/routes` 的统计定向测试 PASS。`internal/server/middleware` 包测试在编译既有 `api_key_auth_test.go` 时失败，原因是该文件仍按三参数调用已改为四参数的 `NewAPIKeyAuthMiddleware`；本变更未修改该测试。新增路径仍由现有 `/payment/` 前缀逻辑覆盖，并已保留在 `TestIsUserTimingPath` 的表中。
+
+- [x] **Step 6: 勾选映射任务并提交**
 
 勾选 OpenSpec `2.1`、`2.2`、`2.4`：
 

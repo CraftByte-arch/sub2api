@@ -35,6 +35,8 @@ func RegisterPaymentRoutes(
 		{
 			orders.POST("", paymentHandler.CreateOrder)
 			orders.POST("/verify", paymentHandler.VerifyOrder)
+			orders.GET("/statistics", paymentHandler.GetOrderStatistics)
+			orders.GET("/statistics/details", paymentHandler.GetOrderStatisticsDetails)
 			orders.GET("/my", paymentHandler.GetMyOrders)
 			orders.GET("/:id", paymentHandler.GetOrder)
 			orders.POST("/:id/cancel", paymentHandler.CancelOrder)
