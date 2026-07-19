@@ -212,16 +212,22 @@ func ProvideImageStudioInputStorage() ImageStudioInputStorage {
 	return NewImageStudioInputStore(os.Getenv("DATA_DIR"), 0)
 }
 
+func ProvideImageStudioInputStorageHealth(inputStore ImageStudioInputStorage) *ImageStudioInputStorageHealth {
+	prober, _ := inputStore.(ImageStudioInputStorageProber)
+	return NewImageStudioInputStorageHealth(prober, defaultImageStudioInputStorageProbeInterval)
+}
+
 func ProvideImageStudioJobService(
 	repo ImageStudioJobRepository,
 	settingService *SettingService,
 	inputStore ImageStudioInputStorage,
+	inputStorageHealth *ImageStudioInputStorageHealth,
 	openAIGateway *OpenAIGatewayService,
 	apiKeyService *APIKeyService,
 	billingCacheService *BillingCacheService,
 	subscriptionService *SubscriptionService,
 ) *ImageStudioJobService {
-	svc := NewImageStudioJobService(repo, settingService, inputStore, time.Now)
+	svc := NewImageStudioJobService(repo, settingService, inputStore, time.Now, inputStorageHealth)
 	svc.SetRuntimeDependencies(openAIGateway, apiKeyService, billingCacheService, subscriptionService)
 	svc.Start()
 	return svc
@@ -671,6 +677,7 @@ var ProviderSet = wire.NewSet(
 	ProvideDashboardAggregationService,
 	ProvideUsageCleanupService,
 	ProvideImageStudioInputStorage,
+	ProvideImageStudioInputStorageHealth,
 	ProvideImageStudioJobService,
 	ProvideDeferredService,
 	NewAntigravityQuotaFetcher,

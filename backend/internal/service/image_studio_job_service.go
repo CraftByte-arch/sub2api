@@ -25,12 +25,14 @@ const (
 	imageStudioAssetBaseDir            = "image-studio"
 	imageStudioInputOrphanGrace        = time.Hour
 	imageStudioMultipartSpoolGrace     = 10 * time.Minute
+	imageStudioStorageStartupProbeWait = 5 * time.Second
 )
 
 type ImageStudioJobService struct {
 	repo                 ImageStudioJobRepository
 	settingService       *SettingService
 	inputStore           ImageStudioInputStorage
+	inputStorageHealth   *ImageStudioInputStorageHealth
 	executor             imageStudioJobExecutor
 	openAIGateway        *OpenAIGatewayService
 	apiKeyService        *APIKeyService
@@ -43,6 +45,7 @@ type ImageStudioJobService struct {
 	now                  func() time.Time
 	syncAssetFile        func(*os.File) error
 	renameAssetFile      func(string, string) error
+	newQueueTicker       func(time.Duration) imageStudioInputStorageHealthTicker
 }
 
 type imageStudioSubscriptionResolver interface {
@@ -50,26 +53,58 @@ type imageStudioSubscriptionResolver interface {
 	GetActiveSubscription(ctx context.Context, userID, groupID int64) (*UserSubscription, error)
 }
 
-func NewImageStudioJobService(repo ImageStudioJobRepository, settingService *SettingService, inputStore ImageStudioInputStorage, now func() time.Time) *ImageStudioJobService {
+func NewImageStudioJobService(repo ImageStudioJobRepository, settingService *SettingService, inputStore ImageStudioInputStorage, now func() time.Time, health ...*ImageStudioInputStorageHealth) *ImageStudioJobService {
 	if now == nil {
 		now = time.Now
 	}
-	return &ImageStudioJobService{
+	service := &ImageStudioJobService{
 		repo:           repo,
 		settingService: settingService,
 		inputStore:     inputStore,
 		stopCh:         make(chan struct{}),
 		now:            now,
+		newQueueTicker: func(interval time.Duration) imageStudioInputStorageHealthTicker {
+			return imageStudioInputStorageRealTicker{Ticker: time.NewTicker(interval)}
+		},
 	}
+	if len(health) > 0 {
+		service.inputStorageHealth = health[0]
+	}
+	return service
 }
 
 func (s *ImageStudioJobService) Start() {
 	if s == nil || s.repo == nil {
 		return
 	}
+	if s.inputStorageHealth != nil {
+		probeCtx, cancel := context.WithTimeout(context.Background(), imageStudioStorageStartupProbeWait)
+		_ = s.inputStorageHealth.Probe(probeCtx)
+		cancel()
+		s.wg.Add(1)
+		go s.runInputStorageHealthLoop()
+	}
 	s.wg.Add(2)
 	go s.runQueueLoop()
 	go s.runCleanupLoop()
+}
+
+func (s *ImageStudioJobService) SetInputStorageHealth(health *ImageStudioInputStorageHealth) {
+	if s == nil {
+		return
+	}
+	s.inputStorageHealth = health
+}
+
+func (s *ImageStudioJobService) InputStorageAvailable() bool {
+	return s != nil && (s.inputStorageHealth == nil || s.inputStorageHealth.Available())
+}
+
+func (s *ImageStudioJobService) RequireInputStorage() error {
+	if s.InputStorageAvailable() {
+		return nil
+	}
+	return imageStudioInputCreateError(inputStorageError(errors.New("image studio input storage health is unavailable")))
 }
 
 func (s *ImageStudioJobService) Stop() {
@@ -85,6 +120,9 @@ func (s *ImageStudioJobService) Stop() {
 func (s *ImageStudioJobService) CreateJob(ctx context.Context, input ImageStudioJobCreateInput) (*ImageStudioJob, error) {
 	if s == nil || s.repo == nil {
 		return nil, fmt.Errorf("image studio job service is not configured")
+	}
+	if err := s.RequireInputStorage(); err != nil {
+		return nil, err
 	}
 	if input.UserID <= 0 || input.APIKeyID <= 0 {
 		return nil, fmt.Errorf("user_id and api_key_id are required")
@@ -104,6 +142,9 @@ func (s *ImageStudioJobService) CreateJob(ctx context.Context, input ImageStudio
 func (s *ImageStudioJobService) CreateEditJob(ctx context.Context, input ImageStudioJobCreateInput, images []UploadedFile, mask *UploadedFile) (*ImageStudioJob, error) {
 	if s == nil || s.repo == nil {
 		return nil, fmt.Errorf("image studio job service is not configured")
+	}
+	if err := s.RequireInputStorage(); err != nil {
+		return nil, err
 	}
 	if input.UserID <= 0 || input.APIKeyID <= 0 {
 		return nil, infraerrors.BadRequest("IMAGE_STUDIO_JOB_INVALID", "user_id and api_key_id are required")
@@ -196,11 +237,28 @@ func sanitizeImageStudioEditPayload(raw json.RawMessage) (json.RawMessage, error
 func imageStudioInputCreateError(err error) error {
 	if errors.Is(err, ErrImageStudioInputStorageUnavailable) {
 		return infraerrors.ServiceUnavailable(
-			"IMAGE_STUDIO_INPUT_STORAGE_UNAVAILABLE",
+			ImageStudioInputCodeStorageUnavailable,
 			"image studio input storage is unavailable",
 		).WithCause(err)
 	}
 	return infraerrors.BadRequest("IMAGE_STUDIO_INPUT_INVALID", "image studio edit input is invalid").WithCause(err)
+}
+
+func (s *ImageStudioJobService) runInputStorageHealthLoop() {
+	defer s.wg.Done()
+	ctx, cancel := context.WithCancel(context.Background())
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		select {
+		case <-s.stopCh:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	s.inputStorageHealth.Run(ctx)
+	cancel()
+	<-stopped
 }
 
 func cloneImageStudioString(value *string) *string {
@@ -320,13 +378,13 @@ func (s *ImageStudioJobService) EstimateCost(ctx context.Context, apiKey *APIKey
 
 func (s *ImageStudioJobService) runQueueLoop() {
 	defer s.wg.Done()
-	ticker := time.NewTicker(imageStudioWorkerTick)
+	ticker := s.newQueueTicker(imageStudioWorkerTick)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-s.stopCh:
 			return
-		case <-ticker.C:
+		case <-ticker.C():
 			s.drainQueueOnce(context.Background())
 		}
 	}

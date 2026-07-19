@@ -377,6 +377,81 @@ func TestImageStudioJobHandlerCreateMapsInputStorageUnavailableTo503(t *testing.
 	require.False(t, repo.created)
 }
 
+func TestImageStudioJobHandlerCreateGatesGenerateAndEditBeforeParsingOrLanding(t *testing.T) {
+	store := service.NewImageStudioInputStore(t.TempDir(), 1<<20)
+	health := service.NewImageStudioInputStorageHealth(
+		&imageStudioHandlerStorageProberStub{err: errors.New("shared mount unavailable")},
+		time.Minute,
+	)
+	require.Error(t, health.Probe(context.Background()))
+	repo := &imageStudioHandlerJobRepoStub{}
+	handler := newImageStudioCreateHandler(t, repo, store)
+	handler.jobService.SetInputStorageHealth(health)
+	tempFileCalls := 0
+	handler.createMultipartTempFile = func() (imageStudioMultipartTempFile, error) {
+		tempFileCalls++
+		return nil, errors.New("must not land multipart input")
+	}
+
+	generate := performImageStudioJSONCreate(t, handler, `{`)
+	parts := append(validImageStudioMultipartScalars(), imageStudioMultipartTestPart{
+		name: "image", contentType: "image/png", data: imageStudioHandlerTestPNG(t, 2, 2, color.NRGBA{A: 255}),
+	})
+	edit := performImageStudioMultipartCreate(t, handler, parts)
+
+	for _, rec := range []*httptest.ResponseRecorder{generate, edit} {
+		require.Equal(t, http.StatusServiceUnavailable, rec.Code, rec.Body.String())
+		require.Contains(t, rec.Body.String(), `"reason":"input_storage_unavailable"`)
+	}
+	require.Zero(t, tempFileCalls)
+	require.Zero(t, repo.createCalls)
+}
+
+func TestImageStudioJobHandlerOriginalDownloadWorksWhileInputStorageIsUnhealthy(t *testing.T) {
+	asset := filepath.Join(t.TempDir(), "original.png")
+	require.NoError(t, os.WriteFile(asset, []byte("existing-output"), 0o600))
+	health := service.NewImageStudioInputStorageHealth(
+		&imageStudioHandlerStorageProberStub{err: errors.New("shared mount unavailable")},
+		time.Minute,
+	)
+	require.Error(t, health.Probe(context.Background()))
+	repo := &imageStudioHandlerAssetRepoStub{job: &service.ImageStudioJob{
+		ID: 44, UserID: 123, OriginalPath: asset,
+	}}
+	jobService := service.NewImageStudioJobService(repo, nil, nil, time.Now, health)
+	handler := NewImageStudioJobHandler(jobService, nil)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodGet, "/image-studio/jobs/44/original", nil)
+	c.Params = gin.Params{{Key: "id", Value: "44"}}
+	c.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: 123})
+
+	handler.GetOriginal(c)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "existing-output", rec.Body.String())
+}
+
+func TestImageStudioStorageStartupFailureLeavesUnrelatedRouteAvailable(t *testing.T) {
+	health := service.NewImageStudioInputStorageHealth(
+		&imageStudioHandlerStorageProberStub{err: errors.New("shared mount unavailable")},
+		time.Minute,
+	)
+	handler := newImageStudioCreateHandler(t, &imageStudioHandlerJobRepoStub{}, service.NewImageStudioInputStore(t.TempDir(), 1<<20))
+	handler.jobService.SetInputStorageHealth(health)
+	handler.jobService.Start()
+	t.Cleanup(handler.jobService.Stop)
+	require.False(t, health.Available())
+
+	router := gin.New()
+	router.POST("/api/v1/image-studio/jobs", handler.Create)
+	router.GET("/api/v1/unrelated-health", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/unrelated-health", nil))
+
+	require.Equal(t, http.StatusNoContent, rec.Code)
+}
+
 func TestImageStudioJobHandlerCreateRejectsJSONEditWithCompatibilityError(t *testing.T) {
 	store := service.NewImageStudioInputStore(t.TempDir(), 1<<20)
 	repo := &imageStudioHandlerJobRepoStub{}
@@ -684,6 +759,24 @@ type imageStudioHandlerJobRepoStub struct {
 	createCalls int
 	lastInput   service.ImageStudioJobCreateInput
 	createErr   error
+}
+
+type imageStudioHandlerStorageProberStub struct {
+	err error
+}
+
+func (s *imageStudioHandlerStorageProberStub) Probe(context.Context) error { return s.err }
+
+type imageStudioHandlerAssetRepoStub struct {
+	service.ImageStudioJobRepository
+	job *service.ImageStudioJob
+}
+
+func (r *imageStudioHandlerAssetRepoStub) GetByIDForUser(_ context.Context, id, userID int64) (*service.ImageStudioJob, error) {
+	if r.job == nil || r.job.ID != id || r.job.UserID != userID {
+		return nil, service.ErrImageStudioJobNotFound
+	}
+	return r.job, nil
 }
 
 func (r *imageStudioHandlerJobRepoStub) Create(ctx context.Context, input service.ImageStudioJobCreateInput) (*service.ImageStudioJob, error) {

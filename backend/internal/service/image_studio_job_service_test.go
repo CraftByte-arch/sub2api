@@ -145,6 +145,34 @@ func TestImageStudioJobServiceCreateEditJobMapsStorageFailures(t *testing.T) {
 	}
 }
 
+func TestImageStudioJobServiceRejectsNewJobsBeforeRepositoryOrStorageWhenUnhealthy(t *testing.T) {
+	prober := &imageStudioInputStorageProberStub{errors: []error{errors.New("mount unavailable")}}
+	health := NewImageStudioInputStorageHealth(prober, time.Minute)
+	require.Error(t, health.Probe(context.Background()))
+	store := &imageStudioCreateStorageStub{staged: &StagedEditInputs{
+		UploadID: "upload-test", ImagePaths: []string{"inputs/upload-test/image-01.png"},
+	}}
+	repo := &imageStudioJobDeleteRepoStub{}
+	svc := NewImageStudioJobService(repo, nil, store, time.Now, health)
+
+	generated, generateErr := svc.CreateJob(context.Background(), ImageStudioJobCreateInput{
+		UserID: 7, APIKeyID: 8, Mode: ImageStudioJobModeGenerate,
+		RequestPayload: json.RawMessage(`{"model":"gpt-image-2"}`),
+	})
+	edited, editErr := svc.CreateEditJob(context.Background(), validImageStudioEditCreateInput(), []UploadedFile{{
+		Reader: strings.NewReader("image"), ContentType: "image/png",
+	}}, nil)
+
+	require.Nil(t, generated)
+	require.Nil(t, edited)
+	for _, err := range []error{generateErr, editErr} {
+		require.Equal(t, 503, infraerrors.Code(err))
+		require.ErrorIs(t, err, ErrImageStudioInputStorageUnavailable)
+	}
+	require.Zero(t, repo.createCalls)
+	require.Empty(t, store.images)
+}
+
 func validImageStudioEditCreateInput() ImageStudioJobCreateInput {
 	return ImageStudioJobCreateInput{
 		UserID: 7, APIKeyID: 8, Mode: ImageStudioJobModeEdit, Prompt: "edit",
@@ -442,9 +470,11 @@ type imageStudioJobDeleteRepoStub struct {
 	events            *[]string
 	pathsExpectedGone []string
 	claimErr          error
+	createCalls       int
 }
 
 func (r *imageStudioJobDeleteRepoStub) Create(_ context.Context, input ImageStudioJobCreateInput) (*ImageStudioJob, error) {
+	r.createCalls++
 	r.lastCreateInput = input
 	if r.createErr != nil {
 		return nil, r.createErr

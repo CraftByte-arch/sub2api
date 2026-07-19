@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -696,6 +697,20 @@ func (e *recordingImageStudioJobExecutor) Execute(_ context.Context, _ ImageStud
 	return e.outcome, e.err
 }
 
+type blockingImageStudioJobExecutor struct {
+	entered chan struct{}
+	release chan struct{}
+	err     error
+	calls   int
+}
+
+func (e *blockingImageStudioJobExecutor) Execute(context.Context, ImageStudioJob, *APIKey, *imageStudioExecutionInput) (*imageStudioForwardOutcome, error) {
+	e.calls++
+	close(e.entered)
+	<-e.release
+	return nil, e.err
+}
+
 func TestImageStudioJobServiceGenerationBypassesInputStorage(t *testing.T) {
 	now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
 	store := &imageStudioWorkerStorageStub{openErr: errors.New("must not open generation input")}
@@ -712,6 +727,119 @@ func TestImageStudioJobServiceGenerationBypassesInputStorage(t *testing.T) {
 	require.Zero(t, store.openCalls)
 	require.Equal(t, 1, executor.calls)
 	require.Nil(t, executor.editInputs)
+}
+
+func TestImageStudioJobServiceWorkerPausesClaimsUntilStorageRecovers(t *testing.T) {
+	prober := &imageStudioInputStorageProberStub{errors: []error{errors.New("mount unavailable"), nil}}
+	health := NewImageStudioInputStorageHealth(prober, time.Minute)
+	require.Error(t, health.Probe(context.Background()))
+	repo := &imageStudioWorkerHealthRepoStub{}
+	svc := NewImageStudioJobService(repo, nil, nil, time.Now, health)
+
+	svc.drainQueueOnce(context.Background())
+	require.Zero(t, repo.listCalls)
+	require.Zero(t, repo.markRunningCalls)
+	require.Zero(t, repo.claimSettlingCalls)
+
+	require.NoError(t, health.Probe(context.Background()))
+	svc.drainQueueOnce(context.Background())
+	require.Equal(t, 1, repo.listCalls)
+	require.Zero(t, repo.markRunningCalls)
+	require.Zero(t, repo.claimSettlingCalls)
+}
+
+func TestImageStudioJobServiceRechecksStorageHealthAtExecutionAndSettlementClaims(t *testing.T) {
+	health := NewImageStudioInputStorageHealth(&imageStudioInputStorageProberStub{errors: []error{errors.New("mount unavailable")}}, time.Minute)
+	require.Error(t, health.Probe(context.Background()))
+	now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
+	repo := &imageStudioWorkerRepoStub{claimSettling: true}
+	executor := &recordingImageStudioJobExecutor{}
+	svc := newImageStudioWorkerTestService(repo, nil, &imageStudioAPIKeyRepoStub{apiKey: validImageStudioWorkerAPIKey()}, executor, now)
+	svc.SetInputStorageHealth(health)
+
+	svc.processJob(context.Background(), ImageStudioJob{
+		ID: 39, UserID: 42, APIKeyID: 41, Mode: ImageStudioJobModeGenerate, Status: ImageStudioJobStatusQueued,
+		RequestPayload: json.RawMessage(`{"model":"gpt-image-2"}`),
+	})
+	svc.processJob(context.Background(), ImageStudioJob{
+		ID: 40, UserID: 42, APIKeyID: 41, Status: ImageStudioJobStatusSettling,
+	})
+
+	require.Zero(t, repo.markRunningCalls)
+	require.Zero(t, repo.claimSettlingCalls)
+	require.Zero(t, executor.calls)
+}
+
+func TestImageStudioJobServicePeriodicProbeRecoveryResumesExactlyOneClaim(t *testing.T) {
+	prober := &imageStudioInputStorageProberStub{errors: []error{errors.New("mount unavailable"), nil}}
+	health := NewImageStudioInputStorageHealth(prober, time.Minute)
+	healthTicker := &imageStudioInputStorageHealthTickerStub{ticks: make(chan time.Time, 1)}
+	health.newTicker = func(time.Duration) imageStudioInputStorageHealthTicker { return healthTicker }
+	baseRepo := &imageStudioWorkerRepoStub{}
+	repo := &imageStudioWorkerAutoRecoveryRepo{
+		imageStudioWorkerRepoStub: baseRepo,
+		jobs: []ImageStudioJob{{
+			ID: 39, UserID: 42, APIKeyID: 41, Mode: ImageStudioJobModeGenerate, Status: ImageStudioJobStatusQueued,
+			RequestPayload: json.RawMessage(`{"model":"gpt-image-2"}`),
+		}},
+		claims: make(chan struct{}, 2),
+	}
+	executor := &blockingImageStudioJobExecutor{
+		entered: make(chan struct{}), release: make(chan struct{}), err: errors.New("stop after capture"),
+	}
+	svc := newImageStudioWorkerTestService(repo, nil, &imageStudioAPIKeyRepoStub{apiKey: validImageStudioWorkerAPIKey()}, executor, time.Now())
+	svc.SetInputStorageHealth(health)
+	queueTicker := &imageStudioInputStorageHealthTickerStub{ticks: make(chan time.Time, 2)}
+	svc.newQueueTicker = func(time.Duration) imageStudioInputStorageHealthTicker { return queueTicker }
+	svc.Start()
+	defer svc.Stop()
+	require.False(t, health.Available())
+
+	healthTicker.ticks <- time.Now()
+	require.Eventually(t, health.Available, time.Second, time.Millisecond)
+	queueTicker.ticks <- time.Now()
+	select {
+	case <-repo.claims:
+	case <-time.After(time.Second):
+		t.Fatal("worker did not resume claim after storage recovered")
+	}
+	<-executor.entered
+	queueTicker.ticks <- time.Now()
+	select {
+	case <-repo.claims:
+		t.Fatal("recovered job was claimed more than once")
+	case <-time.After(25 * time.Millisecond):
+	}
+	close(executor.release)
+}
+
+func TestImageStudioJobServiceUnhealthyProbeDoesNotCancelAlreadyRunningWork(t *testing.T) {
+	health := NewImageStudioInputStorageHealth(&imageStudioInputStorageProberStub{errors: []error{nil, errors.New("mount unavailable")}}, time.Minute)
+	require.NoError(t, health.Probe(context.Background()))
+	now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
+	repo := &imageStudioWorkerRepoStub{}
+	apiKeys := &imageStudioAPIKeyRepoStub{apiKey: validImageStudioWorkerAPIKey()}
+	executor := &blockingImageStudioJobExecutor{
+		entered: make(chan struct{}), release: make(chan struct{}), err: errors.New("stop after capture"),
+	}
+	svc := newImageStudioWorkerTestService(repo, nil, apiKeys, executor, now)
+	svc.SetInputStorageHealth(health)
+
+	done := make(chan struct{})
+	go func() {
+		svc.processJob(context.Background(), ImageStudioJob{
+			ID: 39, UserID: 42, APIKeyID: 41, Mode: ImageStudioJobModeGenerate, Status: ImageStudioJobStatusQueued,
+			RequestPayload: json.RawMessage(`{"model":"gpt-image-2","prompt":"draw"}`),
+		})
+		close(done)
+	}()
+	<-executor.entered
+	require.Error(t, health.Probe(context.Background()))
+	close(executor.release)
+	<-done
+
+	require.Equal(t, 1, executor.calls)
+	require.Equal(t, 1, repo.markRunningCalls)
 }
 
 func TestImageStudioJobServiceMaterializedLegacyInputsEnterStoredExecutionPath(t *testing.T) {
@@ -1365,6 +1493,51 @@ type imageStudioWorkerRepoStub struct {
 	markInputsDeletedErr         error
 	failExpiredRunningChanged    bool
 	failExpiredRunningCalls      int
+}
+
+type imageStudioWorkerHealthRepoStub struct {
+	ImageStudioJobRepository
+	listCalls          int
+	markRunningCalls   int
+	claimSettlingCalls int
+}
+
+type imageStudioWorkerAutoRecoveryRepo struct {
+	*imageStudioWorkerRepoStub
+	mu     sync.Mutex
+	jobs   []ImageStudioJob
+	claims chan struct{}
+}
+
+func (r *imageStudioWorkerAutoRecoveryRepo) ListRunnableJobs(context.Context, int) ([]ImageStudioJob, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	jobs := append([]ImageStudioJob(nil), r.jobs...)
+	r.jobs = nil
+	return jobs, nil
+}
+
+func (r *imageStudioWorkerAutoRecoveryRepo) MarkRunning(ctx context.Context, id int64, startedAt time.Time) (bool, error) {
+	acquired, err := r.imageStudioWorkerRepoStub.MarkRunning(ctx, id, startedAt)
+	if err == nil && acquired {
+		r.claims <- struct{}{}
+	}
+	return acquired, err
+}
+
+func (r *imageStudioWorkerHealthRepoStub) ListRunnableJobs(context.Context, int) ([]ImageStudioJob, error) {
+	r.listCalls++
+	return nil, nil
+}
+
+func (r *imageStudioWorkerHealthRepoStub) MarkRunning(context.Context, int64, time.Time) (bool, error) {
+	r.markRunningCalls++
+	return true, nil
+}
+
+func (r *imageStudioWorkerHealthRepoStub) ClaimSettling(context.Context, int64, time.Time, time.Time) (bool, error) {
+	r.claimSettlingCalls++
+	return true, nil
 }
 
 func (r *imageStudioWorkerRepoStub) FailExpiredRunningInputs(context.Context, int64, time.Time) (bool, error) {

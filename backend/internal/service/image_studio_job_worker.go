@@ -216,6 +216,9 @@ func (s *ImageStudioJobService) drainQueueOnce(ctx context.Context) {
 	if s == nil || s.repo == nil {
 		return
 	}
+	if !s.InputStorageAvailable() {
+		return
+	}
 	maxConcurrency := s.AsyncConcurrency(ctx)
 	running := int(atomic.LoadInt32(&s.running))
 	available := maxConcurrency - running
@@ -247,6 +250,9 @@ func (s *ImageStudioJobService) processJob(ctx context.Context, job ImageStudioJ
 	}
 	if job.Status == ImageStudioJobStatusSettling {
 		s.processSettlingJob(ctx, job)
+		return
+	}
+	if !s.InputStorageAvailable() {
 		return
 	}
 
@@ -811,6 +817,9 @@ func (s *ImageStudioJobService) forwardResponsesJob(ctx context.Context, job Ima
 }
 
 func (s *ImageStudioJobService) processSettlingJob(ctx context.Context, job ImageStudioJob) {
+	if !s.InputStorageAvailable() {
+		return
+	}
 	leaseAt := time.Now()
 	claimed, err := s.repo.ClaimSettling(ctx, job.ID, leaseAt, leaseAt.Add(-5*time.Minute))
 	if err != nil || !claimed {

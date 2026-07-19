@@ -898,3 +898,151 @@ func TestImageStudioInputStoreSpoolScanDoesNotSkipFetchedOrphan(t *testing.T) {
 	require.Equal(t, 1, result.OrphanDirsDeleted)
 	require.NoDirExists(t, filepath.Join(inputsRoot, orphan))
 }
+
+func TestImageStudioInputStoreProbeRoundTripsPrivateFileAndCleansUp(t *testing.T) {
+	store := NewImageStudioInputStore(t.TempDir(), 1<<20)
+	var probeName string
+	originalOpen := store.openProbeFile
+	store.openProbeFile = func(root *os.Root, name string, flag int, perm os.FileMode) (*os.File, error) {
+		probeName = name
+		require.Equal(t, os.O_CREATE|os.O_EXCL|os.O_WRONLY, flag)
+		require.Equal(t, os.FileMode(0o600), perm)
+		require.Equal(t, filepath.Base(name), name)
+		return originalOpen(root, name, flag, perm)
+	}
+
+	require.NoError(t, store.Probe(context.Background()))
+	require.NotEmpty(t, probeName)
+	require.NoFileExists(t, filepath.Join(store.Root(), probeName))
+}
+
+func TestImageStudioInputStoreProbeClassifiesEveryIOFailureAndCleansUp(t *testing.T) {
+	tests := []struct {
+		name   string
+		inject func(*ImageStudioInputStore, error)
+	}{
+		{name: "create", inject: func(store *ImageStudioInputStore, failure error) {
+			store.openProbeFile = func(*os.Root, string, int, os.FileMode) (*os.File, error) { return nil, failure }
+		}},
+		{name: "write", inject: func(store *ImageStudioInputStore, failure error) {
+			store.writeProbeFile = func(*os.File, []byte) (int, error) { return 0, failure }
+		}},
+		{name: "sync", inject: func(store *ImageStudioInputStore, failure error) {
+			store.syncProbeFile = func(*os.File) error { return failure }
+		}},
+		{name: "close", inject: func(store *ImageStudioInputStore, failure error) {
+			store.closeProbeFile = func(file *os.File) error { return errors.Join(file.Close(), failure) }
+		}},
+		{name: "open for read", inject: func(store *ImageStudioInputStore, failure error) {
+			store.openProbeRead = func(*os.Root, string) (*os.File, error) { return nil, failure }
+		}},
+		{name: "read", inject: func(store *ImageStudioInputStore, failure error) {
+			store.readProbeFile = func(*os.File) ([]byte, error) { return nil, failure }
+		}},
+		{name: "delete", inject: func(store *ImageStudioInputStore, failure error) {
+			store.removeProbeFile = func(*os.Root, string) error { return failure }
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := NewImageStudioInputStore(t.TempDir(), 1<<20)
+			failure := errors.New(tt.name + " failed")
+			tt.inject(store, failure)
+
+			err := store.Probe(context.Background())
+
+			require.ErrorIs(t, err, failure)
+			require.ErrorIs(t, err, ErrImageStudioInputStorageUnavailable)
+			var inputErr *ImageStudioInputError
+			require.ErrorAs(t, err, &inputErr)
+			require.Equal(t, ImageStudioInputCodeStorageUnavailable, inputErr.Code)
+			entries, readErr := os.ReadDir(store.Root())
+			require.NoError(t, readErr)
+			if tt.name != "delete" {
+				require.Empty(t, entries)
+			}
+		})
+	}
+}
+
+func TestImageStudioInputStoreProbeRejectsReadMismatch(t *testing.T) {
+	store := NewImageStudioInputStore(t.TempDir(), 1<<20)
+	store.readProbeFile = func(*os.File) ([]byte, error) { return []byte("wrong"), nil }
+
+	err := store.Probe(context.Background())
+
+	require.ErrorIs(t, err, ErrImageStudioInputStorageUnavailable)
+	require.ErrorContains(t, err, "probe content mismatch")
+	entries, readErr := os.ReadDir(store.Root())
+	require.NoError(t, readErr)
+	require.Empty(t, entries)
+}
+
+func TestImageStudioInputStoreProbePreservesCleanupFailure(t *testing.T) {
+	store := NewImageStudioInputStore(t.TempDir(), 1<<20)
+	writeFailure := errors.New("probe write failed")
+	cleanupFailure := errors.New("probe cleanup failed")
+	store.writeProbeFile = func(*os.File, []byte) (int, error) { return 0, writeFailure }
+	store.removeProbeFile = func(*os.Root, string) error { return cleanupFailure }
+
+	err := store.Probe(context.Background())
+
+	require.ErrorIs(t, err, writeFailure)
+	require.ErrorIs(t, err, cleanupFailure)
+	require.ErrorIs(t, err, ErrImageStudioInputStorageUnavailable)
+}
+
+func TestImageStudioInputStoreProbeHonorsCanceledContextBeforeCreate(t *testing.T) {
+	store := NewImageStudioInputStore(t.TempDir(), 1<<20)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	createCalls := 0
+	store.openProbeFile = func(*os.Root, string, int, os.FileMode) (*os.File, error) {
+		createCalls++
+		return nil, errors.New("unexpected create")
+	}
+
+	err := store.Probe(ctx)
+
+	require.ErrorIs(t, err, context.Canceled)
+	require.ErrorIs(t, err, ErrImageStudioInputStorageUnavailable)
+	require.Zero(t, createCalls)
+}
+
+func TestImageStudioInputStoreProbeSerializesConcurrentCalls(t *testing.T) {
+	store := NewImageStudioInputStore(t.TempDir(), 1<<20)
+	originalWrite := store.writeProbeFile
+	entered := make(chan struct{}, 2)
+	release := make(chan struct{})
+	var active, maximum int
+	var mu sync.Mutex
+	store.writeProbeFile = func(file *os.File, payload []byte) (int, error) {
+		mu.Lock()
+		active++
+		if active > maximum {
+			maximum = active
+		}
+		mu.Unlock()
+		entered <- struct{}{}
+		<-release
+		n, err := originalWrite(file, payload)
+		mu.Lock()
+		active--
+		mu.Unlock()
+		return n, err
+	}
+
+	errs := make(chan error, 2)
+	go func() { errs <- store.Probe(context.Background()) }()
+	<-entered
+	go func() { errs <- store.Probe(context.Background()) }()
+	select {
+	case <-entered:
+		t.Fatal("second probe entered while first probe was active")
+	case <-time.After(25 * time.Millisecond):
+	}
+	close(release)
+	require.NoError(t, <-errs)
+	require.NoError(t, <-errs)
+	require.Equal(t, 1, maximum)
+}

@@ -1,8 +1,11 @@
 package service
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"image"
@@ -96,6 +99,10 @@ type ImageStudioInputStorage interface {
 	MaterializeLegacy(ctx context.Context, images []string, mask *string) (*StagedEditInputs, error)
 	OpenInputs(paths []string, maskPath *string) (*OpenedEditInputs, error)
 	RemoveInputs(paths []string, maskPath *string) error
+}
+
+type ImageStudioInputStorageProber interface {
+	Probe(ctx context.Context) error
 }
 
 type ImageStudioInputCleanupOptions struct {
@@ -218,6 +225,14 @@ type ImageStudioInputStore struct {
 	renameTempFile  func(string, string) error
 	removeAllInRoot func(*os.Root, string) error
 	removeInRoot    func(*os.Root, string) error
+	openProbeFile   func(*os.Root, string, int, os.FileMode) (*os.File, error)
+	writeProbeFile  func(*os.File, []byte) (int, error)
+	syncProbeFile   func(*os.File) error
+	closeProbeFile  func(*os.File) error
+	openProbeRead   func(*os.Root, string) (*os.File, error)
+	readProbeFile   func(*os.File) ([]byte, error)
+	removeProbeFile func(*os.Root, string) error
+	probeMu         sync.Mutex
 	cleanupMu       sync.Mutex
 	cleanupDir      *os.File
 }
@@ -242,6 +257,13 @@ func NewImageStudioInputStore(dataDir string, maxFileBytes int64) *ImageStudioIn
 		renameTempFile:  os.Rename,
 		removeAllInRoot: (*os.Root).RemoveAll,
 		removeInRoot:    (*os.Root).Remove,
+		openProbeFile:   (*os.Root).OpenFile,
+		writeProbeFile:  (*os.File).Write,
+		syncProbeFile:   (*os.File).Sync,
+		closeProbeFile:  (*os.File).Close,
+		openProbeRead:   (*os.Root).Open,
+		readProbeFile:   func(file *os.File) ([]byte, error) { return io.ReadAll(file) },
+		removeProbeFile: (*os.Root).Remove,
 	}
 }
 
@@ -250,6 +272,97 @@ func (s *ImageStudioInputStore) Root() string {
 		return ""
 	}
 	return s.root
+}
+
+func (s *ImageStudioInputStore) Probe(ctx context.Context) (retErr error) {
+	if s == nil {
+		return inputStorageError(errors.New("image studio input store is nil"))
+	}
+	s.probeMu.Lock()
+	defer s.probeMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return inputStorageError(err)
+	}
+
+	root, err := s.openRoot()
+	if err != nil {
+		return inputStorageError(err)
+	}
+	defer func() {
+		if closeErr := root.Close(); closeErr != nil {
+			retErr = inputStorageError(errors.Join(retErr, closeErr))
+		}
+	}()
+
+	random := make([]byte, 16)
+	if _, err := rand.Read(random); err != nil {
+		return inputStorageError(err)
+	}
+	name := ".storage-probe-" + hex.EncodeToString(random)
+	payload := []byte("image-studio-input-storage-probe-v1")
+	file, err := s.openProbeFile(root, name, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return inputStorageError(err)
+	}
+	created := true
+	defer func() {
+		if file != nil {
+			retErr = errors.Join(retErr, s.closeProbeFile(file))
+		}
+		if created {
+			retErr = errors.Join(retErr, s.removeProbeFile(root, name))
+		}
+		if retErr != nil && !errors.Is(retErr, ErrImageStudioInputStorageUnavailable) {
+			retErr = inputStorageError(retErr)
+		}
+	}()
+
+	written, err := s.writeProbeFile(file, payload)
+	if err != nil {
+		return err
+	}
+	if written != len(payload) {
+		return io.ErrShortWrite
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := s.syncProbeFile(file); err != nil {
+		return err
+	}
+	if err := s.closeProbeFile(file); err != nil {
+		file = nil
+		return err
+	}
+	file = nil
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	file, err = s.openProbeRead(root, name)
+	if err != nil {
+		return err
+	}
+	read, err := s.readProbeFile(file)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(read, payload) {
+		return errors.New("probe content mismatch")
+	}
+	if err := s.closeProbeFile(file); err != nil {
+		file = nil
+		return err
+	}
+	file = nil
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := s.removeProbeFile(root, name); err != nil {
+		return err
+	}
+	created = false
+	return nil
 }
 
 func (s *ImageStudioInputStore) StageEditInputs(ctx context.Context, images []UploadedFile, mask *UploadedFile) (_ *StagedEditInputs, retErr error) {

@@ -101,6 +101,10 @@ func (h *ImageStudioJobHandler) Create(c *gin.Context) {
 		response.Unauthorized(c, "User not authenticated")
 		return
 	}
+	if err := h.jobService.RequireInputStorage(); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
 
 	mediaType, _, err := mime.ParseMediaType(c.GetHeader("Content-Type"))
 	if err != nil {
