@@ -2,6 +2,7 @@
 change: refactor-image-studio-edit-storage
 design-doc: docs/superpowers/specs/2026-07-14-image-studio-edit-storage-design.md
 base-ref: e15265205a50addfeba66f935b7e256ea2a51f20
+archived-with: 2026-07-19-refactor-image-studio-edit-storage
 ---
 
 # Image Studio 编辑输入文件存储实施计划
@@ -14,6 +15,7 @@ base-ref: e15265205a50addfeba66f935b7e256ea2a51f20
 
 **Tech Stack:** Vue 3、TypeScript、Canvas API、Vitest、Go、Gin、PostgreSQL、`mime/multipart`、sqlmock、testify、Wire。
 
+archived-with: 2026-07-19-refactor-image-studio-edit-storage
 ---
 
 ## 文件职责

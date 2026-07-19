@@ -2,6 +2,8 @@
 comet_change: refactor-image-studio-edit-storage
 role: technical-design
 canonical_spec: openspec
+archived-with: 2026-07-19-refactor-image-studio-edit-storage
+status: final
 ---
 
 # Image Studio Edit Input Storage Design
