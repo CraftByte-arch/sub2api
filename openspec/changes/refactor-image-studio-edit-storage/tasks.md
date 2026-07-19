@@ -28,7 +28,7 @@
 
 ## 5. Verification And Operational Readiness
 
-- [ ] 5.1 Run focused backend migration, repository, handler, storage, Worker, billing, and cleanup tests, then run the complete backend test suite and linters required by the repository.
-- [ ] 5.2 Run Image Studio frontend unit tests, type checking, and production build, including multipart upload and four-reference scenarios.
-- [ ] 5.3 Verify in an integration environment that new edit rows contain no base64, API Key upstream requests are multipart, OAuth edits still succeed, inputs disappear after success/TTL/delete, and outputs remain downloadable until output retention expires.
-- [ ] 5.4 Document deployment ordering, shared `DATA_DIR` requirements, legacy cleanup metrics, database growth checks, and roll-forward recovery steps.
+- [x] 5.1 Run focused backend migration, repository, handler, storage, Worker, billing, and cleanup tests, then run the complete backend test suite and linters required by the repository.
+- [x] 5.2 Run Image Studio frontend unit tests, type checking, and production build, including multipart upload and four-reference scenarios.
+- [x] 5.3 Verify in an integration environment that new edit rows contain no base64, API Key upstream requests are multipart, OAuth edits still succeed, inputs disappear after success/TTL/delete, and outputs remain downloadable until output retention expires.
+- [x] 5.4 Document deployment ordering, shared `DATA_DIR` requirements, legacy cleanup metrics, database growth checks, and roll-forward recovery steps.

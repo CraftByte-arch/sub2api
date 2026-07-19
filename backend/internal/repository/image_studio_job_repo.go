@@ -127,7 +127,7 @@ func (r *imageStudioJobRepository) ListByUser(ctx context.Context, userID int64,
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	items := make([]service.ImageStudioJob, 0, pageSize)
 	for rows.Next() {
@@ -214,7 +214,7 @@ func (r *imageStudioJobRepository) ListRunnableJobs(ctx context.Context, limit i
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	items := make([]service.ImageStudioJob, 0, limit)
 	for rows.Next() {
@@ -356,7 +356,7 @@ func (r *imageStudioJobRepository) ExpireQueuedInputs(ctx context.Context, now t
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	jobs := make([]service.ImageStudioJob, 0, limit)
 	for rows.Next() {
@@ -387,7 +387,7 @@ func (r *imageStudioJobRepository) ListExpiredInputs(ctx context.Context, now ti
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	jobs := make([]service.ImageStudioJob, 0, limit)
 	for rows.Next() {
@@ -449,7 +449,7 @@ func (r *imageStudioJobRepository) ListReferencedInputDirs(ctx context.Context) 
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	dirs := make(map[string]struct{})
 	for rows.Next() {
@@ -496,7 +496,7 @@ func (r *imageStudioJobRepository) ListRunningInputDirs(ctx context.Context) (ma
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	dirs := make(map[string]struct{})
 	for rows.Next() {
@@ -738,7 +738,7 @@ func (r *imageStudioJobRepository) ListExpiredAssets(ctx context.Context, now ti
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	items := make([]service.ImageStudioJob, 0, limit)
 	for rows.Next() {

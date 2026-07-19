@@ -46,6 +46,7 @@ type ImageStudioJobService struct {
 	syncAssetFile        func(*os.File) error
 	renameAssetFile      func(string, string) error
 	newQueueTicker       func(time.Duration) imageStudioInputStorageHealthTicker
+	newCleanupTicker     func(time.Duration) imageStudioInputStorageHealthTicker
 }
 
 type imageStudioSubscriptionResolver interface {
@@ -64,6 +65,9 @@ func NewImageStudioJobService(repo ImageStudioJobRepository, settingService *Set
 		stopCh:         make(chan struct{}),
 		now:            now,
 		newQueueTicker: func(interval time.Duration) imageStudioInputStorageHealthTicker {
+			return imageStudioInputStorageRealTicker{Ticker: time.NewTicker(interval)}
+		},
+		newCleanupTicker: func(interval time.Duration) imageStudioInputStorageHealthTicker {
 			return imageStudioInputStorageRealTicker{Ticker: time.NewTicker(interval)}
 		},
 	}
@@ -392,13 +396,19 @@ func (s *ImageStudioJobService) runQueueLoop() {
 
 func (s *ImageStudioJobService) runCleanupLoop() {
 	defer s.wg.Done()
-	ticker := time.NewTicker(imageStudioCleanupTick)
+	newTicker := s.newCleanupTicker
+	if newTicker == nil {
+		newTicker = func(interval time.Duration) imageStudioInputStorageHealthTicker {
+			return imageStudioInputStorageRealTicker{Ticker: time.NewTicker(interval)}
+		}
+	}
+	ticker := newTicker(imageStudioCleanupTick)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-s.stopCh:
 			return
-		case <-ticker.C:
+		case <-ticker.C():
 			s.cleanupExpiredInputs(context.Background())
 			s.cleanupExpiredAssets(context.Background())
 		}
@@ -490,7 +500,7 @@ func (s *ImageStudioJobService) removeImageStudioJobAssets(job ImageStudioJob) e
 	if err != nil {
 		return fmt.Errorf("open image studio asset root: %w", err)
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	relativeDir := strconv.FormatInt(job.ID, 10)
 	info, err := root.Lstat(relativeDir)
 	if errors.Is(err, os.ErrNotExist) {

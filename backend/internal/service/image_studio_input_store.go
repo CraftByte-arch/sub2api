@@ -904,7 +904,7 @@ func validateImageStudioFile(ctx context.Context, path, declaredType string, mas
 	if err != nil {
 		return nil, inputStorageError(err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	validated, err := validateOpenImageStudioFile(ctx, file, 0, mask, expectedBounds)
 	if err != nil {
 		return nil, err

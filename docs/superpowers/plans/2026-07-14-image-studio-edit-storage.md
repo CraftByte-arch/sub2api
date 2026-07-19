@@ -391,23 +391,23 @@ git commit -m "feat: execute stored image edits through oauth"
 - Modify: `backend/internal/repository/image_studio_job_repo.go`
 - Modify: `backend/internal/repository/image_studio_job_repo_test.go`
 
-- [ ] **Step 1: 写 RED 生命周期测试**
+- [x] **Step 1: 写 RED 生命周期测试**
 
 覆盖：`MarkSettling` durable 后删输入；settlement retry 无需输入；provider retryable 保留；queued TTL 原子失败并删除；running 即使过 TTL 也跳过 cleanup；用户删除顺序 input/output/row；referenced/young orphan 保留、old orphan/stale spool 删除；单项失败不中断批次。
 
-- [ ] **Step 2: 放置成功删除点**
+- [x] **Step 2: 放置成功删除点**
 
 只有输出文件与 settlement recovery payload 已由 `MarkSettling` 持久化后才调用 `RemoveInputs` 和 `MarkInputsDeleted`。删除或 timestamp 更新失败不得回滚成功结果，下轮 cleanup 幂等重试。
 
-- [ ] **Step 3: 扩展 cleanup loop**
+- [x] **Step 3: 扩展 cleanup loop**
 
 顺序为：`ExpireQueuedInputs(now, 50)`、删除过期非 running 输入、现有 output cleanup、读取 DB 引用后孤儿目录扫描、stale spool 清理。DB 引用查询失败时跳过孤儿删除。
 
-- [ ] **Step 4: 扩展用户删除**
+- [x] **Step 4: 扩展用户删除**
 
 `DeleteJob` 先删除 input，再删除 original/thumbnail，最后删 row；缺失文件视为已删除，真实 I/O 失败保留 row 便于重试。
 
-- [ ] **Step 5: GREEN 并提交**
+- [x] **Step 5: GREEN 并提交**
 
 ```bash
 cd backend
@@ -454,7 +454,7 @@ git commit -m "feat: gate image studio jobs on shared storage"
 - Create: `docs/operations/image-studio-edit-input-storage.md`
 - Modify: `openspec/changes/refactor-image-studio-edit-storage/tasks.md`
 
-- [ ] **Step 1: 后端聚焦与全量验证**
+- [x] **Step 1: 后端聚焦与全量验证**
 
 ```bash
 cd backend
@@ -463,9 +463,10 @@ go test ./... -count=1
 golangci-lint run ./...
 ```
 
-预期：全部 PASS，无 lint error。
+预期：测试与 vet 全部 PASS；full-tree lint 的既有 baseline 单独记录，本 change scoped lint
+为 0 issues，不宣称 full lint 或 CI 全绿。
 
-- [ ] **Step 2: 前端验证**
+- [x] **Step 2: 前端验证**
 
 ```bash
 cd frontend
@@ -477,15 +478,15 @@ pnpm run build
 
 预期：全部 PASS，包含四参考图 multipart 场景。
 
-- [ ] **Step 3: 集成环境协议与生命周期核验**
+- [x] **Step 3: 集成环境协议与生命周期核验**
 
 创建一图/四图 API Key edit 和 OAuth edit。SQL 断言新 row 的 `request_payload` 不含 `images`、`mask`、`data:image`，且 `jsonb_array_length(input_image_paths)` 为 1 或 4。测试 upstream 断言 API Key 收到 repeated `image` multipart，OAuth 仍走 Responses。确认 success、TTL、user delete 后 input 消失，output 在既有 retention 到期前可下载。
 
-- [ ] **Step 4: 写部署文档**
+- [x] **Step 4: 写部署文档**
 
 记录 schema-first -> 双读 legacy 后端和共享 DATA_DIR -> multipart 前端的发布顺序；确认现有 `deploy/docker-compose.yml` 与 `deploy/docker-compose.standalone.yml` 均把持久卷挂载到 `/app/data`；记录 storage probe、legacy materialization、input/orphan/spool cleanup、数据库 payload 大小监控；强制回滚前停止新 edit 并排空 path-only task，默认 roll-forward。
 
-- [ ] **Step 5: 对照证据勾选 20 项 OpenSpec 任务并提交**
+- [x] **Step 5: 对照证据勾选 20 项 OpenSpec 任务并提交**
 
 仅在相应测试/集成证据存在后，将 1.1 至 5.4 标记为 `[x]`。
 

@@ -1780,10 +1780,20 @@ func TestIsImageStudioRetryableError(t *testing.T) {
 		require.True(t, isImageStudioRetryableError(context.DeadlineExceeded))
 	})
 
+	t.Run("retryable temporary network error", func(t *testing.T) {
+		require.True(t, isImageStudioRetryableError(imageStudioTemporaryNetError{}))
+	})
+
 	t.Run("non-retryable validation", func(t *testing.T) {
 		require.False(t, isImageStudioRetryableError(errors.New("model is required")))
 	})
 }
+
+type imageStudioTemporaryNetError struct{}
+
+func (imageStudioTemporaryNetError) Error() string   { return "temporary network failure" }
+func (imageStudioTemporaryNetError) Timeout() bool   { return false }
+func (imageStudioTemporaryNetError) Temporary() bool { return true }
 
 func TestImageStudioRetryDelay(t *testing.T) {
 	require.Equal(t, 10*time.Second, imageStudioRetryDelay(1))

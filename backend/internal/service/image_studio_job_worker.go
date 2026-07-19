@@ -621,10 +621,6 @@ type imageStudioForwardOutcome struct {
 	upstreamEndpoint   string
 }
 
-func (s *ImageStudioJobService) forwardJob(ctx context.Context, job ImageStudioJob, apiKey *APIKey, body []byte) (*imageStudioForwardOutcome, error) {
-	return s.forwardExecutionJob(ctx, job, apiKey, &imageStudioExecutionInput{Payload: body})
-}
-
 func (s *ImageStudioJobService) forwardExecutionJob(ctx context.Context, job ImageStudioJob, apiKey *APIKey, input *imageStudioExecutionInput) (*imageStudioForwardOutcome, error) {
 	if s == nil || s.openAIGateway == nil {
 		return nil, fmt.Errorf("openai gateway service is not configured")
@@ -1190,7 +1186,11 @@ func isImageStudioRetryableError(err error) bool {
 		}
 	}
 	var netErr net.Error
-	if errors.As(err, &netErr) && (netErr.Timeout() || netErr.Temporary()) {
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	var temporaryErr interface{ Temporary() bool }
+	if errors.As(err, &temporaryErr) && temporaryErr.Temporary() {
 		return true
 	}
 	msg := strings.ToLower(err.Error())
