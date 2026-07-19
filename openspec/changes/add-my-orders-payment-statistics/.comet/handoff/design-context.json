@@ -1,0 +1,14 @@
+{
+  "change": "add-my-orders-payment-statistics",
+  "phase": "design",
+  "mode": "compact",
+  "canonical_spec": "openspec",
+  "generated_by": "comet-handoff.sh",
+  "context_hash": "d6e3fcdeb92bf14b4d2f7b9abfb2a339c901ce0f4a40c0e1f59050651dedad56",
+  "files": [
+    { "path": "openspec/changes/add-my-orders-payment-statistics/proposal.md", "sha256": "150a39fe8c6064f0f43a71c4e1ac922647266e7ff9ffe2beac379cd691a0c55d" },
+    { "path": "openspec/changes/add-my-orders-payment-statistics/design.md", "sha256": "c1fd47833b955292bf95921ff9dd1d6e0143dc41c9e32e3c9f8e2ef4e2563293" },
+    { "path": "openspec/changes/add-my-orders-payment-statistics/tasks.md", "sha256": "a69d16c4e409196e8a2b06f29c738f9343847751e0216517e9f98f339aeab7af" },
+    { "path": "openspec/changes/add-my-orders-payment-statistics/specs/payment/spec.md", "sha256": "b9c4e322be878150cef95d84e640760c2c45cf1b5ac902282828f16a5272f506" }
+  ]
+}
