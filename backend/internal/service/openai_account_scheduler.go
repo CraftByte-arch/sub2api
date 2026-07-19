@@ -78,6 +78,7 @@ type OpenAIAccountScheduleRequest struct {
 	PreviousResponseCanMove bool
 	UseUpstreamTokenCost    bool
 	RequestedModel          string
+	ImageProtocolPreference string
 	RequiredTransport       OpenAIUpstreamTransport
 	RequiredCapability      OpenAIEndpointCapability
 	RequiredImageCapability OpenAIImagesCapability
@@ -643,6 +644,21 @@ func isOpenAIAccountCandidateBetter(left openAIAccountCandidateScore, right open
 	return left.account.ID < right.account.ID
 }
 
+func openAIImageProtocolMatchScore(account *Account, desired string) int {
+	desired = NormalizeOpenAIImageProtocolPreference(desired)
+	if desired == OpenAIImageProtocolPreferenceAuto || account == nil {
+		return 0
+	}
+	switch account.OpenAIImageProtocolPreference() {
+	case desired:
+		return 2
+	case OpenAIImageProtocolPreferenceAuto:
+		return 1
+	default:
+		return 0
+	}
+}
+
 func selectTopKOpenAICandidates(candidates []openAIAccountCandidateScore, topK int) []openAIAccountCandidateScore {
 	if len(candidates) == 0 {
 		return nil
@@ -1036,6 +1052,23 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAISelectionOrder(
 		})
 		return append(primary, overflow...)
 	}
+	buildProtocolSelectionOrder := func(pool []openAIAccountCandidateScore) []openAIAccountCandidateScore {
+		desired := NormalizeOpenAIImageProtocolPreference(req.ImageProtocolPreference)
+		if desired == OpenAIImageProtocolPreferenceAuto {
+			return buildSelectionOrder(pool)
+		}
+		selectionOrder := make([]openAIAccountCandidateScore, 0, len(pool))
+		for _, score := range []int{2, 1, 0} {
+			tier := make([]openAIAccountCandidateScore, 0, len(pool))
+			for _, candidate := range pool {
+				if openAIImageProtocolMatchScore(candidate.account, desired) == score {
+					tier = append(tier, candidate)
+				}
+			}
+			selectionOrder = append(selectionOrder, buildSelectionOrder(tier)...)
+		}
+		return selectionOrder
+	}
 
 	if req.RequireCompact {
 		supported := make([]openAIAccountCandidateScore, 0, len(plan.candidates))
@@ -1049,15 +1082,15 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAISelectionOrder(
 			}
 		}
 		selectionOrder := make([]openAIAccountCandidateScore, 0, len(plan.allCandidates))
-		selectionOrder = append(selectionOrder, buildSelectionOrder(supported)...)
-		selectionOrder = append(selectionOrder, buildSelectionOrder(unknown)...)
+		selectionOrder = append(selectionOrder, buildProtocolSelectionOrder(supported)...)
+		selectionOrder = append(selectionOrder, buildProtocolSelectionOrder(unknown)...)
 		if len(plan.staleSnapshotCompactRetry) > 0 && s.service.schedulerSnapshot != nil {
 			selectionOrder = append(selectionOrder, sortOpenAICompactRetryCandidates(plan.staleSnapshotCompactRetry)...)
 		}
 		return selectionOrder
 	}
 
-	return buildSelectionOrder(plan.candidates)
+	return buildProtocolSelectionOrder(plan.candidates)
 }
 
 func sortOpenAICompactRetryCandidates(pool []openAIAccountCandidateScore) []openAIAccountCandidateScore {
@@ -1911,7 +1944,7 @@ func (s *OpenAIGatewayService) SelectAccountWithScheduler(
 	requiredTransport OpenAIUpstreamTransport,
 	requireCompact bool,
 ) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
-	return s.selectAccountWithScheduler(ctx, groupID, previousResponseID, sessionHash, requestedModel, excludedIDs, requiredTransport, "", "", requireCompact, PlatformOpenAI, false, true)
+	return s.selectAccountWithScheduler(ctx, groupID, previousResponseID, sessionHash, requestedModel, excludedIDs, requiredTransport, "", "", "", requireCompact, PlatformOpenAI, false, true)
 }
 
 // SelectAccountWithSchedulerForCapability 按能力要求调度账号。
@@ -1935,7 +1968,7 @@ func (s *OpenAIGatewayService) SelectAccountWithSchedulerForCapability(
 	if len(platformOverride) > 0 {
 		platform = platformOverride[0]
 	}
-	return s.selectAccountWithScheduler(ctx, groupID, previousResponseID, sessionHash, requestedModel, excludedIDs, requiredTransport, requiredCapability, "", requireCompact, platform, previousResponseCanMove, useUpstreamTokenCost)
+	return s.selectAccountWithScheduler(ctx, groupID, previousResponseID, sessionHash, requestedModel, excludedIDs, requiredTransport, requiredCapability, "", "", requireCompact, platform, previousResponseCanMove, useUpstreamTokenCost)
 }
 
 func (s *OpenAIGatewayService) SelectAccountWithSchedulerForImages(
@@ -1946,13 +1979,13 @@ func (s *OpenAIGatewayService) SelectAccountWithSchedulerForImages(
 	excludedIDs map[int64]struct{},
 	requiredCapability OpenAIImagesCapability,
 ) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
-	selection, decision, err := s.selectAccountWithScheduler(ctx, groupID, "", sessionHash, requestedModel, excludedIDs, OpenAIUpstreamTransportHTTPSSE, "", requiredCapability, false, PlatformOpenAI, false, false)
+	selection, decision, err := s.selectAccountWithScheduler(ctx, groupID, "", sessionHash, requestedModel, excludedIDs, OpenAIUpstreamTransportHTTPSSE, "", requiredCapability, OpenAIImageProtocolPreferenceImages, false, PlatformOpenAI, false, false)
 	if err == nil && selection != nil && selection.Account != nil {
 		return selection, decision, nil
 	}
 	// 如果要求 native 能力（如指定了模型）但没有可用的 APIKey 账号，回退到 basic（OAuth 账号）
 	if requiredCapability == OpenAIImagesCapabilityNative {
-		return s.selectAccountWithScheduler(ctx, groupID, "", sessionHash, requestedModel, excludedIDs, OpenAIUpstreamTransportHTTPSSE, "", OpenAIImagesCapabilityBasic, false, PlatformOpenAI, false, false)
+		return s.selectAccountWithScheduler(ctx, groupID, "", sessionHash, requestedModel, excludedIDs, OpenAIUpstreamTransportHTTPSSE, "", OpenAIImagesCapabilityBasic, OpenAIImageProtocolPreferenceImages, false, PlatformOpenAI, false, false)
 	}
 	return selection, decision, err
 }
@@ -1969,10 +2002,10 @@ func (s *OpenAIGatewayService) SelectAccountWithSchedulerForImageProtocol(
 	excludedIDs map[int64]struct{},
 	requiredTransport OpenAIUpstreamTransport,
 	requiredCapability OpenAIEndpointCapability,
-	_ string,
+	imageProtocolPreference string,
 	requireCompact bool,
 ) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
-	return s.selectAccountWithScheduler(ctx, groupID, previousResponseID, sessionHash, requestedModel, excludedIDs, requiredTransport, requiredCapability, "", requireCompact, PlatformOpenAI, false, false)
+	return s.selectAccountWithScheduler(ctx, groupID, previousResponseID, sessionHash, requestedModel, excludedIDs, requiredTransport, requiredCapability, "", imageProtocolPreference, requireCompact, PlatformOpenAI, false, false)
 }
 
 func (s *OpenAIGatewayService) selectAccountWithScheduler(
@@ -1985,6 +2018,7 @@ func (s *OpenAIGatewayService) selectAccountWithScheduler(
 	requiredTransport OpenAIUpstreamTransport,
 	requiredCapability OpenAIEndpointCapability,
 	requiredImageCapability OpenAIImagesCapability,
+	imageProtocolPreference string,
 	requireCompact bool,
 	platform string,
 	previousResponseCanMove bool,
@@ -1992,6 +2026,7 @@ func (s *OpenAIGatewayService) selectAccountWithScheduler(
 ) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
 	ctx = s.withOpenAIQuotaAutoPauseContext(ctx)
 	platform = normalizeOpenAICompatiblePlatform(platform)
+	imageProtocolPreference = NormalizeOpenAIImageProtocolPreference(imageProtocolPreference)
 	decision := OpenAIAccountScheduleDecision{}
 	scheduler := s.getOpenAIAccountScheduler(ctx)
 	if scheduler == nil {
@@ -1999,7 +2034,7 @@ func (s *OpenAIGatewayService) selectAccountWithScheduler(
 		if requiredTransport == OpenAIUpstreamTransportAny || requiredTransport == OpenAIUpstreamTransportHTTPSSE {
 			effectiveExcludedIDs := cloneExcludedAccountIDs(excludedIDs)
 			for {
-				selection, err := s.selectAccountWithLoadAwareness(ctx, groupID, platform, sessionHash, requestedModel, effectiveExcludedIDs, requireCompact, requiredCapability, useUpstreamTokenCost)
+				selection, err := s.selectAccountWithLoadAwareness(ctx, groupID, platform, sessionHash, requestedModel, effectiveExcludedIDs, requireCompact, requiredCapability, imageProtocolPreference, useUpstreamTokenCost)
 				if err != nil {
 					return nil, decision, err
 				}
@@ -2024,7 +2059,7 @@ func (s *OpenAIGatewayService) selectAccountWithScheduler(
 
 		effectiveExcludedIDs := cloneExcludedAccountIDs(excludedIDs)
 		for {
-			selection, err := s.selectAccountWithLoadAwareness(ctx, groupID, platform, sessionHash, requestedModel, effectiveExcludedIDs, requireCompact, requiredCapability, useUpstreamTokenCost)
+			selection, err := s.selectAccountWithLoadAwareness(ctx, groupID, platform, sessionHash, requestedModel, effectiveExcludedIDs, requireCompact, requiredCapability, imageProtocolPreference, useUpstreamTokenCost)
 			if err != nil {
 				return nil, decision, err
 			}
@@ -2080,6 +2115,7 @@ func (s *OpenAIGatewayService) selectAccountWithScheduler(
 		PreviousResponseCanMove: previousResponseCanMove,
 		UseUpstreamTokenCost:    useUpstreamTokenCost,
 		RequestedModel:          requestedModel,
+		ImageProtocolPreference: imageProtocolPreference,
 		RequiredTransport:       requiredTransport,
 		RequiredCapability:      requiredCapability,
 		RequiredImageCapability: requiredImageCapability,

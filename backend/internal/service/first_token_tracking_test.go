@@ -684,7 +684,7 @@ func TestFirstTokenFailureKindEligibleStreamsUseIdleTimeoutSentinel(t *testing.T
 		{file: "openai_gateway_chat_completions.go", function: "handleChatStreamingResponse", wantSentinel: true},
 		{file: "openai_gateway_messages.go", function: "readOpenAICompatBufferedTerminal", wantSentinel: false},
 		{file: "openai_gateway_messages.go", function: "handleAnthropicStreamingResponse", wantSentinel: true},
-		{file: "openai_gateway_response_handling.go", function: "handleStreamingResponse", wantSentinel: true},
+		{file: "openai_gateway_response_handling.go", function: "handleStreamingResponseWithReasoning", wantSentinel: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.file+"/"+tt.function, func(t *testing.T) {

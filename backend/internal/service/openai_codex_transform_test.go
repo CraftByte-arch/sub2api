@@ -617,7 +617,7 @@ func TestEnsureOpenAIResponsesImageGenerationTool_PreservesExistingImageTool(t *
 	require.Equal(t, "webp", tool["output_format"])
 }
 
-func TestEnsureOpenAIResponsesImageGenerationTool_PreservesImageGenNamespace(t *testing.T) {
+func TestEnsureOpenAIResponsesImageGenerationTool_CanonicalizesImageGenNamespace(t *testing.T) {
 	tests := []struct {
 		name    string
 		reqBody map[string]any
@@ -665,13 +665,14 @@ func TestEnsureOpenAIResponsesImageGenerationTool_PreservesImageGenNamespace(t *
 
 			modified := ensureOpenAIResponsesImageGenerationTool(tt.reqBody)
 
-			require.False(t, modified)
-			tools, _ := tt.reqBody["tools"].([]any)
-			for _, rawTool := range tools {
-				tool, ok := rawTool.(map[string]any)
-				require.True(t, ok)
-				require.NotEqual(t, "image_generation", firstNonEmptyString(tool["type"]))
-			}
+			require.True(t, modified)
+			tools, ok := tt.reqBody["tools"].([]any)
+			require.True(t, ok)
+			require.Len(t, tools, 1)
+			tool, ok := tools[0].(map[string]any)
+			require.True(t, ok)
+			require.Equal(t, "image_generation", firstNonEmptyString(tool["type"]))
+			require.False(t, inputContainsImageGenerationTool(tt.reqBody["input"]))
 		})
 	}
 }
