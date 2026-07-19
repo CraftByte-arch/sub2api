@@ -62,7 +62,7 @@ base-ref: eece1469ac4e99ad92c519f024146f92d3f20b03
 - Create: `backend/internal/service/payment_order_statistics_test.go`
 - Modify: `openspec/changes/add-my-orders-payment-statistics/tasks.md`（映射 1.1–1.4）
 
-- [ ] **Step 1: 写日期窗口失败测试**
+- [x] **Step 1: 写日期窗口失败测试**
 
 在 `payment_order_statistics_test.go` 使用 `package service` 和 `//go:build unit`，表驱动覆盖默认 30 天、缺一端、反向、366/367 天、非法日期、显式非法时区，以及 `America/New_York` 的 23/25 小时日：
 
@@ -84,13 +84,13 @@ func TestParseOrderStatisticsWindowRejectsInvalidInput(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: 运行日期测试并确认 RED**
+- [x] **Step 2: 运行日期测试并确认 RED**
 
 Run: `cd backend && go test -tags=unit ./internal/service -run 'TestParseOrderStatisticsWindow' -count=1`
 
 Expected: FAIL，提示 `OrderStatisticsQuery` 或 `parseOrderStatisticsWindow` 未定义。
 
-- [ ] **Step 3: 实现范围类型和解析器**
+- [x] **Step 3: 实现范围类型和解析器**
 
 在新 service 文件定义稳定常量和内部窗口；显式非法时区必须报 400，结束边界必须使用 `AddDate`：
 
@@ -122,7 +122,7 @@ type orderStatisticsWindow struct {
 
 `parseOrderStatisticsWindow` 先加载 location，再处理“两端都空”或“两端都有”，使用 `infraerrors.BadRequest("INVALID_ORDER_STATISTICS_RANGE", message)` 返回参数错误。
 
-- [ ] **Step 4: 写整数分和纯聚合失败测试**
+- [x] **Step 4: 写整数分和纯聚合失败测试**
 
 构造包含 `10.10`、`20.20`、`0.30`、三个状态和三个类型的输入，断言总分 `3060`、平均分 `1020`、缺失类型补零、本地日期分组倒序、空数据形状稳定；另断言不支持类型不进入 summary：
 
@@ -143,13 +143,13 @@ func TestAggregateOrderStatisticsUsesIntegerCents(t *testing.T) {
 }
 ```
 
-- [ ] **Step 5: 运行聚合测试并确认 RED**
+- [x] **Step 5: 运行聚合测试并确认 RED**
 
 Run: `cd backend && go test -tags=unit ./internal/service -run 'TestAggregateOrderStatistics' -count=1`
 
 Expected: FAIL，提示聚合类型或函数未定义。
 
-- [ ] **Step 6: 实现响应类型、分转换和纯聚合**
+- [x] **Step 6: 实现响应类型、分转换和纯聚合**
 
 定义 `OrderStatisticsResponse`（固定 `Currency: "CNY"`）、`OrderStatisticsSummary`、`OrderTypeStatistics`、`DailyOrderStatistics`。每行先执行 `int64(math.Round(amount * 100))`，只累加整数分；输出时使用：
 
@@ -164,7 +164,7 @@ func averageCents(total int64, count int) int64 {
 
 类型顺序使用固定 slice `balance, usage_card, subscription`，每日 key 使用 `PaidAt.In(loc).Format(orderStatisticsDateLayout)` 并降序排序。
 
-- [ ] **Step 7: 运行测试、勾选映射任务并提交**
+- [x] **Step 7: 运行测试、勾选映射任务并提交**
 
 Run: `cd backend && go test -tags=unit ./internal/service -run 'Test(ParseOrderStatisticsWindow|AggregateOrderStatistics)' -count=1`
 
