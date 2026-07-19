@@ -427,19 +427,19 @@ git commit -m "feat: manage image studio input lifecycle"
 - Modify: `backend/cmd/server/wire_gen.go`
 - Test: `backend/cmd/server/wire_gen_test.go`
 
-- [ ] **Step 1: 写 RED probe 测试**
+- [x] **Step 1: 写 RED probe 测试**
 
 模拟 root 只读/不可用，断言 probe 完成 create/write/read/delete；失败时异步 Image Studio 创建返回 503、Worker 不领取新任务、无关 API 和已有 output download 不受影响；恢复后自动重新领取。
 
-- [ ] **Step 2: 实现周期健康状态**
+- [x] **Step 2: 实现周期健康状态**
 
 启动立即 probe，之后周期重试；失败只标记 Image Studio input storage unavailable。queue drain 先检查健康状态，handler 通过稳定 `input_storage_unavailable` 映射 503。
 
-- [ ] **Step 3: Wire 注入共享 store**
+- [x] **Step 3: Wire 注入共享 store**
 
 `ProvideImageStudioJobService` 创建/接收同一 `DATA_DIR/image-studio` store 并注入 service；更新生成 Wire。所有接收和执行实例必须挂载相同持久化 `DATA_DIR`。
 
-- [ ] **Step 4: GREEN 并提交**
+- [x] **Step 4: GREEN 并提交**
 
 ```bash
 cd backend
