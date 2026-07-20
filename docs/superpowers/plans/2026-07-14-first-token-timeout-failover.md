@@ -2,6 +2,7 @@
 change: configurable-first-token-timeout-failover
 design-doc: docs/superpowers/specs/2026-07-14-first-token-timeout-failover-design.md
 base-ref: e15265205a50addfeba66f935b7e256ea2a51f20
+archived-with: 2026-07-19-configurable-first-token-timeout-failover
 ---
 
 # 可配置首 Token 超时、换号与统计 Implementation Plan
@@ -14,6 +15,7 @@ base-ref: e15265205a50addfeba66f935b7e256ea2a51f20
 
 **Tech Stack:** Go 1.x、Gin、Ent settings、`database/sql`、PostgreSQL、Redis pub/sub、Wire、Vue 3、TypeScript、Pinia/Vue Router、Chart.js、Vitest。
 
+archived-with: 2026-07-19-configurable-first-token-timeout-failover
 ---
 
 ## 文件结构

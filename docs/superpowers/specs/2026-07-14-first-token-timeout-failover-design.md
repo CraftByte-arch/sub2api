@@ -2,6 +2,8 @@
 comet_change: configurable-first-token-timeout-failover
 role: technical-design
 canonical_spec: openspec
+archived-with: 2026-07-19-configurable-first-token-timeout-failover
+status: final
 ---
 
 # 可配置首 Token 超时、换号与统计技术设计

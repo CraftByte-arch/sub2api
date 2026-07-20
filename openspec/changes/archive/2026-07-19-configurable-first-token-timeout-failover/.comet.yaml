@@ -17,6 +17,6 @@ verification_report: docs/superpowers/reports/2026-07-15-configurable-first-toke
 branch_status: handled
 created_at: 2026-07-14
 verified_at: 2026-07-15
-archived: false
+archived: true
 handoff_context: openspec/changes/configurable-first-token-timeout-failover/.comet/handoff/design-context.json
 handoff_hash: dac2efaeb60dc5e004000fcb9affc2806e5b442086f2adc0dbfbb0a31a7185fe
