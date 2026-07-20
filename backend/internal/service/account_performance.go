@@ -144,6 +144,7 @@ type AccountPerformanceAccountFilter struct {
 	Model     string
 	Protocol  string
 	AccountID int64
+	Search    string
 	SortBy    string
 	SortOrder string
 	Page      int

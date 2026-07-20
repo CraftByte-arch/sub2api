@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -51,6 +52,7 @@ func (h *AccountPerformanceHandler) GetAccounts(c *gin.Context) {
 	}
 	result, err := h.service.Accounts(c.Request.Context(), service.AccountPerformanceAccountFilter{
 		Start: filter.start, End: filter.end, Platform: filter.platform, GroupID: filter.groupID, Model: filter.model, Protocol: filter.protocol, AccountID: filter.accountID,
+		Search: filter.search,
 		SortBy: c.Query("sort"), SortOrder: c.Query("order"), Page: page, PageSize: pageSize,
 	})
 	if err != nil {
@@ -93,6 +95,7 @@ type accountPerformanceFilter struct {
 	groupID         int64
 	model, protocol string
 	accountID       int64
+	search          string
 }
 
 func (f accountPerformanceFilter) overview() service.AccountPerformanceOverviewFilter {
@@ -103,7 +106,7 @@ func parseAccountPerformanceFilter(c *gin.Context) (accountPerformanceFilter, bo
 	if c == nil {
 		return accountPerformanceFilter{}, false
 	}
-	allowed := map[string]bool{"range": true, "platform": true, "group_id": true, "model": true, "protocol": true, "account_id": true, "sort": true, "order": true, "page": true, "page_size": true, "timezone": true}
+	allowed := map[string]bool{"range": true, "platform": true, "group_id": true, "model": true, "protocol": true, "account_id": true, "search": true, "sort": true, "order": true, "page": true, "page_size": true, "timezone": true}
 	for key, values := range c.Request.URL.Query() {
 		if !allowed[key] || len(values) != 1 {
 			response.BadRequest(c, "Invalid account performance query")
@@ -116,7 +119,11 @@ func parseAccountPerformanceFilter(c *gin.Context) (accountPerformanceFilter, bo
 		return accountPerformanceFilter{}, false
 	}
 	now := time.Now().UTC()
-	filter := accountPerformanceFilter{start: now.Add(-duration), end: now, platform: strings.TrimSpace(c.Query("platform")), model: strings.TrimSpace(c.Query("model")), protocol: strings.TrimSpace(c.Query("protocol"))}
+	filter := accountPerformanceFilter{start: now.Add(-duration), end: now, platform: strings.TrimSpace(c.Query("platform")), model: strings.TrimSpace(c.Query("model")), protocol: strings.TrimSpace(c.Query("protocol")), search: strings.TrimSpace(c.Query("search"))}
+	if utf8.RuneCountInString(filter.search) > 255 {
+		response.BadRequest(c, "search exceeds 255 characters")
+		return accountPerformanceFilter{}, false
+	}
 	var valid bool
 	if filter.groupID, valid = parseAccountPerformanceID(c, "group_id"); !valid {
 		return accountPerformanceFilter{}, false

@@ -173,7 +173,7 @@ func TestAccountPerformanceQueryAccountsUsesBoundedArgsAndAllowlistedSort(t *tes
 	defer func() { _ = db.Close() }()
 	start := time.Date(2026, 7, 16, 0, 0, 0, 0, time.UTC)
 	end := start.Add(48 * time.Hour)
-	args := accountPerformanceMockArgs(t, start, end, "openai", int64(7), "gpt-5", "responses", int64(42), int64(10), int64(0))
+	args := append(accountPerformanceMockArgs(t, start, end, "openai", int64(7), "gpt-5", "responses", int64(42), int64(10), int64(0)), "")
 	mock.ExpectBegin()
 	mock.ExpectQuery("(?s)account_performance_minute.*COALESCE\\(success_count::double precision / NULLIF\\(attempt_count - client_canceled_count, 0\\), 0\\) AS availability.*LEFT JOIN accounts AS account ON account.id = scored.account_id.*LEFT JOIN accounts AS parent ON parent.id = account.parent_account_id").
 		WithArgs(args...).
@@ -328,6 +328,25 @@ func TestAccountPerformanceRollupClosedHoursSkipsEmptyClosedWindow(t *testing.T)
 	mock.ExpectQuery("SELECT EXISTS\\(SELECT 1 FROM account_performance_minute WHERE bucket_start < \\$1\\)").WithArgs(cutoff).WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 
 	require.NoError(t, NewAccountPerformanceRepository(db).RollupClosedHours(context.Background(), time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestQueryAccountsAppliesSearchFilter(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	repo := NewAccountPerformanceRepository(db)
+	mock.ExpectBegin()
+	mock.ExpectQuery("FROM enriched WHERE \\(\\$20::text = '' OR account_name ILIKE \\$20").
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), int64(20), int64(0), "%prod%").
+		WillReturnRows(sqlmock.NewRows([]string{"account_id"}))
+	mock.ExpectCommit()
+
+	_, err = repo.QueryAccounts(context.Background(), service.AccountPerformanceAccountFilter{
+		Start: time.Now().Add(-time.Hour), End: time.Now(), Page: 1, PageSize: 20, Search: "prod", SortBy: "health_score", SortOrder: "asc",
+	})
+	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

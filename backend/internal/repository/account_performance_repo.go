@@ -415,6 +415,10 @@ func (r *accountPerformanceRepository) QueryAccounts(ctx context.Context, filter
 			_ = tx.Rollback()
 		}
 	}()
+	search := ""
+	if filter.Search != "" {
+		search = "%" + escapeAccountPerformanceLike(filter.Search) + "%"
+	}
 	query := `WITH aggregated AS (
 SELECT account_id, platform, ` + accountPerformanceAggregateColumns() + `
 FROM ` + table + accountPerformanceWhereClause() + `
@@ -444,8 +448,9 @@ LEFT JOIN accounts AS account ON account.id = scored.account_id
 LEFT JOIN accounts AS parent ON parent.id = account.parent_account_id
 )
 SELECT account_id, platform, account_name, account_type, auth_mode, ` + accountPerformanceCounterColumns() + `, availability, failure_rate, health_score, COUNT(*) OVER() AS total FROM enriched
+WHERE ($20::text = '' OR account_name ILIKE $20 ESCAPE '\')
 ORDER BY ` + sortColumn + ` ` + sortOrder + `, account_id ASC LIMIT $18 OFFSET $19`
-	queryArgs := append(args, int64(pageSize), offset)
+	queryArgs := append(args, int64(pageSize), offset, search)
 	rows, err := tx.QueryContext(ctx, query, queryArgs...)
 	if err != nil {
 		return nil, fmt.Errorf("query account performance accounts: %w", err)
@@ -680,4 +685,10 @@ func accountPerformanceCounterDestinations(c *service.AccountPerformanceCounters
 		&c.TTFTLatency.Samples, &c.TTFTSumMS, &c.DurationLatency.Samples, &c.DurationSumMS,
 		&c.TTFTLatency.LE1000MS, &c.TTFTLatency.LE2500MS, &c.TTFTLatency.LE5000MS, &c.TTFTLatency.LE10000MS, &c.TTFTLatency.LE30000MS, &c.TTFTLatency.GT30000MS,
 		&c.DurationLatency.LE1000MS, &c.DurationLatency.LE2500MS, &c.DurationLatency.LE5000MS, &c.DurationLatency.LE10000MS, &c.DurationLatency.LE30000MS, &c.DurationLatency.GT30000MS}
+}
+
+func escapeAccountPerformanceLike(value string) string {
+	value = strings.ReplaceAll(value, `\`, `\\`)
+	value = strings.ReplaceAll(value, `%`, `\%`)
+	return strings.ReplaceAll(value, `_`, `\_`)
 }
