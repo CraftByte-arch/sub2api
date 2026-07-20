@@ -577,13 +577,13 @@ git commit -m "feat(payment): expose order statistics navigation"
 **Files:**
 - Modify: `openspec/changes/add-my-orders-payment-statistics/tasks.md`（映射 5.2–5.5）
 
-- [ ] **Step 1: 运行后端定向测试**
+- [x] **Step 1: 运行后端定向测试**
 
 Run: `cd backend && go test -tags=unit ./internal/service ./internal/handler ./internal/server/routes ./internal/server/middleware -run 'Test(PaymentServiceGetUserOrderStatistics|ParseOrderStatisticsWindow|AggregateOrderStatistics|PaymentStatistics|PaymentStatisticsRoutes|IsUserTimingPath)' -count=1`
 
 Expected: PASS。
 
-- [ ] **Step 2: 运行后端 race、vet 和 build**
+- [x] **Step 2: 运行后端 race、vet 和 build**
 
 Run: `cd backend && go test -race -tags=unit ./internal/service ./internal/handler ./internal/server/routes ./internal/server/middleware`
 
@@ -593,7 +593,9 @@ Run: `make build-backend`
 
 Expected: 三条命令均 exit 0。
 
-- [ ] **Step 3: 运行前端定向与全量静态验证**
+执行记录（2026-07-20）：统计 service、handler、routes 定向测试与 race 均 PASS，`TestIsUserTimingPath` 使用生产 middleware 文件加单一测试文件隔离编译后 PASS，`go vet ./...` 与 `make build-backend` PASS。middleware 全包仍被既有 `api_key_auth_test.go` 三参数调用/四参数签名不一致阻断；service 全包 race 另有两个 OpenAI image-generation 既有测试独立复现失败。上述文件相对本功能基点均无 diff，未扩大范围修改。
+
+- [x] **Step 3: 运行前端定向与全量静态验证**
 
 Run: `pnpm --dir frontend exec vitest run src/api/__tests__/payment.spec.ts src/views/user/__tests__/orderStatistics.spec.ts src/views/user/__tests__/UserOrderStatisticsView.spec.ts src/components/payment/__tests__/OrderStatisticsAggregateTable.spec.ts src/components/payment/__tests__/OrderStatisticsDetailsDialog.spec.ts src/router/__tests__/order-statistics-route.spec.ts src/components/layout/__tests__/AppSidebar.spec.ts`
 
@@ -605,13 +607,17 @@ Run: `pnpm --dir frontend run build`
 
 Expected: 全部 exit 0。
 
+执行记录（2026-07-20）：7 个定向文件共 38 个测试 PASS，lint/typecheck/build 均 exit 0。lint 仅报既有 `AixwHomeView.spec.ts` 的 3 个 unused warning，构建仅报既有 Browserslist/chunk 告警。
+
 - [ ] **Step 4: 启动开发服务器并做视觉检查**
 
 Run: `pnpm --dir frontend run dev -- --host 127.0.0.1`
 
 使用可用浏览器控制工具在 1440x900 与 375x812 检查浅色/深色统计页和明细弹窗。固定检查：长订单号不覆盖相邻列、日期和人民币金额不截断、空状态不改变区段高度、弹窗表格只在自身横向滚动、按钮/文字不重叠、键盘焦点可见。保留截图路径作为验证证据，检查完停止 dev server。
 
-- [ ] **Step 5: 运行规格与工作区检查**
+执行记录（2026-07-20）：已启动 dev server 并在内置浏览器与 Chrome 打开 `/order-statistics`，两者均因本地无后端/登录态被正常重定向至登录页；Vite 日志同时记录 `/setup/status` 与公开设置 API `ECONNREFUSED`。未获得有效的统计页/弹窗视觉证据，本步保持未完成。
+
+- [x] **Step 5: 运行规格与工作区检查**
 
 Run: `openspec validate add-my-orders-payment-statistics --type change --strict --no-interactive`
 
@@ -630,6 +636,8 @@ git add openspec/changes/add-my-orders-payment-statistics/tasks.md
 git commit -m "test(payment): verify personal order statistics"
 ```
 
-- [ ] **Step 7: 请求代码审查并处理结果**
+- [x] **Step 7: 请求代码审查并处理结果**
 
 执行方式为 `executing-plans` 时，按 Comet guard 要求加载 `superpowers:requesting-code-review` 并至少完成一次审查。CRITICAL 问题先修复并重新运行受影响测试；接受非 CRITICAL 偏差时把理由写入 `tasks.md` 注释或验证报告草稿，再进入 build guard。
+
+审查记录（2026-07-20）：用户明确要求当前会话直接执行且不用 subAgent，因此在当前会话依照 requesting-code-review 清单审查 `eece1469a..57aeb6856` 的实现、测试和规格。未发现 Critical 或 Important 问题；未闭环的视觉 QA 不视为代码正确性证据，仍保持为阻塞项。

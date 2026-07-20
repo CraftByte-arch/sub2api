@@ -31,7 +31,9 @@
 ## 5. 回归验证与交付
 
 - [x] 5.1 增加回归断言，确认 `UserOrdersView.vue`、`/orders` 和 `GET /api/v1/payment/orders/my` 未被修改。
-- [ ] 5.2 运行 payment service、handler、路由/API 契约相关 Go 测试及 race/vet 检查。
-- [ ] 5.3 运行新增页面 Vitest、前端 lint、typecheck 和生产构建。
+- [x] 5.2 运行 payment service、handler、路由/API 契约相关 Go 测试及 race/vet 检查。
+- [x] 5.3 运行新增页面 Vitest、前端 lint、typecheck 和生产构建。
 - [ ] 5.4 在桌面和移动视口做统计页视觉检查，覆盖长订单号、长日期、空状态和弹窗表格横向滚动，确认无溢出、重叠或布局跳动。
-- [ ] 5.5 运行 `openspec validate add-my-orders-payment-statistics --type change --strict --no-interactive` 和 `git diff --check`，记录验证结果。
+- [x] 5.5 运行 `openspec validate add-my-orders-payment-statistics --type change --strict --no-interactive` 和 `git diff --check`，记录验证结果。
+
+<!-- 2026-07-20 verification notes: statistics-targeted Go tests/race, isolated timing-path test, go vet, backend build, 38 targeted frontend tests, lint, typecheck, frontend build, strict OpenSpec validation, diff check, and legacy-page zero-diff check passed. Full middleware tests remain blocked by the pre-existing NewAPIKeyAuthMiddleware test signature mismatch. Full service race also independently reproduces two unrelated OpenAI image-generation baseline failures. Visual QA remains pending because no local backend/authenticated session was available. -->
