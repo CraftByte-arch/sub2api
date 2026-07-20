@@ -444,22 +444,24 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
-    path: '/admin/ttft',
-    name: 'AdminTTFT',
-    component: () => import('@/views/admin/ttft/FirstTokenTimeoutView.vue'),
+    path: '/admin/monitoring',
+    name: 'AdminMonitoring',
+    component: () => import('@/views/admin/monitoring/MonitoringView.vue'),
     meta: {
       requiresAuth: true,
       requiresAdmin: true,
-      title: 'First Token Monitoring',
-      titleKey: 'admin.ttft.title',
-      descriptionKey: 'admin.ttft.description'
+      title: 'Monitoring',
+      titleKey: 'admin.monitoring.title',
+      descriptionKey: 'admin.monitoring.description'
     }
   },
   {
+    path: '/admin/ttft',
+    redirect: (to) => ({ path: '/admin/monitoring', query: to.query })
+  },
+  {
     path: '/admin/performance',
-    name: 'AdminPerformance',
-    component: () => import('@/views/admin/performance/AccountPerformanceView.vue'),
-    meta: { requiresAuth: true, requiresAdmin: true, title: 'Account Performance' }
+    redirect: (to) => ({ path: '/admin/monitoring', query: to.query })
   },
   {
     path: '/admin/audit-logs',
