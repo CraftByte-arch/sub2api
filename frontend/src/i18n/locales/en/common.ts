@@ -170,6 +170,7 @@ export default {
     ops: 'Ops',
     ttftMonitoring: 'First Token Monitoring',
     accountPerformance: 'Account Performance',
+    monitoring: 'Monitoring',
     promoCodes: 'Promo Codes',
     settings: 'Settings',
     myAccount: 'My Account',
