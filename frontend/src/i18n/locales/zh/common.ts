@@ -168,8 +168,6 @@ export default {
     proxies: 'IP管理',
     redeemCodes: '兑换码',
     ops: '运维监控',
-    ttftMonitoring: '首 Token 监控',
-    accountPerformance: '账号性能',
     monitoring: '监控中心',
     promoCodes: '优惠码',
     settings: '系统设置',

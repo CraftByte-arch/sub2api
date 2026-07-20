@@ -168,8 +168,6 @@ export default {
     proxies: 'Proxies',
     redeemCodes: 'Redeem Codes',
     ops: 'Ops',
-    ttftMonitoring: 'First Token Monitoring',
-    accountPerformance: 'Account Performance',
     monitoring: 'Monitoring',
     promoCodes: 'Promo Codes',
     settings: 'Settings',

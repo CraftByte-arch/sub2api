@@ -33,7 +33,6 @@ import adminPaymentAPI from './payment'
 import affiliatesAPI from './affiliates'
 import riskControlAPI from './riskControl'
 import adminComplianceAPI from './compliance'
-import ttftAPI from './ttft'
 import auditAPI from './audit'
 import performanceAPI from './performance'
 
@@ -71,7 +70,6 @@ export const adminAPI = {
   affiliates: affiliatesAPI,
   riskControl: riskControlAPI,
   compliance: adminComplianceAPI,
-	ttft: ttftAPI,
 	performance: performanceAPI,
 	audit: auditAPI
 }
@@ -107,7 +105,6 @@ export {
   affiliatesAPI,
   riskControlAPI,
   adminComplianceAPI,
-	ttftAPI,
 	performanceAPI,
 	auditAPI
 }
