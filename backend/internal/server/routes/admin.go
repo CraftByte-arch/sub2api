@@ -72,6 +72,9 @@ func RegisterAdminRoutes(
 		// 账号性能看板
 		registerAccountPerformanceRoutes(admin, h)
 
+		// 统一监控中心
+		registerMonitoringRoutes(admin, h)
+
 		// 数据管理
 		registerDataManagementRoutes(admin, h, stepUpAuth)
 
@@ -135,6 +138,13 @@ func registerAccountPerformanceRoutes(admin *gin.RouterGroup, h *handler.Handler
 		performance.GET("/accounts", h.Admin.AccountPerformance.GetAccounts)
 		performance.GET("/investigation", h.Admin.AccountPerformance.GetInvestigation)
 		performance.GET("/health", h.Admin.AccountPerformance.GetHealth)
+	}
+}
+
+func registerMonitoringRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	monitoring := admin.Group("/monitoring")
+	{
+		monitoring.GET("/overview", h.Admin.Monitoring.GetOverview)
 	}
 }
 

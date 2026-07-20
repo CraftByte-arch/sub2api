@@ -25,6 +25,7 @@ type AdminHandlers struct {
 	Setting                *admin.SettingHandler
 	FirstTokenTimeout      *admin.FirstTokenTimeoutHandler
 	AccountPerformance     *admin.AccountPerformanceHandler
+	Monitoring             *admin.MonitoringHandler
 	Ops                    *admin.OpsHandler
 	System                 *admin.SystemHandler
 	Subscription           *admin.SubscriptionHandler
