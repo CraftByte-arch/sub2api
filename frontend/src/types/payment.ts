@@ -155,6 +155,10 @@ export type OrderStatisticsDetailsParams = {
   page?: number
 } & OrderStatisticsDetailsSelector
 
+export type OrderStatisticsDrilldownSelection =
+  | { kind: 'type'; orderType: OrderType }
+  | { kind: 'date'; date: string }
+
 // ==================== Plans & Channels ====================
 
 export interface SubscriptionPlan {

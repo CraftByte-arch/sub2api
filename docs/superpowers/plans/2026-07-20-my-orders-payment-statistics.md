@@ -418,9 +418,9 @@ git commit -m "feat(payment): add order statistics client contract"
 - Create: `frontend/src/components/payment/OrderStatisticsDetailsDialog.vue`
 - Create: `frontend/src/components/payment/__tests__/OrderStatisticsAggregateTable.spec.ts`
 - Create: `frontend/src/components/payment/__tests__/OrderStatisticsDetailsDialog.spec.ts`
-- Modify: `openspec/changes/add-my-orders-payment-statistics/tasks.md`（映射 4.1–4.4）
+- Modify: `openspec/changes/add-my-orders-payment-statistics/tasks.md`（映射 4.1–4.3；弹窗部分为 4.4 提供覆盖）
 
-- [ ] **Step 1: 写聚合表交互 RED 测试**
+- [x] **Step 1: 写聚合表交互 RED 测试**
 
 分别传 type 和 daily rows，断言点击、Enter、Space 均只发出一次 `select`，行有 `tabindex="0"`，类型顺序和标签为“余额 / 余额卡 / 订阅”：
 
@@ -429,17 +429,17 @@ await wrapper.get('[data-test="statistics-row-balance"]').trigger('keydown', { k
 expect(wrapper.emitted('select')?.[0]?.[0]).toMatchObject({ kind: 'type', orderType: 'balance' })
 ```
 
-- [ ] **Step 2: 写弹窗 RED 测试**
+- [x] **Step 2: 写弹窗 RED 测试**
 
 mock `getOrderStatisticsDetails`，覆盖打开即加载、固定 `page: 1`、翻页、关闭重开重置、类型/日期标题、六列、加载、空、错误重试。用两个 deferred Promise 验证关闭或选择改变后旧响应不覆盖新列表。
 
-- [ ] **Step 3: 运行组件测试并确认 RED**
+- [x] **Step 3: 运行组件测试并确认 RED**
 
 Run: `pnpm --dir frontend exec vitest run src/components/payment/__tests__/OrderStatisticsAggregateTable.spec.ts src/components/payment/__tests__/OrderStatisticsDetailsDialog.spec.ts`
 
 Expected: FAIL，提示两个组件不存在。
 
-- [ ] **Step 4: 实现聚合表**
+- [x] **Step 4: 实现聚合表**
 
 组件接收 `kind`, `rows`, `currency`，类型/每日使用各自列头；row 绑定 click 与：
 
@@ -450,17 +450,17 @@ Expected: FAIL，提示两个组件不存在。
 
 金额统一调用现有 `formatPaymentAmount(value, 'CNY', locale.value)`。表格外层固定 overflow 容器，行高至少 44px，并提供可见 `focus-visible` ring。
 
-- [ ] **Step 5: 实现明细弹窗和独立请求代次**
+- [x] **Step 5: 实现明细弹窗和独立请求代次**
 
 弹窗 props 包含 `show`, `selection`, `startDate`, `endDate`。内部 `requestGeneration` 每次打开、切换、翻页、重试和关闭时递增；响应写入前比较本地 generation。复用 `BaseDialog width="extra-wide"`、`DataTable`、`OrderStatusBadge` 和 `Pagination :show-page-size-selector="false"`，不提供 action 列。
 
-- [ ] **Step 6: 运行组件测试、勾选任务并提交**
+- [x] **Step 6: 运行组件测试、勾选任务并提交**
 
 Run: `pnpm --dir frontend exec vitest run src/components/payment/__tests__/OrderStatisticsAggregateTable.spec.ts src/components/payment/__tests__/OrderStatisticsDetailsDialog.spec.ts`
 
 Expected: PASS。
 
-勾选 OpenSpec `4.1`、`4.2`、`4.3`、`4.4`：
+勾选 OpenSpec `4.1`、`4.2`、`4.3`；待 Task 6 完成页面竞态测试后再勾选 `4.4`：
 
 ```bash
 git add frontend/src/components/payment/OrderStatisticsAggregateTable.vue frontend/src/components/payment/OrderStatisticsDetailsDialog.vue frontend/src/components/payment/__tests__/OrderStatisticsAggregateTable.spec.ts frontend/src/components/payment/__tests__/OrderStatisticsDetailsDialog.spec.ts openspec/changes/add-my-orders-payment-statistics/tasks.md
@@ -472,7 +472,7 @@ git commit -m "feat(payment): add statistics drilldown components"
 **Files:**
 - Create: `frontend/src/views/user/UserOrderStatisticsView.vue`
 - Create: `frontend/src/views/user/__tests__/UserOrderStatisticsView.spec.ts`
-- Modify: `openspec/changes/add-my-orders-payment-statistics/tasks.md`（映射 3.2、3.3）
+- Modify: `openspec/changes/add-my-orders-payment-statistics/tasks.md`（映射 3.2、3.3、4.4）
 
 - [ ] **Step 1: 写页面 RED 测试**
 
@@ -512,7 +512,7 @@ Run: `pnpm --dir frontend exec vitest run src/views/user/__tests__/UserOrderStat
 
 Expected: PASS。
 
-勾选 OpenSpec `3.2`、`3.3`：
+勾选 OpenSpec `3.2`、`3.3`、`4.4`：
 
 ```bash
 git add frontend/src/views/user/UserOrderStatisticsView.vue frontend/src/views/user/__tests__/UserOrderStatisticsView.spec.ts openspec/changes/add-my-orders-payment-statistics/tasks.md
