@@ -474,7 +474,7 @@ git commit -m "feat(payment): add statistics drilldown components"
 - Create: `frontend/src/views/user/__tests__/UserOrderStatisticsView.spec.ts`
 - Modify: `openspec/changes/add-my-orders-payment-statistics/tasks.md`（映射 3.2、3.3、4.4）
 
-- [ ] **Step 1: 写页面 RED 测试**
+- [x] **Step 1: 写页面 RED 测试**
 
 mock AppLayout、子组件和 payment API，覆盖：默认最近 30 天；7/30/90 快捷立即查询；编辑 draft 不查询；自定义成功才提交 applied；失败保留旧 applied 与旧数据；首次错误重试；空数据；刷新；点击 type/day 打开正确 selection。
 
@@ -492,21 +492,21 @@ await flushPromises()
 expect(wrapper.text()).toContain('2026-07-14')
 ```
 
-- [ ] **Step 2: 运行页面测试并确认 RED**
+- [x] **Step 2: 运行页面测试并确认 RED**
 
 Run: `pnpm --dir frontend exec vitest run src/views/user/__tests__/UserOrderStatisticsView.spec.ts`
 
 Expected: FAIL，提示 view 不存在。
 
-- [ ] **Step 3: 实现页面状态和筛选**
+- [x] **Step 3: 实现页面状态和筛选**
 
 使用 `draftRange`、`appliedRange`、`candidateRange` 和 `summaryGeneration`。默认 30 天 onMounted 查询；快捷范围立即替换 applied 并查询；自定义查询成功后才写 applied。初次失败显示整页 retry，已有成功数据后的自定义失败保留数据并显示非阻断错误。
 
-- [ ] **Step 4: 实现页面布局和下钻连接**
+- [x] **Step 4: 实现页面布局和下钻连接**
 
 `AppLayout` 内依次放：标题/刷新、7/30/90 segmented controls、自定义两个 `type=date` 输入和查询按钮、三个稳定尺寸指标卡、类型表、每日表、一个 details dialog。页面只把当前 `appliedRange` 交给弹窗；不导入或渲染 `OrderTable`。
 
-- [ ] **Step 5: 运行页面测试、勾选任务并提交**
+- [x] **Step 5: 运行页面测试、勾选任务并提交**
 
 Run: `pnpm --dir frontend exec vitest run src/views/user/__tests__/UserOrderStatisticsView.spec.ts`
 
