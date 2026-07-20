@@ -349,7 +349,7 @@ git commit -m "feat(payment): expose personal order statistics APIs"
 - Create: `frontend/src/views/user/__tests__/orderStatistics.spec.ts`
 - Modify: `openspec/changes/add-my-orders-payment-statistics/tasks.md`（映射 3.1）
 
-- [ ] **Step 1: 写 API 和日期 helper RED 测试**
+- [x] **Step 1: 写 API 和日期 helper RED 测试**
 
 API 测试断言汇总路径、details 的 type/date 两种参数和 `page` 原样传入。日期测试使用本地 `Date` 构造，不经过 `toISOString`：
 
@@ -362,13 +362,13 @@ expect(validateInclusiveRange('2025-07-20', '2026-07-20')).toBeNull()
 expect(validateInclusiveRange('2025-07-19', '2026-07-20')).toBe('tooLong')
 ```
 
-- [ ] **Step 2: 运行前端单测并确认 RED**
+- [x] **Step 2: 运行前端单测并确认 RED**
 
 Run: `pnpm --dir frontend exec vitest run src/api/__tests__/payment.spec.ts src/views/user/__tests__/orderStatistics.spec.ts`
 
 Expected: FAIL，提示 API 方法和日期 helper 未定义。
 
-- [ ] **Step 3: 增加严格 TypeScript 类型**
+- [x] **Step 3: 增加严格 TypeScript 类型**
 
 在 `types/payment.ts` 增加：
 
@@ -394,11 +394,11 @@ export interface OrderStatisticsDetail {
 
 details params 使用 union 保证 `order_type` 与 `date` 编译期互斥，再与 `{ start_date; end_date; page? }` 相交。
 
-- [ ] **Step 4: 实现 API 和日期纯函数**
+- [x] **Step 4: 实现 API 和日期纯函数**
 
 新增 `paymentAPI.getOrderStatistics(params?)` 与 `getOrderStatisticsDetails(params)`，均由共享 client 自动注入 timezone。helper 使用 `getFullYear/getMonth/getDate` 格式化，`rangeForLastDays` 使用 `setDate`，包含天数通过本地日期序号计算并限制 366。
 
-- [ ] **Step 5: 运行测试、勾选任务并提交**
+- [x] **Step 5: 运行测试、勾选任务并提交**
 
 Run: `pnpm --dir frontend exec vitest run src/api/__tests__/payment.spec.ts src/views/user/__tests__/orderStatistics.spec.ts`
 

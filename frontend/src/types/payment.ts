@@ -107,6 +107,54 @@ export interface PaymentOrder {
   provider_instance_id?: string
 }
 
+export interface OrderStatisticsMetric {
+  total_paid_amount: number
+  order_count: number
+  average_paid_amount: number
+}
+
+export interface OrderTypeStatistics extends OrderStatisticsMetric {
+  order_type: OrderType
+}
+
+export interface DailyOrderStatistics extends OrderStatisticsMetric {
+  date: string
+}
+
+export interface OrderStatisticsResponse {
+  start_date: string
+  end_date: string
+  timezone: string
+  currency: 'CNY'
+  summary: OrderStatisticsMetric
+  by_type: OrderTypeStatistics[]
+  daily: DailyOrderStatistics[]
+}
+
+export interface OrderStatisticsDetail {
+  out_trade_no: string
+  order_type: OrderType
+  pay_amount: number
+  status: OrderStatus
+  payment_type: string
+  paid_at: string
+}
+
+export interface OrderStatisticsParams {
+  start_date?: string
+  end_date?: string
+}
+
+type OrderStatisticsDetailsSelector =
+  | { order_type: OrderType; date?: never }
+  | { date: string; order_type?: never }
+
+export type OrderStatisticsDetailsParams = {
+  start_date: string
+  end_date: string
+  page?: number
+} & OrderStatisticsDetailsSelector
+
 // ==================== Plans & Channels ====================
 
 export interface SubscriptionPlan {

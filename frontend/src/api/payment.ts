@@ -11,7 +11,11 @@ import type {
   CheckoutInfoResponse,
   CreateOrderRequest,
   CreateOrderResult,
-  PaymentOrder
+  PaymentOrder,
+  OrderStatisticsResponse,
+  OrderStatisticsDetail,
+  OrderStatisticsParams,
+  OrderStatisticsDetailsParams
 } from '@/types/payment'
 import type { BasePaginationResponse } from '@/types'
 
@@ -52,6 +56,16 @@ export const paymentAPI = {
   /** Get current user's orders */
   getMyOrders(params?: { page?: number; page_size?: number; status?: string }) {
     return apiClient.get<BasePaginationResponse<PaymentOrder>>('/payment/orders/my', { params })
+  },
+
+  /** Get current user's paid-order aggregates */
+  getOrderStatistics(params?: OrderStatisticsParams) {
+    return apiClient.get<OrderStatisticsResponse>('/payment/orders/statistics', { params })
+  },
+
+  /** Get a fixed-size read-only order statistics drilldown page */
+  getOrderStatisticsDetails(params: OrderStatisticsDetailsParams) {
+    return apiClient.get<BasePaginationResponse<OrderStatisticsDetail>>('/payment/orders/statistics/details', { params })
   },
 
   /** Get a specific order by ID */

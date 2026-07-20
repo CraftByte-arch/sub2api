@@ -37,4 +37,44 @@ describe('payment api', () => {
       resume_token: 'resume-token-123',
     })
   })
+
+  it('requests the authenticated user order statistics range', async () => {
+    const params = { start_date: '2026-07-01', end_date: '2026-07-20' }
+
+    await paymentAPI.getOrderStatistics(params)
+
+    expect(get).toHaveBeenCalledWith('/payment/orders/statistics', { params })
+  })
+
+  it('requests type and daily drilldowns with fixed selectors', async () => {
+    await paymentAPI.getOrderStatisticsDetails({
+      start_date: '2026-07-01',
+      end_date: '2026-07-20',
+      order_type: 'balance',
+      page: 2,
+    })
+    await paymentAPI.getOrderStatisticsDetails({
+      start_date: '2026-07-01',
+      end_date: '2026-07-20',
+      date: '2026-07-20',
+      page: 1,
+    })
+
+    expect(get).toHaveBeenNthCalledWith(1, '/payment/orders/statistics/details', {
+      params: {
+        start_date: '2026-07-01',
+        end_date: '2026-07-20',
+        order_type: 'balance',
+        page: 2,
+      },
+    })
+    expect(get).toHaveBeenNthCalledWith(2, '/payment/orders/statistics/details', {
+      params: {
+        start_date: '2026-07-01',
+        end_date: '2026-07-20',
+        date: '2026-07-20',
+        page: 1,
+      },
+    })
+  })
 })
