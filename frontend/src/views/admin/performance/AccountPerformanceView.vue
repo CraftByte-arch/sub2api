@@ -16,7 +16,7 @@ import performanceAPI, {
 } from '@/api/admin/performance'
 import PerformanceAccountTable from './components/PerformanceAccountTable.vue'
 import PerformanceFailureDistribution from './components/PerformanceFailureDistribution.vue'
-import PerformanceInvestigationDrawer from './components/PerformanceInvestigationDrawer.vue'
+import PerformanceInvestigationDrawer from '@/views/admin/monitoring/components/InvestigationDrawer.vue'
 import PerformanceMetricCard from './components/PerformanceMetricCard.vue'
 import PerformanceTrendChart, { type PerformanceSeriesDefinition } from '@/views/admin/monitoring/components/MonitoringTrendChart.vue'
 

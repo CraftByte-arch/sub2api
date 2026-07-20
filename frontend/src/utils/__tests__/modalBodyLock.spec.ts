@@ -1,9 +1,14 @@
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import BaseDialog from '@/components/common/BaseDialog.vue'
-import PerformanceInvestigationDrawer from '@/views/admin/performance/components/PerformanceInvestigationDrawer.vue'
+import InvestigationDrawer from '@/views/admin/monitoring/components/InvestigationDrawer.vue'
 import { acquireModalBodyLock, lockAppInert, releaseAppInert, releaseModalBodyLock } from '../modalBodyLock'
+
+vi.mock('vue-i18n', async () => {
+  const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
+  return { ...actual, useI18n: () => ({ t: (key: string) => key }) }
+})
 
 afterEach(() => {
   releaseModalBodyLock()
@@ -51,7 +56,7 @@ describe('modalBodyLock', () => {
     appRoot.id = 'app'
     document.body.append(appRoot)
     const dialog = mount(BaseDialog, { props: { show: true, title: 'Shared dialog' } })
-    const drawer = mount(PerformanceInvestigationDrawer, {
+    const drawer = mount(InvestigationDrawer, {
       props: {
         open: true,
         account: {
@@ -92,9 +97,9 @@ describe('modalBodyLock', () => {
       global: {
         stubs: {
           PlatformTypeBadge: true,
-          PerformanceMetricCard: true,
-          PerformanceTrendChart: true,
-          PerformanceFailureDistribution: true
+          MetricTrendCard: true,
+          MonitoringTrendChart: true,
+          FailureDistribution: true
         }
       }
     })

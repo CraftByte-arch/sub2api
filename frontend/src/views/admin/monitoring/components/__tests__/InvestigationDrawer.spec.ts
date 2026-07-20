@@ -1,8 +1,16 @@
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import BaseDialog from '@/components/common/BaseDialog.vue'
-import PerformanceInvestigationDrawer from '../PerformanceInvestigationDrawer.vue'
+import InvestigationDrawer from '../InvestigationDrawer.vue'
+
+vi.mock('vue-i18n', async () => {
+  const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
+  return {
+    ...actual,
+    useI18n: () => ({ t: (key: string, params?: Record<string, unknown>) => (params ? `${key} ${JSON.stringify(params)}` : key) })
+  }
+})
 
 const counters = {
   attempt_count: 120,
@@ -27,9 +35,9 @@ const account = { account_id: 42, account_name: 'Codex Team', account_type: 'oau
 const props = { open: true, account, investigation: null, loading: false, error: '' }
 const global = {
   stubs: {
-    PerformanceMetricCard: true,
-    PerformanceTrendChart: true,
-    PerformanceFailureDistribution: true,
+    MetricTrendCard: true,
+    MonitoringTrendChart: true,
+    FailureDistribution: true,
     PlatformTypeBadge: {
       props: ['platform', 'type', 'authMode'],
       template: '<span data-testid="platform-type-badge" />'
@@ -42,9 +50,9 @@ afterEach(() => {
   document.body.style.overflow = ''
 })
 
-describe('PerformanceInvestigationDrawer', () => {
+describe('InvestigationDrawer', () => {
   it('shows an open dialog error state, retries, and closes from its close control', async () => {
-    const wrapper = mount(PerformanceInvestigationDrawer, { attachTo: document.body, props: { ...props, error: '详情加载失败' }, global })
+    const wrapper = mount(InvestigationDrawer, { attachTo: document.body, props: { ...props, error: '详情加载失败' }, global })
     await nextTick()
 
     const dialog = document.body.querySelector('[role="dialog"]')
@@ -60,12 +68,12 @@ describe('PerformanceInvestigationDrawer', () => {
   })
 
   it('distinguishes a loading investigation from an empty investigation', async () => {
-    const wrapper = mount(PerformanceInvestigationDrawer, { attachTo: document.body, props: { ...props, loading: true }, global })
+    const wrapper = mount(InvestigationDrawer, { attachTo: document.body, props: { ...props, loading: true }, global })
     await nextTick()
-    expect(document.body.textContent).toContain('正在加载账号详情')
+    expect(document.body.textContent).toContain('admin.monitoring.drawer.loading')
 
     await wrapper.setProps({ loading: false })
-    expect(document.body.textContent).toContain('暂无可供分析的性能数据')
+    expect(document.body.textContent).toContain('admin.monitoring.drawer.empty')
     wrapper.unmount()
   })
 
@@ -78,7 +86,7 @@ describe('PerformanceInvestigationDrawer', () => {
     document.body.append(appRoot)
     trigger.focus()
 
-    const wrapper = mount(PerformanceInvestigationDrawer, { attachTo: appRoot, props: { ...props, error: '详情加载失败' }, global })
+    const wrapper = mount(InvestigationDrawer, { attachTo: appRoot, props: { ...props, error: '详情加载失败' }, global })
     await nextTick()
     const dialog = wrapper.getComponent(BaseDialog)
 
@@ -99,7 +107,7 @@ describe('PerformanceInvestigationDrawer', () => {
     appRoot.id = 'app'
     document.body.append(appRoot)
 
-    const wrapper = mount(PerformanceInvestigationDrawer, { attachTo: appRoot, props, global })
+    const wrapper = mount(InvestigationDrawer, { attachTo: appRoot, props, global })
     await nextTick()
     await wrapper.setProps({ open: false })
     await wrapper.setProps({ open: true })
@@ -116,15 +124,37 @@ describe('PerformanceInvestigationDrawer', () => {
       ...account,
       counters: { ...counters, success_count: 90, client_canceled_count: 20 }
     }
-    const wrapper = mount(PerformanceInvestigationDrawer, {
+    const wrapper = mount(InvestigationDrawer, {
       attachTo: document.body,
       props: { ...props, account: cancelledAccount },
-      global: { stubs: { ...global.stubs, PerformanceMetricCard: { props: ['context'], template: '<div>{{ context }}</div>' } } }
+      global: { stubs: { ...global.stubs, MetricTrendCard: { props: ['context'], template: '<div>{{ context }}</div>' } } }
     })
     await nextTick()
 
-    expect(document.body.textContent).toContain('90 / 100 次成功')
-    expect(document.body.textContent).toContain('10 / 100 次失败')
+    expect(document.body.textContent).toContain('admin.monitoring.drawer.successContext {"success":90,"total":100}')
+    expect(document.body.textContent).toContain('admin.monitoring.drawer.failureContext {"failure":10,"total":100}')
+    wrapper.unmount()
+  })
+
+  it('maps raw failure outcomes to labeled, colored distribution items', async () => {
+    const investigation = {
+      time_points: [],
+      failures: [
+        { Outcome: 'ttftTimeout', Count: 2 },
+        { Outcome: 'rate limit', Count: 1 },
+        { Outcome: 'Mystery-Thing', Count: 5 }
+      ]
+    }
+    const wrapper = mount(InvestigationDrawer, { attachTo: document.body, props: { ...props, investigation }, global })
+    await nextTick()
+
+    const distribution = wrapper.getComponent({ name: 'FailureDistribution' })
+    expect(distribution.props('failures')).toEqual([
+      { label: 'admin.monitoring.failures.outcomes.ttft_timeout', count: 2, color: '#ef4444' },
+      { label: 'admin.monitoring.failures.outcomes.rate_limit', count: 1, color: '#f97316' },
+      { label: 'admin.monitoring.failures.outcomes.other_failure', count: 5, color: '#64748b' }
+    ])
+    expect(distribution.props('title')).toBe('admin.monitoring.drawer.failureTitle')
     wrapper.unmount()
   })
 
@@ -132,8 +162,8 @@ describe('PerformanceInvestigationDrawer', () => {
     const appRoot = document.createElement('div')
     appRoot.id = 'app'
     document.body.append(appRoot)
-    const first = mount(PerformanceInvestigationDrawer, { attachTo: appRoot, props: { ...props, error: '详情加载失败' }, global })
-    const second = mount(PerformanceInvestigationDrawer, { attachTo: appRoot, props: { ...props, error: '详情加载失败' }, global })
+    const first = mount(InvestigationDrawer, { attachTo: appRoot, props: { ...props, error: '详情加载失败' }, global })
+    const second = mount(InvestigationDrawer, { attachTo: appRoot, props: { ...props, error: '详情加载失败' }, global })
     await nextTick()
 
     expect(appRoot.hasAttribute('inert')).toBe(true)
