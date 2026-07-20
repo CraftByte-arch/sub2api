@@ -68,7 +68,10 @@ export default {
       watch: 'Watch',
       risk: 'At risk',
       lowSample: 'Low sample',
-      empty: 'No account performance data for the selected range'
+      empty: 'No account performance data for the selected range',
+      loading: 'Loading account performance',
+      retry: 'Retry',
+      viewDetails: 'View performance details for account {name}'
     },
     failures: {
       title: 'Failure distribution',

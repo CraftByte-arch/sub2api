@@ -68,7 +68,10 @@ export default {
       watch: '关注',
       risk: '风险',
       lowSample: '样本不足',
-      empty: '所选时间段暂无账号性能数据'
+      empty: '所选时间段暂无账号性能数据',
+      loading: '正在加载账号性能',
+      retry: '重试',
+      viewDetails: '查看账号 {name} 性能详情'
     },
     failures: {
       title: '失败分布',
