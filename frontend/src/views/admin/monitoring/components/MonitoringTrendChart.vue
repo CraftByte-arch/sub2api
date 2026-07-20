@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { CategoryScale, Chart as ChartJS, Filler, Legend, LineElement, LinearScale, PointElement, Tooltip, type ChartData, type ChartOptions } from 'chart.js'
 import { Line } from 'vue-chartjs'
-import type { PerformanceTimePoint } from '@/api/admin/performance'
+import type { PerformanceTimePoint } from '@/api/admin/monitoring'
 
 ChartJS.register(CategoryScale, Filler, Legend, LineElement, LinearScale, PointElement, Tooltip)
 

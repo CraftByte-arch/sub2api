@@ -5,7 +5,7 @@ import PlatformTypeBadge from '@/components/common/PlatformTypeBadge.vue'
 import { performanceMetricsFromCounters, performanceMetricsFromTimePoint, type PerformanceAccountItem as PerformanceAccount, type PerformanceInvestigation } from '@/api/admin/performance'
 import PerformanceFailureDistribution from './PerformanceFailureDistribution.vue'
 import PerformanceMetricCard from './PerformanceMetricCard.vue'
-import PerformanceTrendChart, { type PerformanceSeriesDefinition } from './PerformanceTrendChart.vue'
+import PerformanceTrendChart, { type PerformanceSeriesDefinition } from '@/views/admin/monitoring/components/MonitoringTrendChart.vue'
 
 const props = defineProps<{
   open: boolean

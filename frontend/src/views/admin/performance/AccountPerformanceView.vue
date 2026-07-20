@@ -18,7 +18,7 @@ import PerformanceAccountTable from './components/PerformanceAccountTable.vue'
 import PerformanceFailureDistribution from './components/PerformanceFailureDistribution.vue'
 import PerformanceInvestigationDrawer from './components/PerformanceInvestigationDrawer.vue'
 import PerformanceMetricCard from './components/PerformanceMetricCard.vue'
-import PerformanceTrendChart, { type PerformanceSeriesDefinition } from './components/PerformanceTrendChart.vue'
+import PerformanceTrendChart, { type PerformanceSeriesDefinition } from '@/views/admin/monitoring/components/MonitoringTrendChart.vue'
 
 const route = useRoute()
 const router = useRouter()
