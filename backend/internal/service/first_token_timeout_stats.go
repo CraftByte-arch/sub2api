@@ -55,6 +55,8 @@ type FirstTokenStatsDelta struct {
 type FirstTokenStatsRange string
 
 const (
+	FirstTokenStatsRange1Hour   FirstTokenStatsRange = "1h"
+	FirstTokenStatsRange6Hours  FirstTokenStatsRange = "6h"
 	FirstTokenStatsRange24Hours FirstTokenStatsRange = "24h"
 	FirstTokenStatsRange7Days   FirstTokenStatsRange = "7d"
 	FirstTokenStatsRange30Days  FirstTokenStatsRange = "30d"

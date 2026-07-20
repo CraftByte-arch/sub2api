@@ -209,7 +209,7 @@ func TestFirstTokenTimeoutOverviewValidatesAndForwardsFilters(t *testing.T) {
 	}
 
 	invalid := []string{
-		"/overview?range=1h",
+		"/overview?range=2h",
 		"/overview?range=24h&range=90d",
 		"/overview?model=&model=gpt-5",
 		"/overview?protocol=openai",
@@ -376,7 +376,7 @@ func TestFirstTokenTimeoutAccountsDefaultsAndValidation(t *testing.T) {
 	require.Equal(t, 20, filter.PageSize)
 
 	invalid := []string{
-		"/accounts?range=1h",
+		"/accounts?range=2h",
 		"/accounts?range=24h&range=90d",
 		"/accounts?search=alice&search=bob",
 		"/accounts?protocol=openai",
@@ -566,4 +566,12 @@ func (r *firstTokenTimeoutHandlerStatsRepo) lastAccountFilter() service.FirstTok
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.accountFilter
+}
+
+func TestParseFirstTokenStatsRangeAcceptsShortRanges(t *testing.T) {
+	for _, raw := range []string{"1h", "6h"} {
+		statsRange, ok := parseFirstTokenStatsRange(raw)
+		require.True(t, ok, "range %s should be accepted", raw)
+		require.Equal(t, service.FirstTokenStatsRange(raw), statsRange)
+	}
 }

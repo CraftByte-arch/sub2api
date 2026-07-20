@@ -259,7 +259,7 @@ func parseFirstTokenStatsOverviewFilter(c *gin.Context) (service.FirstTokenStats
 	}
 	statsRange, ok := parseFirstTokenStatsRange(c.Query("range"))
 	if !ok {
-		response.BadRequest(c, "range must be one of 24h, 7d, 30d, or 90d")
+		response.BadRequest(c, "range must be one of 1h, 6h, 24h, 7d, 30d, or 90d")
 		return service.FirstTokenStatsOverviewFilter{}, false
 	}
 	protocol, ok := parseFirstTokenStatsProtocol(c.Query("protocol"))
@@ -376,7 +376,7 @@ func parseFirstTokenStatsAccountFilter(c *gin.Context) (service.FirstTokenStatsA
 	}
 	statsRange, ok := parseFirstTokenStatsRange(c.Query("range"))
 	if !ok {
-		response.BadRequest(c, "range must be one of 24h, 7d, 30d, or 90d")
+		response.BadRequest(c, "range must be one of 1h, 6h, 24h, 7d, 30d, or 90d")
 		return service.FirstTokenStatsAccountFilter{}, false
 	}
 	protocol, ok := parseFirstTokenStatsProtocol(c.Query("protocol"))
@@ -505,6 +505,10 @@ func finiteOrZero(value float64) float64 {
 
 func parseFirstTokenStatsRange(raw string) (service.FirstTokenStatsRange, bool) {
 	switch service.FirstTokenStatsRange(strings.TrimSpace(raw)) {
+	case service.FirstTokenStatsRange1Hour:
+		return service.FirstTokenStatsRange1Hour, true
+	case service.FirstTokenStatsRange6Hours:
+		return service.FirstTokenStatsRange6Hours, true
 	case "", service.FirstTokenStatsRange24Hours:
 		return service.FirstTokenStatsRange24Hours, true
 	case service.FirstTokenStatsRange7Days:

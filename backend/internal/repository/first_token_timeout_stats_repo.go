@@ -513,6 +513,10 @@ func firstTokenStatsRatio(numerator, denominator int64) service.FirstTokenStatsR
 func normalizeFirstTokenStatsOverviewFilter(filter service.FirstTokenStatsOverviewFilter) (time.Time, time.Time, error) {
 	var duration time.Duration
 	switch filter.Range {
+	case service.FirstTokenStatsRange1Hour:
+		duration = time.Hour
+	case service.FirstTokenStatsRange6Hours:
+		duration = 6 * time.Hour
 	case service.FirstTokenStatsRange24Hours:
 		duration = 24 * time.Hour
 	case service.FirstTokenStatsRange7Days:

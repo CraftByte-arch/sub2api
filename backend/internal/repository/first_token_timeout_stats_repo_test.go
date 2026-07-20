@@ -670,3 +670,20 @@ func (t *firstTokenStatsTxOptionsTx) Rollback() error {
 	t.state.mu.Unlock()
 	return nil
 }
+
+func TestNormalizeFirstTokenStatsOverviewFilterSupportsShortRanges(t *testing.T) {
+	end := time.Date(2026, 7, 20, 10, 30, 0, 0, time.UTC)
+	cases := []struct {
+		rangeValue service.FirstTokenStatsRange
+		wantStart  time.Time
+	}{
+		{service.FirstTokenStatsRange1Hour, time.Date(2026, 7, 20, 10, 0, 0, 0, time.UTC)},
+		{service.FirstTokenStatsRange6Hours, time.Date(2026, 7, 20, 5, 0, 0, 0, time.UTC)},
+	}
+	for _, tc := range cases {
+		start, normalizedEnd, err := normalizeFirstTokenStatsOverviewFilter(service.FirstTokenStatsOverviewFilter{Range: tc.rangeValue, End: end})
+		require.NoError(t, err)
+		require.Equal(t, time.Date(2026, 7, 20, 11, 0, 0, 0, time.UTC), normalizedEnd)
+		require.Equal(t, tc.wantStart, start)
+	}
+}
