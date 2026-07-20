@@ -45,7 +45,8 @@ base-ref: eece1469ac4e99ad92c519f024146f92d3f20b03
 - `frontend/src/router/index.ts`：增加 `/order-statistics` 路由。
 - `frontend/src/components/layout/AppSidebar.vue`：在“我的订单”后追加统计入口。
 - `frontend/src/components/layout/__tests__/AppSidebar.spec.ts`：锁定相邻顺序和 feature flag。
-- `frontend/src/i18n/locales/zh/misc.ts`、`frontend/src/i18n/locales/en/misc.ts`：增加导航和统计页文案。
+- `frontend/src/i18n/locales/zh/common.ts`、`frontend/src/i18n/locales/en/common.ts`：增加导航文案。
+- `frontend/src/i18n/locales/zh/misc.ts`、`frontend/src/i18n/locales/en/misc.ts`：增加统计页文案。
 - `openspec/changes/add-my-orders-payment-statistics/tasks.md`：每完成一个映射任务立即勾选。
 
 **明确不修改：**
@@ -526,21 +527,23 @@ git commit -m "feat(payment): build personal order statistics page"
 - Create: `frontend/src/router/__tests__/order-statistics-route.spec.ts`
 - Modify: `frontend/src/components/layout/AppSidebar.vue`
 - Modify: `frontend/src/components/layout/__tests__/AppSidebar.spec.ts`
+- Modify: `frontend/src/i18n/locales/zh/common.ts`
+- Modify: `frontend/src/i18n/locales/en/common.ts`
 - Modify: `frontend/src/i18n/locales/zh/misc.ts`
 - Modify: `frontend/src/i18n/locales/en/misc.ts`
 - Modify: `openspec/changes/add-my-orders-payment-statistics/tasks.md`（映射 3.4、5.1）
 
-- [ ] **Step 1: 写路由、侧栏和文案 RED 测试**
+- [x] **Step 1: 写路由、侧栏和文案 RED 测试**
 
 路由测试捕获传给 `createRouter` 的 routes，断言 `/order-statistics` 使用 lazy view、`requiresAuth: true`、`requiresAdmin: false`、`requiresPayment: true`。侧栏源码测试断言新 path 位于 `/orders` 后且同样使用 `flagPayment`。i18n 编译测试沿用现有全量 locale suite。
 
-- [ ] **Step 2: 运行导航测试并确认 RED**
+- [x] **Step 2: 运行导航测试并确认 RED**
 
 Run: `pnpm --dir frontend exec vitest run src/router/__tests__/order-statistics-route.spec.ts src/components/layout/__tests__/AppSidebar.spec.ts src/i18n/__tests__/localesMessageCompile.spec.ts`
 
 Expected: FAIL，提示新路由、菜单项或 locale key 缺失。
 
-- [ ] **Step 3: 添加路由、菜单和中英文文案**
+- [x] **Step 3: 添加路由、菜单和中英文文案**
 
 路由紧邻 `/orders`，名称 `OrderStatistics`，标题 key 使用 `nav.orderStatistics`。侧栏复用 `ChartIcon`：
 
@@ -548,9 +551,9 @@ Expected: FAIL，提示新路由、菜单项或 locale key 缺失。
 { path: '/order-statistics', label: t('nav.orderStatistics'), icon: ChartIcon, hideInSimpleMode: true, featureFlag: flagPayment }
 ```
 
-在 `payment.statistics` 下加入标题、范围、指标、类型、每日、明细六列、加载/错误/空状态和重试文案；中文类型固定“余额 / 余额卡 / 订阅”。
+在 `common.ts` 的 `nav` 下增加 `orderStatistics`，在 `misc.ts` 的 `payment.statistics` 下加入标题、范围、指标、类型、每日、明细六列、加载/错误/空状态和重试文案；中文类型固定“余额 / 余额卡 / 订阅”。
 
-- [ ] **Step 4: 运行测试并执行旧页面 diff 断言**
+- [x] **Step 4: 运行测试并执行旧页面 diff 断言**
 
 Run: `pnpm --dir frontend exec vitest run src/router/__tests__/order-statistics-route.spec.ts src/router/__tests__/feature-access.spec.ts src/components/layout/__tests__/AppSidebar.spec.ts src/i18n/__tests__/localesMessageCompile.spec.ts`
 
@@ -560,12 +563,12 @@ Run: `git diff --exit-code eece1469ac4e99ad92c519f024146f92d3f20b03 -- frontend/
 
 Expected: exit 0，无输出。
 
-- [ ] **Step 5: 勾选任务并提交**
+- [x] **Step 5: 勾选任务并提交**
 
 勾选 OpenSpec `3.4`、`5.1`：
 
 ```bash
-git add frontend/src/router/index.ts frontend/src/router/__tests__/order-statistics-route.spec.ts frontend/src/components/layout/AppSidebar.vue frontend/src/components/layout/__tests__/AppSidebar.spec.ts frontend/src/i18n/locales/zh/misc.ts frontend/src/i18n/locales/en/misc.ts openspec/changes/add-my-orders-payment-statistics/tasks.md
+git add frontend/src/router/index.ts frontend/src/router/__tests__/order-statistics-route.spec.ts frontend/src/components/layout/AppSidebar.vue frontend/src/components/layout/__tests__/AppSidebar.spec.ts frontend/src/i18n/locales/zh/common.ts frontend/src/i18n/locales/en/common.ts frontend/src/i18n/locales/zh/misc.ts frontend/src/i18n/locales/en/misc.ts openspec/changes/add-my-orders-payment-statistics/tasks.md
 git commit -m "feat(payment): expose order statistics navigation"
 ```
 

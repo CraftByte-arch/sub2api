@@ -19,7 +19,7 @@
 - [x] 3.1 增加统计与下钻请求/响应类型、payment API 方法及参数和固定分页契约测试。
 - [x] 3.2 为新页面编写组件测试，覆盖默认 30 天、7/30/90 天快捷范围、自定义 draft/applied 状态、加载、错误、重试和空状态。
 - [x] 3.3 实现 `UserOrderStatisticsView.vue`，展示人民币总实付、成功订单数、平均实付、三种类型聚合和按日列表。
-- [ ] 3.4 增加 `/order-statistics` 路由、支付 feature flag 保护、相邻侧边栏入口和中英文文案，并测试菜单可见性与激活状态。
+- [x] 3.4 增加 `/order-statistics` 路由、支付 feature flag 保护、相邻侧边栏入口和中英文文案，并测试菜单可见性与激活状态。
 
 ## 4. 聚合下钻弹窗
 
@@ -30,7 +30,7 @@
 
 ## 5. 回归验证与交付
 
-- [ ] 5.1 增加回归断言，确认 `UserOrdersView.vue`、`/orders` 和 `GET /api/v1/payment/orders/my` 未被修改。
+- [x] 5.1 增加回归断言，确认 `UserOrdersView.vue`、`/orders` 和 `GET /api/v1/payment/orders/my` 未被修改。
 - [ ] 5.2 运行 payment service、handler、路由/API 契约相关 Go 测试及 race/vet 检查。
 - [ ] 5.3 运行新增页面 Vitest、前端 lint、typecheck 和生产构建。
 - [ ] 5.4 在桌面和移动视口做统计页视觉检查，覆盖长订单号、长日期、空状态和弹窗表格横向滚动，确认无溢出、重叠或布局跳动。

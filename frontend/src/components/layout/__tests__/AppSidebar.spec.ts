@@ -54,6 +54,19 @@ describe('AppSidebar merged feature navigation', () => {
     expect(componentSource).toContain("path: '/usage-cards'")
     expect(componentSource).toContain("path: '/admin/usage-cards'")
   })
+
+  it('places order statistics after orders with the same payment visibility rule', () => {
+    const ordersIndex = componentSource.indexOf("{ path: '/orders'")
+    const statisticsIndex = componentSource.indexOf("{ path: '/order-statistics'")
+    const redeemIndex = componentSource.indexOf("{ path: '/redeem'", ordersIndex)
+
+    expect(ordersIndex).toBeGreaterThanOrEqual(0)
+    expect(statisticsIndex).toBeGreaterThan(ordersIndex)
+    expect(statisticsIndex).toBeLessThan(redeemIndex)
+    expect(componentSource).toContain(
+      "{ path: '/order-statistics', label: t('nav.orderStatistics'), icon: ChartIcon, hideInSimpleMode: true, featureFlag: flagPayment }",
+    )
+  })
 })
 
 describe('AppSidebar header styles', () => {
