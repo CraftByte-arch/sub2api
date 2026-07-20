@@ -1,6 +1,6 @@
 <template>
   <AppLayout>
-    <div class="space-y-6">
+    <div data-test="order-statistics-page" class="min-w-0 max-w-full space-y-6 overflow-x-hidden">
       <header class="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 class="text-xl font-semibold text-gray-900 dark:text-gray-100">

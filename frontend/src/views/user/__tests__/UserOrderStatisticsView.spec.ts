@@ -127,6 +127,17 @@ describe('UserOrderStatisticsView', () => {
     vi.useRealTimers()
   })
 
+  it('contains wide aggregate tables without creating page-level horizontal overflow', async () => {
+    getOrderStatistics.mockResolvedValue({ data: statisticsResponse('2026-06-21', '2026-07-20', 100) })
+
+    const wrapper = mountView()
+    await flushPromises()
+
+    expect(wrapper.get('[data-test="order-statistics-page"]').classes()).toEqual(
+      expect.arrayContaining(['min-w-0', 'max-w-full', 'overflow-x-hidden']),
+    )
+  })
+
   it('loads the most recent 30 local calendar days by default', async () => {
     getOrderStatistics.mockResolvedValue({ data: statisticsResponse('2026-06-21', '2026-07-20', 100) })
 
