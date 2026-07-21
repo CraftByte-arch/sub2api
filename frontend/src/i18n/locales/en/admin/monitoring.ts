@@ -30,7 +30,11 @@ export default {
       requestsContext: '{count} requests',
       ratioContext: '{numerator} / {denominator}',
       timeoutsContext: '{count} timeouts',
-      p95TtftContext: 'P50 {p50} · duration {duration}'
+      p95TtftContext: 'P50 {p50} · duration {duration}',
+      trendAria: '{label} trend',
+      trendSummary: '{label} trend: {direction} {delta}',
+      trendUp: 'rising',
+      trendDown: 'falling'
     },
     funnel: {
       title: 'First token protection path',
@@ -39,7 +43,8 @@ export default {
       triggered: 'Timeout triggered',
       recovered: 'Recovered via failover',
       finalFailure: 'Final failure',
-      platformNote: 'Funnel data is not affected by the platform filter'
+      platformNote: 'Funnel data is not affected by the platform filter',
+      summarySeparator: ', '
     },
     trends: {
       rates: 'Request health trend',
@@ -76,6 +81,9 @@ export default {
     failures: {
       title: 'Failure distribution',
       empty: 'No failures recorded',
+      countLabel: 'Failures',
+      tooltipCount: '{count}',
+      loading: 'Loading',
       outcomes: {
         ttft_timeout: 'TTFT timeout',
         rate_limit: 'Rate limit',

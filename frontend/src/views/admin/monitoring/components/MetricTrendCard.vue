@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 type MetricTone = 'success' | 'danger' | 'warning' | 'neutral'
 
@@ -10,6 +11,8 @@ const props = withDefaults(defineProps<{
   tone: MetricTone
   trend?: number[]
 }>(), { trend: () => [] })
+
+const { t } = useI18n()
 
 const strokeClasses: Record<MetricTone, string> = {
   success: 'stroke-emerald-500 dark:stroke-emerald-300',
@@ -38,7 +41,8 @@ const trendSummary = computed(() => {
   if (!hasTrend.value) return ''
   const first = props.trend[0]
   const last = props.trend.at(-1) ?? first
-  return `${props.label}趋势：${last >= first ? '上升' : '下降'} ${Math.abs(last - first).toFixed(2)}`
+  const direction = t(last >= first ? 'admin.monitoring.kpi.trendUp' : 'admin.monitoring.kpi.trendDown')
+  return t('admin.monitoring.kpi.trendSummary', { label: props.label, direction, delta: Math.abs(last - first).toFixed(2) })
 })
 </script>
 
@@ -52,7 +56,7 @@ const trendSummary = computed(() => {
     </div>
     <div class="mt-3 flex min-h-8 items-end justify-between gap-3">
       <p class="min-w-0 text-xs text-gray-500 dark:text-gray-400">{{ context }}</p>
-      <svg v-if="hasTrend" data-testid="metric-trend-sparkline" class="h-8 w-24 shrink-0" viewBox="0 0 100 32" role="img" :aria-label="`${label}趋势`" preserveAspectRatio="none">
+      <svg v-if="hasTrend" data-testid="metric-trend-sparkline" class="h-8 w-24 shrink-0" viewBox="0 0 100 32" role="img" :aria-label="t('admin.monitoring.kpi.trendAria', { label })" preserveAspectRatio="none">
         <polygon :points="sparklineArea" :class="fillClasses[tone]" />
         <polyline :points="sparklinePoints" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" :class="strokeClasses[tone]" />
       </svg>

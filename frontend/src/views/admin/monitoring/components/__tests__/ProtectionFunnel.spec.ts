@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
-  return { ...actual, useI18n: () => ({ t: (key: string) => key }) }
+  return { ...actual, useI18n: () => ({ t: (key: string, params?: Record<string, unknown>) => params ? key + ' ' + JSON.stringify(params) : key }) }
 })
 
 import ProtectionFunnel from '../ProtectionFunnel.vue'
@@ -32,5 +32,10 @@ describe('ProtectionFunnel', () => {
   it('renders nothing without controlled requests', () => {
     const wrapper = mount(ProtectionFunnel, { props: { summary: { ...summary, controlled_requests: 0 } } })
     expect(wrapper.find('[data-testid="protection-funnel"]').exists()).toBe(false)
+  })
+
+  it('renders the platform note under the subtitle', () => {
+    const wrapper = mount(ProtectionFunnel, { props: { summary } })
+    expect(wrapper.text()).toContain('admin.monitoring.funnel.platformNote')
   })
 })

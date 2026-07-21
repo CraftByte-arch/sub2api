@@ -15,7 +15,7 @@ const stages = computed(() => [
   { label: t('admin.monitoring.funnel.finalFailure'), value: props.summary.final_ttft_failure_rate.numerator, rate: formatRate(props.summary.final_ttft_failure_rate.rate), tone: 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200' }
 ])
 
-const accessibleSummary = computed(() => stages.value.map((stage) => `${stage.label} ${stage.value}`).join('，'))
+const accessibleSummary = computed(() => stages.value.map((stage) => `${stage.label} ${stage.value}`).join(t('admin.monitoring.funnel.summarySeparator')))
 
 function formatRate(rate: number): string {
   return `${((Number.isFinite(rate) ? rate : 0) * 100).toFixed(1)}%`
@@ -28,6 +28,7 @@ function formatRate(rate: number): string {
       <div>
         <h2 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.monitoring.funnel.title') }}</h2>
         <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.monitoring.funnel.subtitle') }}</p>
+        <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">{{ t('admin.monitoring.funnel.platformNote') }}</p>
       </div>
       <span class="text-xs tabular-nums text-gray-500 dark:text-gray-400">{{ summary.controlled_requests.toLocaleString() }}</span>
     </div>

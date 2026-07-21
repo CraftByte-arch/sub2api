@@ -97,7 +97,7 @@ function failureCount(account: PerformanceAccount) {
     </div>
     <div v-else-if="!hasInvestigation" class="flex min-h-64 items-center justify-center text-sm text-gray-500 dark:text-gray-400">{{ t('admin.monitoring.drawer.empty') }}</div>
     <div v-else class="mt-6 space-y-8">
-      <MonitoringTrendChart :title="t('admin.monitoring.drawer.trendTitle')" :points="investigation?.time_points ?? []" time-range="" :series="trendSeries" />
+      <MonitoringTrendChart :title="t('admin.monitoring.drawer.trendTitle')" :points="investigation?.time_points ?? []" :series="trendSeries" />
       <FailureDistribution :title="t('admin.monitoring.drawer.failureTitle')" :failures="failureItems" />
     </div>
   </BaseDialog>

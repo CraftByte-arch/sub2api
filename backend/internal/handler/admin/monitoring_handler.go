@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"net/http"
 	"time"
 
@@ -9,15 +10,21 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// monitoringPerformanceService is the subset of service.AccountPerformanceService
+// the monitoring handler depends on, kept small so tests can stub it.
+type monitoringPerformanceService interface {
+	Overview(ctx context.Context, filter service.AccountPerformanceOverviewFilter) (*service.AccountPerformanceOverviewResult, error)
+}
+
 // MonitoringHandler serves the unified monitoring center by composing the
 // account performance and first-token-timeout read models into one response.
 type MonitoringHandler struct {
-	performance  *service.AccountPerformanceService
+	performance  monitoringPerformanceService
 	ttftRepo     service.FirstTokenTimeoutStatsRepository
 	ttftRecorder *service.FirstTokenTimeoutStatsRecorder
 }
 
-func NewMonitoringHandler(performance *service.AccountPerformanceService, ttftRepo service.FirstTokenTimeoutStatsRepository, ttftRecorder *service.FirstTokenTimeoutStatsRecorder) *MonitoringHandler {
+func NewMonitoringHandler(performance monitoringPerformanceService, ttftRepo service.FirstTokenTimeoutStatsRepository, ttftRecorder *service.FirstTokenTimeoutStatsRecorder) *MonitoringHandler {
 	return &MonitoringHandler{performance: performance, ttftRepo: ttftRepo, ttftRecorder: ttftRecorder}
 }
 

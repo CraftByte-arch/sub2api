@@ -17,7 +17,7 @@ export interface PerformanceSeriesDefinition {
 const props = withDefaults(defineProps<{
   title: string
   points: PerformanceTimePoint[]
-  timeRange: string
+  timeRange?: string
   series: PerformanceSeriesDefinition[]
   loading?: boolean
   valueFormat?: 'number' | 'percent'

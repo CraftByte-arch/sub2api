@@ -30,7 +30,11 @@ export default {
       requestsContext: '{count} 次请求',
       ratioContext: '{numerator} / {denominator}',
       timeoutsContext: '{count} 次超时',
-      p95TtftContext: 'P50 {p50} · 总耗时 {duration}'
+      p95TtftContext: 'P50 {p50} · 总耗时 {duration}',
+      trendAria: '{label}趋势',
+      trendSummary: '{label}趋势：{direction} {delta}',
+      trendUp: '上升',
+      trendDown: '下降'
     },
     funnel: {
       title: '首 Token 保护路径',
@@ -39,7 +43,8 @@ export default {
       triggered: '触发超时',
       recovered: '换号恢复',
       finalFailure: '最终失败',
-      platformNote: '漏斗数据不随平台筛选变化'
+      platformNote: '漏斗数据不随平台筛选变化',
+      summarySeparator: '，'
     },
     trends: {
       rates: '请求健康趋势',
@@ -76,6 +81,9 @@ export default {
     failures: {
       title: '失败分布',
       empty: '暂无失败记录',
+      countLabel: '失败次数',
+      tooltipCount: '{count} 次',
+      loading: '加载中',
       outcomes: {
         ttft_timeout: 'TTFT 超时',
         rate_limit: '限流',
