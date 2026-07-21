@@ -833,6 +833,9 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 					if fs.SwitchCount > 0 {
 						attemptCtx = service.WithAccountSwitchCount(attemptCtx, fs.SwitchCount, h.metadataBridgeEnabled())
 					}
+					if fs.ForceCacheBilling {
+						attemptCtx = service.WithForceCacheBilling(attemptCtx)
+					}
 					if account.Platform == service.PlatformAntigravity && account.Type != service.AccountTypeAPIKey {
 						return h.antigravityGatewayService.Forward(attemptCtx, c, account, attemptBody, hasBoundSession)
 					}
