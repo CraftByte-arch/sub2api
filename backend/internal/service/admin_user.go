@@ -13,6 +13,7 @@ import (
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/authidentity"
 	"github.com/Wei-Shaw/sub2api/ent/authidentitychannel"
+	"github.com/Wei-Shaw/sub2api/ent/usagecardplan"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
@@ -1232,6 +1233,9 @@ func (s *adminServiceImpl) GenerateRedeemCodes(ctx context.Context, input *Gener
 		return nil, ErrRedeemCodeExpired
 	}
 
+	var usageCardPlan *UsageCardPlan
+	redeemValue := input.Value
+
 	// 如果是订阅类型，验证必须有 GroupID
 	if input.Type == RedeemTypeSubscription {
 		if input.GroupID == nil {
@@ -1246,6 +1250,23 @@ func (s *adminServiceImpl) GenerateRedeemCodes(ctx context.Context, input *Gener
 			return nil, errors.New("group must be subscription type")
 		}
 	}
+	if input.Type == RedeemTypeUsageCard {
+		if input.GroupID != nil {
+			return nil, errors.New("group_id must be empty for usage card type")
+		}
+		if input.UsageCardPlanID == nil || *input.UsageCardPlanID <= 0 {
+			return nil, errors.New("usage_card_plan_id is required for usage card type")
+		}
+		if input.ValidityDays != 0 {
+			return nil, errors.New("validity_days must be empty for usage card type")
+		}
+		plan, err := s.getUsageCardPlanForRedeem(ctx, *input.UsageCardPlanID)
+		if err != nil {
+			return nil, err
+		}
+		usageCardPlan = plan
+		redeemValue = plan.AmountUSD
+	}
 
 	codes := make([]RedeemCode, 0, input.Count)
 	for i := 0; i < input.Count; i++ {
@@ -1256,7 +1277,7 @@ func (s *adminServiceImpl) GenerateRedeemCodes(ctx context.Context, input *Gener
 		code := RedeemCode{
 			Code:      codeValue,
 			Type:      input.Type,
-			Value:     input.Value,
+			Value:     redeemValue,
 			Status:    StatusUnused,
 			ExpiresAt: input.ExpiresAt,
 		}
@@ -1268,12 +1289,45 @@ func (s *adminServiceImpl) GenerateRedeemCodes(ctx context.Context, input *Gener
 				code.ValidityDays = 30 // 默认30天
 			}
 		}
+		if input.Type == RedeemTypeUsageCard {
+			code.UsageCardPlanID = input.UsageCardPlanID
+			code.UsageCardPlan = usageCardPlan
+		}
 		if err := s.redeemCodeRepo.Create(ctx, &code); err != nil {
 			return nil, err
 		}
 		codes = append(codes, code)
 	}
 	return codes, nil
+}
+
+func (s *adminServiceImpl) getUsageCardPlanForRedeem(ctx context.Context, id int64) (*UsageCardPlan, error) {
+	if s == nil || s.entClient == nil {
+		return nil, ErrUsageCardPlanNotFound
+	}
+	plan, err := s.entClient.UsageCardPlan.Query().
+		Where(usagecardplan.IDEQ(id)).
+		Only(ctx)
+	if err != nil {
+		if dbent.IsNotFound(err) {
+			return nil, ErrUsageCardPlanNotFound
+		}
+		return nil, err
+	}
+	return &UsageCardPlan{
+		ID:           plan.ID,
+		Name:         plan.Name,
+		Description:  plan.Description,
+		ProductName:  plan.ProductName,
+		Price:        plan.Price,
+		AmountUSD:    plan.AmountUsd,
+		ValidityDays: plan.ValidityDays,
+		Features:     plan.Features,
+		ForSale:      plan.ForSale,
+		SortOrder:    plan.SortOrder,
+		CreatedAt:    plan.CreatedAt,
+		UpdatedAt:    plan.UpdatedAt,
+	}, nil
 }
 
 func (s *adminServiceImpl) DeleteRedeemCode(ctx context.Context, id int64) error {
