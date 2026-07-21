@@ -55,6 +55,7 @@ export default {
       p50Ttft: 'P50 TTFT',
       p95Ttft: 'P95 TTFT',
       p95Duration: 'P95 duration',
+      loading: 'Loading trend data',
       empty: 'No data for the selected range'
     },
     accounts: {

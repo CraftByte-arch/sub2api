@@ -338,7 +338,7 @@ func TestQueryAccountsAppliesSearchFilter(t *testing.T) {
 
 	repo := NewAccountPerformanceRepository(db)
 	mock.ExpectBegin()
-	mock.ExpectQuery("FROM enriched WHERE \\(\\$20::text = '' OR account_name ILIKE \\$20").
+	mock.ExpectQuery("FROM enriched WHERE \\(\\$20::text = '' OR account_name ILIKE \\$20 ESCAPE '\\\\' OR account_id::text ILIKE \\$20").
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), int64(20), int64(0), "%prod%").
 		WillReturnRows(sqlmock.NewRows([]string{"account_id"}))
 	mock.ExpectCommit()

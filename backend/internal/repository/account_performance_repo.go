@@ -448,7 +448,7 @@ LEFT JOIN accounts AS account ON account.id = scored.account_id
 LEFT JOIN accounts AS parent ON parent.id = account.parent_account_id
 )
 SELECT account_id, platform, account_name, account_type, auth_mode, ` + accountPerformanceCounterColumns() + `, availability, failure_rate, health_score, COUNT(*) OVER() AS total FROM enriched
-WHERE ($20::text = '' OR account_name ILIKE $20 ESCAPE '\')
+WHERE ($20::text = '' OR account_name ILIKE $20 ESCAPE '\' OR account_id::text ILIKE $20 ESCAPE '\')
 ORDER BY ` + sortColumn + ` ` + sortOrder + `, account_id ASC LIMIT $18 OFFSET $19`
 	queryArgs := append(args, int64(pageSize), offset, search)
 	rows, err := tx.QueryContext(ctx, query, queryArgs...)

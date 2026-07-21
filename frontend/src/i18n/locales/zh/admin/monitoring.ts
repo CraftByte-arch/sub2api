@@ -55,6 +55,7 @@ export default {
       p50Ttft: 'P50 TTFT',
       p95Ttft: 'P95 TTFT',
       p95Duration: 'P95 总耗时',
+      loading: '正在加载趋势数据',
       empty: '所选时间段暂无数据'
     },
     accounts: {

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { CategoryScale, Chart as ChartJS, Filler, Legend, LineElement, LinearScale, PointElement, Tooltip, type ChartData, type ChartOptions } from 'chart.js'
+import { useI18n } from 'vue-i18n'
 import { Line } from 'vue-chartjs'
 import type { PerformanceTimePoint } from '@/api/admin/monitoring'
 
@@ -22,6 +23,8 @@ const props = withDefaults(defineProps<{
   loading?: boolean
   valueFormat?: 'number' | 'percent'
 }>(), { loading: false, valueFormat: 'number' })
+
+const { t } = useI18n()
 
 const themeVersion = ref(0)
 let themeObserver: MutationObserver | undefined
@@ -85,9 +88,9 @@ onUnmounted(() => themeObserver?.disconnect())
     </div>
     <p v-if="summary" class="sr-only">{{ summary }}</p>
     <div class="mt-3 h-72">
-      <div v-if="loading" class="flex h-full items-center justify-center text-sm text-gray-500 dark:text-gray-400"><slot name="loading">加载中</slot></div>
+      <div v-if="loading" class="flex h-full items-center justify-center text-sm text-gray-500 dark:text-gray-400"><slot name="loading">{{ t('admin.monitoring.trends.loading') }}</slot></div>
       <Line v-else-if="points.length && series.length" :data="data" :options="options" />
-      <p v-else class="flex h-full items-center justify-center text-sm text-gray-500 dark:text-gray-400"><slot name="empty">所选时间段暂无性能数据</slot></p>
+      <p v-else class="flex h-full items-center justify-center text-sm text-gray-500 dark:text-gray-400"><slot name="empty">{{ t('admin.monitoring.trends.empty') }}</slot></p>
     </div>
   </section>
 </template>
