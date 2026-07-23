@@ -50,8 +50,10 @@ func ProvideAdminHandlers(
 	complianceHandler *admin.ComplianceHandler,
 	auditLogHandler *admin.AuditLogHandler,
 	upstreamBillingProbe *service.UpstreamBillingProbeService,
+	ollamaCloudUsage *service.OllamaCloudUsageService,
 ) *AdminHandlers {
 	accountHandler.SetUpstreamBillingProbeService(upstreamBillingProbe)
+	accountHandler.SetOllamaCloudUsageService(ollamaCloudUsage)
 	return &AdminHandlers{
 		Dashboard:              dashboardHandler,
 		User:                   userHandler,
@@ -108,6 +110,16 @@ func ProvideBatchImageHandler(
 // ProvideSystemHandler creates admin.SystemHandler with UpdateService
 func ProvideSystemHandler(updateService *service.UpdateService, lockService *service.SystemOperationLockService) *admin.SystemHandler {
 	return admin.NewSystemHandler(updateService, lockService)
+}
+
+// ProvideMonitoringHandler adapts concrete services for Wire while the
+// constructor retains its narrow interface for focused tests.
+func ProvideMonitoringHandler(
+	performance *service.AccountPerformanceService,
+	ttftRepo service.FirstTokenTimeoutStatsRepository,
+	ttftRecorder *service.FirstTokenTimeoutStatsRecorder,
+) *admin.MonitoringHandler {
+	return admin.NewMonitoringHandler(performance, ttftRepo, ttftRecorder)
 }
 
 // ProvideSettingHandler creates SettingHandler with version from BuildInfo
@@ -267,7 +279,7 @@ var ProviderSet = wire.NewSet(
 	ProvideAdminSettingHandler,
 	admin.NewFirstTokenTimeoutHandler,
 	admin.NewAccountPerformanceHandler,
-	admin.NewMonitoringHandler,
+	ProvideMonitoringHandler,
 	admin.NewOpsHandler,
 	ProvideSystemHandler,
 	admin.NewSubscriptionHandler,

@@ -116,6 +116,10 @@ const (
 	FieldRpmLimit = "rpm_limit"
 	// FieldUsageCardDisabled holds the string denoting the usage_card_disabled field in the database.
 	FieldUsageCardDisabled = "usage_card_disabled"
+	// FieldMaxReasoningEffort holds the string denoting the max_reasoning_effort field in the database.
+	FieldMaxReasoningEffort = "max_reasoning_effort"
+	// FieldReasoningEffortMappings holds the string denoting the reasoning_effort_mappings field in the database.
+	FieldReasoningEffortMappings = "reasoning_effort_mappings"
 	// EdgeAPIKeys holds the string denoting the api_keys edge name in mutations.
 	EdgeAPIKeys = "api_keys"
 	// EdgeRedeemCodes holds the string denoting the redeem_codes edge name in mutations.
@@ -241,6 +245,8 @@ var Columns = []string{
 	FieldModelsListConfig,
 	FieldRpmLimit,
 	FieldUsageCardDisabled,
+	FieldMaxReasoningEffort,
+	FieldReasoningEffortMappings,
 }
 
 var (
@@ -354,6 +360,12 @@ var (
 	DefaultRpmLimit int
 	// DefaultUsageCardDisabled holds the default value on creation for the "usage_card_disabled" field.
 	DefaultUsageCardDisabled bool
+	// DefaultMaxReasoningEffort holds the default value on creation for the "max_reasoning_effort" field.
+	DefaultMaxReasoningEffort string
+	// MaxReasoningEffortValidator is a validator for the "max_reasoning_effort" field. It is called by the builders before save.
+	MaxReasoningEffortValidator func(string) error
+	// DefaultReasoningEffortMappings holds the default value on creation for the "reasoning_effort_mappings" field.
+	DefaultReasoningEffortMappings []domain.ReasoningEffortMapping
 )
 
 // OrderOption defines the ordering options for the Group queries.
@@ -592,6 +604,11 @@ func ByRpmLimit(opts ...sql.OrderTermOption) OrderOption {
 // ByUsageCardDisabled orders the results by the usage_card_disabled field.
 func ByUsageCardDisabled(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldUsageCardDisabled, opts...).ToFunc()
+}
+
+// ByMaxReasoningEffort orders the results by the max_reasoning_effort field.
+func ByMaxReasoningEffort(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldMaxReasoningEffort, opts...).ToFunc()
 }
 
 // ByAPIKeysCount orders the results by api_keys count.

@@ -117,6 +117,14 @@ func (h *PaymentHandler) GetCheckoutInfo(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
+	alipayMobilePrecreateDeepLink := false
+	if cfg.AlipayMobilePrecreateDeepLink {
+		alipayMobilePrecreateDeepLink, err = h.configService.UsesOfficialAlipayVisibleMethod(ctx)
+		if err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
+	}
 
 	// Fetch plans with group info
 	legacySubscriptionPurchaseEnabled := h.configService.IsLegacySubscriptionPurchaseEnabled(ctx)
@@ -169,6 +177,7 @@ func (h *PaymentHandler) GetCheckoutInfo(c *gin.Context) {
 		HelpImageURL:                      cfg.HelpImageURL,
 		StripePublishableKey:              cfg.StripePublishableKey,
 		AlipayForceQRCode:                 cfg.AlipayForceQRCode,
+		AlipayMobilePrecreateDeepLink:     alipayMobilePrecreateDeepLink,
 		LegacySubscriptionPurchaseEnabled: legacySubscriptionPurchaseEnabled,
 		UsageCardPaymentEnabled:           usageCardPaymentEnabled,
 	})
@@ -188,6 +197,7 @@ type checkoutInfoResponse struct {
 	HelpImageURL                      string                          `json:"help_image_url"`
 	StripePublishableKey              string                          `json:"stripe_publishable_key"`
 	AlipayForceQRCode                 bool                            `json:"alipay_force_qrcode"`
+	AlipayMobilePrecreateDeepLink     bool                            `json:"alipay_mobile_precreate_deep_link"`
 	LegacySubscriptionPurchaseEnabled bool                            `json:"legacy_subscription_purchase_enabled"`
 	UsageCardPaymentEnabled           bool                            `json:"usage_card_payment_enabled"`
 }
