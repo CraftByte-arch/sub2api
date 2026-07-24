@@ -128,6 +128,8 @@ docker compose -f docker-compose.local.yml logs -f sub2api
 
 **Recommendation:** Use `docker-compose.local.yml` (deployed by `docker-deploy.sh`) for easier data management and migration.
 
+> **Managed HTML page persistence:** Single-file HTML pages created in the admin settings are stored in `/app/data/pages/*.html`. Normal image pulls and container recreation preserve them because `/app/data` is backed by a named volume or bind mount. Include this directory in migrations and backups. Running `docker compose down -v` deletes the named volume and therefore deletes the managed HTML pages.
+
 ### How Auto-Setup Works
 
 When using Docker Compose with `AUTO_SETUP=true`:

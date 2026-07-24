@@ -422,6 +422,8 @@ docker compose -f docker-compose.local.yml logs -f sub2api
 
 **推荐：** 使用 `docker-compose.local.yml`（脚本部署）以便更轻松地管理数据。
 
+> **自定义 HTML 页面持久化：** 管理后台维护的单文件 HTML 页面保存在 `/app/data/pages/*.html`。由于 `/app/data` 使用命名卷或本地目录挂载，正常拉取新镜像和重新创建容器不会删除这些文件。迁移和备份时请包含该目录；使用 `docker compose down -v` 会删除命名卷，并一并删除其中的 HTML 页面。
+
 #### 启用“数据管理”功能（datamanagementd）
 
 如需启用管理后台“数据管理”，需要额外部署宿主机数据管理进程 `datamanagementd`。
