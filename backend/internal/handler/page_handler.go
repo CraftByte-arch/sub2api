@@ -1,14 +1,15 @@
 package handler
 
 import (
-	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -35,7 +36,7 @@ func (h *PageHandler) GetPageContent(c *gin.Context) {
 
 	// Visibility check: slug must be configured in custom_menu_items
 	// and the user must have permission based on visibility setting
-	if !h.checkSlugVisibility(c, slug) {
+	if !h.checkPageVisibility(c, slug, dto.CustomMenuContentMarkdown) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "page not found"})
 		return
 	}
@@ -55,6 +56,73 @@ func (h *PageHandler) GetPageContent(c *gin.Context) {
 	}
 
 	c.Data(http.StatusOK, "text/markdown; charset=utf-8", content)
+}
+
+// GetHTMLPage serves a referenced static HTML page as inert plain text.
+func (h *PageHandler) GetHTMLPage(c *gin.Context) {
+	slug := c.Param("slug")
+	if !h.checkPageVisibility(c, slug, dto.CustomMenuContentHTML) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "page not found"})
+		return
+	}
+	content, err := h.store.read(slug, pageExtensionHTML)
+	if err != nil {
+		h.writePageError(c, err)
+		return
+	}
+	c.Data(http.StatusOK, "text/plain; charset=utf-8", content)
+}
+
+// GetAdminHTMLPage returns source even when it is not yet referenced by a menu item.
+func (h *PageHandler) GetAdminHTMLPage(c *gin.Context) {
+	content, err := h.store.read(c.Param("slug"), pageExtensionHTML)
+	if err != nil {
+		h.writePageError(c, err)
+		return
+	}
+	c.Data(http.StatusOK, "text/plain; charset=utf-8", content)
+}
+
+// PutAdminHTMLPage atomically creates or replaces one static HTML document.
+func (h *PageHandler) PutAdminHTMLPage(c *gin.Context) {
+	slug := c.Param("slug")
+	body, err := io.ReadAll(io.LimitReader(c.Request.Body, maxPageFileSize+1))
+	if err != nil {
+		response.BadRequest(c, "Failed to read HTML page")
+		return
+	}
+	if err := h.store.writeHTML(slug, body); err != nil {
+		h.writePageError(c, err)
+		return
+	}
+	response.Success(c, gin.H{"slug": slug})
+}
+
+// DeleteAdminHTMLPage removes an HTML source only after menu references are gone.
+func (h *PageHandler) DeleteAdminHTMLPage(c *gin.Context) {
+	slug := c.Param("slug")
+	if h.htmlPageReferenced(c, slug) {
+		response.Error(c, http.StatusConflict, "HTML page is still referenced by a custom menu item")
+		return
+	}
+	if err := h.store.deleteHTML(slug); err != nil {
+		h.writePageError(c, err)
+		return
+	}
+	response.Success(c, gin.H{"slug": slug})
+}
+
+func (h *PageHandler) writePageError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, errInvalidPageSlug), errors.Is(err, errPageInvalidUTF8), errors.Is(err, errPageEmpty):
+		response.BadRequest(c, err.Error())
+	case errors.Is(err, errPageTooLarge):
+		response.Error(c, http.StatusRequestEntityTooLarge, err.Error())
+	case errors.Is(err, errPageNotFound):
+		c.JSON(http.StatusNotFound, gin.H{"error": "page not found"})
+	default:
+		response.InternalError(c, "failed to access page")
+	}
 }
 
 // ListPages returns available page slugs.
@@ -92,7 +160,7 @@ func (h *PageHandler) ServePageImage(c *gin.Context) {
 		return
 	}
 
-	if !h.checkImageSlugVisibility(c, slug) {
+	if !h.checkImagePageVisibility(c, slug) {
 		c.Status(http.StatusNotFound)
 		return
 	}
@@ -186,64 +254,56 @@ func isPathWithinBase(path, base string) bool {
 	return rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
-// findSlugVisibility looks up the slug in custom_menu_items and returns (visibility, found).
-func (h *PageHandler) findSlugVisibility(c *gin.Context, slug string) (string, bool) {
+// findPageReference looks up a page reference with an exact content type.
+func (h *PageHandler) findPageReference(c *gin.Context, slug, contentType string) (string, bool) {
 	if h.settingService == nil {
 		return "", false
 	}
-
-	raw := h.settingService.GetCustomMenuItemsRaw(c.Request.Context())
-	if raw == "" || raw == "[]" {
-		return "", false
-	}
-
-	var items []struct {
-		URL        string `json:"url"`
-		PageSlug   string `json:"page_slug"`
-		Visibility string `json:"visibility"`
-	}
-	if err := json.Unmarshal([]byte(raw), &items); err != nil {
-		return "", false
-	}
-
-	for _, item := range items {
-		itemSlug := item.PageSlug
-		if itemSlug == "" && strings.HasPrefix(item.URL, "md:") {
-			itemSlug = strings.TrimPrefix(item.URL, "md:")
-		}
-		if itemSlug == slug {
+	for _, item := range dto.ParseCustomMenuItems(h.settingService.GetCustomMenuItemsRaw(c.Request.Context())) {
+		if item.EffectiveContentType() == contentType && item.EffectivePageSlug() == slug {
 			return item.Visibility, true
 		}
 	}
 	return "", false
 }
 
-// checkSlugVisibility verifies the slug is configured in custom_menu_items
-// and the authenticated user has permission to view it.
-func (h *PageHandler) checkSlugVisibility(c *gin.Context, slug string) bool {
-	visibility, found := h.findSlugVisibility(c, slug)
+// checkPageVisibility verifies the referenced page is visible to the current role.
+func (h *PageHandler) checkPageVisibility(c *gin.Context, slug, contentType string) bool {
+	visibility, found := h.findPageReference(c, slug, contentType)
 	if !found {
 		return false
 	}
 	if visibility == "admin" {
 		role, _ := middleware2.GetUserRoleFromContext(c)
-		return role == "admin"
+		return role == service.RoleAdmin
 	}
 	return true
 }
 
-// checkImageSlugVisibility checks visibility for image requests (no JWT available).
+// checkImagePageVisibility checks Markdown visibility for image requests (no JWT available).
 // Only allows user-visible pages; admin-only pages are blocked.
-func (h *PageHandler) checkImageSlugVisibility(c *gin.Context, slug string) bool {
-	visibility, found := h.findSlugVisibility(c, slug)
+func (h *PageHandler) checkImagePageVisibility(c *gin.Context, slug string) bool {
+	visibility, found := h.findPageReference(c, slug, dto.CustomMenuContentMarkdown)
 	if !found {
 		return false
 	}
 	return visibility != "admin"
 }
 
+func (h *PageHandler) htmlPageReferenced(c *gin.Context, slug string) bool {
+	if h.settingService == nil {
+		return false
+	}
+	for _, item := range dto.ParseCustomMenuItems(h.settingService.GetCustomMenuItemsRaw(c.Request.Context())) {
+		if item.EffectiveContentType() == dto.CustomMenuContentHTML && item.EffectivePageSlug() == slug {
+			return true
+		}
+	}
+	return false
+}
+
 // RegisterPageRoutes registers page routes on a router group.
-func RegisterPageRoutes(v1 *gin.RouterGroup, dataDir string, jwtAuth gin.HandlerFunc, adminAuth gin.HandlerFunc, settingService *service.SettingService) {
+func RegisterPageRoutes(v1 *gin.RouterGroup, dataDir string, jwtAuth gin.HandlerFunc, adminAuth gin.HandlerFunc, auditLog gin.HandlerFunc, settingService *service.SettingService) {
 	h := NewPageHandler(dataDir, settingService)
 
 	// Authenticated page content (JWT required + visibility check)
@@ -251,6 +311,7 @@ func RegisterPageRoutes(v1 *gin.RouterGroup, dataDir string, jwtAuth gin.Handler
 	pages.Use(jwtAuth)
 	{
 		pages.GET("/:slug", h.GetPageContent)
+		pages.GET("/:slug/html", h.GetHTMLPage)
 	}
 
 	// Images: no JWT (browser img tags can't carry tokens), visibility check in handler
@@ -265,5 +326,13 @@ func RegisterPageRoutes(v1 *gin.RouterGroup, dataDir string, jwtAuth gin.Handler
 	adminPages.Use(middleware2.AdminComplianceGuard(settingService))
 	{
 		adminPages.GET("", h.ListPages)
+	}
+
+	managedPages := v1.Group("/admin/pages")
+	managedPages.Use(adminAuth, auditLog, middleware2.AdminComplianceGuard(settingService))
+	{
+		managedPages.GET("/:slug/html", h.GetAdminHTMLPage)
+		managedPages.PUT("/:slug/html", h.PutAdminHTMLPage)
+		managedPages.DELETE("/:slug/html", h.DeleteAdminHTMLPage)
 	}
 }
