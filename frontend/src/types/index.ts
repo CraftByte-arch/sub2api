@@ -167,11 +167,14 @@ export interface SendVerifyCodeResponse {
   countdown: number
 }
 
+export type CustomMenuContentType = 'url' | 'markdown' | 'html'
+
 export interface CustomMenuItem {
   id: string
   label: string
   icon_svg: string
   url: string
+  content_type?: CustomMenuContentType
   page_slug?: string
   visibility: 'user' | 'admin'
   sort_order: number

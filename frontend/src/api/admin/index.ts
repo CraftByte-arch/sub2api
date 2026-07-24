@@ -35,6 +35,7 @@ import riskControlAPI from './riskControl'
 import adminComplianceAPI from './compliance'
 import auditAPI from './audit'
 import performanceAPI from './performance'
+import adminPagesAPI from './pages'
 
 /**
  * Unified admin API object for convenient access
@@ -71,7 +72,8 @@ export const adminAPI = {
   riskControl: riskControlAPI,
   compliance: adminComplianceAPI,
 	performance: performanceAPI,
-	audit: auditAPI
+	audit: auditAPI,
+  pages: adminPagesAPI
 }
 
 export {
@@ -106,7 +108,8 @@ export {
   riskControlAPI,
   adminComplianceAPI,
 	performanceAPI,
-	auditAPI
+	auditAPI,
+  adminPagesAPI
 }
 
 export default adminAPI
