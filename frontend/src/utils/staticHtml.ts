@@ -1,5 +1,7 @@
 import DOMPurify from 'dompurify'
 
+export type StaticHtmlTheme = 'light' | 'dark'
+
 export const STATIC_HTML_SANDBOX =
   'allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation'
 
@@ -70,7 +72,10 @@ function normalizeStaticLinks(doc: Document): void {
   })
 }
 
-export function buildStaticHtmlDocument(source: string): string {
+export function buildStaticHtmlDocument(
+  source: string,
+  theme: StaticHtmlTheme = 'light',
+): string {
   const sanitized = DOMPurify.sanitize(source, {
     WHOLE_DOCUMENT: true,
     ADD_TAGS: ['style'],
@@ -80,6 +85,7 @@ export function buildStaticHtmlDocument(source: string): string {
   })
   const doc = new DOMParser().parseFromString(String(sanitized), 'text/html')
   normalizeStaticLinks(doc)
+  doc.documentElement.dataset.theme = theme
 
   const csp = doc.createElement('meta')
   csp.httpEquiv = 'Content-Security-Policy'

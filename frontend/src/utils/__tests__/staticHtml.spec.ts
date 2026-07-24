@@ -7,6 +7,15 @@ function parseBuiltDocument(source: string): Document {
 }
 
 describe('buildStaticHtmlDocument', () => {
+  it('marks the sandbox document with the resolved theme', () => {
+    expect(parseBuiltDocument('<p>Hello</p>').documentElement.dataset.theme).toBe('light')
+    expect(
+      new DOMParser()
+        .parseFromString(buildStaticHtmlDocument('<p>Hello</p>', 'dark'), 'text/html')
+        .documentElement.dataset.theme,
+    ).toBe('dark')
+  })
+
   it('keeps static layout while removing active content', () => {
     const doc = parseBuiltDocument(`
       <!doctype html>
