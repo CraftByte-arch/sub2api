@@ -77,6 +77,8 @@ export default {
     notFoundDesc: '该自定义页面不存在或已被删除。',
     notConfiguredTitle: '页面链接未配置',
     notConfiguredDesc: '该自定义页面的 URL 未正确配置。',
+    htmlLoading: '正在加载页面...',
+    htmlUnavailable: '该页面暂时无法加载。',
     tableOfContents: '目录',
     copyCode: '复制',
     copiedCode: '已复制',

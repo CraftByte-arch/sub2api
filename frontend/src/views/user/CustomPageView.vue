@@ -27,6 +27,36 @@
           </div>
         </div>
 
+        <div
+          v-else-if="isHtmlMode && htmlLoading"
+          data-testid="html-page-loading"
+          class="flex h-full flex-col items-center justify-center gap-3 p-10 text-center"
+        >
+          <div
+            class="h-8 w-8 animate-spin rounded-full border-2 border-primary-500 border-t-transparent"
+          ></div>
+          <p class="text-sm text-gray-500 dark:text-dark-400">
+            {{ t('customPage.htmlLoading') }}
+          </p>
+        </div>
+
+        <StaticHtmlFrame
+          v-else-if="isHtmlMode && !htmlLoadFailed"
+          class="h-full w-full"
+          :source="htmlSource"
+          :title="menuItem.label"
+        />
+
+        <div
+          v-else-if="isHtmlMode"
+          data-testid="html-page-unavailable"
+          class="flex h-full items-center justify-center p-10 text-center"
+        >
+          <p class="text-sm text-gray-500 dark:text-dark-400">
+            {{ t('customPage.htmlUnavailable') }}
+          </p>
+        </div>
+
         <!-- Markdown mode with TOC -->
         <div v-else-if="isMarkdownMode" class="flex h-full overflow-hidden">
           <!-- TOC Sidebar -->
@@ -124,7 +154,10 @@ import { useAuthStore } from '@/stores/auth'
 import { useAdminSettingsStore } from '@/stores/adminSettings'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
+import StaticHtmlFrame from '@/components/common/StaticHtmlFrame.vue'
+import { pagesAPI } from '@/api'
 import { buildApiUrl } from '@/api/client'
+import type { CustomMenuContentType } from '@/types'
 import { buildEmbeddedUrl, detectTheme } from '@/utils/embedded-url'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
@@ -144,6 +177,9 @@ const adminSettingsStore = useAdminSettingsStore()
 const loading = ref(false)
 const pageTheme = ref<'light' | 'dark'>('light')
 const renderedHtml = ref('')
+const htmlSource = ref('')
+const htmlLoading = ref(false)
+const htmlLoadFailed = ref(false)
 const markdownContainer = ref<HTMLElement | null>(null)
 const tocItems = ref<TocItem[]>([])
 const tocVisible = ref(typeof window !== 'undefined' ? window.innerWidth > 768 : true)
@@ -163,9 +199,28 @@ const menuItem = computed(() => {
   return null
 })
 
+const contentType = computed<CustomMenuContentType>(() => {
+  const item = menuItem.value
+  if (!item) return 'url'
+  if (item.content_type) return item.content_type
+  if (item.url?.startsWith('html:')) return 'html'
+  if (item.url?.startsWith('md:') || item.page_slug) return 'markdown'
+  return 'url'
+})
+
+const htmlSlug = computed(() => {
+  const item = menuItem.value
+  if (!item || contentType.value !== 'html') return ''
+  if (item.page_slug) return item.page_slug
+  if (item.url?.startsWith('html:')) return item.url.slice(5)
+  return ''
+})
+
+const isHtmlMode = computed(() => contentType.value === 'html')
+
 const markdownSlug = computed(() => {
   const item = menuItem.value
-  if (!item) return ''
+  if (!item || contentType.value !== 'markdown') return ''
   if (item.page_slug) return item.page_slug
   if (item.url?.startsWith('md:')) return item.url.slice(3)
   return ''
@@ -174,7 +229,7 @@ const markdownSlug = computed(() => {
 const isMarkdownMode = computed(() => !!markdownSlug.value)
 
 const embeddedUrl = computed(() => {
-  if (!menuItem.value || isMarkdownMode.value) return ''
+  if (!menuItem.value || contentType.value !== 'url') return ''
   return buildEmbeddedUrl(
     menuItem.value.url,
     authStore.user?.id,
@@ -185,7 +240,7 @@ const embeddedUrl = computed(() => {
 })
 
 const isValidUrl = computed(() => {
-  if (isMarkdownMode.value) return false
+  if (contentType.value !== 'url') return false
   const url = embeddedUrl.value
   return url.startsWith('http://') || url.startsWith('https://')
 })
@@ -334,6 +389,33 @@ function injectCopyButtons() {
   })
 }
 
+let htmlRequestGeneration = 0
+watch(htmlSlug, async (slug) => {
+  const generation = ++htmlRequestGeneration
+  htmlSource.value = ''
+  htmlLoadFailed.value = false
+
+  if (!slug) {
+    htmlLoading.value = false
+    htmlLoadFailed.value = isHtmlMode.value
+    return
+  }
+
+  htmlLoading.value = true
+  try {
+    const source = await pagesAPI.getHtml(slug)
+    if (generation !== htmlRequestGeneration) return
+    htmlSource.value = source
+  } catch {
+    if (generation !== htmlRequestGeneration) return
+    htmlLoadFailed.value = true
+  } finally {
+    if (generation === htmlRequestGeneration) {
+      htmlLoading.value = false
+    }
+  }
+}, { immediate: true })
+
 watch(markdownSlug, (slug) => {
   if (slug) {
     fetchAndRenderMarkdown(slug)
@@ -366,6 +448,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  htmlRequestGeneration += 1
   if (themeObserver) {
     themeObserver.disconnect()
     themeObserver = null
