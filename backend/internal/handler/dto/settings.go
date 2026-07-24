@@ -7,15 +7,62 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
+const (
+	CustomMenuContentURL      = "url"
+	CustomMenuContentMarkdown = "markdown"
+	CustomMenuContentHTML     = "html"
+)
+
 // CustomMenuItem represents a user-configured custom menu entry.
 type CustomMenuItem struct {
-	ID         string `json:"id"`
-	Label      string `json:"label"`
-	IconSVG    string `json:"icon_svg"`
-	URL        string `json:"url"`
-	PageSlug   string `json:"page_slug,omitempty"`
-	Visibility string `json:"visibility"` // "user" or "admin"
-	SortOrder  int    `json:"sort_order"`
+	ID          string `json:"id"`
+	Label       string `json:"label"`
+	IconSVG     string `json:"icon_svg"`
+	URL         string `json:"url"`
+	ContentType string `json:"content_type,omitempty"`
+	PageSlug    string `json:"page_slug,omitempty"`
+	Visibility  string `json:"visibility"` // "user" or "admin"
+	SortOrder   int    `json:"sort_order"`
+}
+
+// EffectiveContentType infers the content type for records written before the
+// explicit content_type field was introduced.
+func (item CustomMenuItem) EffectiveContentType() string {
+	if contentType := strings.ToLower(strings.TrimSpace(item.ContentType)); contentType != "" {
+		return contentType
+	}
+	url := strings.TrimSpace(item.URL)
+	if strings.HasPrefix(url, "html:") {
+		return CustomMenuContentHTML
+	}
+	if strings.HasPrefix(url, "md:") || strings.TrimSpace(item.PageSlug) != "" {
+		return CustomMenuContentMarkdown
+	}
+	return CustomMenuContentURL
+}
+
+// EffectivePageSlug returns the explicit slug or derives it from a legacy URL.
+func (item CustomMenuItem) EffectivePageSlug() string {
+	if slug := strings.TrimSpace(item.PageSlug); slug != "" {
+		return slug
+	}
+	url := strings.TrimSpace(item.URL)
+	if strings.HasPrefix(url, "html:") {
+		return strings.TrimPrefix(url, "html:")
+	}
+	if strings.HasPrefix(url, "md:") {
+		return strings.TrimPrefix(url, "md:")
+	}
+	return ""
+}
+
+// NormalizeCustomMenuItem adds explicit metadata while preserving legacy data.
+func NormalizeCustomMenuItem(item CustomMenuItem) CustomMenuItem {
+	item.ContentType = item.EffectiveContentType()
+	if item.ContentType == CustomMenuContentMarkdown || item.ContentType == CustomMenuContentHTML {
+		item.PageSlug = item.EffectivePageSlug()
+	}
+	return item
 }
 
 // CustomEndpoint represents an admin-configured API endpoint for quick copy.
@@ -545,6 +592,9 @@ func ParseCustomMenuItems(raw string) []CustomMenuItem {
 	var items []CustomMenuItem
 	if err := json.Unmarshal([]byte(raw), &items); err != nil {
 		return []CustomMenuItem{}
+	}
+	for i := range items {
+		items[i] = NormalizeCustomMenuItem(items[i])
 	}
 	return items
 }

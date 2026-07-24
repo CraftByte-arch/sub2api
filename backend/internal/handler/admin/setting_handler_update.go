@@ -1131,28 +1131,38 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 				response.BadRequest(c, "Custom menu item label is too long (max 50 characters)")
 				return
 			}
-			urlTrimmed := strings.TrimSpace(item.URL)
-			if strings.HasPrefix(urlTrimmed, "md:") {
-				// Markdown page mode: URL = "md:<slug>"
-				slug := strings.TrimPrefix(urlTrimmed, "md:")
-				if slug == "" {
-					response.BadRequest(c, "Custom menu item markdown slug cannot be empty (use md:slug format)")
+
+			contentType := item.EffectiveContentType()
+			switch contentType {
+			case dto.CustomMenuContentURL:
+				urlTrimmed := strings.TrimSpace(item.URL)
+				if urlTrimmed == "" || config.ValidateAbsoluteHTTPURL(urlTrimmed) != nil {
+					response.BadRequest(c, "Custom menu item URL must be an absolute http(s) URL")
 					return
 				}
-			} else {
-				if urlTrimmed == "" {
-					response.BadRequest(c, "Custom menu item URL is required (use md:slug for markdown pages)")
-					return
-				}
-				if len(item.URL) > maxMenuItemURLLen {
+				if len(urlTrimmed) > maxMenuItemURLLen {
 					response.BadRequest(c, "Custom menu item URL is too long (max 2048 characters)")
 					return
 				}
-				if err := config.ValidateAbsoluteHTTPURL(urlTrimmed); err != nil {
-					response.BadRequest(c, "Custom menu item URL must be an absolute http(s) URL or md:<slug>")
+				item.URL = urlTrimmed
+				item.PageSlug = ""
+			case dto.CustomMenuContentMarkdown, dto.CustomMenuContentHTML:
+				slug := item.EffectivePageSlug()
+				if len(slug) > 64 || !menuPageSlugPattern.MatchString(slug) {
+					response.BadRequest(c, "Custom menu item page slug is invalid")
 					return
 				}
+				item.PageSlug = slug
+				if contentType == dto.CustomMenuContentMarkdown {
+					item.URL = "md:" + slug
+				} else {
+					item.URL = "html:" + slug
+				}
+			default:
+				response.BadRequest(c, "Custom menu item content type must be 'url', 'markdown', or 'html'")
+				return
 			}
+			item.ContentType = contentType
 			if item.Visibility != "user" && item.Visibility != "admin" {
 				response.BadRequest(c, "Custom menu item visibility must be 'user' or 'admin'")
 				return
@@ -1168,7 +1178,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 					response.Error(c, http.StatusInternalServerError, "Failed to generate menu item ID")
 					return
 				}
-				items[i].ID = id
+				item.ID = id
 			} else if len(item.ID) > maxMenuItemIDLen {
 				response.BadRequest(c, "Custom menu item ID is too long (max 32 characters)")
 				return
@@ -1176,6 +1186,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 				response.BadRequest(c, "Custom menu item ID contains invalid characters (only a-z, A-Z, 0-9, - and _ are allowed)")
 				return
 			}
+			items[i] = item
 		}
 		// ID uniqueness check
 		seen := make(map[string]struct{}, len(items))
