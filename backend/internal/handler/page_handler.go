@@ -2,11 +2,11 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
@@ -15,26 +15,20 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-var validSlugPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]*$`)
-
-const maxPageFileSize = 1 << 20 // 1MB
-
 type PageHandler struct {
-	pagesDir       string
+	store          *pageStore
 	settingService *service.SettingService
 }
 
 func NewPageHandler(dataDir string, settingService *service.SettingService) *PageHandler {
-	pagesDir := filepath.Join(dataDir, "pages")
-	_ = os.MkdirAll(pagesDir, 0755)
-	return &PageHandler{pagesDir: pagesDir, settingService: settingService}
+	return &PageHandler{store: newPageStore(dataDir), settingService: settingService}
 }
 
 // GetPageContent serves raw markdown content for a given slug.
 // GET /api/v1/pages/:slug
 func (h *PageHandler) GetPageContent(c *gin.Context) {
 	slug := c.Param("slug")
-	if !validSlugPattern.MatchString(slug) || len(slug) > 64 {
+	if !validPageSlug(slug) {
 		response.BadRequest(c, "Invalid page slug")
 		return
 	}
@@ -46,24 +40,15 @@ func (h *PageHandler) GetPageContent(c *gin.Context) {
 		return
 	}
 
-	filePath := filepath.Join(h.pagesDir, slug+".md")
-	cleaned := filepath.Clean(filePath)
-	if !strings.HasPrefix(cleaned, filepath.Clean(h.pagesDir)) {
-		response.BadRequest(c, "Invalid page slug")
-		return
-	}
-
-	info, err := os.Stat(cleaned)
-	if err != nil || info.IsDir() {
+	content, err := h.store.read(slug, pageExtensionMD)
+	if errors.Is(err, errPageNotFound) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "page not found"})
 		return
 	}
-	if info.Size() > maxPageFileSize {
+	if errors.Is(err, errPageTooLarge) {
 		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "page too large"})
 		return
 	}
-
-	content, err := os.ReadFile(cleaned)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read page"})
 		return
@@ -75,7 +60,7 @@ func (h *PageHandler) GetPageContent(c *gin.Context) {
 // ListPages returns available page slugs.
 // GET /api/v1/pages
 func (h *PageHandler) ListPages(c *gin.Context) {
-	entries, err := os.ReadDir(h.pagesDir)
+	entries, err := os.ReadDir(h.store.pagesDir)
 	if err != nil {
 		response.Success(c, []string{})
 		return
@@ -102,7 +87,7 @@ func (h *PageHandler) ServePageImage(c *gin.Context) {
 	filename := c.Param("filename")
 	filename = strings.TrimPrefix(filename, "/")
 
-	if !validSlugPattern.MatchString(slug) || len(slug) > 64 {
+	if !validPageSlug(slug) {
 		c.Status(http.StatusNotFound)
 		return
 	}
@@ -112,8 +97,8 @@ func (h *PageHandler) ServePageImage(c *gin.Context) {
 		return
 	}
 
-	imagesDir := filepath.Join(h.pagesDir, slug)
-	cleaned, ok := resolvePageImagePath(h.pagesDir, imagesDir, filename)
+	imagesDir := filepath.Join(h.store.pagesDir, slug)
+	cleaned, ok := resolvePageImagePath(h.store.pagesDir, imagesDir, filename)
 	if !ok {
 		c.Status(http.StatusNotFound)
 		return
