@@ -3,6 +3,7 @@ import { defineComponent, h } from "vue";
 import { enableAutoUnmount, flushPromises, mount } from "@vue/test-utils";
 
 import SettingsView from "../SettingsView.vue";
+import StaticHtmlEditorDialog from "@/components/admin/settings/StaticHtmlEditorDialog.vue";
 
 enableAutoUnmount(afterEach);
 
@@ -32,6 +33,10 @@ const {
   adminSettingsFetch,
   showError,
   showSuccess,
+  showWarning,
+  getHtml,
+  putHtml,
+  deleteHtml,
 } = vi.hoisted(() => ({
   getSettings: vi.fn(),
   updateSettings: vi.fn(),
@@ -64,6 +69,10 @@ const {
   adminSettingsFetch: vi.fn(),
   showError: vi.fn(),
   showSuccess: vi.fn(),
+  showWarning: vi.fn(),
+  getHtml: vi.fn(),
+  putHtml: vi.fn(),
+  deleteHtml: vi.fn(),
 }));
 
 const localeRef = vi.hoisted(() => ({ value: "zh-CN" }));
@@ -101,6 +110,11 @@ vi.mock("@/api", () => ({
       createProvider,
       deleteProvider,
     },
+    pages: {
+      getHtml,
+      putHtml,
+      deleteHtml,
+    },
   },
 }));
 
@@ -108,7 +122,7 @@ vi.mock("@/stores", () => ({
   useAppStore: () => ({
     showError,
     showSuccess,
-    showWarning: vi.fn(),
+    showWarning,
     showInfo: vi.fn(),
     fetchPublicSettings,
   }),
@@ -535,9 +549,32 @@ function mountView() {
         ProxySelector: true,
         ImageUpload: ImageUploadStub,
         BackupSettings: true,
+        StaticHtmlEditorDialog: true,
       },
     },
   });
+}
+
+function findCustomMenuCard(wrapper: ReturnType<typeof mountView>) {
+  const card = wrapper
+    .findAll(".card")
+    .find((node) => node.text().includes("admin.settings.customMenu.title"));
+  expect(card).toBeDefined();
+  return card!;
+}
+
+async function addCustomHtmlMenu(
+  wrapper: ReturnType<typeof mountView>,
+  source: string,
+) {
+  const card = findCustomMenuCard(wrapper);
+  await card.get('[data-testid="add-custom-menu-item"]').trigger("click");
+  await card.get('[data-testid="custom-menu-content-type"]').setValue("html");
+  await card.get('[data-testid="edit-custom-menu-html"]').trigger("click");
+  await flushPromises();
+  wrapper.getComponent(StaticHtmlEditorDialog).vm.$emit("apply", source);
+  await flushPromises();
+  return card;
 }
 
 async function openPaymentTab(wrapper: ReturnType<typeof mountView>) {
@@ -617,6 +654,10 @@ describe("admin SettingsView payment visible method controls", () => {
     adminSettingsFetch.mockReset();
     showError.mockReset();
     showSuccess.mockReset();
+    showWarning.mockReset();
+    getHtml.mockReset();
+    putHtml.mockReset();
+    deleteHtml.mockReset();
     localeRef.value = "zh-CN";
 
     getSettings.mockResolvedValue({ ...baseSettingsResponse });
@@ -681,6 +722,9 @@ describe("admin SettingsView payment visible method controls", () => {
     });
     fetchPublicSettings.mockResolvedValue(undefined);
     adminSettingsFetch.mockResolvedValue(undefined);
+    getHtml.mockRejectedValue({ status: 404 });
+    putHtml.mockResolvedValue(undefined);
+    deleteHtml.mockResolvedValue(undefined);
   });
 
   it("does not render legacy visible payment method controls", async () => {
@@ -1281,6 +1325,10 @@ describe("admin SettingsView wechat connect controls", () => {
     adminSettingsFetch.mockReset();
     showError.mockReset();
     showSuccess.mockReset();
+    showWarning.mockReset();
+    getHtml.mockReset();
+    putHtml.mockReset();
+    deleteHtml.mockReset();
 
     getSettings.mockResolvedValue({
       ...baseSettingsResponse,
@@ -1338,6 +1386,9 @@ describe("admin SettingsView wechat connect controls", () => {
     });
     fetchPublicSettings.mockResolvedValue(undefined);
     adminSettingsFetch.mockResolvedValue(undefined);
+    getHtml.mockRejectedValue({ status: 404 });
+    putHtml.mockResolvedValue(undefined);
+    deleteHtml.mockResolvedValue(undefined);
   });
 
   it("loads and echoes WeChat Connect fields from the backend payload", async () => {
@@ -1499,6 +1550,229 @@ describe("admin SettingsView wechat connect controls", () => {
       expect.objectContaining({
         oidc_connect_use_pkce: false,
         oidc_connect_validate_id_token: false,
+      }),
+    );
+  });
+
+  it("custom menu HTML uploads dirty source before publishing its reference", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    const card = await addCustomHtmlMenu(wrapper, "<h1>About</h1>");
+
+    expect(card.get('[data-testid="custom-menu-html-status"]').text()).toContain(
+      "admin.settings.customMenu.html.unsaved",
+    );
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(putHtml).toHaveBeenCalledWith(expect.any(String), "<h1>About</h1>");
+    expect(putHtml.mock.invocationCallOrder[0]).toBeLessThan(
+      updateSettings.mock.invocationCallOrder[0],
+    );
+    expect(updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        custom_menu_items: [
+          expect.objectContaining({
+            content_type: "html",
+            url: expect.stringMatching(/^html:/),
+            page_slug: expect.any(String),
+          }),
+        ],
+      }),
+    );
+    expect(card.get('[data-testid="custom-menu-html-status"]').text()).toContain(
+      "admin.settings.customMenu.html.saved",
+    );
+  });
+
+  it("custom menu HTML write failure prevents settings publication", async () => {
+    putHtml.mockRejectedValueOnce(new Error("write failed"));
+    const wrapper = mountView();
+    await flushPromises();
+    const card = await addCustomHtmlMenu(wrapper, "<h1>About</h1>");
+
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(putHtml).toHaveBeenCalledTimes(1);
+    expect(updateSettings).not.toHaveBeenCalled();
+    expect(card.get('[data-testid="custom-menu-html-status"]').text()).toContain(
+      "admin.settings.customMenu.html.unsaved",
+    );
+  });
+
+  it("custom menu HTML retains its draft when settings publication fails", async () => {
+    updateSettings.mockRejectedValueOnce(new Error("settings failed"));
+    const wrapper = mountView();
+    await flushPromises();
+    const card = await addCustomHtmlMenu(wrapper, "<h1>Retry</h1>");
+
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+    expect(card.get('[data-testid="custom-menu-html-status"]').text()).toContain(
+      "admin.settings.customMenu.html.unsaved",
+    );
+
+    updateSettings.mockImplementationOnce(async (payload) => ({
+      ...baseSettingsResponse,
+      ...payload,
+    }));
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(putHtml).toHaveBeenCalledTimes(2);
+    expect(updateSettings).toHaveBeenCalledTimes(2);
+    expect(card.get('[data-testid="custom-menu-html-status"]').text()).toContain(
+      "admin.settings.customMenu.html.saved",
+    );
+  });
+
+  it("custom menu HTML removes its reference before deleting the file", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      custom_menu_items: [
+        {
+          id: "about",
+          label: "About",
+          icon_svg: "",
+          url: "html:about",
+          content_type: "html",
+          page_slug: "about",
+          visibility: "user",
+          sort_order: 0,
+        },
+      ],
+    });
+    const wrapper = mountView();
+    await flushPromises();
+    const card = findCustomMenuCard(wrapper);
+    await card
+      .get('button[title="admin.settings.customMenu.remove"]')
+      .trigger("click");
+
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(updateSettings).toHaveBeenCalledTimes(1);
+    expect(deleteHtml).toHaveBeenCalledWith("about");
+    expect(updateSettings.mock.invocationCallOrder[0]).toBeLessThan(
+      deleteHtml.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("custom menu HTML reports cleanup failure and retries it after a valid update", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      custom_menu_items: [
+        {
+          id: "about",
+          label: "About",
+          icon_svg: "",
+          url: "html:about",
+          visibility: "user",
+          sort_order: 0,
+        },
+      ],
+    });
+    deleteHtml.mockRejectedValueOnce(new Error("cleanup failed"));
+    const wrapper = mountView();
+    await flushPromises();
+    await findCustomMenuCard(wrapper)
+      .get('button[title="admin.settings.customMenu.remove"]')
+      .trigger("click");
+
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(updateSettings).toHaveBeenCalledTimes(1);
+    expect(showWarning).toHaveBeenCalledWith(
+      "admin.settings.customMenu.html.cleanupFailed",
+    );
+    expect(showSuccess).toHaveBeenCalled();
+
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+    expect(deleteHtml).toHaveBeenCalledTimes(2);
+  });
+
+  it("custom menu HTML loads an existing source once per local draft", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      custom_menu_items: [
+        {
+          id: "about",
+          label: "About",
+          icon_svg: "",
+          url: "html:about",
+          visibility: "user",
+          sort_order: 0,
+        },
+      ],
+    });
+    getHtml.mockResolvedValueOnce("<h1>Stored</h1>");
+    const wrapper = mountView();
+    await flushPromises();
+    const edit = findCustomMenuCard(wrapper).get(
+      '[data-testid="edit-custom-menu-html"]',
+    );
+
+    await edit.trigger("click");
+    await flushPromises();
+    expect(wrapper.getComponent(StaticHtmlEditorDialog).props("source")).toBe(
+      "<h1>Stored</h1>",
+    );
+    wrapper.getComponent(StaticHtmlEditorDialog).vm.$emit("close");
+    await edit.trigger("click");
+    await flushPromises();
+    expect(getHtml).toHaveBeenCalledTimes(1);
+  });
+
+  it("custom menu HTML leaves legacy URL and Markdown items on their existing paths", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      custom_menu_items: [
+        {
+          id: "docs",
+          label: "Docs",
+          icon_svg: "",
+          url: "https://example.com/docs",
+          visibility: "user",
+          sort_order: 0,
+        },
+        {
+          id: "guide",
+          label: "Guide",
+          icon_svg: "",
+          url: "md:guide",
+          visibility: "user",
+          sort_order: 1,
+        },
+      ],
+    });
+    const wrapper = mountView();
+    await flushPromises();
+
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(getHtml).not.toHaveBeenCalled();
+    expect(putHtml).not.toHaveBeenCalled();
+    expect(deleteHtml).not.toHaveBeenCalled();
+    expect(updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        custom_menu_items: [
+          expect.objectContaining({
+            id: "docs",
+            content_type: "url",
+            url: "https://example.com/docs",
+          }),
+          expect.objectContaining({
+            id: "guide",
+            content_type: "markdown",
+            page_slug: "guide",
+            url: "md:guide",
+          }),
+        ],
       }),
     );
   });

@@ -572,6 +572,9 @@ export default {
           invalidEncoding: 'The HTML file must contain valid UTF-8 text',
           emptyAfterSanitize: 'No visible content remains after unsafe content is removed',
           loadFailed: 'The saved HTML page could not be loaded',
+          missingSlug: 'Enter a valid HTML page slug first',
+          sourceRequired: 'Edit and apply the HTML page source before saving',
+          cleanupFailed: 'The menu was saved, but some old HTML files could not be removed. Cleanup will retry on the next save.',
           discardTitle: 'Discard HTML changes?',
           discardMessage: 'Closing will discard HTML changes that have not been applied.',
           discardAction: 'Discard changes'

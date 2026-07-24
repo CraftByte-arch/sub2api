@@ -567,6 +567,9 @@ export default {
           invalidEncoding: 'HTML 文件必须使用有效的 UTF-8 编码',
           emptyAfterSanitize: '移除不安全内容后，页面没有可显示的内容',
           loadFailed: '无法读取已保存的 HTML 页面',
+          missingSlug: '请先填写有效的 HTML 页面标识',
+          sourceRequired: '请先编辑并应用 HTML 页面内容',
+          cleanupFailed: '菜单已保存，但部分旧 HTML 文件清理失败；下次保存时将重试',
           discardTitle: '放弃 HTML 修改？',
           discardMessage: '关闭后，本次未应用的 HTML 修改将丢失。',
           discardAction: '放弃修改'

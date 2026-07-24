@@ -6137,8 +6137,33 @@
                     </select>
                   </div>
 
-                  <!-- URL (full width) -->
+                  <!-- Content type -->
                   <div class="sm:col-span-2">
+                    <label
+                      class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400"
+                    >
+                      {{ t("admin.settings.customMenu.contentType") }}
+                    </label>
+                    <select
+                      :value="menuContentType(item)"
+                      data-testid="custom-menu-content-type"
+                      class="input text-sm"
+                      @change="changeMenuContentType(item, $event)"
+                    >
+                      <option value="url">
+                        {{ t("admin.settings.customMenu.contentTypeUrl") }}
+                      </option>
+                      <option value="markdown">
+                        {{ t("admin.settings.customMenu.contentTypeMarkdown") }}
+                      </option>
+                      <option value="html">
+                        {{ t("admin.settings.customMenu.contentTypeHtml") }}
+                      </option>
+                    </select>
+                  </div>
+
+                  <!-- URL (full width) -->
+                  <div v-if="menuContentType(item) === 'url'" class="sm:col-span-2">
                     <label
                       class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400"
                     >
@@ -6152,6 +6177,44 @@
                         t('admin.settings.customMenu.urlPlaceholder')
                       "
                     />
+                  </div>
+
+                  <!-- Markdown/static HTML page slug -->
+                  <div v-else class="sm:col-span-2">
+                    <label
+                      class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400"
+                    >
+                      {{ t("admin.settings.customMenu.pageSlug") }}
+                    </label>
+                    <input
+                      :value="effectiveMenuPageSlug(item)"
+                      type="text"
+                      class="input font-mono text-sm"
+                      :placeholder="t('admin.settings.customMenu.pageSlugPlaceholder')"
+                      @input="changeMenuPageSlug(item, $event)"
+                    />
+                  </div>
+
+                  <div
+                    v-if="menuContentType(item) === 'html'"
+                    class="flex items-center justify-between gap-3 sm:col-span-2"
+                  >
+                    <button
+                      type="button"
+                      data-testid="edit-custom-menu-html"
+                      class="btn btn-secondary inline-flex items-center gap-2"
+                      :disabled="htmlEditorLoadingSlug === effectiveMenuPageSlug(item)"
+                      @click="openHtmlEditor(item)"
+                    >
+                      <Icon name="edit" size="sm" />
+                      <span>{{ t("admin.settings.customMenu.html.edit") }}</span>
+                    </button>
+                    <span
+                      data-testid="custom-menu-html-status"
+                      class="text-xs text-gray-500 dark:text-dark-400"
+                    >
+                      {{ menuHtmlStatus(item) }}
+                    </span>
                   </div>
 
                   <!-- SVG Icon (full width) -->
@@ -6176,6 +6239,7 @@
               <!-- Add button -->
               <button
                 type="button"
+                data-testid="add-custom-menu-item"
                 class="flex w-full items-center justify-center gap-2 rounded-lg border-2 border-dashed border-gray-300 py-3 text-sm text-gray-500 transition-colors hover:border-primary-400 hover:text-primary-600 dark:border-dark-600 dark:text-gray-400 dark:hover:border-primary-500 dark:hover:text-primary-400"
                 @click="addMenuItem"
               >
@@ -8063,6 +8127,14 @@
         </div>
       </form>
 
+      <StaticHtmlEditorDialog
+        :show="htmlEditorItem !== null"
+        :title="htmlEditorTitle"
+        :source="htmlEditorSource"
+        @apply="applyHtmlEditor"
+        @close="closeHtmlEditor"
+      />
+
       <!-- Provider dialogs placed outside the settings form to prevent form submission bubbling -->
       <PaymentProviderDialog
         ref="providerDialogRef"
@@ -8131,6 +8203,8 @@ import type {
 } from "@/api/admin/settings";
 import type {
   AdminGroup,
+  CustomMenuContentType,
+  CustomMenuItem,
   LoginAgreementDocument,
   NotifyEmailEntry,
   Proxy,
@@ -8149,6 +8223,7 @@ import Toggle from "@/components/common/Toggle.vue";
 import ProxySelector from "@/components/common/ProxySelector.vue";
 import ImageUpload from "@/components/common/ImageUpload.vue";
 import BackupSettings from "@/views/admin/BackupView.vue";
+import StaticHtmlEditorDialog from "@/components/admin/settings/StaticHtmlEditorDialog.vue";
 import EmailTemplateEditor from "@/views/admin/settings/EmailTemplateEditor.vue";
 import OpenAIFastPolicyUserSelector from "@/views/admin/settings/OpenAIFastPolicyUserSelector.vue";
 import { useClipboard } from "@/composables/useClipboard";
@@ -8161,6 +8236,7 @@ import {
 import TotpStepUpDialog from "@/components/auth/TotpStepUpDialog.vue";
 import { affiliatesAPI, type AffiliateAdminEntry, type SimpleUser as AffiliateSimpleUser } from "@/api/admin/affiliates";
 import { extractApiErrorMessage, extractI18nErrorMessage } from "@/utils/apiError";
+import { hasVisibleStaticHtml } from "@/utils/staticHtml";
 import { useAppStore } from "@/stores";
 import { useAdminSettingsStore } from "@/stores/adminSettings";
 import { normalizeVisibleMethod } from "@/components/payment/paymentFlow";
@@ -8288,6 +8364,22 @@ const registrationEmailSuffixWhitelistTags = ref<string[]>([]);
 const registrationEmailSuffixWhitelistDraft = ref("");
 const forwardedClientIpHeaderDraft = ref("");
 const tablePageSizeOptionsInput = ref("10, 20, 50, 100");
+const htmlDrafts = reactive<Record<string, string>>({});
+const dirtyHtmlSlugs = ref(new Set<string>());
+const originalHtmlSlugs = ref(new Set<string>());
+const pendingHtmlCleanupSlugs = ref(new Set<string>());
+const htmlEditorItem = ref<CustomMenuItem | null>(null);
+const htmlEditorLoadingSlug = ref("");
+const htmlEditorSource = computed(() => {
+  const item = htmlEditorItem.value;
+  if (!item) return "";
+  return htmlDrafts[effectiveMenuPageSlug(item)] || "";
+});
+const htmlEditorTitle = computed(
+  () =>
+    htmlEditorItem.value?.label ||
+    t("admin.settings.customMenu.html.edit"),
+);
 
 // Admin API Key 状态
 const adminApiKeyLoading = ref(true);
@@ -8937,14 +9029,7 @@ const form = reactive<SettingsForm>({
   payment_alipay_mobile_precreate_deep_link: false,
   table_default_page_size: tablePageSizeDefault,
   table_page_size_options: [10, 20, 50, 100],
-  custom_menu_items: [] as Array<{
-    id: string;
-    label: string;
-    icon_svg: string;
-    url: string;
-    visibility: "user" | "admin";
-    sort_order: number;
-  }>,
+  custom_menu_items: [] as CustomMenuItem[],
   custom_endpoints: [] as Array<{
     name: string;
     endpoint: string;
@@ -9858,23 +9943,263 @@ async function setAndCopyOIDCRedirectUrl() {
 }
 
 // Custom menu item management
+function newCustomMenuID(): string {
+  try {
+  const uuid = globalThis.crypto?.randomUUID?.().replace(/-/g, "");
+    if (uuid) return uuid.slice(0, 24);
+  } catch {
+    // Fall through to the local identifier below.
+  }
+  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`.slice(
+    0,
+    24,
+  );
+}
+
+function menuContentType(item: CustomMenuItem): CustomMenuContentType {
+  const explicit = String(item.content_type || "").toLowerCase();
+  if (explicit === "url" || explicit === "markdown" || explicit === "html") {
+    return explicit;
+  }
+  const url = String(item.url || "").trim();
+  if (url.startsWith("html:")) return "html";
+  if (url.startsWith("md:") || item.page_slug) return "markdown";
+  return "url";
+}
+
+function effectiveMenuPageSlug(item: CustomMenuItem): string {
+  const explicit = String(item.page_slug || "").trim();
+  if (explicit) return explicit;
+  const url = String(item.url || "").trim();
+  if (url.startsWith("html:")) return url.slice(5);
+  if (url.startsWith("md:")) return url.slice(3);
+  return "";
+}
+
+function normalizeCustomMenuItem(item: CustomMenuItem): CustomMenuItem {
+  const contentType = menuContentType(item);
+  if (contentType === "url") {
+    return {
+      ...item,
+      url: String(item.url || "").trim(),
+      content_type: "url",
+      page_slug: undefined,
+    };
+  }
+  const slug = effectiveMenuPageSlug(item);
+  return {
+    ...item,
+    content_type: contentType,
+    page_slug: slug,
+    url: `${contentType === "html" ? "html" : "md"}:${slug}`,
+  };
+}
+
+function normalizeCustomMenuItems(items: CustomMenuItem[] | undefined): CustomMenuItem[] {
+  return Array.isArray(items) ? items.map(normalizeCustomMenuItem) : [];
+}
+
+function replaceSetValue(target: { value: Set<string> }, values: Iterable<string>): void {
+  target.value = new Set(values);
+}
+
+function hasHtmlDraft(slug: string): boolean {
+  return Object.prototype.hasOwnProperty.call(htmlDrafts, slug);
+}
+
+function markHtmlDirty(slug: string): void {
+  replaceSetValue(dirtyHtmlSlugs, [...dirtyHtmlSlugs.value, slug]);
+}
+
+function clearHtmlDirty(slug: string): void {
+  replaceSetValue(
+    dirtyHtmlSlugs,
+    [...dirtyHtmlSlugs.value].filter((value) => value !== slug),
+  );
+}
+
 function addMenuItem() {
   form.custom_menu_items.push({
-    id: "",
+    id: newCustomMenuID(),
     label: "",
     icon_svg: "",
     url: "",
+    content_type: "url",
     visibility: "user",
     sort_order: form.custom_menu_items.length,
   });
 }
 
 function removeMenuItem(index: number) {
-  form.custom_menu_items.splice(index, 1);
+  const [removed] = form.custom_menu_items.splice(index, 1);
+  if (removed && menuContentType(removed) === "html") {
+    const slug = effectiveMenuPageSlug(removed);
+    if (htmlEditorItem.value === removed) closeHtmlEditor();
+    if (slug && !originalHtmlSlugs.value.has(slug)) {
+      delete htmlDrafts[slug];
+      clearHtmlDirty(slug);
+    }
+  }
   // Re-index sort_order
   form.custom_menu_items.forEach((item, i) => {
     item.sort_order = i;
   });
+}
+
+function changeMenuContentType(item: CustomMenuItem, event: Event): void {
+  const previousType = menuContentType(item);
+  const previousSlug = effectiveMenuPageSlug(item);
+  const nextType = (event.target as HTMLSelectElement).value as CustomMenuContentType;
+  item.content_type = nextType;
+
+  if (nextType === "url") {
+    item.page_slug = undefined;
+    if (previousType !== "url") item.url = "";
+    return;
+  }
+
+  const slug = previousSlug || item.id || newCustomMenuID();
+  if (!item.id) item.id = newCustomMenuID();
+  item.page_slug = slug;
+  item.url = `${nextType === "html" ? "html" : "md"}:${slug}`;
+}
+
+function changeMenuPageSlug(item: CustomMenuItem, event: Event): void {
+  const previousSlug = effectiveMenuPageSlug(item);
+  const nextSlug = (event.target as HTMLInputElement).value;
+  const contentType = menuContentType(item);
+  item.page_slug = nextSlug;
+  item.url = `${contentType === "html" ? "html" : "md"}:${nextSlug}`;
+
+  if (
+    contentType === "html" &&
+    previousSlug &&
+    previousSlug !== nextSlug &&
+    hasHtmlDraft(previousSlug)
+  ) {
+    htmlDrafts[nextSlug] = htmlDrafts[previousSlug];
+    delete htmlDrafts[previousSlug];
+    clearHtmlDirty(previousSlug);
+    markHtmlDirty(nextSlug);
+  }
+}
+
+function menuHtmlStatus(item: CustomMenuItem): string {
+  const slug = effectiveMenuPageSlug(item);
+  if (dirtyHtmlSlugs.value.has(slug)) {
+    return t("admin.settings.customMenu.html.unsaved");
+  }
+  if (originalHtmlSlugs.value.has(slug)) {
+    return t("admin.settings.customMenu.html.saved");
+  }
+  return t("admin.settings.customMenu.html.sourceRequired");
+}
+
+function isNotFoundError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const record = error as { status?: number; response?: { status?: number } };
+  return record.status === 404 || record.response?.status === 404;
+}
+
+async function openHtmlEditor(item: CustomMenuItem): Promise<void> {
+  const slug = effectiveMenuPageSlug(item);
+  if (!slug) {
+    appStore.showError(t("admin.settings.customMenu.html.missingSlug"));
+    return;
+  }
+  if (hasHtmlDraft(slug)) {
+    htmlEditorItem.value = item;
+    return;
+  }
+  if (!originalHtmlSlugs.value.has(slug)) {
+    htmlDrafts[slug] = "";
+    htmlEditorItem.value = item;
+    return;
+  }
+
+  htmlEditorLoadingSlug.value = slug;
+  try {
+    htmlDrafts[slug] = await adminAPI.pages.getHtml(slug);
+    htmlEditorItem.value = item;
+  } catch (error: unknown) {
+    if (isNotFoundError(error)) {
+      htmlDrafts[slug] = "";
+      htmlEditorItem.value = item;
+    } else {
+      appStore.showError(t("admin.settings.customMenu.html.loadFailed"));
+    }
+  } finally {
+    if (htmlEditorLoadingSlug.value === slug) htmlEditorLoadingSlug.value = "";
+  }
+}
+
+function applyHtmlEditor(source: string): void {
+  const item = htmlEditorItem.value;
+  if (!item) return;
+  const slug = effectiveMenuPageSlug(item);
+  if (!slug) return;
+  htmlDrafts[slug] = source;
+  markHtmlDirty(slug);
+  closeHtmlEditor();
+}
+
+function closeHtmlEditor(): void {
+  htmlEditorItem.value = null;
+}
+
+async function uploadDirtyHtmlPages(items: CustomMenuItem[]): Promise<void> {
+  for (const item of items.filter((entry) => menuContentType(entry) === "html")) {
+    const slug = effectiveMenuPageSlug(item);
+    if (!slug) {
+      throw new Error(t("admin.settings.customMenu.html.missingSlug"));
+    }
+    if (!originalHtmlSlugs.value.has(slug) && !dirtyHtmlSlugs.value.has(slug)) {
+      throw new Error(t("admin.settings.customMenu.html.sourceRequired"));
+    }
+    if (!dirtyHtmlSlugs.value.has(slug)) continue;
+
+    const source = htmlDrafts[slug] || "";
+    if (new TextEncoder().encode(source).byteLength > 1 << 20) {
+      throw new Error(t("admin.settings.customMenu.html.tooLarge"));
+    }
+    if (!hasVisibleStaticHtml(source)) {
+      throw new Error(t("admin.settings.customMenu.html.emptyAfterSanitize"));
+    }
+    await adminAPI.pages.putHtml(slug, source);
+  }
+}
+
+async function cleanupRemovedHtmlPages(
+  previousSlugs: Set<string>,
+  currentSlugs: Set<string>,
+): Promise<void> {
+  const candidates = new Set([
+    ...pendingHtmlCleanupSlugs.value,
+    ...[...previousSlugs].filter((slug) => !currentSlugs.has(slug)),
+  ]);
+  for (const slug of currentSlugs) candidates.delete(slug);
+
+  const failures = new Set<string>();
+  await Promise.all(
+    [...candidates].map(async (slug) => {
+      try {
+        await adminAPI.pages.deleteHtml(slug);
+        delete htmlDrafts[slug];
+        clearHtmlDirty(slug);
+      } catch (error: unknown) {
+        if (isNotFoundError(error)) {
+          delete htmlDrafts[slug];
+          clearHtmlDirty(slug);
+          return;
+        }
+        failures.add(slug);
+      }
+    }),
+  );
+  replaceSetValue(pendingHtmlCleanupSlugs, failures);
+  if (failures.size > 0) {
+    appStore.showWarning(t("admin.settings.customMenu.html.cleanupFailed"));
+  }
 }
 
 function moveMenuItem(index: number, direction: -1 | 1) {
@@ -10056,6 +10381,18 @@ async function loadSettings() {
         (form as Record<string, unknown>)[key] = value;
       }
     }
+    form.custom_menu_items = normalizeCustomMenuItems(settings.custom_menu_items);
+    replaceSetValue(
+      originalHtmlSlugs,
+      form.custom_menu_items
+        .filter((item) => menuContentType(item) === "html")
+        .map(effectiveMenuPageSlug)
+        .filter(Boolean),
+    );
+    replaceSetValue(dirtyHtmlSlugs, []);
+    replaceSetValue(pendingHtmlCleanupSlugs, []);
+    for (const slug of Object.keys(htmlDrafts)) delete htmlDrafts[slug];
+    closeHtmlEditor();
     if (!form.claude_oauth_system_prompt_blocks?.trim()) {
       form.claude_oauth_system_prompt_blocks =
         defaultClaudeOAuthSystemPromptBlocks;
@@ -10504,6 +10841,10 @@ async function saveSettings() {
     form.claude_oauth_system_prompt_blocks =
       claudeOAuthSystemPromptBlocksJSON;
 
+    const normalizedCustomMenuItems = form.custom_menu_items.map(
+      normalizeCustomMenuItem,
+    );
+
     const payload: UpdateSettingsRequest = {
       registration_enabled: form.registration_enabled,
       email_verify_enabled: form.email_verify_enabled,
@@ -10580,7 +10921,7 @@ async function saveSettings() {
       usage_card_billing_enabled: form.usage_card_billing_enabled,
       table_default_page_size: form.table_default_page_size,
       table_page_size_options: form.table_page_size_options,
-      custom_menu_items: form.custom_menu_items,
+      custom_menu_items: normalizedCustomMenuItems,
       custom_endpoints: form.custom_endpoints,
       frontend_url: form.frontend_url,
       smtp_host: form.smtp_host,
@@ -10857,6 +11198,8 @@ async function saveSettings() {
     payload.default_platform_quotas = sanitizePlatformQuotasMap(form.default_platform_quotas);
     appendAuthSourceDefaultsToUpdateRequest(payload, authSourceDefaults);
 
+    const previousHtmlSlugs = new Set(originalHtmlSlugs.value);
+    await uploadDirtyHtmlPages(normalizedCustomMenuItems);
     const updated = await settingsStepUp.run(() =>
       adminAPI.settings.updateSettings(payload),
     );
@@ -10866,6 +11209,19 @@ async function saveSettings() {
         (form as Record<string, unknown>)[key] = value;
       }
     }
+    const updatedCustomMenuItems = normalizeCustomMenuItems(
+      updated.custom_menu_items || normalizedCustomMenuItems,
+    );
+    form.custom_menu_items = updatedCustomMenuItems;
+    const currentHtmlSlugs = new Set(
+      updatedCustomMenuItems
+        .filter((item) => menuContentType(item) === "html")
+        .map(effectiveMenuPageSlug)
+        .filter(Boolean),
+    );
+    replaceSetValue(originalHtmlSlugs, currentHtmlSlugs);
+    replaceSetValue(dirtyHtmlSlugs, []);
+    await cleanupRemovedHtmlPages(previousHtmlSlugs, currentHtmlSlugs);
     Object.assign(authSourceDefaults, buildAuthSourceDefaultsState(updated));
     form.default_platform_quotas = normalizePlatformQuotasMap(updated.default_platform_quotas);
     registrationEmailSuffixWhitelistTags.value =
