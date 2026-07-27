@@ -26,8 +26,16 @@ ARG NPM_CONFIG_REGISTRY
 WORKDIR /app/frontend
 
 # Keep Corepack aligned with frontend/package.json so it does not download a
-# different pnpm version when the project manifest is copied.
-RUN corepack enable && corepack prepare pnpm@11.1.2 --activate
+# different pnpm version when the project manifest is copied. Corepack does not
+# read NPM_CONFIG_REGISTRY, so forward it explicitly and retry transient fetches.
+RUN corepack enable && \
+    if [ -n "${NPM_CONFIG_REGISTRY}" ]; then export COREPACK_NPM_REGISTRY="${NPM_CONFIG_REGISTRY}"; fi && \
+    for attempt in 1 2 3; do \
+        corepack prepare pnpm@11.1.2 --activate && break; \
+        if [ "${attempt}" -eq 3 ]; then exit 1; fi; \
+        sleep $((attempt * 2)); \
+    done && \
+    pnpm --version
 
 # Install dependencies first (better caching). pnpm-workspace.yaml contains the
 # allowBuilds policy required by pnpm 11 for esbuild and vue-demi postinstall.
@@ -77,7 +85,11 @@ COPY backend/go.mod backend/go.sum ./
 # Cache mount keeps the module cache across builds so a transient CDN blip on
 # retry resumes instead of re-fetching every zip from scratch.
 RUN --mount=type=cache,id=sub2api-gomod,target=/go/pkg/mod \
-    go mod download
+    for attempt in 1 2 3; do \
+        go mod download && break; \
+        if [ "${attempt}" -eq 3 ]; then exit 1; fi; \
+        sleep $((attempt * 2)); \
+    done
 
 # Copy backend source first
 COPY backend/ ./
