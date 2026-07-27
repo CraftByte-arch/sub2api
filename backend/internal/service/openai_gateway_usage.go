@@ -249,7 +249,7 @@ func (s *OpenAIGatewayService) recordUsageDetailed(ctx context.Context, input *O
 		RequestID:           requestID,
 		Model:               result.Model,
 		RequestedModel:      requestedModel,
-		UpstreamModel:       optionalNonEqualStringPtr(result.UpstreamModel, result.Model),
+		UpstreamModel:       optionalTrimmedStringPtr(result.UpstreamModel),
 		ServiceTier:         result.ServiceTier,
 		ReasoningEffort:     result.ReasoningEffort,
 		InboundEndpoint:     optionalTrimmedStringPtr(input.InboundEndpoint),

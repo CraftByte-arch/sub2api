@@ -242,6 +242,8 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 			forwardBody = h.gatewayService.ReplaceModelInBody(body, channelMapping.MappedModel)
 		}
 		var result *service.ForwardResult
+		setActualUpstreamEndpoint(c, "")
+		useAntigravityCompat := shouldUseAntigravityCompat(account)
 		if account.Platform == service.PlatformGemini && h.geminiCompatService == nil {
 			h.chatCompletionsErrorResponse(c, http.StatusBadGateway, "upstream_error", "Gemini compatibility service is not configured")
 			if accountReleaseFunc != nil {
@@ -249,17 +251,33 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 			}
 			return
 		}
+		if useAntigravityCompat && h.antigravityGatewayService == nil {
+			h.chatCompletionsErrorResponse(c, http.StatusBadGateway, "upstream_error", "Antigravity compatibility service is not configured")
+			if accountReleaseFunc != nil {
+				accountReleaseFunc()
+			}
+			return
+		}
+		if useAntigravityCompat {
+			setActualUpstreamEndpoint(c, EndpointAntigravityGenerateContent)
+		}
+		// The new Antigravity compatibility adapters do not emit the semantic
+		// first-token commit signal yet, so keep their upstream path ungated.
+		firstTokenEligibleStream := reqStream && !useAntigravityCompat
 		result, err = runEligibleFirstTokenAttempt(
 			c,
 			h.firstTokenTimeoutPolicy,
 			service.ProtocolChatCompletions,
-			reqStream,
+			firstTokenEligibleStream,
 			reqModel,
 			body,
 			FirstTokenAttemptMetadata{AccountID: account.ID, Platform: account.Platform, GroupID: derefGroupID(apiKey.GroupID), Model: reqModel, AttemptIndex: fs.SwitchCount + 1, SwitchCount: fs.SwitchCount, PerformanceRecorder: h.accountPerformanceRecorder},
 			func(attemptCtx context.Context) (*service.ForwardResult, error) {
 				if account.Platform == service.PlatformGemini {
 					return h.geminiCompatService.ForwardAsChatCompletions(attemptCtx, c, account, forwardBody)
+				}
+				if useAntigravityCompat {
+					return h.antigravityGatewayService.ForwardAsChatCompletions(attemptCtx, c, account, forwardBody, parsedReq)
 				}
 				return h.gatewayService.ForwardAsChatCompletions(attemptCtx, c, account, forwardBody, parsedReq)
 			},

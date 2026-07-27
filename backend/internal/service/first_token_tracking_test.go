@@ -677,7 +677,7 @@ func TestFirstTokenFailureKindEligibleStreamsUseIdleTimeoutSentinel(t *testing.T
 		{file: "bedrock_stream.go", function: "handleBedrockStreamingResponse", wantSentinel: true},
 		{file: "antigravity_gateway_streaming.go", function: "handleGeminiStreamingResponse", wantSentinel: true},
 		{file: "antigravity_gateway_streaming.go", function: "handleGeminiStreamToNonStreaming", wantSentinel: false},
-		{file: "antigravity_gateway_streaming.go", function: "handleClaudeStreamToNonStreaming", wantSentinel: false},
+		{file: "antigravity_gateway_streaming.go", function: "collectClaudeStreamResponse", wantSentinel: false},
 		{file: "antigravity_gateway_streaming.go", function: "handleClaudeStreamingResponse", wantSentinel: true},
 		{file: "gateway_anthropic_passthrough.go", function: "handleStreamingResponseAnthropicAPIKeyPassthrough", wantSentinel: true},
 		{file: "gateway_upstream_response.go", function: "handleStreamingResponse", wantSentinel: true},

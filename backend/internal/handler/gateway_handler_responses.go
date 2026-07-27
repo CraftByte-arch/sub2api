@@ -230,16 +230,35 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 		if channelMapping.Mapped {
 			forwardBody = h.gatewayService.ReplaceModelInBody(body, channelMapping.MappedModel)
 		}
-		result, err := runEligibleFirstTokenAttemptFromContext(
+		var result *service.ForwardResult
+		setActualUpstreamEndpoint(c, "")
+		useAntigravityCompat := shouldUseAntigravityCompat(account)
+		if useAntigravityCompat && h.antigravityGatewayService == nil {
+			h.responsesErrorResponse(c, http.StatusBadGateway, "upstream_error", "Antigravity compatibility service is not configured")
+			if accountReleaseFunc != nil {
+				accountReleaseFunc()
+			}
+			return
+		}
+		if useAntigravityCompat {
+			setActualUpstreamEndpoint(c, EndpointAntigravityGenerateContent)
+		}
+		// The new Antigravity compatibility adapters do not emit the semantic
+		// first-token commit signal yet, so keep their upstream path ungated.
+		firstTokenEligibleStream := reqStream && !useAntigravityCompat
+		result, err = runEligibleFirstTokenAttemptFromContext(
 			c,
 			requestCtx,
 			h.firstTokenTimeoutPolicy,
 			service.ProtocolResponses,
-			reqStream,
+			firstTokenEligibleStream,
 			reqModel,
 			body,
 			FirstTokenAttemptMetadata{AccountID: account.ID, Platform: account.Platform, GroupID: derefGroupID(apiKey.GroupID), Model: reqModel, AttemptIndex: fs.SwitchCount + 1, SwitchCount: fs.SwitchCount, PerformanceRecorder: h.accountPerformanceRecorder},
 			func(attemptCtx context.Context) (*service.ForwardResult, error) {
+				if useAntigravityCompat {
+					return h.antigravityGatewayService.ForwardAsResponses(attemptCtx, c, account, forwardBody, parsedReq)
+				}
 				return h.gatewayService.ForwardAsResponses(attemptCtx, c, account, forwardBody, parsedReq)
 			},
 		)
