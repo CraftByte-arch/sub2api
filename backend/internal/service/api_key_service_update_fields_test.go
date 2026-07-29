@@ -16,6 +16,7 @@ import (
 type updateFieldsAPIKeyRepoStub struct {
 	quotaBaseAPIKeyRepoStub
 	key          *APIKey
+	updatedKey   *APIKey
 	updateFields []APIKeyUpdateFields
 }
 
@@ -30,9 +31,20 @@ func (s *updateFieldsAPIKeyRepoStub) GetByID(context.Context, int64) (*APIKey, e
 	return &clone, nil
 }
 
-func (s *updateFieldsAPIKeyRepoStub) Update(_ context.Context, _ *APIKey, fields APIKeyUpdateFields) error {
+func (s *updateFieldsAPIKeyRepoStub) Update(_ context.Context, key *APIKey, fields APIKeyUpdateFields) error {
+	clone := *key
+	s.updatedKey = &clone
 	s.updateFields = append(s.updateFields, fields)
 	return nil
+}
+
+type updateFieldsGroupRepoStub struct {
+	GroupRepository
+	group *Group
+}
+
+func (s *updateFieldsGroupRepoStub) GetByID(context.Context, int64) (*Group, error) {
+	return s.group, nil
 }
 
 func newUpdateFieldsAPIKeyService(key *APIKey) (*APIKeyService, *updateFieldsAPIKeyRepoStub) {
@@ -91,6 +103,41 @@ func TestAPIKeyUpdate_OnlyDeclaresRequestedColumns(t *testing.T) {
 			require.Equal(t, []APIKeyUpdateFields{tt.want}, repo.updateFields)
 		})
 	}
+}
+
+func TestAPIKeyUpdate_DeclaresBillingPriority(t *testing.T) {
+	priority := BillingPriorityBalanceOnly
+	svc, repo := newUpdateFieldsAPIKeyService(&APIKey{
+		ID: 1, UserID: 7, Key: "sk-test", Status: StatusActive, BillingPriority: BillingPriorityAuto,
+	})
+
+	_, err := svc.Update(context.Background(), 1, 7, UpdateAPIKeyRequest{BillingPriority: &priority})
+	require.NoError(t, err)
+	require.Equal(t, []APIKeyUpdateFields{{BillingPriority: true}}, repo.updateFields)
+	require.NotNil(t, repo.updatedKey)
+	require.Equal(t, BillingPriorityBalanceOnly, repo.updatedKey.BillingPriority)
+}
+
+func TestAPIKeyUpdate_DeclaresBillingPriorityWhenGroupForcesBalanceFirst(t *testing.T) {
+	groupID := int64(9)
+	svc, repo := newUpdateFieldsAPIKeyService(&APIKey{
+		ID:              1,
+		UserID:          7,
+		Key:             "sk-test",
+		Status:          StatusActive,
+		GroupID:         &groupID,
+		BillingPriority: BillingPriorityUsageCardFirst,
+	})
+	svc.groupRepo = &updateFieldsGroupRepoStub{group: &Group{
+		ID:                groupID,
+		UsageCardDisabled: true,
+	}}
+
+	_, err := svc.Update(context.Background(), 1, 7, UpdateAPIKeyRequest{})
+	require.NoError(t, err)
+	require.Equal(t, []APIKeyUpdateFields{{BillingPriority: true}}, repo.updateFields)
+	require.NotNil(t, repo.updatedKey)
+	require.Equal(t, BillingPriorityBalanceFirst, repo.updatedKey.BillingPriority)
 }
 
 // 显式重置仍需声明对应的列，避免收窄写入列时把功能改坏。

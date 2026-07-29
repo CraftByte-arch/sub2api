@@ -150,6 +150,26 @@ func (s *APIKeyRepoSuite) TestUpdate() {
 	s.Require().Equal(service.StatusDisabled, got.Status)
 }
 
+func (s *APIKeyRepoSuite) TestUpdate_BillingPriority() {
+	user := s.mustCreateUser("update-billing-priority@test.com")
+	key := &service.APIKey{
+		UserID:          user.ID,
+		Key:             "sk-update-billing-priority",
+		Name:            "Billing Priority Key",
+		Status:          service.StatusActive,
+		BillingPriority: service.BillingPriorityUsageCardFirst,
+	}
+	s.Require().NoError(s.repo.Create(s.ctx, key))
+
+	key.BillingPriority = service.BillingPriorityBalanceOnly
+	err := s.repo.Update(s.ctx, key, service.APIKeyUpdateFields{BillingPriority: true})
+	s.Require().NoError(err, "Update")
+
+	got, err := s.repo.GetByID(s.ctx, key.ID)
+	s.Require().NoError(err, "GetByID after update")
+	s.Require().Equal(service.BillingPriorityBalanceOnly, got.BillingPriority)
+}
+
 func (s *APIKeyRepoSuite) TestUpdate_ClearGroupID() {
 	user := s.mustCreateUser("cleargroup@test.com")
 	group := s.mustCreateGroup("g-clear")

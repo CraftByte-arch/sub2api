@@ -247,6 +247,9 @@ func (r *apiKeyRepository) Update(ctx context.Context, key *service.APIKey, fiel
 	if fields.Status {
 		builder.SetStatus(key.Status)
 	}
+	if fields.BillingPriority {
+		builder.SetBillingPriority(service.NormalizeBillingPriority(key.BillingPriority))
+	}
 	if fields.Quota {
 		builder.SetQuota(key.Quota)
 	}
