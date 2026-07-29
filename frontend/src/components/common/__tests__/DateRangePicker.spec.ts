@@ -16,7 +16,12 @@ const messages: Record<string, string> = {
   'dates.startDate': 'Start Date',
   'dates.endDate': 'End Date',
   'dates.apply': 'Apply',
-  'dates.selectDateRange': 'Select date range'
+  'dates.selectDateRange': 'Select date range',
+  'dates.calendar': 'Calendar',
+  'dates.previousMonth': 'Previous month',
+  'dates.nextMonth': 'Next month',
+  'dates.selectStartDate': 'Select a start date',
+  'dates.selectEndDate': 'Select an end date'
 }
 
 vi.mock('vue-i18n', () => ({
@@ -34,6 +39,23 @@ const formatLocalDate = (date: Date): string => {
 }
 
 describe('DateRangePicker', () => {
+  it('does not render native date inputs', () => {
+    const today = formatLocalDate(new Date())
+    const wrapper = mount(DateRangePicker, {
+      props: {
+        startDate: today,
+        endDate: today
+      },
+      global: {
+        stubs: {
+          Icon: true
+        }
+      }
+    })
+
+    expect(wrapper.find('input[type="date"]').exists()).toBe(false)
+  })
+
   it('uses last 24 hours as the default recognized preset', () => {
     const now = new Date()
     const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000)
@@ -90,6 +112,43 @@ describe('DateRangePicker', () => {
         startDate: expectedStart,
         endDate: expectedEnd,
         preset: 'last24Hours'
+      }
+    ])
+  })
+
+  it('emits the selected calendar range when applied', async () => {
+    const now = new Date()
+    const startDate = formatLocalDate(now)
+    const end = new Date(now)
+    end.setDate(end.getDate() + 1)
+    const endDate = formatLocalDate(end)
+
+    const wrapper = mount(DateRangePicker, {
+      props: {
+        startDate,
+        endDate: startDate,
+        showPresets: false,
+        maxDate: endDate
+      },
+      global: {
+        stubs: {
+          Icon: true
+        }
+      }
+    })
+
+    await wrapper.find('.date-picker-trigger').trigger('click')
+    await wrapper.find(`.date-picker-day[data-date="${startDate}"]`).trigger('click')
+    await wrapper.find(`.date-picker-day[data-date="${endDate}"]`).trigger('click')
+    await wrapper.find('.date-picker-apply').trigger('click')
+
+    expect(wrapper.emitted('update:startDate')?.at(-1)).toEqual([startDate])
+    expect(wrapper.emitted('update:endDate')?.at(-1)).toEqual([endDate])
+    expect(wrapper.emitted('change')?.at(-1)).toEqual([
+      {
+        startDate,
+        endDate,
+        preset: null
       }
     ])
   })

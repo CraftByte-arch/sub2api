@@ -835,7 +835,12 @@ export default {
     startDate: 'Start Date',
     endDate: 'End Date',
     apply: 'Apply',
-    selectDateRange: 'Select date range'
+    selectDateRange: 'Select date range',
+    calendar: 'Calendar',
+    previousMonth: 'Previous month',
+    nextMonth: 'Next month',
+    selectStartDate: 'Select a start date',
+    selectEndDate: 'Select an end date'
   },
 
   // Admin

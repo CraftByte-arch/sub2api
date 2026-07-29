@@ -24,3 +24,15 @@ func TestPaymentStatisticsRoutesAreStaticAndRegisteredBeforeOrderID(t *testing.T
 	require.Less(t, summary, dynamic)
 	require.Less(t, details, dynamic)
 }
+
+func TestAdminPaymentAggregationRouteIsRegisteredBeforeOrderID(t *testing.T) {
+	source, err := os.ReadFile("payment.go")
+	require.NoError(t, err)
+	text := string(source)
+	dynamic := strings.Index(text, `adminOrders.GET("/:id"`)
+	aggregation := strings.Index(text, `adminOrders.GET("/aggregation"`)
+
+	require.NotEqual(t, -1, dynamic)
+	require.NotEqual(t, -1, aggregation)
+	require.Less(t, aggregation, dynamic)
+}

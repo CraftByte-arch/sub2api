@@ -840,7 +840,12 @@ export default {
     startDate: '开始日期',
     endDate: '结束日期',
     apply: '应用',
-    selectDateRange: '选择日期范围'
+    selectDateRange: '选择日期范围',
+    calendar: '日期选择器',
+    previousMonth: '上个月',
+    nextMonth: '下个月',
+    selectStartDate: '请选择开始日期',
+    selectEndDate: '请选择结束日期'
   },
 
   // Admin

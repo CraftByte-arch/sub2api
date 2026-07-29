@@ -44,6 +44,26 @@ func (h *PaymentHandler) GetDashboard(c *gin.Context) {
 	response.Success(c, stats)
 }
 
+// GetOrderAggregation returns filtered payment aggregation by user and time.
+// GET /api/v1/admin/payment/orders/aggregation
+func (h *PaymentHandler) GetOrderAggregation(c *gin.Context) {
+	page, pageSize := response.ParsePagination(c)
+	stats, err := h.paymentService.GetAdminPaymentAggregation(c.Request.Context(), service.AdminPaymentAggregationQuery{
+		StartDate:   c.Query("start_date"),
+		EndDate:     c.Query("end_date"),
+		UserKeyword: c.Query("user"),
+		Status:      c.Query("status"),
+		Granularity: c.Query("granularity"),
+		Page:        page,
+		PageSize:    pageSize,
+	})
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, stats)
+}
+
 // --- Orders ---
 
 // ListOrders returns a paginated list of all payment orders.

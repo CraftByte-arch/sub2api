@@ -5,6 +5,8 @@
 
 import { apiClient } from '../client'
 import type {
+  AdminPaymentAggregationParams,
+  AdminPaymentAggregationResponse,
   DashboardStats,
   PaymentOrder,
   PaymentChannel,
@@ -83,6 +85,11 @@ export const adminPaymentAPI = {
     return apiClient.get<DashboardStats>('/admin/payment/dashboard', {
       params: days ? { days } : undefined
     })
+  },
+
+  /** Get user payment aggregation with date, status, and granularity filters */
+  getOrderAggregation(params?: AdminPaymentAggregationParams) {
+    return apiClient.get<AdminPaymentAggregationResponse>('/admin/payment/orders/aggregation', { params })
   },
 
   // ==================== Orders ====================

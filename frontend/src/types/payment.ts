@@ -320,3 +320,55 @@ export interface DashboardStats {
   payment_methods: PaymentMethodStats[]
   top_users: Record<string, TopUserPaymentStats[]>
 }
+
+export type AdminPaymentAggregationGranularity = 'day' | 'week' | 'month'
+
+export interface AdminPaymentAggregationSummary {
+  total_amount: CurrencyAmounts
+  average_amount: CurrencyAmounts
+  order_count: number
+  user_count: number
+}
+
+export interface AdminPaymentAggregationUser {
+  user_id: number
+  user_email?: string
+  user_name?: string
+  currency: string
+  total_amount: number
+  order_count: number
+  average_amount: number
+}
+
+export interface AdminPaymentAggregationBucket {
+  period: string
+  period_start: string
+  period_end: string
+  amount: CurrencyAmounts
+  order_count: number
+  user_count: number
+}
+
+export interface AdminPaymentAggregationResponse {
+  start_date: string
+  end_date: string
+  timezone: string
+  granularity: AdminPaymentAggregationGranularity
+  summary: AdminPaymentAggregationSummary
+  timeline: AdminPaymentAggregationBucket[]
+  users: AdminPaymentAggregationUser[]
+  total: number
+  page: number
+  page_size: number
+  pages: number
+}
+
+export interface AdminPaymentAggregationParams {
+  start_date?: string
+  end_date?: string
+  user?: string
+  status?: string
+  granularity?: AdminPaymentAggregationGranularity
+  page?: number
+  page_size?: number
+}
