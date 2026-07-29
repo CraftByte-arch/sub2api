@@ -302,7 +302,7 @@ func (r *imageStudioHandlerAPIKeyRepoStub) GetByKey(ctx context.Context, key str
 func (r *imageStudioHandlerAPIKeyRepoStub) GetByKeyForAuth(ctx context.Context, key string) (*service.APIKey, error) {
 	panic("unexpected GetByKeyForAuth call")
 }
-func (r *imageStudioHandlerAPIKeyRepoStub) Update(ctx context.Context, key *service.APIKey) error {
+func (r *imageStudioHandlerAPIKeyRepoStub) Update(ctx context.Context, key *service.APIKey, fields service.APIKeyUpdateFields) error {
 	panic("unexpected Update call")
 }
 func (r *imageStudioHandlerAPIKeyRepoStub) Delete(ctx context.Context, id int64) error {
