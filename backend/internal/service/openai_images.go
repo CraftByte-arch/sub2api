@@ -578,15 +578,8 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 	channelMappedModel string,
 ) (*OpenAIForwardResult, error) {
 	startTime := time.Now()
-	requestModel := strings.TrimSpace(parsed.Model)
-	if mapped := strings.TrimSpace(channelMappedModel); mapped != "" {
-		requestModel = mapped
-	}
-	if err := validateOpenAIImagesModel(requestModel); err != nil {
-		return nil, err
-	}
-	upstreamModel := account.GetMappedModel(requestModel)
-	if err := validateOpenAIImagesModel(upstreamModel); err != nil {
+	requestModel, upstreamModel, err := resolveOpenAIImagesAPIKeyModels(account, parsed, channelMappedModel)
+	if err != nil {
 		return nil, err
 	}
 	logger.LegacyPrintf(
@@ -601,6 +594,76 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 	if err != nil {
 		return nil, err
 	}
+	return s.forwardOpenAIImagesAPIKeyReader(
+		ctx, c, account, bytes.NewReader(forwardBody), forwardContentType, int64(len(forwardBody)), parsed, requestModel, upstreamModel, startTime,
+	)
+}
+
+func (s *OpenAIGatewayService) ForwardImagesAPIKeyEdit(
+	ctx context.Context,
+	c *gin.Context,
+	account *Account,
+	body io.ReadSeeker,
+	contentType string,
+	contentLength int64,
+	parsed *OpenAIImagesRequest,
+	channelMappedModel string,
+) (*OpenAIForwardResult, error) {
+	if account == nil || account.Type != AccountTypeAPIKey {
+		return nil, fmt.Errorf("API Key image account is required")
+	}
+	if parsed == nil || parsed.Endpoint != openAIImagesEditsEndpoint {
+		return nil, fmt.Errorf("API Key image edit metadata is required")
+	}
+	if body == nil || contentLength <= 0 {
+		return nil, fmt.Errorf("API Key image edit multipart body is required")
+	}
+	mediaType, params, err := mime.ParseMediaType(contentType)
+	if err != nil || !strings.EqualFold(mediaType, "multipart/form-data") || strings.TrimSpace(params["boundary"]) == "" {
+		return nil, fmt.Errorf("valid multipart content-type is required")
+	}
+	requestModel, upstreamModel, err := resolveOpenAIImagesAPIKeyModels(account, parsed, channelMappedModel)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := body.Seek(0, io.SeekStart); err != nil {
+		return nil, fmt.Errorf("seek API Key image edit multipart body: %w", err)
+	}
+	return s.forwardOpenAIImagesAPIKeyReader(
+		ctx, c, account, body, contentType, contentLength, parsed, requestModel, upstreamModel, time.Now(),
+	)
+}
+
+func resolveOpenAIImagesAPIKeyModels(account *Account, parsed *OpenAIImagesRequest, channelMappedModel string) (string, string, error) {
+	if account == nil || parsed == nil {
+		return "", "", fmt.Errorf("image account and parsed request are required")
+	}
+	requestModel := strings.TrimSpace(parsed.Model)
+	if mapped := strings.TrimSpace(channelMappedModel); mapped != "" {
+		requestModel = mapped
+	}
+	if err := validateOpenAIImagesModel(requestModel); err != nil {
+		return "", "", err
+	}
+	upstreamModel := account.GetMappedModel(requestModel)
+	if err := validateOpenAIImagesModel(upstreamModel); err != nil {
+		return "", "", err
+	}
+	return requestModel, upstreamModel, nil
+}
+
+func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKeyReader(
+	ctx context.Context,
+	c *gin.Context,
+	account *Account,
+	body io.Reader,
+	contentType string,
+	contentLength int64,
+	parsed *OpenAIImagesRequest,
+	requestModel string,
+	upstreamModel string,
+	startTime time.Time,
+) (*OpenAIForwardResult, error) {
 	upstreamCtx, releaseUpstreamCtx := detachStreamUpstreamContext(ctx, parsed.Stream)
 	defer releaseUpstreamCtx()
 
@@ -608,7 +671,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 	if err != nil {
 		return nil, err
 	}
-	upstreamReq, err := s.buildOpenAIImagesRequest(upstreamCtx, c, account, forwardBody, forwardContentType, token, parsed.Endpoint)
+	upstreamReq, err := s.buildOpenAIImagesRequest(upstreamCtx, c, account, body, contentType, contentLength, token, parsed.Endpoint)
 	if err != nil {
 		return nil, err
 	}
@@ -735,8 +798,9 @@ func (s *OpenAIGatewayService) buildOpenAIImagesRequest(
 	ctx context.Context,
 	c *gin.Context,
 	account *Account,
-	body []byte,
+	body io.Reader,
 	contentType string,
+	contentLength int64,
 	token string,
 	endpoint string,
 ) (*http.Request, error) {
@@ -753,7 +817,7 @@ func (s *OpenAIGatewayService) buildOpenAIImagesRequest(
 		targetURL = buildOpenAIImagesURL(validatedURL, endpoint)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, body)
 	if err != nil {
 		return nil, err
 	}
@@ -781,6 +845,9 @@ func (s *OpenAIGatewayService) buildOpenAIImagesRequest(
 	}
 	if strings.TrimSpace(contentType) != "" {
 		req.Header.Set("Content-Type", contentType)
+	}
+	if contentLength >= 0 {
+		req.ContentLength = contentLength
 	}
 	// 账号级请求头覆写（仅 openai api_key 账号启用时生效；OAuth 路径 no-op）
 	account.ApplyHeaderOverrides(req.Header)

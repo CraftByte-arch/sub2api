@@ -4,12 +4,23 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"image"
+	"image/color"
+	"image/png"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/textproto"
+	"os"
+	"path/filepath"
+	"strconv"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -17,6 +28,45 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
+
+func TestCopyImageStudioMultipartFileMapsDestinationWriteFailureTo503(t *testing.T) {
+	err := copyImageStudioMultipartFile(&imageStudioFailingMultipartWriter{err: syscall.ENOSPC}, bytes.NewReader([]byte("image")))
+
+	require.Equal(t, http.StatusServiceUnavailable, infraerrors.Code(err))
+	require.ErrorIs(t, err, syscall.ENOSPC)
+}
+
+func TestParseImageStudioMultipartRejectsFifthImageWithoutDrainingIt(t *testing.T) {
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	require.NoError(t, writer.WriteField("api_key_id", "1001"))
+	require.NoError(t, writer.WriteField("mode", "edit"))
+	require.NoError(t, writer.WriteField("model", "gpt-image-2"))
+	for i := 0; i < 5; i++ {
+		header := make(textproto.MIMEHeader)
+		header.Set("Content-Disposition", `form-data; name="image"; filename="ignored.bin"`)
+		header.Set("Content-Type", "image/png")
+		part, err := writer.CreatePart(header)
+		require.NoError(t, err)
+		if i < 4 {
+			_, err = part.Write([]byte("small"))
+		} else {
+			_, err = part.Write(bytes.Repeat([]byte("x"), 1<<20))
+		}
+		require.NoError(t, err)
+	}
+	require.NoError(t, writer.Close())
+	reader := &imageStudioCountingReader{Reader: bytes.NewReader(body.Bytes())}
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/image-studio/jobs", reader)
+	c.Request.Header.Set("Content-Type", writer.FormDataContentType())
+
+	_, _, _, _, err := parseImageStudioEditMultipart(c, newImageStudioMultipartTempFile)
+
+	require.Error(t, err)
+	require.Less(t, reader.read, body.Len()-(512<<10))
+}
 
 func TestBuildImageStudioJobPayload_UsesImagesGenerationFormat(t *testing.T) {
 	payload, err := buildImageStudioJobPayload(imageStudioCreateJobRequest{
@@ -44,7 +94,29 @@ func TestBuildImageStudioJobPayload_UsesImagesGenerationFormat(t *testing.T) {
 	require.False(t, gjson.GetBytes(payload, "tool_choice").Exists())
 }
 
-func TestBuildImageStudioJobPayload_UsesImagesEditFormat(t *testing.T) {
+func TestImageStudioJobResponseDoesNotExposeInputPaths(t *testing.T) {
+	maskPath := "inputs/private-upload/mask.png"
+	expiresAt := time.Now().Add(24 * time.Hour)
+	deletedAt := time.Now()
+	handler := &ImageStudioJobHandler{}
+
+	raw, err := json.Marshal(handler.toJobResponse(&service.ImageStudioJob{
+		ID:              39,
+		InputImagePaths: []string{"inputs/private-upload/image-01.webp"},
+		InputMaskPath:   &maskPath,
+		InputExpiresAt:  &expiresAt,
+		InputDeletedAt:  &deletedAt,
+	}))
+
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), "input_image_paths")
+	require.NotContains(t, string(raw), "input_mask_path")
+	require.NotContains(t, string(raw), "input_expires_at")
+	require.NotContains(t, string(raw), "input_deleted_at")
+	require.NotContains(t, string(raw), "private-upload")
+}
+
+func TestBuildImageStudioJobPayload_SanitizesEditPayload(t *testing.T) {
 	payload, err := buildImageStudioJobPayload(imageStudioCreateJobRequest{
 		Prompt:        "replace the sky",
 		Model:         "gpt-image-2",
@@ -57,13 +129,358 @@ func TestBuildImageStudioJobPayload_UsesImagesEditFormat(t *testing.T) {
 
 	require.Equal(t, "gpt-image-2", gjson.GetBytes(payload, "model").String())
 	require.Equal(t, "replace the sky", gjson.GetBytes(payload, "prompt").String())
-	require.Equal(t, "data:image/png;base64,aW1hZ2U=", gjson.GetBytes(payload, "images.0.image_url").String())
-	require.Equal(t, "data:image/png;base64,bWFzaw==", gjson.GetBytes(payload, "mask.image_url").String())
+	require.False(t, gjson.GetBytes(payload, "images").Exists())
+	require.False(t, gjson.GetBytes(payload, "mask").Exists())
 	require.Equal(t, "b64_json", gjson.GetBytes(payload, "response_format").String())
 	require.Equal(t, "png", gjson.GetBytes(payload, "output_format").String())
 	require.False(t, gjson.GetBytes(payload, "input").Exists())
 	require.False(t, gjson.GetBytes(payload, "tools").Exists())
 	require.False(t, gjson.GetBytes(payload, "tool_choice").Exists())
+}
+
+func TestImageStudioJobHandlerCreateAcceptsOrderedMultipartImages(t *testing.T) {
+	for _, count := range []int{1, 4} {
+		t.Run(strconv.Itoa(count)+" images", func(t *testing.T) {
+			store := service.NewImageStudioInputStore(t.TempDir(), 1<<20)
+			repo := &imageStudioHandlerJobRepoStub{}
+			handler := newImageStudioCreateHandler(t, repo, store)
+			images := make([][]byte, count)
+			parts := []imageStudioMultipartTestPart{
+				{name: "api_key_id", value: "1001"},
+				{name: "mode", value: "edit"},
+				{name: "prompt", value: "replace the sky"},
+				{name: "model", value: "gpt-image-2"},
+				{name: "size", value: "1024x1024"},
+				{name: "quality", value: "high"},
+				{name: "background", value: "transparent"},
+				{name: "style", value: "vivid"},
+				{name: "moderation", value: "low"},
+				{name: "input_fidelity", value: "high"},
+				{name: "output_format", value: "webp"},
+				{name: "output_compression", value: "72"},
+			}
+			for i := range images {
+				images[i] = imageStudioHandlerTestPNG(t, i+2, i+2, color.NRGBA{R: uint8(30 + i), A: 255})
+				parts = append(parts, imageStudioMultipartTestPart{name: "image", contentType: "image/png", data: images[i]})
+			}
+
+			rec := performImageStudioMultipartCreate(t, handler, parts)
+
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+			require.True(t, repo.created)
+			require.Len(t, repo.lastInput.InputImagePaths, count)
+			for i, relativePath := range repo.lastInput.InputImagePaths {
+				stored, err := os.ReadFile(filepath.Join(store.Root(), filepath.FromSlash(relativePath)))
+				require.NoError(t, err)
+				require.Equal(t, images[i], stored)
+			}
+			require.JSONEq(t, `{
+				"model":"gpt-image-2","prompt":"replace the sky","size":"1024x1024",
+				"quality":"high","background":"transparent","style":"vivid",
+				"moderation":"low","input_fidelity":"high","output_format":"webp",
+				"output_compression":72,"response_format":"b64_json"
+			}`, string(repo.lastInput.RequestPayload))
+			require.NotContains(t, rec.Body.String(), "input_image_paths")
+			require.NotContains(t, rec.Body.String(), "inputs/")
+		})
+	}
+}
+
+func TestImageStudioJobHandlerCreateAcceptsSingleMask(t *testing.T) {
+	store := service.NewImageStudioInputStore(t.TempDir(), 1<<20)
+	repo := &imageStudioHandlerJobRepoStub{}
+	handler := newImageStudioCreateHandler(t, repo, store)
+	imageBytes := imageStudioHandlerTestPNG(t, 3, 2, color.NRGBA{R: 50, A: 255})
+	maskBytes := imageStudioHandlerTestPNG(t, 3, 2, color.NRGBA{A: 0})
+
+	rec := performImageStudioMultipartCreate(t, handler, append(validImageStudioMultipartScalars(),
+		imageStudioMultipartTestPart{name: "image", contentType: "image/png", data: imageBytes},
+		imageStudioMultipartTestPart{name: "mask", contentType: "image/png", data: maskBytes},
+	))
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.NotNil(t, repo.lastInput.InputMaskPath)
+	stored, err := os.ReadFile(filepath.Join(store.Root(), filepath.FromSlash(*repo.lastInput.InputMaskPath)))
+	require.NoError(t, err)
+	require.Equal(t, maskBytes, stored)
+}
+
+func TestImageStudioJobHandlerCreateRejectsMultipartShapeErrors(t *testing.T) {
+	validImage := imageStudioHandlerTestPNG(t, 2, 2, color.NRGBA{R: 1, A: 255})
+	validMask := imageStudioHandlerTestPNG(t, 2, 2, color.NRGBA{A: 0})
+	tests := []struct {
+		name  string
+		parts []imageStudioMultipartTestPart
+		want  string
+	}{
+		{name: "missing required api key", parts: []imageStudioMultipartTestPart{
+			{name: "mode", value: "edit"},
+			{name: "model", value: "gpt-image-2"},
+			{name: "image", contentType: "image/png", data: validImage},
+		}, want: "api_key_id is required"},
+		{name: "zero images", parts: validImageStudioMultipartScalars(), want: "at least one image"},
+		{name: "five images", parts: append(validImageStudioMultipartScalars(),
+			imageStudioMultipartTestPart{name: "image", contentType: "image/png", data: validImage},
+			imageStudioMultipartTestPart{name: "image", contentType: "image/png", data: validImage},
+			imageStudioMultipartTestPart{name: "image", contentType: "image/png", data: validImage},
+			imageStudioMultipartTestPart{name: "image", contentType: "image/png", data: validImage},
+			imageStudioMultipartTestPart{name: "image", contentType: "image/png", data: validImage},
+		), want: "at most four image"},
+		{name: "duplicate mask", parts: append(validImageStudioMultipartScalars(),
+			imageStudioMultipartTestPart{name: "image", contentType: "image/png", data: validImage},
+			imageStudioMultipartTestPart{name: "mask", contentType: "image/png", data: validMask},
+			imageStudioMultipartTestPart{name: "mask", contentType: "image/png", data: validMask},
+		), want: "mask must appear at most once"},
+		{name: "unknown scalar", parts: append(validImageStudioMultipartScalars(),
+			imageStudioMultipartTestPart{name: "unknown", value: "value"},
+			imageStudioMultipartTestPart{name: "image", contentType: "image/png", data: validImage},
+		), want: "unknown multipart field"},
+		{name: "duplicate scalar", parts: append(validImageStudioMultipartScalars(),
+			imageStudioMultipartTestPart{name: "model", value: "other"},
+			imageStudioMultipartTestPart{name: "image", contentType: "image/png", data: validImage},
+		), want: "must appear at most once"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := service.NewImageStudioInputStore(t.TempDir(), 1<<20)
+			repo := &imageStudioHandlerJobRepoStub{}
+			rec := performImageStudioMultipartCreate(t, newImageStudioCreateHandler(t, repo, store), tt.parts)
+			require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+			require.Contains(t, rec.Body.String(), tt.want)
+			require.False(t, repo.created)
+			require.Empty(t, imageStudioHandlerInputDirs(t, store.Root()))
+		})
+	}
+}
+
+func TestImageStudioJobHandlerCreateKeepsGenerationJSONResponseAndPayload(t *testing.T) {
+	store := service.NewImageStudioInputStore(t.TempDir(), 1<<20)
+	repo := &imageStudioHandlerJobRepoStub{}
+	handler := newImageStudioCreateHandler(t, repo, store)
+
+	rec := performImageStudioJSONCreate(t, handler, `{
+		"api_key_id":1001,"mode":"generate","prompt":"draw a cat","model":"gpt-image-2",
+		"size":"1024x1024","quality":"high","background":"transparent","output_format":"webp",
+		"response_format":"url"
+	}`)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, int64(9001), gjson.Get(rec.Body.String(), "data.id").Int())
+	require.Equal(t, service.ImageStudioJobModeGenerate, gjson.Get(rec.Body.String(), "data.mode").String())
+	require.Equal(t, "draw a cat", gjson.Get(rec.Body.String(), "data.prompt").String())
+	require.Equal(t, "gpt-image-2", gjson.Get(rec.Body.String(), "data.model").String())
+	require.Equal(t, "1024x1024", gjson.Get(rec.Body.String(), "data.size").String())
+	require.Equal(t, "webp", gjson.Get(rec.Body.String(), "data.output_format").String())
+	require.JSONEq(t, `{
+		"model":"gpt-image-2","prompt":"draw a cat","size":"1024x1024",
+		"quality":"high","background":"transparent","output_format":"webp","response_format":"b64_json"
+	}`, string(repo.lastInput.RequestPayload))
+	require.Empty(t, repo.lastInput.InputImagePaths)
+	require.Nil(t, repo.lastInput.InputMaskPath)
+	require.Nil(t, repo.lastInput.InputExpiresAt)
+}
+
+func TestImageStudioJobHandlerCreateRollsBackRejectedFiles(t *testing.T) {
+	validImage := imageStudioHandlerTestPNG(t, 4, 3, color.NRGBA{R: 5, A: 255})
+	tests := []struct {
+		name         string
+		maxFileBytes int64
+		parts        []imageStudioMultipartTestPart
+	}{
+		{name: "spoofed MIME", maxFileBytes: 1 << 20, parts: append(validImageStudioMultipartScalars(),
+			imageStudioMultipartTestPart{name: "image", contentType: "image/png", data: []byte("not an image")},
+		)},
+		{name: "storage file size limit", maxFileBytes: int64(len(validImage) - 1), parts: append(validImageStudioMultipartScalars(),
+			imageStudioMultipartTestPart{name: "image", contentType: "image/png", data: validImage},
+		)},
+		{name: "invalid mask", maxFileBytes: 1 << 20, parts: append(validImageStudioMultipartScalars(),
+			imageStudioMultipartTestPart{name: "image", contentType: "image/png", data: validImage},
+			imageStudioMultipartTestPart{name: "mask", contentType: "image/png", data: imageStudioHandlerTestPNG(t, 2, 2, color.NRGBA{A: 0})},
+		)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := service.NewImageStudioInputStore(t.TempDir(), tt.maxFileBytes)
+			repo := &imageStudioHandlerJobRepoStub{}
+			rec := performImageStudioMultipartCreate(t, newImageStudioCreateHandler(t, repo, store), tt.parts)
+			require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+			require.False(t, repo.created)
+			require.Empty(t, imageStudioHandlerInputDirs(t, store.Root()))
+		})
+	}
+}
+
+func TestImageStudioJobHandlerCreateRollsBackInputsWhenRepositoryFails(t *testing.T) {
+	multipartTempDir := t.TempDir()
+	t.Setenv("TMPDIR", multipartTempDir)
+	store := service.NewImageStudioInputStore(t.TempDir(), 1<<20)
+	repo := &imageStudioHandlerJobRepoStub{createErr: errors.New("insert failed")}
+	parts := append(validImageStudioMultipartScalars(), imageStudioMultipartTestPart{
+		name: "image", contentType: "image/png", data: imageStudioHandlerTestPNG(t, 2, 2, color.NRGBA{A: 255}),
+	})
+
+	rec := performImageStudioMultipartCreate(t, newImageStudioCreateHandler(t, repo, store), parts)
+
+	require.Equal(t, http.StatusInternalServerError, rec.Code, rec.Body.String())
+	require.Empty(t, imageStudioHandlerInputDirs(t, store.Root()))
+	tempEntries, err := os.ReadDir(multipartTempDir)
+	require.NoError(t, err)
+	require.Empty(t, tempEntries)
+}
+
+func TestImageStudioJobHandlerCreateObservesTempCloseFailureWithoutReversingSuccess(t *testing.T) {
+	store := service.NewImageStudioInputStore(t.TempDir(), 1<<20)
+	repo := &imageStudioHandlerJobRepoStub{}
+	handler := newImageStudioCreateHandler(t, repo, store)
+	closeFailure := errors.New("temp close failed")
+	multipartTempDir := t.TempDir()
+	handler.createMultipartTempFile = func() (imageStudioMultipartTempFile, error) {
+		file, err := os.CreateTemp(multipartTempDir, "upload-*")
+		if err != nil {
+			return nil, err
+		}
+		if err := os.Remove(file.Name()); err != nil {
+			_ = file.Close()
+			return nil, err
+		}
+		return &imageStudioCloseFailingTempFile{File: file, err: closeFailure}, nil
+	}
+	var observed error
+	handler.observeMultipartCleanupError = func(err error) { observed = err }
+	parts := append(validImageStudioMultipartScalars(), imageStudioMultipartTestPart{
+		name: "image", contentType: "image/png", data: imageStudioHandlerTestPNG(t, 2, 2, color.NRGBA{A: 255}),
+	})
+
+	rec := performImageStudioMultipartCreate(t, handler, parts)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, 1, repo.createCalls)
+	require.ErrorIs(t, observed, closeFailure)
+	tempEntries, err := os.ReadDir(multipartTempDir)
+	require.NoError(t, err)
+	require.Empty(t, tempEntries)
+}
+
+func TestImageStudioJobHandlerCreateMapsInputStorageUnavailableTo503(t *testing.T) {
+	dataPath := filepath.Join(t.TempDir(), "data-file")
+	require.NoError(t, os.WriteFile(dataPath, []byte("not a directory"), 0o600))
+	store := service.NewImageStudioInputStore(dataPath, 1<<20)
+	repo := &imageStudioHandlerJobRepoStub{}
+	parts := append(validImageStudioMultipartScalars(), imageStudioMultipartTestPart{
+		name: "image", contentType: "image/png", data: imageStudioHandlerTestPNG(t, 2, 2, color.NRGBA{A: 255}),
+	})
+
+	rec := performImageStudioMultipartCreate(t, newImageStudioCreateHandler(t, repo, store), parts)
+
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "input storage is unavailable")
+	require.False(t, repo.created)
+}
+
+func TestImageStudioJobHandlerCreateGatesGenerateAndEditBeforeParsingOrLanding(t *testing.T) {
+	store := service.NewImageStudioInputStore(t.TempDir(), 1<<20)
+	health := service.NewImageStudioInputStorageHealth(
+		&imageStudioHandlerStorageProberStub{err: errors.New("shared mount unavailable")},
+		time.Minute,
+	)
+	require.Error(t, health.Probe(context.Background()))
+	repo := &imageStudioHandlerJobRepoStub{}
+	handler := newImageStudioCreateHandler(t, repo, store)
+	handler.jobService.SetInputStorageHealth(health)
+	tempFileCalls := 0
+	handler.createMultipartTempFile = func() (imageStudioMultipartTempFile, error) {
+		tempFileCalls++
+		return nil, errors.New("must not land multipart input")
+	}
+
+	generate := performImageStudioJSONCreate(t, handler, `{`)
+	parts := append(validImageStudioMultipartScalars(), imageStudioMultipartTestPart{
+		name: "image", contentType: "image/png", data: imageStudioHandlerTestPNG(t, 2, 2, color.NRGBA{A: 255}),
+	})
+	edit := performImageStudioMultipartCreate(t, handler, parts)
+
+	for _, rec := range []*httptest.ResponseRecorder{generate, edit} {
+		require.Equal(t, http.StatusServiceUnavailable, rec.Code, rec.Body.String())
+		require.Contains(t, rec.Body.String(), `"reason":"input_storage_unavailable"`)
+	}
+	require.Zero(t, tempFileCalls)
+	require.Zero(t, repo.createCalls)
+}
+
+func TestImageStudioJobHandlerOriginalDownloadWorksWhileInputStorageIsUnhealthy(t *testing.T) {
+	asset := filepath.Join(t.TempDir(), "original.png")
+	require.NoError(t, os.WriteFile(asset, []byte("existing-output"), 0o600))
+	health := service.NewImageStudioInputStorageHealth(
+		&imageStudioHandlerStorageProberStub{err: errors.New("shared mount unavailable")},
+		time.Minute,
+	)
+	require.Error(t, health.Probe(context.Background()))
+	repo := &imageStudioHandlerAssetRepoStub{job: &service.ImageStudioJob{
+		ID: 44, UserID: 123, OriginalPath: asset,
+	}}
+	jobService := service.NewImageStudioJobService(repo, nil, nil, time.Now, health)
+	handler := NewImageStudioJobHandler(jobService, nil)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodGet, "/image-studio/jobs/44/original", nil)
+	c.Params = gin.Params{{Key: "id", Value: "44"}}
+	c.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: 123})
+
+	handler.GetOriginal(c)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "existing-output", rec.Body.String())
+}
+
+func TestImageStudioStorageStartupFailureLeavesUnrelatedRouteAvailable(t *testing.T) {
+	health := service.NewImageStudioInputStorageHealth(
+		&imageStudioHandlerStorageProberStub{err: errors.New("shared mount unavailable")},
+		time.Minute,
+	)
+	handler := newImageStudioCreateHandler(t, &imageStudioHandlerJobRepoStub{}, service.NewImageStudioInputStore(t.TempDir(), 1<<20))
+	handler.jobService.SetInputStorageHealth(health)
+	handler.jobService.Start()
+	t.Cleanup(handler.jobService.Stop)
+	require.False(t, health.Available())
+
+	router := gin.New()
+	router.POST("/api/v1/image-studio/jobs", handler.Create)
+	router.GET("/api/v1/unrelated-health", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/unrelated-health", nil))
+
+	require.Equal(t, http.StatusNoContent, rec.Code)
+}
+
+func TestImageStudioJobHandlerCreateRejectsJSONEditWithCompatibilityError(t *testing.T) {
+	store := service.NewImageStudioInputStore(t.TempDir(), 1<<20)
+	repo := &imageStudioHandlerJobRepoStub{}
+	handler := newImageStudioCreateHandler(t, repo, store)
+	rec := performImageStudioJSONCreate(t, handler, `{
+		"api_key_id":1001,"mode":"edit","prompt":"edit","model":"gpt-image-2",
+		"image_data_urls":["data:image/png;base64,SECRET"],"mask_data_url":"data:image/png;base64,MASK"
+	}`)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "multipart/form-data")
+	require.Contains(t, rec.Body.String(), "image_data_urls")
+	require.False(t, repo.created)
+}
+
+func TestImageStudioJobHandlerCreateRejectsMultipartGeneration(t *testing.T) {
+	store := service.NewImageStudioInputStore(t.TempDir(), 1<<20)
+	repo := &imageStudioHandlerJobRepoStub{}
+	parts := validImageStudioMultipartScalars()
+	parts[1].value = "generate"
+	parts = append(parts, imageStudioMultipartTestPart{
+		name: "image", contentType: "image/png", data: imageStudioHandlerTestPNG(t, 2, 2, color.NRGBA{A: 255}),
+	})
+
+	rec := performImageStudioMultipartCreate(t, newImageStudioCreateHandler(t, repo, store), parts)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "only supports edit mode")
+	require.False(t, repo.created)
 }
 
 func TestImageStudioJobHandler_CreateEnforcesAvailableGroups(t *testing.T) {
@@ -118,7 +535,7 @@ func TestImageStudioJobHandler_CreateEnforcesAvailableGroups(t *testing.T) {
 			settingSvc := service.NewSettingService(&imageStudioHandlerSettingRepoStub{values: map[string]string{
 				service.SettingKeyImageStudioAvailableGroupIDs: tt.allowedGroups,
 			}}, &config.Config{})
-			jobService := service.NewImageStudioJobService(jobRepo, settingSvc)
+			jobService := service.NewImageStudioJobService(jobRepo, settingSvc, nil, time.Now)
 			openAIGateway := service.NewOpenAIGatewayService(
 				nil, nil, nil, nil, nil, nil, nil, cfg, nil, nil,
 				service.NewBillingService(cfg, nil), nil, &service.BillingCacheService{}, nil,
@@ -155,6 +572,145 @@ func TestImageStudioJobHandler_CreateEnforcesAvailableGroups(t *testing.T) {
 			}
 		})
 	}
+}
+
+type imageStudioMultipartTestPart struct {
+	name        string
+	value       string
+	contentType string
+	data        []byte
+}
+
+type imageStudioFailingMultipartWriter struct {
+	err error
+}
+
+type imageStudioCountingReader struct {
+	*bytes.Reader
+	read int
+}
+
+func (r *imageStudioCountingReader) Read(p []byte) (int, error) {
+	n, err := r.Reader.Read(p)
+	r.read += n
+	return n, err
+}
+
+func (w *imageStudioFailingMultipartWriter) Write([]byte) (int, error) {
+	return 0, w.err
+}
+
+type imageStudioCloseFailingTempFile struct {
+	*os.File
+	err error
+}
+
+func (f *imageStudioCloseFailingTempFile) Close() error {
+	return errors.Join(f.File.Close(), f.err)
+}
+
+func validImageStudioMultipartScalars() []imageStudioMultipartTestPart {
+	return []imageStudioMultipartTestPart{
+		{name: "api_key_id", value: "1001"},
+		{name: "mode", value: "edit"},
+		{name: "prompt", value: "edit image"},
+		{name: "model", value: "gpt-image-2"},
+		{name: "output_format", value: "png"},
+	}
+}
+
+func newImageStudioCreateHandler(t *testing.T, repo *imageStudioHandlerJobRepoStub, store service.ImageStudioInputStorage) *ImageStudioJobHandler {
+	t.Helper()
+	cfg := &config.Config{}
+	cfg.Default.RateMultiplier = 1
+	groupID := int64(42)
+	apiKeyRepo := &imageStudioHandlerAPIKeyRepoStub{apiKey: &service.APIKey{
+		ID: 1001, UserID: 123, Key: "sk-user", Status: service.StatusActive, GroupID: &groupID,
+		Group: &service.Group{ID: groupID, AllowImageGeneration: true, RateMultiplier: 1, ImageRateMultiplier: 1},
+		User:  &service.User{ID: 123},
+	}}
+	settingSvc := service.NewSettingService(&imageStudioHandlerSettingRepoStub{values: map[string]string{
+		service.SettingKeyImageStudioAvailableGroupIDs: `[42]`,
+	}}, cfg)
+	jobService := service.NewImageStudioJobService(repo, settingSvc, store, time.Now)
+	openAIGateway := service.NewOpenAIGatewayService(
+		nil, nil, nil, nil, nil, nil, nil, cfg, nil, nil,
+		service.NewBillingService(cfg, nil), nil, &service.BillingCacheService{}, nil,
+		&service.DeferredService{}, nil, nil, nil, nil, nil, nil, nil,
+	)
+	jobService.SetRuntimeDependencies(openAIGateway, nil, nil, nil)
+	return NewImageStudioJobHandler(
+		jobService,
+		service.NewAPIKeyService(apiKeyRepo, nil, nil, nil, nil, nil, cfg),
+	)
+}
+
+func performImageStudioMultipartCreate(t *testing.T, handler *ImageStudioJobHandler, parts []imageStudioMultipartTestPart) *httptest.ResponseRecorder {
+	t.Helper()
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	for i, part := range parts {
+		if part.data == nil {
+			require.NoError(t, writer.WriteField(part.name, part.value))
+			continue
+		}
+		header := make(textproto.MIMEHeader)
+		header.Set("Content-Disposition", `form-data; name="`+part.name+`"; filename="client-`+strconv.Itoa(i)+`.bin"`)
+		header.Set("Content-Type", part.contentType)
+		filePart, err := writer.CreatePart(header)
+		require.NoError(t, err)
+		_, err = filePart.Write(part.data)
+		require.NoError(t, err)
+	}
+	require.NoError(t, writer.Close())
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/image-studio/jobs", bytes.NewReader(body.Bytes()))
+	c.Request.Header.Set("Content-Type", writer.FormDataContentType())
+	c.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: 123})
+	handler.Create(c)
+	return rec
+}
+
+func performImageStudioJSONCreate(t *testing.T, handler *ImageStudioJobHandler, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/image-studio/jobs", bytes.NewReader([]byte(body)))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: 123})
+	handler.Create(c)
+	return rec
+}
+
+func imageStudioHandlerTestPNG(t *testing.T, width, height int, fill color.NRGBA) []byte {
+	t.Helper()
+	img := image.NewNRGBA(image.Rect(0, 0, width, height))
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			img.SetNRGBA(x, y, fill)
+		}
+	}
+	var buffer bytes.Buffer
+	require.NoError(t, png.Encode(&buffer, img))
+	return buffer.Bytes()
+}
+
+func imageStudioHandlerInputDirs(t *testing.T, root string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Join(root, "inputs"))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	require.NoError(t, err)
+	result := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() {
+			result = append(result, entry.Name())
+		}
+	}
+	return result
 }
 
 type imageStudioHandlerSettingRepoStub struct {
@@ -199,13 +755,37 @@ func (r *imageStudioHandlerSettingRepoStub) Delete(ctx context.Context, key stri
 }
 
 type imageStudioHandlerJobRepoStub struct {
-	created   bool
-	lastInput service.ImageStudioJobCreateInput
+	created     bool
+	createCalls int
+	lastInput   service.ImageStudioJobCreateInput
+	createErr   error
+}
+
+type imageStudioHandlerStorageProberStub struct {
+	err error
+}
+
+func (s *imageStudioHandlerStorageProberStub) Probe(context.Context) error { return s.err }
+
+type imageStudioHandlerAssetRepoStub struct {
+	service.ImageStudioJobRepository
+	job *service.ImageStudioJob
+}
+
+func (r *imageStudioHandlerAssetRepoStub) GetByIDForUser(_ context.Context, id, userID int64) (*service.ImageStudioJob, error) {
+	if r.job == nil || r.job.ID != id || r.job.UserID != userID {
+		return nil, service.ErrImageStudioJobNotFound
+	}
+	return r.job, nil
 }
 
 func (r *imageStudioHandlerJobRepoStub) Create(ctx context.Context, input service.ImageStudioJobCreateInput) (*service.ImageStudioJob, error) {
 	r.created = true
+	r.createCalls++
 	r.lastInput = input
+	if r.createErr != nil {
+		return nil, r.createErr
+	}
 	now := time.Now()
 	return &service.ImageStudioJob{
 		ID:               9001,
@@ -230,6 +810,10 @@ func (r *imageStudioHandlerJobRepoStub) GetByID(ctx context.Context, id int64) (
 func (r *imageStudioHandlerJobRepoStub) GetByIDForUser(ctx context.Context, id, userID int64) (*service.ImageStudioJob, error) {
 	panic("unexpected GetByIDForUser call")
 }
+
+func (r *imageStudioHandlerJobRepoStub) ClaimDeletingByIDForUser(context.Context, int64, int64) (*service.ImageStudioJob, error) {
+	panic("unexpected ClaimDeletingByIDForUser call")
+}
 func (r *imageStudioHandlerJobRepoStub) ListByUser(ctx context.Context, userID int64, page, pageSize int) (*service.ImageStudioJobList, error) {
 	panic("unexpected ListByUser call")
 }
@@ -244,6 +828,32 @@ func (r *imageStudioHandlerJobRepoStub) ListRunnableJobs(ctx context.Context, li
 }
 func (r *imageStudioHandlerJobRepoStub) MarkRunning(ctx context.Context, id int64, startedAt time.Time) (bool, error) {
 	panic("unexpected MarkRunning call")
+}
+func (r *imageStudioHandlerJobRepoStub) PersistLegacyInputs(context.Context, int64, []string, *string, json.RawMessage, time.Time) error {
+	panic("unexpected PersistLegacyInputs call")
+}
+func (r *imageStudioHandlerJobRepoStub) FailLegacyInputs(context.Context, int64, json.RawMessage, time.Time) error {
+	panic("unexpected FailLegacyInputs call")
+}
+func (r *imageStudioHandlerJobRepoStub) ExpireQueuedInputs(context.Context, time.Time, int) ([]service.ImageStudioJob, error) {
+	panic("unexpected ExpireQueuedInputs call")
+}
+func (r *imageStudioHandlerJobRepoStub) ListExpiredInputs(context.Context, time.Time, int) ([]service.ImageStudioJob, error) {
+	panic("unexpected ListExpiredInputs call")
+}
+func (r *imageStudioHandlerJobRepoStub) MarkInputsDeleted(context.Context, int64, time.Time) error {
+	panic("unexpected MarkInputsDeleted call")
+}
+
+func (r *imageStudioHandlerJobRepoStub) FailExpiredRunningInputs(context.Context, int64, time.Time) (bool, error) {
+	panic("unexpected FailExpiredRunningInputs call")
+}
+func (r *imageStudioHandlerJobRepoStub) ListReferencedInputDirs(context.Context) (map[string]struct{}, error) {
+	panic("unexpected ListReferencedInputDirs call")
+}
+
+func (r *imageStudioHandlerJobRepoStub) ListRunningInputDirs(context.Context) (map[string]struct{}, error) {
+	panic("unexpected ListRunningInputDirs call")
 }
 func (r *imageStudioHandlerJobRepoStub) MarkStaleRunningFailed(context.Context, int64, time.Time, time.Time) (bool, error) {
 	panic("unexpected MarkStaleRunningFailed call")

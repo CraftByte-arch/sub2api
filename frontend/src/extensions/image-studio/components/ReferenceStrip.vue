@@ -71,6 +71,38 @@
             <small>支持粘贴或上传</small>
           </span>
         </label>
+        <figure
+          v-if="maskFile"
+          class="reference-compact-thumb"
+          data-testid="mask-selected"
+        >
+          <span class="reference-compact-preview" aria-hidden="true">
+            <Icon name="upload" size="xs" />
+          </span>
+          <span class="reference-compact-name">{{ maskFile.name }}</span>
+          <button
+            type="button"
+            class="reference-compact-remove"
+            :aria-label="t('imageStudio.removeMask')"
+            @click.stop="$emit('remove-mask')"
+          >
+            {{ t('imageStudio.remove') }}
+          </button>
+        </figure>
+        <label
+          v-else
+          class="reference-compact-add"
+          :for="maskInputId"
+          data-testid="mask-upload"
+          @click.stop
+        >
+          <span class="reference-compact-add-icon" aria-hidden="true">
+            <Icon name="upload" size="xs" />
+          </span>
+          <span class="reference-compact-add-text">
+            <strong>{{ t('imageStudio.addMask') }}</strong>
+          </span>
+        </label>
       </div>
     </div>
     <input
@@ -83,17 +115,29 @@
       data-testid="reference-input"
       @change="$emit('change', $event)"
     >
+    <input
+      :id="maskInputId"
+      class="reference-hidden-input"
+      type="file"
+      accept="image/png,image/webp"
+      data-testid="mask-input"
+      @change="$emit('mask-change', $event)"
+    >
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watchEffect } from 'vue'
+import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
+
+const { t } = useI18n()
 
 const props = withDefaults(defineProps<{
   files: File[]
   previewUrls: string[]
   maxFiles: number
+  maskFile?: File | null
   hidden?: boolean
   variant?: 'floating' | 'inline'
   expandMode?: 'overlay' | 'flow'
@@ -102,7 +146,8 @@ const props = withDefaults(defineProps<{
   hidden: false,
   variant: 'floating',
   expandMode: 'flow',
-  interactionMode: 'expandable'
+  interactionMode: 'expandable',
+  maskFile: null
 })
 
 const emit = defineEmits<{
@@ -110,6 +155,9 @@ const emit = defineEmits<{
   remove: [index: number]
   'preview-error': [index: number]
   'open-lightbox': [file: File, index: number]
+  'mask-change': [event: Event]
+  'remove-mask': []
+  'limit-reached': []
 }>()
 
 const expanded = ref(props.interactionMode === 'static')
@@ -117,6 +165,7 @@ const resizing = ref(false)
 const stripRef = ref<HTMLElement | null>(null)
 const liveHeight = ref<number | null>(null)
 const fileInputId = `reference-input-${Math.random().toString(36).slice(2, 10)}`
+const maskInputId = `mask-input-${Math.random().toString(36).slice(2, 10)}`
 const dragState = ref<{
   pointerId: number
   startY: number
@@ -225,6 +274,7 @@ function handleAddClick(event: MouseEvent) {
   event.stopPropagation()
   if (props.files.length >= props.maxFiles) {
     event.preventDefault()
+    emit('limit-reached')
     return
   }
 }

@@ -124,6 +124,25 @@ describe('API Client', () => {
       expect(config.params?.timezone).toBeUndefined()
     })
 
+    it('保留 FormData 二进制请求并让浏览器生成 multipart boundary', async () => {
+      const adapter = vi.fn().mockResolvedValue({
+        status: 200,
+        data: { code: 0, data: {} },
+        headers: {},
+        config: {},
+        statusText: 'OK',
+      })
+      apiClient.defaults.adapter = adapter
+      const formData = new FormData()
+      formData.append('image', new File(['image'], 'reference.webp', { type: 'image/webp' }))
+
+      await apiClient.post('/image-studio/jobs', formData)
+
+      const config = adapter.mock.calls[0][0]
+      expect(config.data).toBe(formData)
+      expect(config.headers.get('Content-Type')).not.toBe('application/json')
+    })
+
     it('请求默认带 withCredentials 以支持跨域 cookie', async () => {
       const adapter = vi.fn().mockResolvedValue({
         status: 200,

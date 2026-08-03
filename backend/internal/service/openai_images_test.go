@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/gin-gonic/gin"
 	"github.com/imroc/req/v3"
 	"github.com/stretchr/testify/require"
@@ -1177,6 +1178,104 @@ func TestOpenAIGatewayServiceForwardImages_APIKeyGenerationUsesConfiguredV1BaseU
 	require.Equal(t, "gpt-image-2", gjson.GetBytes(upstream.lastBody, "model").String())
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "aGVsbG8=", gjson.Get(rec.Body.String(), "data.0.b64_json").String())
+}
+
+func TestOpenAIGatewayServiceForwardImagesAPIKeyEditStreamsMultipartBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	require.NoError(t, writer.WriteField("model", "gpt-image-2"))
+	require.NoError(t, writer.WriteField("prompt", "edit the image"))
+	part, err := writer.CreateFormFile("image", "image-01.png")
+	require.NoError(t, err)
+	_, err = part.Write([]byte("large-image-placeholder"))
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, openAIImagesEditsEndpoint, nil)
+	parsed := &OpenAIImagesRequest{
+		Endpoint:           openAIImagesEditsEndpoint,
+		Model:              "image-alias",
+		Prompt:             "edit the image",
+		N:                  1,
+		Size:               "1024x1024",
+		SizeTier:           "1024x1024",
+		Multipart:          true,
+		RequiredCapability: OpenAIImagesCapabilityNative,
+	}
+	stream := &openAIImagesObservedReadSeeker{Reader: bytes.NewReader(body.Bytes())}
+	upstream := &openAIImagesStreamingUpstream{
+		stream: stream,
+		resp: &http.Response{
+			StatusCode: http.StatusOK,
+			Header: http.Header{
+				"Content-Type": []string{"application/json"},
+				"X-Request-Id": []string{"req_img_streamed_edit"},
+			},
+			Body: io.NopCloser(strings.NewReader(`{"created":1710000007,"data":[{"b64_json":"aGVsbG8="}]}`)),
+		},
+	}
+	svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+	account := &Account{
+		ID:       61,
+		Name:     "streaming-apikey",
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":       "test-api-key",
+			"base_url":      "https://image-upstream.example/v1",
+			"model_mapping": map[string]any{"gpt-image-1": "gpt-image-2"},
+		},
+	}
+
+	result, err := svc.ForwardImagesAPIKeyEdit(
+		context.Background(), c, account, stream, writer.FormDataContentType(), int64(body.Len()), parsed, "gpt-image-1",
+	)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, "gpt-image-1", result.Model)
+	require.Equal(t, "gpt-image-2", result.UpstreamModel)
+	require.True(t, upstream.unreadBeforeDo, "gateway must hand the seekable body to the transport without pre-reading it")
+	require.Equal(t, body.Bytes(), upstream.body)
+	require.NotNil(t, upstream.req)
+	require.Equal(t, "https://image-upstream.example/v1/images/edits", upstream.req.URL.String())
+	require.Equal(t, writer.FormDataContentType(), upstream.req.Header.Get("Content-Type"))
+	require.Equal(t, int64(body.Len()), upstream.req.ContentLength)
+	require.Equal(t, "Bearer test-api-key", upstream.req.Header.Get("Authorization"))
+	require.False(t, gjson.ValidBytes(upstream.body), "API Key edit upstream body must be multipart, not JSON")
+}
+
+type openAIImagesObservedReadSeeker struct {
+	*bytes.Reader
+	reads int
+}
+
+func (r *openAIImagesObservedReadSeeker) Read(p []byte) (int, error) {
+	r.reads++
+	return r.Reader.Read(p)
+}
+
+type openAIImagesStreamingUpstream struct {
+	stream         *openAIImagesObservedReadSeeker
+	unreadBeforeDo bool
+	req            *http.Request
+	body           []byte
+	resp           *http.Response
+}
+
+func (u *openAIImagesStreamingUpstream) Do(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
+	u.req = req
+	u.unreadBeforeDo = u.stream.reads == 0
+	if req != nil && req.Body != nil {
+		u.body, _ = io.ReadAll(req.Body)
+	}
+	return u.resp, nil
+}
+
+func (u *openAIImagesStreamingUpstream) DoWithTLS(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, _ *tlsfingerprint.Profile) (*http.Response, error) {
+	return u.Do(req, proxyURL, accountID, accountConcurrency)
 }
 
 func TestOpenAIGatewayServiceForwardImages_APIKeyStreamJSONResponseBillsImage(t *testing.T) {

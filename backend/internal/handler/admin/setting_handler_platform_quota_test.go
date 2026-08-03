@@ -210,9 +210,10 @@ func TestSettingHandler_ImageStudioAsyncSettings_PutGetRoundTrip(t *testing.T) {
 	handler := NewSettingHandler(svc, nil, nil, nil, nil, nil, nil)
 
 	putBody := map[string]any{
-		"image_studio_async_concurrency": 3,
-		"image_studio_retention_value":   72,
-		"image_studio_retention_unit":    service.ImageStudioRetentionUnitHour,
+		"image_studio_async_concurrency":     3,
+		"image_studio_retention_value":       72,
+		"image_studio_retention_unit":        service.ImageStudioRetentionUnitHour,
+		"image_studio_input_retention_hours": 36,
 	}
 	rawBody, err := json.Marshal(putBody)
 	require.NoError(t, err)
@@ -226,6 +227,7 @@ func TestSettingHandler_ImageStudioAsyncSettings_PutGetRoundTrip(t *testing.T) {
 	require.Equal(t, "3", repo.values[service.SettingKeyImageStudioAsyncConcurrency])
 	require.Equal(t, "72", repo.values[service.SettingKeyImageStudioRetentionValue])
 	require.Equal(t, service.ImageStudioRetentionUnitHour, repo.values[service.SettingKeyImageStudioRetentionUnit])
+	require.Equal(t, "36", repo.values[service.SettingKeyImageStudioInputRetentionHours])
 
 	var putResp response.Response
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &putResp))
@@ -234,6 +236,7 @@ func TestSettingHandler_ImageStudioAsyncSettings_PutGetRoundTrip(t *testing.T) {
 	require.Equal(t, float64(3), putData["image_studio_async_concurrency"])
 	require.Equal(t, float64(72), putData["image_studio_retention_value"])
 	require.Equal(t, service.ImageStudioRetentionUnitHour, putData["image_studio_retention_unit"])
+	require.Equal(t, float64(36), putData["image_studio_input_retention_hours"])
 
 	rec2 := httptest.NewRecorder()
 	c2, _ := gin.CreateTestContext(rec2)
@@ -248,6 +251,7 @@ func TestSettingHandler_ImageStudioAsyncSettings_PutGetRoundTrip(t *testing.T) {
 	require.Equal(t, float64(3), data["image_studio_async_concurrency"])
 	require.Equal(t, float64(72), data["image_studio_retention_value"])
 	require.Equal(t, service.ImageStudioRetentionUnitHour, data["image_studio_retention_unit"])
+	require.Equal(t, float64(36), data["image_studio_input_retention_hours"])
 }
 
 func TestSettingHandler_ImageStudioAdminControls_PutGetRoundTrip(t *testing.T) {
@@ -305,6 +309,7 @@ func TestSettingHandler_ImageStudioPartialUpdatePreservesOmittedSettings(t *test
 			service.SettingKeyImageStudioAsyncConcurrency:          "3",
 			service.SettingKeyImageStudioRetentionValue:            "72",
 			service.SettingKeyImageStudioRetentionUnit:             service.ImageStudioRetentionUnitHour,
+			service.SettingKeyImageStudioInputRetentionHours:       "36",
 			service.SettingKeyImageStudioAvailableGroupIDs:         `[3,2]`,
 			service.SettingKeyImageGenerationToolDeclarationPolicy: service.ImageGenerationToolDeclarationPolicyAllow,
 		},
@@ -326,6 +331,7 @@ func TestSettingHandler_ImageStudioPartialUpdatePreservesOmittedSettings(t *test
 	require.Equal(t, "5", repo.values[service.SettingKeyImageStudioAsyncConcurrency])
 	require.Equal(t, "72", repo.values[service.SettingKeyImageStudioRetentionValue])
 	require.Equal(t, service.ImageStudioRetentionUnitHour, repo.values[service.SettingKeyImageStudioRetentionUnit])
+	require.Equal(t, "36", repo.values[service.SettingKeyImageStudioInputRetentionHours])
 	require.JSONEq(t, `[3,2]`, repo.values[service.SettingKeyImageStudioAvailableGroupIDs])
 	require.Equal(t, service.ImageGenerationToolDeclarationPolicyAllow, repo.values[service.SettingKeyImageGenerationToolDeclarationPolicy])
 }

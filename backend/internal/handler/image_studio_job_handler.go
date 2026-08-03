@@ -2,21 +2,40 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"log"
+	"mime"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 )
 
+const (
+	imageStudioMultipartMaxFileBytes   = int64(20 << 20)
+	imageStudioMultipartMaxScalarBytes = int64(64 << 10)
+	imageStudioMultipartMaxBodyBytes   = 5*imageStudioMultipartMaxFileBytes + 1<<20
+)
+
 type ImageStudioJobHandler struct {
-	jobService    *service.ImageStudioJobService
-	apiKeyService *service.APIKeyService
+	jobService                   *service.ImageStudioJobService
+	apiKeyService                *service.APIKeyService
+	createMultipartTempFile      func() (imageStudioMultipartTempFile, error)
+	observeMultipartCleanupError func(error)
+}
+
+type imageStudioMultipartTempFile interface {
+	io.ReadWriteSeeker
+	io.Closer
 }
 
 type imageStudioCreateJobRequest struct {
@@ -32,6 +51,7 @@ type imageStudioCreateJobRequest struct {
 	Moderation        string   `json:"moderation"`
 	InputFidelity     string   `json:"input_fidelity"`
 	OutputCompression *int     `json:"output_compression"`
+	ResponseFormat    string   `json:"response_format"`
 	ImageDataURLs     []string `json:"image_data_urls"`
 	MaskDataURL       string   `json:"mask_data_url"`
 }
@@ -68,8 +88,10 @@ type imageStudioJobStatsResponse struct {
 
 func NewImageStudioJobHandler(jobService *service.ImageStudioJobService, apiKeyService *service.APIKeyService) *ImageStudioJobHandler {
 	return &ImageStudioJobHandler{
-		jobService:    jobService,
-		apiKeyService: apiKeyService,
+		jobService:                   jobService,
+		apiKeyService:                apiKeyService,
+		createMultipartTempFile:      newImageStudioMultipartTempFile,
+		observeMultipartCleanupError: func(err error) { log.Printf("image studio multipart cleanup failed: %v", err) },
 	}
 }
 
@@ -79,31 +101,56 @@ func (h *ImageStudioJobHandler) Create(c *gin.Context) {
 		response.Unauthorized(c, "User not authenticated")
 		return
 	}
+	if err := h.jobService.RequireInputStorage(); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
 
+	mediaType, _, err := mime.ParseMediaType(c.GetHeader("Content-Type"))
+	if err != nil {
+		response.BadRequest(c, "Invalid Content-Type")
+		return
+	}
 	var req imageStudioCreateJobRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "Invalid request: "+err.Error())
+	var images []service.UploadedFile
+	var mask *service.UploadedFile
+	var cleanup func() error
+	switch mediaType {
+	case "application/json":
+		if err := c.ShouldBindJSON(&req); err != nil {
+			response.BadRequest(c, "Invalid request: "+err.Error())
+			return
+		}
+		mode := strings.TrimSpace(req.Mode)
+		if mode == "" {
+			mode = service.ImageStudioJobModeGenerate
+		}
+		if mode == service.ImageStudioJobModeEdit {
+			response.BadRequest(c, "JSON edit jobs are no longer accepted; use multipart/form-data with repeated image fields instead of image_data_urls or mask_data_url")
+			return
+		}
+		if mode != service.ImageStudioJobModeGenerate {
+			response.BadRequest(c, "application/json only supports generate mode")
+			return
+		}
+		req.Mode = mode
+	case "multipart/form-data":
+		var parseErr error
+		req, images, mask, cleanup, parseErr = parseImageStudioEditMultipart(c, h.createMultipartTempFile)
+		if parseErr != nil {
+			response.ErrorFrom(c, parseErr)
+			return
+		}
+		defer func() {
+			if cleanupErr := cleanup(); cleanupErr != nil && h.observeMultipartCleanupError != nil {
+				h.observeMultipartCleanupError(cleanupErr)
+			}
+		}()
+	default:
+		response.BadRequest(c, "Content-Type must be application/json for generation or multipart/form-data for edits")
 		return
 	}
-
 	mode := strings.TrimSpace(req.Mode)
-	if mode == "" {
-		mode = service.ImageStudioJobModeGenerate
-	}
-	if mode != service.ImageStudioJobModeGenerate && mode != service.ImageStudioJobModeEdit {
-		response.BadRequest(c, "mode must be generate or edit")
-		return
-	}
-	if mode == service.ImageStudioJobModeEdit {
-		if len(req.ImageDataURLs) == 0 {
-			response.BadRequest(c, "image_data_urls is required for edit mode")
-			return
-		}
-		if len(req.ImageDataURLs) > 1 {
-			response.BadRequest(c, "only one input image is supported")
-			return
-		}
-	}
 
 	apiKey, err := h.apiKeyService.GetByID(c.Request.Context(), req.APIKeyID)
 	if err != nil {
@@ -146,7 +193,7 @@ func (h *ImageStudioJobHandler) Create(c *gin.Context) {
 		outputFormat = "png"
 	}
 
-	job, err := h.jobService.CreateJob(c.Request.Context(), service.ImageStudioJobCreateInput{
+	createInput := service.ImageStudioJobCreateInput{
 		UserID:           subject.UserID,
 		APIKeyID:         apiKey.ID,
 		Mode:             mode,
@@ -157,13 +204,207 @@ func (h *ImageStudioJobHandler) Create(c *gin.Context) {
 		EstimatedCostUSD: estimatedCost,
 		BillingPriority:  service.NormalizeBillingPriority(apiKey.BillingPriority),
 		RequestPayload:   payload,
-	})
+	}
+	var job *service.ImageStudioJob
+	if mode == service.ImageStudioJobModeEdit {
+		job, err = h.jobService.CreateEditJob(c.Request.Context(), createInput, images, mask)
+	} else {
+		job, err = h.jobService.CreateJob(c.Request.Context(), createInput)
+	}
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
 
 	response.Success(c, h.toJobResponse(job))
+}
+
+func parseImageStudioEditMultipart(c *gin.Context, createTempFile func() (imageStudioMultipartTempFile, error)) (_ imageStudioCreateJobRequest, _ []service.UploadedFile, _ *service.UploadedFile, cleanup func() error, retErr error) {
+	var req imageStudioCreateJobRequest
+	tempFiles := make([]imageStudioMultipartTempFile, 0, 5)
+	cleanup = func() error {
+		errs := make([]error, 0, len(tempFiles))
+		for _, file := range tempFiles {
+			if file == nil {
+				continue
+			}
+			errs = append(errs, file.Close())
+		}
+		return errors.Join(errs...)
+	}
+	defer func() {
+		if retErr != nil {
+			if cleanupErr := cleanup(); cleanupErr != nil {
+				retErr = multipartStorageError(errors.Join(retErr, cleanupErr))
+			}
+		}
+	}()
+
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, imageStudioMultipartMaxBodyBytes)
+	reader, err := c.Request.MultipartReader()
+	if err != nil {
+		return req, nil, nil, cleanup, multipartValidationError("invalid multipart request", err)
+	}
+	seenScalars := make(map[string]struct{})
+	images := make([]service.UploadedFile, 0, 4)
+	var mask *service.UploadedFile
+	for {
+		part, nextErr := reader.NextPart()
+		if nextErr == io.EOF {
+			break
+		}
+		if nextErr != nil {
+			return req, nil, nil, cleanup, multipartValidationError("invalid or oversized multipart request", nextErr)
+		}
+		name := strings.TrimSpace(part.FormName())
+		switch name {
+		case "image", "mask":
+			if name == "image" && len(images) >= 4 {
+				return req, nil, nil, cleanup, multipartValidationError("edit jobs accept at most four image fields", nil)
+			}
+			if name == "mask" && mask != nil {
+				return req, nil, nil, cleanup, multipartValidationError("mask must appear at most once", nil)
+			}
+			tempFile, createErr := createTempFile()
+			if createErr != nil {
+				return req, nil, nil, cleanup, multipartStorageError(createErr)
+			}
+			tempFiles = append(tempFiles, tempFile)
+			copyErr := copyImageStudioMultipartFile(tempFile, part)
+			if copyErr != nil {
+				return req, nil, nil, cleanup, copyErr
+			}
+			if _, seekErr := tempFile.Seek(0, io.SeekStart); seekErr != nil {
+				return req, nil, nil, cleanup, multipartStorageError(seekErr)
+			}
+			upload := service.UploadedFile{Reader: tempFile, ContentType: part.Header.Get("Content-Type")}
+			if name == "image" {
+				images = append(images, upload)
+			} else {
+				mask = &upload
+			}
+		default:
+			if _, exists := seenScalars[name]; exists {
+				return req, nil, nil, cleanup, multipartValidationError(name+" must appear at most once", nil)
+			}
+			seenScalars[name] = struct{}{}
+			value, readErr := io.ReadAll(io.LimitReader(part, imageStudioMultipartMaxScalarBytes+1))
+			if readErr != nil {
+				return req, nil, nil, cleanup, multipartValidationError("failed to read multipart field", readErr)
+			}
+			if int64(len(value)) > imageStudioMultipartMaxScalarBytes {
+				return req, nil, nil, cleanup, multipartValidationError(name+" exceeds the scalar size limit", nil)
+			}
+			if fieldErr := setImageStudioMultipartScalar(&req, name, string(value)); fieldErr != nil {
+				return req, nil, nil, cleanup, fieldErr
+			}
+		}
+	}
+	if len(images) == 0 {
+		return req, nil, nil, cleanup, multipartValidationError("edit jobs require at least one image field", nil)
+	}
+	if strings.TrimSpace(req.Mode) != service.ImageStudioJobModeEdit {
+		return req, nil, nil, cleanup, multipartValidationError("multipart/form-data only supports edit mode", nil)
+	}
+	if req.APIKeyID <= 0 {
+		return req, nil, nil, cleanup, multipartValidationError("api_key_id is required", nil)
+	}
+	return req, images, mask, cleanup, nil
+}
+
+func newImageStudioMultipartTempFile() (imageStudioMultipartTempFile, error) {
+	file, err := os.CreateTemp("", "image-studio-upload-*")
+	if err != nil {
+		return nil, err
+	}
+	if err := os.Remove(file.Name()); err != nil {
+		return nil, errors.Join(err, file.Close())
+	}
+	return file, nil
+}
+
+func copyImageStudioMultipartFile(dst io.Writer, src io.Reader) error {
+	buffer := make([]byte, 32<<10)
+	var total int64
+	for {
+		read, readErr := src.Read(buffer)
+		if read > 0 {
+			total += int64(read)
+			if total > imageStudioMultipartMaxFileBytes {
+				return multipartValidationError("multipart file exceeds the per-file size limit", nil)
+			}
+			written, writeErr := dst.Write(buffer[:read])
+			if writeErr != nil {
+				return multipartStorageError(writeErr)
+			}
+			if written != read {
+				return multipartStorageError(io.ErrShortWrite)
+			}
+		}
+		if readErr == io.EOF {
+			return nil
+		}
+		if readErr != nil {
+			return multipartValidationError("failed to read multipart file", readErr)
+		}
+	}
+}
+
+func setImageStudioMultipartScalar(req *imageStudioCreateJobRequest, name, value string) error {
+	switch name {
+	case "api_key_id":
+		parsed, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+		if err != nil || parsed <= 0 {
+			return multipartValidationError("api_key_id must be a positive integer", err)
+		}
+		req.APIKeyID = parsed
+	case "mode":
+		req.Mode = value
+	case "prompt":
+		req.Prompt = value
+	case "model":
+		req.Model = value
+	case "size":
+		req.Size = value
+	case "output_format":
+		req.OutputFormat = value
+	case "quality":
+		req.Quality = value
+	case "background":
+		req.Background = value
+	case "style":
+		req.Style = value
+	case "moderation":
+		req.Moderation = value
+	case "input_fidelity":
+		req.InputFidelity = value
+	case "response_format":
+		req.ResponseFormat = value
+	case "output_compression":
+		parsed, err := strconv.Atoi(strings.TrimSpace(value))
+		if err != nil {
+			return multipartValidationError("output_compression must be an integer", err)
+		}
+		req.OutputCompression = &parsed
+	default:
+		return multipartValidationError("unknown multipart field: "+name, nil)
+	}
+	return nil
+}
+
+func multipartValidationError(message string, cause error) error {
+	err := infraerrors.BadRequest("IMAGE_STUDIO_MULTIPART_INVALID", message)
+	if cause != nil {
+		return err.WithCause(cause)
+	}
+	return err
+}
+
+func multipartStorageError(cause error) error {
+	return infraerrors.ServiceUnavailable(
+		"IMAGE_STUDIO_INPUT_STORAGE_UNAVAILABLE",
+		"image studio input storage is unavailable",
+	).WithCause(cause)
 }
 
 func (h *ImageStudioJobHandler) List(c *gin.Context) {
@@ -331,19 +572,15 @@ func buildImageStudioJobPayload(req imageStudioCreateJobRequest, mode string) (j
 	}
 
 	outputFormat := firstNonEmptyImageStudio(req.OutputFormat, "png")
+	responseFormat := "b64_json"
+	if mode == service.ImageStudioJobModeEdit {
+		responseFormat = firstNonEmptyImageStudio(req.ResponseFormat, responseFormat)
+	}
 	payload := map[string]any{
 		"model":           model,
 		"prompt":          strings.TrimSpace(req.Prompt),
-		"response_format": "b64_json",
+		"response_format": responseFormat,
 		"output_format":   outputFormat,
-	}
-	if mode == service.ImageStudioJobModeEdit {
-		payload["images"] = []map[string]any{{
-			"image_url": strings.TrimSpace(req.ImageDataURLs[0]),
-		}}
-		if maskDataURL := strings.TrimSpace(req.MaskDataURL); maskDataURL != "" {
-			payload["mask"] = map[string]any{"image_url": maskDataURL}
-		}
 	}
 	if size := strings.TrimSpace(req.Size); size != "" {
 		payload["size"] = size

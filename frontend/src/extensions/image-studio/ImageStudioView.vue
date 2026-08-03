@@ -234,12 +234,16 @@
                     :files="referenceFiles"
                     :preview-urls="referencePreviewUrls"
                     :max-files="maxReferenceImages"
+                    :mask-file="maskFile"
                     variant="floating"
                     interaction-mode="static"
                     @change="handleReferenceImagesChange"
                     @remove="removeReferenceImage"
                     @preview-error="handleReferencePreviewError"
                     @open-lightbox="openReferenceLightbox"
+                    @mask-change="handleMaskChange"
+                    @remove-mask="maskFile = null"
+                    @limit-reached="showReferenceLimitError"
                   />
                 </template>
               </TemplateDrawer>
@@ -434,6 +438,7 @@
                 :files="referenceFiles"
                 :preview-urls="referencePreviewUrls"
                 :max-files="maxReferenceImages"
+                :mask-file="maskFile"
                 variant="inline"
                 expand-mode="overlay"
                 interaction-mode="expandable"
@@ -441,6 +446,9 @@
                 @remove="removeReferenceImage"
                 @preview-error="handleReferencePreviewError"
                 @open-lightbox="openReferenceLightbox"
+                @mask-change="handleMaskChange"
+                @remove-mask="maskFile = null"
+                @limit-reached="showReferenceLimitError"
               />
             </Transition>
           </footer>
@@ -479,6 +487,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { keysAPI } from '@/api'
 import { getPublicSettings } from '@/api/auth'
 import Icon from '@/components/icons/Icon.vue'
@@ -507,6 +516,7 @@ import {
   putImageStudioAssetCache
 } from './imageStudioCache'
 import { estimateHistoryColumnCount, groupHistoryRecordsByVisualColumn } from './historyLayout'
+import { ImageReferenceCompressionError, compressImageReferences } from './imageCompression'
 import { parseAdvancedJson } from './payload'
 import type {
   ImageStudioJob,
@@ -552,6 +562,7 @@ function createCreationSession(): ImageStudioCreationSession {
   }
 }
 
+const { t } = useI18n()
 const activeTab = ref<ImageStudioMode>('generate')
 const lastCreationTab = ref<CreationMode>('generate')
 const suppressReferenceTransition = ref(false)
@@ -1155,7 +1166,7 @@ async function handleSubmit() {
     session.outputs = []
     session.streamState = createIdleStreamState()
   } catch (error) {
-    setSessionError(session, error instanceof Error ? error.message : '生成失败')
+    setSessionError(session, submissionErrorMessage(error))
     updateGenerationStreamState(session, 'failed', session.errorMessage)
   } finally {
     session.submitting = false
@@ -1164,6 +1175,13 @@ async function handleSubmit() {
 
 function setSessionError(session: ImageStudioCreationSession, message: string) {
   session.errorMessage = message
+}
+
+function submissionErrorMessage(error: unknown) {
+  if (error instanceof ImageReferenceCompressionError) {
+    return t(`imageStudio.compressionErrors.${error.code}`)
+  }
+  return error instanceof Error ? error.message : '生成失败'
 }
 
 function updateGenerationStreamState(
@@ -1524,9 +1542,7 @@ async function submitEdit(commonInput: {
 }) {
   if (referenceFiles.value.length === 0) throw new Error('请先添加参考图')
   if (!selectedKey.value) throw new Error('请选择 API 密钥')
-  const compressedReferences = await compressReferenceImagesForUpload(referenceFiles.value.slice(0, 1))
-  const imageDataUrls = await Promise.all(compressedReferences.map((file) => readReferenceFileAsDataUrl(file)))
-  const maskDataUrl = maskFile.value ? await readReferenceFileAsDataUrl(maskFile.value) : ''
+  const compressedReferences = await compressImageReferences(referenceFiles.value)
 
   return createImageStudioJob({
     apiKeyId: selectedKey.value.id,
@@ -1540,9 +1556,10 @@ async function submitEdit(commonInput: {
     style: stringValueOrEmpty(commonInput.advancedParams.style),
     moderation: stringValueOrEmpty(commonInput.advancedParams.moderation),
     inputFidelity: stringValueOrEmpty(commonInput.advancedParams.input_fidelity),
+    responseFormat: stringValueOrEmpty(commonInput.advancedParams.response_format),
     outputCompression: numberValueOrUndefined(commonInput.advancedParams.output_compression),
-    imageDataUrls,
-    maskDataUrl: maskDataUrl || undefined
+    images: compressedReferences,
+    mask: maskFile.value
   })
 }
 
@@ -1583,7 +1600,20 @@ function appendReferenceImages(incoming: File[]) {
   for (const file of accepted) {
     appendReferenceImage(file)
   }
+  if (incoming.length > accepted.length) {
+    showReferenceLimitError()
+  }
   return accepted.length
+}
+
+function showReferenceLimitError() {
+  setSessionError(creationSessions.edit, t('imageStudio.referenceLimit', { count: maxReferenceImages }))
+}
+
+function handleMaskChange(event: Event) {
+  const input = event.target as HTMLInputElement
+  maskFile.value = input.files?.[0] ?? null
+  input.value = ''
 }
 
 function appendReferenceImage(file: File, previewUrl = createReferencePreviewUrl(file)) {
@@ -2101,21 +2131,6 @@ function dataUrlToFile(dataUrl: string, baseName: string): File {
   const { bytes, mimeType } = parseDataUrlBytes(dataUrl)
   return new File([bytes], `${baseName}.${extensionFromMimeType(mimeType)}`, {
     type: mimeType
-  })
-}
-
-async function compressReferenceImagesForUpload(files: File[]): Promise<File[]> {
-  return Promise.all(files.map((file, index) =>
-    convertFileToWebp(file, `reference-${index + 1}`)
-  ))
-}
-
-async function convertFileToWebp(file: File, fallbackBaseName: string): Promise<File> {
-  const blob = await renderImageBlobToFormat(file, 'image/webp', 0.72)
-  const baseName = file.name.replace(/\.[^.]+$/, '') || fallbackBaseName
-  return new File([blob], `${baseName}.webp`, {
-    type: 'image/webp',
-    lastModified: Date.now()
   })
 }
 
