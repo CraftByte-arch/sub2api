@@ -33,6 +33,10 @@ type OpenAIRecordUsageInput struct {
 	RequestPayloadHash string
 	APIKeyService      APIKeyQuotaUpdater
 	QuotaPlatform      string // user×platform quota platform resolved by the handler before async billing.
+	// PricingAt 是请求级定价时刻（请求开始捕获，与利润门的 D 同源）：高峰因子
+	// 按该时刻计算，保证同一请求从准入到扣费不中途变价。零值回退记录时刻
+	//（既有行为），供未装配的路径（图片/异步/cyber 等）沿用。
+	PricingAt time.Time
 	// CyberBlocked 为 true 时把该用量行标记为 cyber（request_type=cyber），计费逻辑不变。
 	CyberBlocked bool
 	ChannelUsageFields
@@ -113,6 +117,15 @@ func (s *OpenAIGatewayService) ResolveUserGroupRateMultiplier(ctx context.Contex
 	return resolver.Resolve(ctx, userID, groupID, groupDefaultMultiplier)
 }
 
+// openAIUsagePricingAt 返回本次用量记录使用的定价时刻：优先请求级 PricingAt
+// （与利润门 D 同源同刻），未装配时回退记录时刻（既有行为）。
+func openAIUsagePricingAt(input *OpenAIRecordUsageInput) time.Time {
+	if input != nil && !input.PricingAt.IsZero() {
+		return input.PricingAt
+	}
+	return timezone.Now()
+}
+
 // RecordUsage records usage and deducts balance
 func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRecordUsageInput) error {
 	_, err := s.recordUsageDetailed(ctx, input)
@@ -156,7 +169,12 @@ func (s *OpenAIGatewayService) recordUsageDetailed(ctx context.Context, input *O
 		ImageOutputTokens:   result.Usage.ImageOutputTokens,
 	}
 
-	multiplier, imageMultiplier, videoMultiplier, baseMultiplier := s.resolveOpenAIUsageMultipliers(ctx, user, apiKey)
+	multiplier, imageMultiplier, videoMultiplier, baseMultiplier := s.resolveOpenAIUsageMultipliersAt(
+		ctx,
+		user,
+		apiKey,
+		openAIUsagePricingAt(input),
+	)
 
 	var cost *CostBreakdown
 	var err error
@@ -379,6 +397,8 @@ func (s *OpenAIGatewayService) recordUsageDetailed(ctx context.Context, input *O
 	}()
 
 	if billingErr != nil {
+		usageLog.ActualCost = 0
+		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.openai_gateway")
 		return nil, billingErr
 	}
 	if !billingApplied {
@@ -397,6 +417,10 @@ func (s *OpenAIGatewayService) recordUsageDetailed(ctx context.Context, input *O
 }
 
 func (s *OpenAIGatewayService) resolveOpenAIUsageMultipliers(ctx context.Context, user *User, apiKey *APIKey) (float64, float64, float64, float64) {
+	return s.resolveOpenAIUsageMultipliersAt(ctx, user, apiKey, timezone.Now())
+}
+
+func (s *OpenAIGatewayService) resolveOpenAIUsageMultipliersAt(ctx context.Context, user *User, apiKey *APIKey, pricingAt time.Time) (float64, float64, float64, float64) {
 	multiplier := 1.0
 	if s != nil && s.cfg != nil {
 		multiplier = s.cfg.Default.RateMultiplier
@@ -409,7 +433,7 @@ func (s *OpenAIGatewayService) resolveOpenAIUsageMultipliers(ctx context.Context
 		multiplier = resolver.Resolve(ctx, user.ID, *apiKey.GroupID, apiKey.Group.RateMultiplier)
 	}
 	baseMultiplier := multiplier
-	multiplier, imageMultiplier := computePeakAwareMultipliers(apiKey, baseMultiplier, timezone.Now())
+	multiplier, imageMultiplier := computePeakAwareMultipliers(apiKey, baseMultiplier, pricingAt)
 	return multiplier, imageMultiplier, resolveVideoRateMultiplier(apiKey, baseMultiplier), baseMultiplier
 }
 
