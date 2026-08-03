@@ -158,8 +158,8 @@ func TestUsageCardRepositoryConvertCardToBalanceUsesRemainingAmount(t *testing.T
 	mock.ExpectExec("INSERT INTO redeem_codes").
 		WithArgs(sqlmock.AnyArg(), service.AdjustmentTypeAdminBalance, 13.0, service.StatusUsed, int64(42), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
-	mock.ExpectExec("UPDATE user_usage_cards[\\s\\S]*status = \\$4").
-		WithArgs(service.UsageCardStatusCancelled, sqlmock.AnyArg(), int64(21), service.UsageCardStatusActive).
+	mock.ExpectExec("UPDATE user_usage_cards[\\s\\S]*status IN \\(\\$4, \\$5\\)").
+		WithArgs(service.UsageCardStatusCancelled, sqlmock.AnyArg(), int64(21), service.UsageCardStatusActive, service.UsageCardStatusSuspended).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
@@ -204,7 +204,7 @@ func TestUsageCardRepositoryConvertCardToBalanceRejectsInvalidBalance(t *testing
 	}
 }
 
-func TestUsageCardRepositoryConvertCardToBalanceRejectsSuspendedCard(t *testing.T) {
+func TestUsageCardRepositoryConvertCardToBalanceAllowsSuspendedCard(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := NewUsageCardRepository(db)
 	now := time.Now()
@@ -214,12 +214,22 @@ func TestUsageCardRepositoryConvertCardToBalanceRejectsSuspendedCard(t *testing.
 		WithArgs(int64(24)).
 		WillReturnRows(sqlmock.NewRows([]string{"user_id", "total_limit_usd", "used_usd", "status", "starts_at", "expires_at"}).
 			AddRow(int64(42), 20.0, 7.0, service.UsageCardStatusSuspended, now.Add(-time.Hour), now.Add(time.Hour)))
-	mock.ExpectRollback()
+	mock.ExpectQuery("UPDATE users[\\s\\S]*total_recharged[\\s\\S]*RETURNING balance").
+		WithArgs(13.0, int64(42)).
+		WillReturnRows(sqlmock.NewRows([]string{"balance"}).AddRow(113.0))
+	mock.ExpectExec("INSERT INTO redeem_codes").
+		WithArgs(sqlmock.AnyArg(), service.AdjustmentTypeAdminBalance, 13.0, service.StatusUsed, int64(42), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("UPDATE user_usage_cards[\\s\\S]*status IN \\(\\$4, \\$5\\)").
+		WithArgs(service.UsageCardStatusCancelled, sqlmock.AnyArg(), int64(24), service.UsageCardStatusActive, service.UsageCardStatusSuspended).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
 
 	conversion, err := repo.ConvertCardToBalance(context.Background(), 24, 7, "")
 
-	require.Nil(t, conversion)
-	require.ErrorIs(t, err, service.ErrUsageCardUnavailable)
+	require.NoError(t, err)
+	require.NotNil(t, conversion)
+	require.InDelta(t, 13.0, conversion.AmountUSD, 0.000001)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

@@ -471,7 +471,7 @@ func (r *usageCardRepository) ConvertCardToBalance(ctx context.Context, cardID, 
 		return nil, service.ErrUsageCardInvalidBalance
 	}
 	remainingUSD := totalLimitUSD - usedUSD
-	if status != service.UsageCardStatusActive || remainingUSD <= 0 || now.Before(startsAt) || !now.Before(expiresAt) {
+	if (status != service.UsageCardStatusActive && status != service.UsageCardStatusSuspended) || remainingUSD <= 0 || now.Before(startsAt) || !now.Before(expiresAt) {
 		return nil, service.ErrUsageCardUnavailable
 	}
 
@@ -518,8 +518,8 @@ func (r *usageCardRepository) ConvertCardToBalance(ctx context.Context, cardID, 
 			updated_at = NOW()
 		WHERE id = $3
 			AND deleted_at IS NULL
-			AND status = $4
-	`, service.UsageCardStatusCancelled, note, cardID, service.UsageCardStatusActive)
+			AND status IN ($4, $5)
+	`, service.UsageCardStatusCancelled, note, cardID, service.UsageCardStatusActive, service.UsageCardStatusSuspended)
 	if err != nil {
 		return nil, err
 	}
