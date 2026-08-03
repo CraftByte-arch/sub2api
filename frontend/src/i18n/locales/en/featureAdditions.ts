@@ -3,7 +3,9 @@ export default {
   "nav": {
     "imageStudio": "Image Studio",
     "myUsageCards": "My Usage Cards",
-    "usageCardManagement": "Usage Cards"
+    "usageCardManagement": "Usage Cards",
+    "balanceOverview": "Balance Overview",
+    "myInvites": "My Invites"
   },
   "usageCards": {
     "title": "Usage Cards",
@@ -82,7 +84,31 @@ export default {
       "invalidDimensions": "A reference image has invalid dimensions"
     }
   },
+  "myInvites": {
+    "title": "My Invites",
+    "empty": "No invited users yet",
+    "loadFailed": "Failed to load invited users",
+    "columns": {
+      "email": "Original Email",
+      "username": "Username",
+      "totalRebate": "Total Rebate",
+      "joinedAt": "Joined"
+    }
+  },
+  "profile": {
+    "invitationExpert": "Invitation Expert"
+  },
   "admin": {
+    "balanceOverview": {
+      "title": "Balance Overview",
+      "userAvailableBalance": "User Available Balance",
+      "excludesFrozenBalance": "Excludes frozen balance",
+      "usageCardAvailableBalance": "Usage Card Available Balance",
+      "latestUsageCardExpiry": "Latest expiry",
+      "noAvailableUsageCards": "No available usage cards",
+      "updatedAt": "Updated",
+      "failedToLoad": "Failed to load balance overview"
+    },
     "usageCards": {
       "title": "Usage Card Management",
       "addPlan": "New Plan",
@@ -152,6 +178,13 @@ export default {
       "suspend": "Suspend",
       "resume": "Resume",
       "cancel": "Revoke",
+      "convertToBalance": "Convert to Balance",
+      "convertConfirmTitle": "Convert Usage Card",
+      "convertConfirmMessage": "Only the current remaining amount of ${amount} will be added to the user's long-term balance, then this usage card will be revoked. This cannot be undone.",
+      "convertConfirm": "Convert",
+      "converting": "Converting...",
+      "convertSuccess": "Converted the remaining ${amount} to long-term balance",
+      "convertFailed": "Failed to convert usage card",
       "noActions": "No actions",
       "validation": {
         "nameRequired": "Please enter a plan name.",
@@ -163,6 +196,9 @@ export default {
       }
     },
     "users": {
+      "roles": {
+        "invitation_expert": "Invitation Expert"
+      },
       "typeUsageCard": "Usage Card",
       "balancePurchased": "Balance Purchase",
       "subscriptionPurchased": "Subscription Purchase",

@@ -211,6 +211,38 @@ func (h *UserHandler) GetAffiliate(c *gin.Context) {
 	response.Success(c, detail)
 }
 
+// GetInvitationExpertInvitees returns the current invitation expert's direct
+// invitees with their current, unmasked account email addresses.
+// GET /api/v1/user/aff/invitees
+func (h *UserHandler) GetInvitationExpertInvitees(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+
+	role, ok := middleware2.GetUserRoleFromContext(c)
+	if !ok || role != service.RoleInvitationExpert {
+		response.Forbidden(c, "Invitation expert access required")
+		return
+	}
+	if h.affiliateService == nil || !h.affiliateService.IsEnabled(c.Request.Context()) {
+		response.NotFound(c, "Affiliate feature is disabled")
+		return
+	}
+
+	page, pageSize := response.ParsePagination(c)
+	if pageSize > service.AffiliateInviteesMaxPageSize {
+		pageSize = service.AffiliateInviteesMaxPageSize
+	}
+	invitees, total, err := h.affiliateService.ListInvitationExpertInvitees(c.Request.Context(), subject.UserID, page, pageSize)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Paginated(c, invitees, total, page, pageSize)
+}
+
 // TransferAffiliateQuota transfers all available affiliate quota into current balance.
 // POST /api/v1/user/aff/transfer
 func (h *UserHandler) TransferAffiliateQuota(c *gin.Context) {

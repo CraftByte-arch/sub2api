@@ -23,6 +23,19 @@ func TestAdminService_CreateUser_WithAdminRole(t *testing.T) {
 	require.Equal(t, RoleAdmin, user.Role)
 }
 
+func TestAdminService_CreateUser_WithInvitationExpertRole(t *testing.T) {
+	repo := &userRepoStub{nextID: 33}
+	svc := &adminServiceImpl{userRepo: repo}
+
+	user, err := svc.CreateUser(context.Background(), &CreateUserInput{
+		Email:    "expert@test.com",
+		Password: "strong-pass",
+		Role:     RoleInvitationExpert,
+	})
+	require.NoError(t, err)
+	require.Equal(t, RoleInvitationExpert, user.Role)
+}
+
 func TestAdminService_CreateUser_DefaultsToUserRole(t *testing.T) {
 	repo := &userRepoStub{nextID: 31}
 	svc := &adminServiceImpl{userRepo: repo}
@@ -103,7 +116,7 @@ func TestAdminService_UpdateUser_DemoteLastAdminRejected(t *testing.T) {
 	repo := &roleGuardUserRepoStub{rpmUserRepoStub: &rpmUserRepoStub{userRepoStub: base}, adminTotal: 1}
 	svc := &adminServiceImpl{userRepo: repo, redeemCodeRepo: &redeemRepoStub{}}
 
-	_, err := svc.UpdateUser(context.Background(), 42, &UpdateUserInput{Role: RoleUser})
+	_, err := svc.UpdateUser(context.Background(), 42, &UpdateUserInput{Role: RoleInvitationExpert})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "last admin")
 	require.Nil(t, repo.lastUpdated, "最后一个管理员不应被降级持久化")

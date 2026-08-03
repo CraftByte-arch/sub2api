@@ -18,9 +18,18 @@ const (
 
 // Role constants
 const (
-	RoleAdmin = domain.RoleAdmin
-	RoleUser  = domain.RoleUser
+	RoleAdmin            = domain.RoleAdmin
+	RoleUser             = domain.RoleUser
+	RoleInvitationExpert = domain.RoleInvitationExpert
 )
+
+func IsUserRole(role string) bool {
+	return domain.IsUserRole(role)
+}
+
+func IsPrivilegedUserRole(role string) bool {
+	return domain.IsPrivilegedUserRole(role)
+}
 
 // Affiliate rebate settings
 const (

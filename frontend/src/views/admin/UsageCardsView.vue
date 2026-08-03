@@ -143,7 +143,7 @@
                 v-model="filters.status"
                 :options="statusOptions"
                 :placeholder="t('admin.usageCards.allStatus')"
-                @change="loadCards"
+                @change="handleCardFilterChange"
               />
             </div>
 
@@ -165,7 +165,12 @@
             :loading="loadingCards"
             :sticky-first-column="true"
             :sticky-actions-column="true"
+            :expandable-actions="false"
+            :server-side-sort="true"
+            default-sort-key="expires_at"
+            default-sort-order="asc"
             row-key="id"
+            @sort="handleSort"
           >
             <template #cell-user="{ row }">
               <div class="flex items-center gap-2">
@@ -227,6 +232,14 @@
 
             <template #cell-actions="{ row }">
               <div class="flex justify-end gap-2">
+                <button
+                  v-if="canConvertCard(row)"
+                  class="btn btn-sm btn-primary"
+                  :disabled="convertingCardId === row.id"
+                  @click="openConvertCardDialog(row)"
+                >
+                  {{ convertingCardId === row.id ? t('admin.usageCards.converting') : t('admin.usageCards.convertToBalance') }}
+                </button>
                 <button v-if="effectiveCardStatus(row) === 'active'" class="btn btn-sm btn-secondary" @click="suspendCard(row.id)">{{ t('admin.usageCards.suspend') }}</button>
                 <button v-if="effectiveCardStatus(row) === 'suspended'" class="btn btn-sm btn-secondary" @click="resumeCard(row.id)">{{ t('admin.usageCards.resume') }}</button>
                 <button v-if="canRevokeCard(effectiveCardStatus(row))" class="btn btn-sm btn-danger" @click="cancelCard(row.id)">{{ t('admin.usageCards.cancel') }}</button>
@@ -234,6 +247,14 @@
               </div>
             </template>
           </DataTable>
+          <Pagination
+            v-if="pagination.total > 0"
+            :page="pagination.page"
+            :total="pagination.total"
+            :page-size="pagination.page_size"
+            @update:page="handlePageChange"
+            @update:page-size="handlePageSizeChange"
+          />
         </div>
       </div>
 
@@ -351,15 +372,28 @@
           </div>
         </template>
       </BaseDialog>
+
+      <ConfirmDialog
+        :show="pendingConversionCard !== null"
+        :title="t('admin.usageCards.convertConfirmTitle')"
+        :message="pendingConversionCard
+          ? t('admin.usageCards.convertConfirmMessage', { amount: formatUSD(pendingConversionCard.remaining_usd) })
+          : ''"
+        :confirm-text="t('admin.usageCards.convertConfirm')"
+        @confirm="confirmConvertCard"
+        @cancel="pendingConversionCard = null"
+      />
     </div>
   </AppLayout>
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref, onMounted } from 'vue'
+import { computed, reactive, ref, onMounted, onUnmounted } from 'vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import DataTable from '@/components/common/DataTable.vue'
+import Pagination from '@/components/common/Pagination.vue'
 import Select from '@/components/common/Select.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { adminAPI } from '@/api/admin'
@@ -368,6 +402,7 @@ import { adminUsageCardsAPI, type UserUsageCard } from '@/api/usageCards'
 import type { UsageCardPlan } from '@/types/payment'
 import { useAppStore } from '@/stores/app'
 import { extractApiErrorMessage } from '@/utils/apiError'
+import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { useI18n } from 'vue-i18n'
 
 const plans = ref<UsageCardPlan[]>([])
@@ -376,6 +411,8 @@ const editingPlan = ref<Partial<UsageCardPlan> | null>(null)
 const savingPlan = ref(false)
 const loadingCards = ref(false)
 const planError = ref('')
+const pendingConversionCard = ref<UserUsageCard | null>(null)
+const convertingCardId = ref<number | null>(null)
 const updatingPlanSaleIds = ref(new Set<number>())
 const updatingPlanOrderIds = ref(new Set<number>())
 const appStore = useAppStore()
@@ -386,12 +423,24 @@ const filters = reactive({
   status: 'active'
 })
 
+const pagination = reactive({
+  page: 1,
+  page_size: getPersistedPageSize(),
+  total: 0,
+})
+
+const sortState = reactive({
+  sort_by: 'expires_at' as 'name' | 'status' | 'expires_at',
+  sort_order: 'asc' as 'asc' | 'desc',
+})
+
 const filterUserKeyword = ref('')
 const selectedFilterUser = ref<SimpleUser | null>(null)
 const filterUserResults = ref<SimpleUser[]>([])
 const filterUserLoading = ref(false)
 const showFilterUserDropdown = ref(false)
 let filterUserSearchTimeout: ReturnType<typeof setTimeout> | null = null
+let cardsAbortController: AbortController | null = null
 
 const statusOptions = computed(() => [
   { value: '', label: t('admin.usageCards.allStatus') },
@@ -475,6 +524,15 @@ function canRevokeCard(status: string) {
   return status === 'active' || status === 'suspended'
 }
 
+function canConvertCard(card: UserUsageCard) {
+  const status = effectiveCardStatus(card)
+  if (status !== 'active' && status !== 'suspended') return false
+  if (!Number.isFinite(card.remaining_usd) || card.remaining_usd <= 0) return false
+  const startsAt = new Date(card.starts_at).getTime()
+  const expiresAt = new Date(card.expires_at).getTime()
+  return Number.isFinite(startsAt) && startsAt <= Date.now() && Number.isFinite(expiresAt) && expiresAt > Date.now()
+}
+
 function hasCardActions(status: string) {
   return status === 'active' || status === 'suspended'
 }
@@ -530,24 +588,79 @@ function formatDateTime(value: string) {
   })
 }
 
+function formatUSD(value: number) {
+  return Number(value).toFixed(4)
+}
+
 async function loadPlans() {
   const res = await adminUsageCardsAPI.listPlans()
   plans.value = res.data
 }
 
 async function loadCards() {
+  cardsAbortController?.abort()
+  const currentController = new AbortController()
+  cardsAbortController = currentController
   loadingCards.value = true
   try {
-    const params: { user_id?: number; status?: string } = {}
+    const params: {
+      page: number
+      page_size: number
+      sort_by: 'name' | 'status' | 'expires_at'
+      sort_order: 'asc' | 'desc'
+      user_id?: number
+      status?: string
+    } = {
+      page: pagination.page,
+      page_size: pagination.page_size,
+      sort_by: sortState.sort_by,
+      sort_order: sortState.sort_order,
+    }
     if (filters.user_id) params.user_id = filters.user_id
     if (filters.status) params.status = filters.status
-    const res = await adminUsageCardsAPI.listCards(params)
-    cards.value = res.data
+    const res = await adminUsageCardsAPI.listCards(params, { signal: currentController.signal })
+    if (currentController.signal.aborted || cardsAbortController !== currentController) return
+    cards.value = res.data.items
+    pagination.page = res.data.page
+    pagination.total = res.data.total
   } catch (err: unknown) {
+    if (
+      currentController.signal.aborted
+      || cardsAbortController !== currentController
+      || (err as { name?: string })?.name === 'AbortError'
+      || (err as { code?: string })?.code === 'ERR_CANCELED'
+    ) return
     appStore.showError(extractApiErrorMessage(err) || t('admin.usageCards.failedToLoadCards'))
   } finally {
-    loadingCards.value = false
+    if (cardsAbortController === currentController) {
+      cardsAbortController = null
+      loadingCards.value = false
+    }
   }
+}
+
+function handleCardFilterChange() {
+  pagination.page = 1
+  void loadCards()
+}
+
+function handlePageChange(page: number) {
+  pagination.page = page
+  void loadCards()
+}
+
+function handlePageSizeChange(pageSize: number) {
+  pagination.page_size = pageSize
+  pagination.page = 1
+  void loadCards()
+}
+
+function handleSort(key: string, order: 'asc' | 'desc') {
+  if (key !== 'name' && key !== 'status' && key !== 'expires_at') return
+  sortState.sort_by = key
+  sortState.sort_order = order
+  pagination.page = 1
+  void loadCards()
 }
 
 async function load() {
@@ -579,6 +692,7 @@ async function searchFilterUsers() {
 function selectFilterUser(user: SimpleUser) {
   selectedFilterUser.value = user
   filters.user_id = user.id
+  pagination.page = 1
   filterUserKeyword.value = user.username ? `${user.email} / ${user.username}` : user.email
   showFilterUserDropdown.value = false
   void loadCards()
@@ -587,6 +701,7 @@ function selectFilterUser(user: SimpleUser) {
 function clearFilterUser() {
   selectedFilterUser.value = null
   filters.user_id = undefined
+  pagination.page = 1
   filterUserKeyword.value = ''
   filterUserResults.value = []
   void loadCards()
@@ -727,9 +842,34 @@ async function deletePlan(id: number) {
   await loadPlans()
 }
 
+function openConvertCardDialog(card: UserUsageCard) {
+  if (convertingCardId.value !== null || !canConvertCard(card)) return
+  pendingConversionCard.value = card
+}
+
+async function confirmConvertCard() {
+  const card = pendingConversionCard.value
+  if (!card || convertingCardId.value !== null) return
+  pendingConversionCard.value = null
+  convertingCardId.value = card.id
+  try {
+    const res = await adminUsageCardsAPI.convertCardToBalance(card.id)
+    appStore.showSuccess(t('admin.usageCards.convertSuccess', { amount: formatUSD(res.data.amount_usd) }))
+    await loadCards()
+  } catch (err: unknown) {
+    appStore.showError(extractApiErrorMessage(err) || t('admin.usageCards.convertFailed'))
+  } finally {
+    convertingCardId.value = null
+  }
+}
+
 async function cancelCard(id: number) { await adminUsageCardsAPI.cancelCard(id); await loadCards() }
 async function suspendCard(id: number) { await adminUsageCardsAPI.suspendCard(id); await loadCards() }
 async function resumeCard(id: number) { await adminUsageCardsAPI.resumeCard(id); await loadCards() }
 
 onMounted(load)
+onUnmounted(() => {
+  cardsAbortController?.abort()
+  if (filterUserSearchTimeout) clearTimeout(filterUserSearchTimeout)
+})
 </script>

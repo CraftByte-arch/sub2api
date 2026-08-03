@@ -67,6 +67,13 @@ describe('AppSidebar merged feature navigation', () => {
       "{ path: '/order-statistics', label: t('nav.orderStatistics'), icon: ChartIcon, hideInSimpleMode: true, featureFlag: flagPayment }",
     )
   })
+
+  it('shows the personal invitee entry only for invitation experts', () => {
+    expect(componentSource).toContain("authStore.user?.role === 'invitation_expert'")
+    expect(componentSource).toContain("path: '/my-invites'")
+    expect(componentSource).toContain("label: t('nav.myInvites')")
+    expect(componentSource).toContain('featureFlag: flagAffiliate')
+  })
 })
 
 describe('AppSidebar header styles', () => {

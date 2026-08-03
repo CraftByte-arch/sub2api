@@ -3,7 +3,9 @@ export default {
   "nav": {
     "imageStudio": "生图体验",
     "myUsageCards": "我的余额卡",
-    "usageCardManagement": "余额卡管理"
+    "usageCardManagement": "余额卡管理",
+    "balanceOverview": "余额概览",
+    "myInvites": "我的邀请"
   },
   "usageCards": {
     "title": "余额卡",
@@ -82,7 +84,31 @@ export default {
       "invalidDimensions": "参考图尺寸无效"
     }
   },
+  "myInvites": {
+    "title": "我的邀请",
+    "empty": "暂无邀请用户",
+    "loadFailed": "加载邀请用户失败",
+    "columns": {
+      "email": "原始邮箱",
+      "username": "用户名",
+      "totalRebate": "累计返利",
+      "joinedAt": "注册时间"
+    }
+  },
+  "profile": {
+    "invitationExpert": "邀请达人"
+  },
   "admin": {
+    "balanceOverview": {
+      "title": "余额概览",
+      "userAvailableBalance": "用户可用余额",
+      "excludesFrozenBalance": "不含冻结余额",
+      "usageCardAvailableBalance": "余额卡可用总额",
+      "latestUsageCardExpiry": "最晚截止",
+      "noAvailableUsageCards": "暂无可用余额卡",
+      "updatedAt": "更新时间",
+      "failedToLoad": "加载余额概览失败"
+    },
     "usageCards": {
       "title": "余额卡管理",
       "addPlan": "新增套餐",
@@ -152,6 +178,13 @@ export default {
       "suspend": "暂停",
       "resume": "恢复",
       "cancel": "撤销",
+      "convertToBalance": "转换为长期余额",
+      "convertConfirmTitle": "转换余额卡",
+      "convertConfirmMessage": "仅将这张余额卡当前剩余额度 ${amount} 转为用户长期余额，并自动撤销余额卡。此操作不可撤销。",
+      "convertConfirm": "确认转换",
+      "converting": "转换中...",
+      "convertSuccess": "已将剩余额度 ${amount} 转为长期余额",
+      "convertFailed": "转换余额卡失败",
       "noActions": "无操作",
       "validation": {
         "nameRequired": "请填写套餐名称。",
@@ -163,6 +196,9 @@ export default {
       }
     },
     "users": {
+      "roles": {
+        "invitation_expert": "邀请达人"
+      },
       "typeUsageCard": "余额卡",
       "balancePurchased": "余额充值购买",
       "subscriptionPurchased": "订阅购买",

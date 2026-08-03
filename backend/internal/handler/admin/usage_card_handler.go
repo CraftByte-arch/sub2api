@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
@@ -158,16 +159,57 @@ func (h *UsageCardHandler) ListCards(c *gin.Context) {
 		}
 		userID = &id
 	}
-	cards, err := h.usageCardService.ListCards(c.Request.Context(), userID, c.Query("status"))
+	status := c.Query("status")
+	if c.Query("page") == "" && c.Query("page_size") == "" && c.Query("limit") == "" {
+		cards, err := h.usageCardService.ListCards(c.Request.Context(), userID, status)
+		if err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
+		response.Success(c, usageCardResponses(cards))
+		return
+	}
+
+	page, pageSize := response.ParsePagination(c)
+	cards, result, err := h.usageCardService.ListCardsPaginated(c.Request.Context(), userID, status, pagination.PaginationParams{
+		Page:      page,
+		PageSize:  pageSize,
+		SortBy:    c.DefaultQuery("sort_by", "expires_at"),
+		SortOrder: c.DefaultQuery("sort_order", "asc"),
+	})
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
-	response.Success(c, usageCardResponses(cards))
+	response.Paginated(c, usageCardResponses(cards), result.Total, page, pageSize)
 }
 
 func (h *UsageCardHandler) CancelCard(c *gin.Context) {
 	h.updateCardStatus(c, "cancel")
+}
+
+func (h *UsageCardHandler) ConvertCardToBalance(c *gin.Context) {
+	id, ok := parseIDParam(c, "id")
+	if !ok {
+		return
+	}
+	var req usageCardStatusRequest
+	_ = c.ShouldBindJSON(&req)
+	conversion, err := h.usageCardService.ConvertCardToBalance(
+		c.Request.Context(),
+		id,
+		getAdminIDFromContext(c),
+		req.Reason,
+	)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gin.H{
+		"converted":       true,
+		"amount_usd":      conversion.AmountUSD,
+		"new_balance_usd": conversion.NewBalanceUSD,
+	})
 }
 
 func (h *UsageCardHandler) SuspendCard(c *gin.Context) {

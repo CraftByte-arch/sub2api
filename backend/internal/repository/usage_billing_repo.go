@@ -273,6 +273,10 @@ func hasPositiveBalance(ctx context.Context, tx *sql.Tx, userID int64) bool {
 }
 
 func deductFirstAvailableUsageCard(ctx context.Context, tx *sql.Tx, userID int64, amount float64) (*int64, error) {
+	if !usageCardDeductionAmountValid(amount) {
+		return nil, service.ErrUsageCardUnavailable
+	}
+
 	var cardID int64
 	err := tx.QueryRowContext(ctx, `
 		WITH selected AS (
@@ -283,7 +287,12 @@ func deductFirstAvailableUsageCard(ctx context.Context, tx *sql.Tx, userID int64
 				AND status = 'active'
 				AND starts_at <= NOW()
 				AND expires_at > NOW()
+				AND total_limit_usd NOT IN ('NaN'::numeric, 'Infinity'::numeric, '-Infinity'::numeric)
+				AND used_usd NOT IN ('NaN'::numeric, 'Infinity'::numeric, '-Infinity'::numeric)
+				AND total_limit_usd > 0
+				AND used_usd >= 0
 				AND used_usd < total_limit_usd
+				AND used_usd + $2 <= total_limit_usd
 			ORDER BY expires_at ASC, (total_limit_usd - used_usd) ASC, created_at ASC, id ASC
 			FOR UPDATE SKIP LOCKED
 			LIMIT 1

@@ -20,7 +20,11 @@ var (
 )
 
 const (
-	affiliateInviteesLimit = 100
+	affiliateInviteesLimit           = 100
+	affiliateInviteesDefaultPageSize = 20
+	// AffiliateInviteesMaxPageSize limits the personal invitee list so one
+	// privileged request cannot enumerate an unbounded number of email records.
+	AffiliateInviteesMaxPageSize = affiliateInviteesLimit
 	// AffiliateCodeMinLength / AffiliateCodeMaxLength bound both system-generated
 	// 12-char codes and admin-customized codes (e.g. "VIP2026").
 	AffiliateCodeMinLength = 4
@@ -103,6 +107,7 @@ type AffiliateRepository interface {
 	ThawFrozenQuota(ctx context.Context, userID int64) (float64, error)
 	TransferQuotaToBalance(ctx context.Context, userID int64) (float64, float64, error)
 	ListInvitees(ctx context.Context, inviterID int64, limit int) ([]AffiliateInvitee, error)
+	ListInviteesPage(ctx context.Context, inviterID int64, page, pageSize int) ([]AffiliateInvitee, int64, error)
 
 	// 管理端：用户级专属配置
 	UpdateUserAffCode(ctx context.Context, userID int64, newCode string) error
@@ -421,6 +426,29 @@ func (s *AffiliateService) TransferAffiliateQuota(ctx context.Context, userID in
 		s.invalidateAffiliateCaches(ctx, userID)
 	}
 	return transferred, balance, nil
+}
+
+// ListInvitationExpertInvitees returns a paginated, unmasked list of the
+// current invitation expert's direct invitees. Authorization is deliberately
+// enforced by the HTTP handler; keeping this method scoped only by inviter ID
+// makes it impossible for callers to request another user's invitee list.
+func (s *AffiliateService) ListInvitationExpertInvitees(ctx context.Context, inviterID int64, page, pageSize int) ([]AffiliateInvitee, int64, error) {
+	if s == nil || s.repo == nil {
+		return nil, 0, infraerrors.ServiceUnavailable("SERVICE_UNAVAILABLE", "affiliate service unavailable")
+	}
+	if inviterID <= 0 {
+		return nil, 0, infraerrors.BadRequest("INVALID_USER", "invalid user")
+	}
+	if page <= 0 {
+		page = 1
+	}
+	if pageSize <= 0 {
+		pageSize = affiliateInviteesDefaultPageSize
+	}
+	if pageSize > AffiliateInviteesMaxPageSize {
+		pageSize = AffiliateInviteesMaxPageSize
+	}
+	return s.repo.ListInviteesPage(ctx, inviterID, page, pageSize)
 }
 
 func (s *AffiliateService) listInvitees(ctx context.Context, inviterID int64) ([]AffiliateInvitee, error) {

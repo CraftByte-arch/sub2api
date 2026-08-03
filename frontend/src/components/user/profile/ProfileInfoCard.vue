@@ -24,8 +24,8 @@
                 <h2 class="truncate text-2xl font-semibold text-gray-900 dark:text-white">
                   {{ displayName }}
                 </h2>
-                <span :class="['badge', user?.role === 'admin' ? 'badge-primary' : 'badge-gray']">
-                  {{ user?.role === 'admin' ? t('profile.administrator') : t('profile.user') }}
+                <span :class="['badge', roleBadgeClass]">
+                  {{ roleLabel }}
                 </span>
                 <span
                   :class="['badge', user?.status === 'active' ? 'badge-success' : 'badge-danger']"
@@ -208,6 +208,18 @@ const props = withDefaults(defineProps<{
 })
 
 const { t } = useI18n()
+
+const roleLabel = computed(() => {
+  if (props.user?.role === 'admin') return t('profile.administrator')
+  if (props.user?.role === 'invitation_expert') return t('profile.invitationExpert')
+  return t('profile.user')
+})
+
+const roleBadgeClass = computed(() => {
+  if (props.user?.role === 'admin') return 'badge-primary'
+  if (props.user?.role === 'invitation_expert') return 'badge-purple'
+  return 'badge-gray'
+})
 
 function normalizeBindingStatus(binding: boolean | UserAuthBindingStatus | undefined): boolean | null {
   if (typeof binding === 'boolean') {

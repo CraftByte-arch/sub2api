@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 )
 
 type UsageCardRepository interface {
@@ -15,7 +17,9 @@ type UsageCardRepository interface {
 	DeletePlan(ctx context.Context, id int64) error
 	ListUserCards(ctx context.Context, userID int64, includeDeleted bool) ([]UserUsageCard, error)
 	ListCards(ctx context.Context, userID *int64, status string) ([]UserUsageCard, error)
+	ListCardsPaginated(ctx context.Context, userID *int64, status string, params pagination.PaginationParams) ([]UserUsageCard, *pagination.PaginationResult, error)
 	ListAvailableCards(ctx context.Context, userID int64, now time.Time) ([]UserUsageCard, error)
 	DeductCard(ctx context.Context, cardID, userID int64, amount float64, now time.Time) (*UserUsageCard, error)
 	UpdateCardStatus(ctx context.Context, cardID int64, status string, reason string, operatorID int64) error
+	ConvertCardToBalance(ctx context.Context, cardID, operatorID int64, reason string) (*UsageCardConversion, error)
 }

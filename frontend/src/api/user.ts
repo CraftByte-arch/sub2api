@@ -16,6 +16,8 @@ import type {
   UserAuthProvider,
   UserAffiliateDetail,
   AffiliateTransferResponse,
+  AffiliateInvitee,
+  PaginatedResponse,
   PlatformQuotasResponse,
 } from '@/types'
 
@@ -186,6 +188,16 @@ export async function transferAffiliateQuota(): Promise<AffiliateTransferRespons
   return data
 }
 
+export async function getMyInvitees(params: {
+  page?: number
+  page_size?: number
+} = {}): Promise<PaginatedResponse<AffiliateInvitee>> {
+  const { data } = await apiClient.get<PaginatedResponse<AffiliateInvitee>>('/user/aff/invitees', {
+    params,
+  })
+  return data
+}
+
 /**
  * 获取当前用户的平台限额 + 用量。
  */
@@ -209,6 +221,7 @@ export const userAPI = {
   startOAuthBinding,
   getAffiliateDetail,
   transferAffiliateQuota,
+  getMyInvitees,
   getMyPlatformQuotas,
 }
 

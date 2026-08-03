@@ -33,6 +33,9 @@ func RegisterAdminRoutes(
 		// 仪表盘
 		registerDashboardRoutes(admin, h)
 
+		// 余额概览
+		registerBalanceOverviewRoutes(admin, h)
+
 		// 用户管理
 		registerUserManagementRoutes(admin, h)
 
@@ -204,6 +207,7 @@ func registerUsageCardRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	{
 		usageCards.GET("", h.Admin.UsageCard.ListCards)
 		usageCards.POST("/:id/cancel", h.Admin.UsageCard.CancelCard)
+		usageCards.POST("/:id/convert", h.Admin.UsageCard.ConvertCardToBalance)
 		usageCards.POST("/:id/suspend", h.Admin.UsageCard.SuspendCard)
 		usageCards.POST("/:id/resume", h.Admin.UsageCard.ResumeCard)
 	}

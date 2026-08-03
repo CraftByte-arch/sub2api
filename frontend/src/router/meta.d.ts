@@ -20,6 +20,12 @@ declare module 'vue-router' {
     requiresAdmin?: boolean
 
     /**
+     * Whether this route requires the invitation expert role.
+     * @default false
+     */
+    requiresInvitationExpert?: boolean
+
+    /**
      * Page title for this route
      */
     title?: string

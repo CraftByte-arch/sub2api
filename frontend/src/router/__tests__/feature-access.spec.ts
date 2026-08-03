@@ -16,6 +16,7 @@ const authStore = vi.hoisted(() => ({
   isAdmin: false,
   isSimpleMode: false,
   hasPendingAuthSession: false,
+  user: { role: 'user' },
 }))
 
 const appStore = vi.hoisted(() => ({
@@ -114,6 +115,7 @@ describe('feature route guard', () => {
     authStore.isAuthenticated = true
     authStore.isAdmin = false
     authStore.isSimpleMode = false
+    authStore.user = { role: 'user' }
     appStore.publicSettingsLoaded = false
     appStore.cachedPublicSettings = null
     appStore.fetchPublicSettings.mockReset()
@@ -173,5 +175,20 @@ describe('feature route guard', () => {
     expect(appStore.fetchPublicSettings).not.toHaveBeenCalled()
     expect(next).toHaveBeenCalledOnce()
     expect(next).toHaveBeenCalledWith(target)
+  })
+
+  it('allows only invitation experts to open the personal invitee list', async () => {
+    const denied = runGuard({ requiresInvitationExpert: true }, '/my-invites')
+    await denied.navigation
+
+    expect(denied.next).toHaveBeenCalledOnce()
+    expect(denied.next).toHaveBeenCalledWith('/dashboard')
+
+    authStore.user = { role: 'invitation_expert' }
+    const allowed = runGuard({ requiresInvitationExpert: true }, '/my-invites')
+    await allowed.navigation
+
+    expect(allowed.next).toHaveBeenCalledOnce()
+    expect(allowed.next).toHaveBeenCalledWith()
   })
 })

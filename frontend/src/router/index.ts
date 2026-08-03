@@ -267,6 +267,18 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/my-invites',
+    name: 'MyInvites',
+    component: () => import('@/views/user/MyInvitesView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      requiresInvitationExpert: true,
+      title: 'My Invites',
+      titleKey: 'myInvites.title'
+    }
+  },
+  {
     path: '/available-channels',
     name: 'UserAvailableChannels',
     component: () => import('@/views/user/AvailableChannelsView.vue'),
@@ -439,6 +451,17 @@ const routes: RouteRecordRaw[] = [
       title: 'Admin Dashboard',
       titleKey: 'admin.dashboard.title',
       descriptionKey: 'admin.dashboard.description'
+    }
+  },
+  {
+    path: '/admin/balance-overview',
+    name: 'AdminBalanceOverview',
+    component: () => import('@/views/admin/BalanceOverviewView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Balance Overview',
+      titleKey: 'admin.balanceOverview.title'
     }
   },
   {
@@ -862,6 +885,7 @@ router.beforeEach(async (to, _from, next) => {
   // Check if route requires authentication
   const requiresAuth = to.meta.requiresAuth !== false // Default to true
   const requiresAdmin = to.meta.requiresAdmin === true
+  const requiresInvitationExpert = to.meta.requiresInvitationExpert === true
 
   if (to.path === '/setup') {
     try {
@@ -945,6 +969,11 @@ router.beforeEach(async (to, _from, next) => {
   // Check admin requirement
   if (requiresAdmin && !authStore.isAdmin) {
     // User is authenticated but not admin, redirect to user dashboard
+    next('/dashboard')
+    return
+  }
+
+  if (requiresInvitationExpert && authStore.user?.role !== 'invitation_expert') {
     next('/dashboard')
     return
   }

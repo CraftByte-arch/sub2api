@@ -543,9 +543,12 @@ func ProvideOpsScheduledReportService(
 }
 
 // ProvideAPIKeyAuthCacheInvalidator 提供 API Key 认证缓存失效能力
-func ProvideAPIKeyAuthCacheInvalidator(apiKeyService *APIKeyService) APIKeyAuthCacheInvalidator {
+func ProvideAPIKeyAuthCacheInvalidator(apiKeyService *APIKeyService, usageCardService *UsageCardService) APIKeyAuthCacheInvalidator {
 	// Start Pub/Sub subscriber for L1 cache invalidation across instances
 	apiKeyService.StartAuthCacheInvalidationSubscriber(context.Background())
+	if usageCardService != nil {
+		usageCardService.SetAuthCacheInvalidator(apiKeyService)
+	}
 	return apiKeyService
 }
 
@@ -693,6 +696,9 @@ func ProvideBillingCacheService(
 ) *BillingCacheService {
 	svc := NewBillingCacheService(cache, userRepo, subRepo, apiKeyRepo, rpmCache, rateRepo, cfg, userPlatformQuotaRepo)
 	svc.SetUsageCardService(usageCardService)
+	if usageCardService != nil {
+		usageCardService.SetBalanceCacheInvalidator(svc)
+	}
 	return svc
 }
 

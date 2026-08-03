@@ -345,25 +345,72 @@ func (r *affiliateRepository) ListInvitees(ctx context.Context, inviterID int64,
 	if limit <= 0 {
 		limit = 100
 	}
+	invitees, _, err := r.ListInviteesPage(ctx, inviterID, 1, limit)
+	return invitees, err
+}
+
+func (r *affiliateRepository) ListInviteesPage(ctx context.Context, inviterID int64, page, pageSize int) ([]service.AffiliateInvitee, int64, error) {
+	if inviterID <= 0 {
+		return []service.AffiliateInvitee{}, 0, nil
+	}
+	if page <= 0 {
+		page = 1
+	}
+	if pageSize <= 0 {
+		pageSize = 20
+	}
+	offset := (page - 1) * pageSize
 	client := clientFromContext(ctx, r.client)
+
+	countRows, err := client.QueryContext(ctx, `
+SELECT COUNT(*)
+FROM user_affiliates ua
+JOIN users u ON u.id = ua.user_id AND u.deleted_at IS NULL
+WHERE ua.inviter_id = $1`, inviterID)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	var total int64
+	if !countRows.Next() {
+		err := countRows.Err()
+		_ = countRows.Close()
+		return nil, 0, err
+	}
+	if err := countRows.Scan(&total); err != nil {
+		_ = countRows.Close()
+		return nil, 0, err
+	}
+	if err := countRows.Err(); err != nil {
+		_ = countRows.Close()
+		return nil, 0, err
+	}
+	if err := countRows.Close(); err != nil {
+		return nil, 0, err
+	}
+
 	rows, err := client.QueryContext(ctx, `
 SELECT ua.user_id,
-       COALESCE(u.email, ''),
-       COALESCE(u.username, ''),
+       u.email,
+       u.username,
        ua.created_at,
-       COALESCE(SUM(ual.amount), 0)::double precision AS total_rebate
+       COALESCE(rebate.total_rebate, 0)::double precision AS total_rebate
 FROM user_affiliates ua
-LEFT JOIN users u ON u.id = ua.user_id
-LEFT JOIN user_affiliate_ledger ual
-       ON ual.user_id = $1
-      AND ual.source_user_id = ua.user_id
-      AND ual.action = 'accrue'
+JOIN users u ON u.id = ua.user_id AND u.deleted_at IS NULL
+LEFT JOIN (
+    SELECT source_user_id,
+           SUM(amount)::double precision AS total_rebate
+    FROM user_affiliate_ledger
+    WHERE user_id = $1
+      AND source_user_id IS NOT NULL
+      AND action = 'accrue'
+    GROUP BY source_user_id
+) rebate ON rebate.source_user_id = ua.user_id
 WHERE ua.inviter_id = $1
-GROUP BY ua.user_id, u.email, u.username, ua.created_at
 ORDER BY ua.created_at DESC
-LIMIT $2`, inviterID, limit)
+LIMIT $2 OFFSET $3`, inviterID, pageSize, offset)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -372,15 +419,15 @@ LIMIT $2`, inviterID, limit)
 		var item service.AffiliateInvitee
 		var createdAt time.Time
 		if err := rows.Scan(&item.UserID, &item.Email, &item.Username, &createdAt, &item.TotalRebate); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		item.CreatedAt = &createdAt
 		invitees = append(invitees, item)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	return invitees, nil
+	return invitees, total, nil
 }
 
 func (r *affiliateRepository) ListAffiliateInviteRecords(ctx context.Context, filter service.AffiliateRecordFilter) ([]service.AffiliateInviteRecord, int64, error) {

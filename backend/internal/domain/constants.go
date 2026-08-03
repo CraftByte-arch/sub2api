@@ -12,9 +12,26 @@ const (
 
 // Role constants
 const (
-	RoleAdmin = "admin"
-	RoleUser  = "user"
+	RoleAdmin            = "admin"
+	RoleUser             = "user"
+	RoleInvitationExpert = "invitation_expert"
 )
+
+// IsUserRole reports whether role is one of the supported panel roles.
+func IsUserRole(role string) bool {
+	switch role {
+	case RoleAdmin, RoleUser, RoleInvitationExpert:
+		return true
+	default:
+		return false
+	}
+}
+
+// IsPrivilegedUserRole reports roles whose assignment grants access beyond a
+// normal user's self-service surface and therefore requires step-up approval.
+func IsPrivilegedUserRole(role string) bool {
+	return role == RoleAdmin || role == RoleInvitationExpert
+}
 
 // Platform constants
 const (

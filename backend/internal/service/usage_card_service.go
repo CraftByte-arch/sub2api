@@ -8,6 +8,8 @@ import (
 	"time"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 )
 
 var (
@@ -17,12 +19,37 @@ var (
 )
 
 type UsageCardService struct {
-	repo        UsageCardRepository
-	settingRepo SettingRepository
+	repo                    UsageCardRepository
+	settingRepo             SettingRepository
+	balanceCacheInvalidator interface {
+		InvalidateUserBalance(context.Context, int64) error
+	}
+	authCacheInvalidator APIKeyAuthCacheInvalidator
 }
 
 func NewUsageCardService(repo UsageCardRepository, settingRepo SettingRepository) *UsageCardService {
 	return &UsageCardService{repo: repo, settingRepo: settingRepo}
+}
+
+// SetBalanceCacheInvalidator connects the conversion path to the billing
+// cache after both services have been constructed. The dependency is optional
+// so usage-card tests and non-cache deployments remain lightweight.
+func (s *UsageCardService) SetBalanceCacheInvalidator(invalidator interface {
+	InvalidateUserBalance(context.Context, int64) error
+}) {
+	if s == nil {
+		return
+	}
+	s.balanceCacheInvalidator = invalidator
+}
+
+// SetAuthCacheInvalidator connects the conversion path to API-key auth-cache
+// invalidation after the API-key service is constructed.
+func (s *UsageCardService) SetAuthCacheInvalidator(invalidator APIKeyAuthCacheInvalidator) {
+	if s == nil {
+		return
+	}
+	s.authCacheInvalidator = invalidator
 }
 
 func (s *UsageCardService) IsEnabled(ctx context.Context) bool {
@@ -221,6 +248,16 @@ func (s *UsageCardService) ListCards(ctx context.Context, userID *int64, status 
 	return s.repo.ListCards(ctx, userID, strings.TrimSpace(status))
 }
 
+func (s *UsageCardService) ListCardsPaginated(ctx context.Context, userID *int64, status string, params pagination.PaginationParams) ([]UserUsageCard, *pagination.PaginationResult, error) {
+	if s == nil || s.repo == nil {
+		return []UserUsageCard{}, &pagination.PaginationResult{
+			Page:     params.Page,
+			PageSize: params.Limit(),
+		}, nil
+	}
+	return s.repo.ListCardsPaginated(ctx, userID, strings.TrimSpace(status), params)
+}
+
 func (s *UsageCardService) DeductFirstAvailable(ctx context.Context, userID int64, amount float64, now time.Time) (*UserUsageCard, error) {
 	if s == nil || s.repo == nil {
 		return nil, ErrUsageCardUnavailable
@@ -243,6 +280,36 @@ func (s *UsageCardService) CancelCard(ctx context.Context, cardID int64, operato
 		return ErrUsageCardNotFound
 	}
 	return s.repo.UpdateCardStatus(ctx, cardID, UsageCardStatusCancelled, reason, operatorID)
+}
+
+// ConvertCardToBalance moves only the card's current remaining amount to the
+// user's long-term balance and revokes the card atomically.
+func (s *UsageCardService) ConvertCardToBalance(ctx context.Context, cardID int64, operatorID int64, reason string) (*UsageCardConversion, error) {
+	if s == nil || s.repo == nil {
+		return nil, ErrUsageCardNotFound
+	}
+	conversion, err := s.repo.ConvertCardToBalance(ctx, cardID, operatorID, reason)
+	if err != nil {
+		return nil, err
+	}
+	if conversion == nil {
+		return nil, ErrUsageCardUnavailable
+	}
+
+	// The database transaction has already committed. Cache invalidation must
+	// not turn a successful conversion into an error, but should happen before
+	// the request returns so the next billing check observes the new balance.
+	cacheCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if s.balanceCacheInvalidator != nil {
+		if err := s.balanceCacheInvalidator.InvalidateUserBalance(cacheCtx, conversion.UserID); err != nil {
+			logger.LegacyPrintf("service.usage_card", "invalidate balance cache after conversion failed: user_id=%d err=%v", conversion.UserID, err)
+		}
+	}
+	if s.authCacheInvalidator != nil {
+		s.authCacheInvalidator.InvalidateAuthCacheByUserID(cacheCtx, conversion.UserID)
+	}
+	return conversion, nil
 }
 
 func (s *UsageCardService) SuspendCard(ctx context.Context, cardID int64, operatorID int64, reason string) error {

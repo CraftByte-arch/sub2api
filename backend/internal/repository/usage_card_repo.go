@@ -5,8 +5,11 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
+	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
@@ -110,6 +113,9 @@ func (r *usageCardRepository) CreateCard(ctx context.Context, input service.Crea
 	if r == nil || r.db == nil {
 		return nil, errors.New("usage card repository db is nil")
 	}
+	if !usageCardAmountsValid(input.TotalLimitUSD, 0) {
+		return nil, service.ErrUsageCardInvalidBalance
+	}
 	row := r.db.QueryRowContext(ctx, `
 		INSERT INTO user_usage_cards (
 			user_id, plan_id, name, starts_at, expires_at, total_limit_usd,
@@ -198,6 +204,10 @@ func (r *usageCardRepository) ListAvailableCards(ctx context.Context, userID int
 			AND status = 'active'
 			AND starts_at <= $2
 			AND expires_at > $2
+			AND total_limit_usd NOT IN ('NaN'::numeric, 'Infinity'::numeric, '-Infinity'::numeric)
+			AND used_usd NOT IN ('NaN'::numeric, 'Infinity'::numeric, '-Infinity'::numeric)
+			AND total_limit_usd > 0
+			AND used_usd >= 0
 			AND used_usd < total_limit_usd
 		ORDER BY expires_at ASC, (total_limit_usd - used_usd) ASC, created_at ASC, id ASC
 	`, userID, now)
@@ -228,19 +238,58 @@ func (r *usageCardRepository) ListCards(ctx context.Context, userID *int64, stat
 	return r.listCards(ctx, userID, status, false)
 }
 
+func (r *usageCardRepository) ListCardsPaginated(ctx context.Context, userID *int64, status string, params pagination.PaginationParams) ([]service.UserUsageCard, *pagination.PaginationResult, error) {
+	if r == nil || r.db == nil {
+		return nil, nil, errors.New("usage card repository db is nil")
+	}
+
+	where, args := usageCardListWhere(userID, status, false)
+	var total int64
+	if err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM user_usage_cards c "+where, args...).Scan(&total); err != nil {
+		return nil, nil, err
+	}
+
+	query := usageCardListSelect + where + usageCardListOrder(params)
+	args = append(args, params.Limit(), params.Offset())
+	query += fmt.Sprintf(" LIMIT $%d OFFSET $%d", len(args)-1, len(args))
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+
+	cards, err := scanUsageCardRows(rows)
+	if err != nil {
+		return nil, nil, err
+	}
+	return cards, paginationResultFromTotal(total, params), nil
+}
+
 func (r *usageCardRepository) listCards(ctx context.Context, userID *int64, status string, includeDeleted bool) ([]service.UserUsageCard, error) {
 	if r == nil || r.db == nil {
 		return nil, errors.New("usage card repository db is nil")
 	}
-	query := `
-		SELECT c.id, c.user_id, c.plan_id, c.name, c.starts_at, c.expires_at, c.total_limit_usd,
-			c.used_usd, c.status, c.source, c.source_order_id, c.source_redeem_code,
-			c.assigned_by, c.notes, c.created_at, c.updated_at, c.deleted_at,
-			u.email, u.username
-		FROM user_usage_cards c
-		LEFT JOIN users u ON u.id = c.user_id
-		WHERE 1 = 1
-	`
+	where, args := usageCardListWhere(userID, status, includeDeleted)
+	query := usageCardListSelect + where + " ORDER BY c.expires_at ASC, c.created_at DESC, c.id DESC"
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanUsageCardRows(rows)
+}
+
+const usageCardListSelect = `
+			SELECT c.id, c.user_id, c.plan_id, c.name, c.starts_at, c.expires_at, c.total_limit_usd,
+				c.used_usd, c.status, c.source, c.source_order_id, c.source_redeem_code,
+				c.assigned_by, c.notes, c.created_at, c.updated_at, c.deleted_at,
+				u.email, u.username
+			FROM user_usage_cards c
+			LEFT JOIN users u ON u.id = c.user_id
+`
+
+func usageCardListWhere(userID *int64, status string, includeDeleted bool) (string, []any) {
+	query := " WHERE 1 = 1"
 	args := []any{}
 	if userID != nil && *userID > 0 {
 		args = append(args, *userID)
@@ -249,11 +298,11 @@ func (r *usageCardRepository) listCards(ctx context.Context, userID *int64, stat
 	if status != "" {
 		switch status {
 		case service.UsageCardStatusActive:
-			args = append(args, time.Now())
-			query += fmt.Sprintf(" AND c.status = '%s' AND c.expires_at > $%d AND c.used_usd < c.total_limit_usd", service.UsageCardStatusActive, len(args))
+			args = append(args, service.UsageCardStatusActive, time.Now())
+			query += fmt.Sprintf(" AND c.status = $%d AND c.expires_at > $%d AND c.total_limit_usd NOT IN ('NaN'::numeric, 'Infinity'::numeric, '-Infinity'::numeric) AND c.used_usd NOT IN ('NaN'::numeric, 'Infinity'::numeric, '-Infinity'::numeric) AND c.total_limit_usd > 0 AND c.used_usd >= 0 AND c.used_usd < c.total_limit_usd", len(args)-1, len(args))
 		case service.UsageCardStatusExpired:
-			args = append(args, time.Now())
-			query += fmt.Sprintf(" AND (c.status = '%s' OR (c.status = '%s' AND c.expires_at <= $%d))", service.UsageCardStatusExpired, service.UsageCardStatusActive, len(args))
+			args = append(args, service.UsageCardStatusExpired, service.UsageCardStatusActive, time.Now())
+			query += fmt.Sprintf(" AND (c.status = $%d OR (c.status = $%d AND c.expires_at <= $%d))", len(args)-2, len(args)-1, len(args))
 		default:
 			args = append(args, status)
 			query += fmt.Sprintf(" AND c.status = $%d", len(args))
@@ -262,12 +311,27 @@ func (r *usageCardRepository) listCards(ctx context.Context, userID *int64, stat
 	if !includeDeleted {
 		query += " AND c.deleted_at IS NULL"
 	}
-	query += " ORDER BY c.expires_at ASC, c.created_at DESC, c.id DESC"
-	rows, err := r.db.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, err
+	return query, args
+}
+
+func usageCardListOrder(params pagination.PaginationParams) string {
+	direction := "ASC"
+	if params.NormalizedSortOrder(pagination.SortOrderAsc) == pagination.SortOrderDesc {
+		direction = "DESC"
 	}
-	defer rows.Close()
+	switch strings.ToLower(strings.TrimSpace(params.SortBy)) {
+	case "name":
+		return " ORDER BY c.name " + direction + ", c.id DESC"
+	case "status":
+		return " ORDER BY c.status " + direction + ", c.id DESC"
+	case "expires_at":
+		return " ORDER BY c.expires_at " + direction + ", c.created_at DESC, c.id DESC"
+	default:
+		return " ORDER BY c.expires_at ASC, c.created_at DESC, c.id DESC"
+	}
+}
+
+func scanUsageCardRows(rows *sql.Rows) ([]service.UserUsageCard, error) {
 	cards := make([]service.UserUsageCard, 0)
 	for rows.Next() {
 		card, err := scanUserUsageCardWithUser(rows)
@@ -283,6 +347,9 @@ func (r *usageCardRepository) DeductCard(ctx context.Context, cardID, userID int
 	if r == nil || r.db == nil {
 		return nil, errors.New("usage card repository db is nil")
 	}
+	if !usageCardDeductionAmountValid(amount) {
+		return nil, service.ErrUsageCardUnavailable
+	}
 	row := r.db.QueryRowContext(ctx, `
 		UPDATE user_usage_cards
 		SET used_usd = used_usd + $1,
@@ -297,7 +364,12 @@ func (r *usageCardRepository) DeductCard(ctx context.Context, cardID, userID int
 			AND status = 'active'
 			AND starts_at <= $4
 			AND expires_at > $4
+			AND total_limit_usd NOT IN ('NaN'::numeric, 'Infinity'::numeric, '-Infinity'::numeric)
+			AND used_usd NOT IN ('NaN'::numeric, 'Infinity'::numeric, '-Infinity'::numeric)
+			AND total_limit_usd > 0
+			AND used_usd >= 0
 			AND used_usd < total_limit_usd
+			AND used_usd + $1 <= total_limit_usd
 		RETURNING id, user_id, plan_id, name, starts_at, expires_at, total_limit_usd,
 			used_usd, status, source, source_order_id, source_redeem_code,
 			assigned_by, notes, created_at, updated_at, deleted_at
@@ -350,6 +422,138 @@ func (r *usageCardRepository) UpdateCardStatus(ctx context.Context, cardID int64
 		return service.ErrUsageCardNotFound
 	}
 	return nil
+}
+
+// ConvertCardToBalance performs the usage-card conversion as one database
+// transaction. The card row is locked before its remaining amount is read so
+// a concurrent billing deduction cannot spend the same amount twice.
+func (r *usageCardRepository) ConvertCardToBalance(ctx context.Context, cardID, operatorID int64, reason string) (_ *service.UsageCardConversion, err error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("usage card repository db is nil")
+	}
+	if cardID <= 0 {
+		return nil, service.ErrUsageCardNotFound
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if tx != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	var (
+		userID        int64
+		totalLimitUSD float64
+		usedUSD       float64
+		status        string
+		startsAt      time.Time
+		expiresAt     time.Time
+	)
+	err = tx.QueryRowContext(ctx, `
+		SELECT user_id, total_limit_usd, used_usd, status, starts_at, expires_at
+		FROM user_usage_cards
+		WHERE id = $1 AND deleted_at IS NULL
+		FOR UPDATE
+	`, cardID).Scan(&userID, &totalLimitUSD, &usedUSD, &status, &startsAt, &expiresAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, service.ErrUsageCardNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now()
+	if !usageCardAmountsValid(totalLimitUSD, usedUSD) {
+		return nil, service.ErrUsageCardInvalidBalance
+	}
+	remainingUSD := totalLimitUSD - usedUSD
+	if status != service.UsageCardStatusActive || remainingUSD <= 0 || now.Before(startsAt) || !now.Before(expiresAt) {
+		return nil, service.ErrUsageCardUnavailable
+	}
+
+	code, err := service.GenerateRedeemCode()
+	if err != nil {
+		return nil, err
+	}
+	reason = strings.TrimSpace(reason)
+	note := fmt.Sprintf("usage card #%d converted to long-term balance: $%.8f; operator_id=%d", cardID, remainingUSD, operatorID)
+	if reason != "" {
+		note += "; reason=" + reason
+	}
+
+	var newBalanceUSD float64
+	err = tx.QueryRowContext(ctx, `
+		UPDATE users
+		SET balance = balance + $1,
+			total_recharged = total_recharged + $1,
+			updated_at = NOW()
+		WHERE id = $2 AND deleted_at IS NULL
+		RETURNING balance
+	`, remainingUSD, userID).Scan(&newBalanceUSD)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, service.ErrUserNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO redeem_codes (code, type, value, status, used_by, used_at, notes, validity_days)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, 0)
+	`, code, service.AdjustmentTypeAdminBalance, remainingUSD, service.StatusUsed, userID, now, note); err != nil {
+		return nil, err
+	}
+
+	res, err := tx.ExecContext(ctx, `
+		UPDATE user_usage_cards
+		SET status = $1,
+			notes = CASE
+				WHEN notes IS NULL OR notes = '' THEN $2
+				ELSE notes || E'\n' || $2
+			END,
+			updated_at = NOW()
+		WHERE id = $3
+			AND deleted_at IS NULL
+			AND status = $4
+	`, service.UsageCardStatusCancelled, note, cardID, service.UsageCardStatusActive)
+	if err != nil {
+		return nil, err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+	if affected == 0 {
+		return nil, service.ErrUsageCardUnavailable
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	tx = nil
+	return &service.UsageCardConversion{
+		UserID:        userID,
+		AmountUSD:     remainingUSD,
+		NewBalanceUSD: newBalanceUSD,
+	}, nil
+}
+
+func usageCardAmountsValid(totalLimitUSD, usedUSD float64) bool {
+	return !math.IsNaN(totalLimitUSD) &&
+		!math.IsInf(totalLimitUSD, 0) &&
+		!math.IsNaN(usedUSD) &&
+		!math.IsInf(usedUSD, 0) &&
+		totalLimitUSD > 0 &&
+		usedUSD >= 0 &&
+		usedUSD <= totalLimitUSD
+}
+
+func usageCardDeductionAmountValid(amount float64) bool {
+	return !math.IsNaN(amount) && !math.IsInf(amount, 0) && amount > 0
 }
 
 type scanner interface {

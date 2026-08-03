@@ -730,6 +730,9 @@ function buildSelfNavItems(withDashboard: boolean): NavItem[] {
     { path: '/order-statistics', label: t('nav.orderStatistics'), icon: ChartIcon, hideInSimpleMode: true, featureFlag: flagPayment },
     { path: '/redeem', label: t('nav.redeem'), icon: GiftIcon, hideInSimpleMode: true },
     { path: '/affiliate', label: t('nav.affiliate'), icon: UsersIcon, hideInSimpleMode: true, featureFlag: flagAffiliate },
+    ...(authStore.user?.role === 'invitation_expert'
+      ? [{ path: '/my-invites', label: t('nav.myInvites'), icon: UsersIcon, hideInSimpleMode: true, featureFlag: flagAffiliate }]
+      : []),
     { path: '/profile', label: t('nav.profile'), icon: UserIcon },
     ...customMenuItemsForUser.value.map((item): NavItem => ({
       path: `/custom/${item.id}`,
@@ -789,6 +792,7 @@ const adminNavItems = computed((): NavItem[] => {
       ],
     },
     { path: '/admin/subscriptions', label: t('nav.subscriptions'), icon: CreditCardIcon, hideInSimpleMode: true, featureFlag: flagLegacySubscription },
+    { path: '/admin/balance-overview', label: t('nav.balanceOverview'), icon: CreditCardIcon, hideInSimpleMode: true },
     { path: '/admin/usage-cards', label: t('nav.usageCardManagement'), icon: CreditCardIcon, hideInSimpleMode: true, featureFlag: flagUsageCard },
     { path: '/admin/accounts', label: t('nav.accounts'), icon: GlobeIcon },
     { path: '/admin/announcements', label: t('nav.announcements'), icon: BellIcon },

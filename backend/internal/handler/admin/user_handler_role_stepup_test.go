@@ -28,6 +28,13 @@ func setupRoleStepUpRouter(t *testing.T) (*gin.Engine, *stubAdminService) {
 		Role:   service.RoleAdmin,
 		Status: service.StatusActive,
 	})
+	// 已是邀请达人的目标用户，验证重复授予同一特权角色不触发门控。
+	adminSvc.users = append(adminSvc.users, service.User{
+		ID:     3,
+		Email:  "expert@example.com",
+		Role:   service.RoleInvitationExpert,
+		Status: service.StatusActive,
+	})
 
 	h := NewUserHandler(adminSvc, nil, nil, nil, nil, nil, nil)
 	router.POST("/api/v1/admin/users", h.Create)
@@ -60,6 +67,20 @@ func TestUpdateUserKeepAdminRoleSkipsStepUp(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 }
 
+func TestUpdateUserPromoteToInvitationExpertRequiresStepUp(t *testing.T) {
+	router, _ := setupRoleStepUpRouter(t)
+
+	rec := doJSON(t, router, http.MethodPut, "/api/v1/admin/users/1", map[string]any{"role": "invitation_expert"})
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+func TestUpdateUserKeepInvitationExpertRoleSkipsStepUp(t *testing.T) {
+	router, _ := setupRoleStepUpRouter(t)
+
+	rec := doJSON(t, router, http.MethodPut, "/api/v1/admin/users/3", map[string]any{"role": "invitation_expert"})
+	require.Equal(t, http.StatusOK, rec.Code)
+}
+
 func TestUpdateUserRegularRoleSkipsStepUp(t *testing.T) {
 	router, _ := setupRoleStepUpRouter(t)
 
@@ -72,6 +93,15 @@ func TestCreateAdminUserRequiresStepUp(t *testing.T) {
 
 	rec := doJSON(t, router, http.MethodPost, "/api/v1/admin/users", map[string]any{
 		"email": "new-admin@example.com", "password": "pass123", "role": "admin",
+	})
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+func TestCreateInvitationExpertUserRequiresStepUp(t *testing.T) {
+	router, _ := setupRoleStepUpRouter(t)
+
+	rec := doJSON(t, router, http.MethodPost, "/api/v1/admin/users", map[string]any{
+		"email": "new-expert@example.com", "password": "pass123", "role": "invitation_expert",
 	})
 	require.Equal(t, http.StatusUnauthorized, rec.Code)
 }

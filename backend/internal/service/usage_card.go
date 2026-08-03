@@ -10,6 +10,9 @@ var (
 	ErrUsageCardNotFound     = infraerrors.NotFound("USAGE_CARD_NOT_FOUND", "usage card not found")
 	ErrUsageCardPlanNotFound = infraerrors.NotFound("USAGE_CARD_PLAN_NOT_FOUND", "usage card plan not found")
 	ErrUsageCardUnavailable  = infraerrors.Forbidden("USAGE_CARD_UNAVAILABLE", "usage card is not available")
+	// ErrUsageCardInvalidBalance keeps damaged card rows from being converted
+	// into a larger long-term balance than their original value.
+	ErrUsageCardInvalidBalance = infraerrors.Conflict("USAGE_CARD_INVALID_BALANCE", "usage card balance data is invalid")
 )
 
 type UsageCardPlan struct {
@@ -51,6 +54,14 @@ type UserUsageCard struct {
 type UsageCardSummary struct {
 	AvailableCount        int
 	AvailableRemainingUSD float64
+}
+
+// UsageCardConversion records the amount moved from a usage card into the
+// user's long-term balance.
+type UsageCardConversion struct {
+	UserID        int64
+	AmountUSD     float64
+	NewBalanceUSD float64
 }
 
 type UsageCardUser struct {

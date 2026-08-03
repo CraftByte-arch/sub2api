@@ -100,6 +100,54 @@ LIMIT 1`, u.ID)
 	require.InDelta(t, 12.34, historyAfter, 1e-9)
 }
 
+func TestAffiliateRepository_ListInviteesPageReturnsActiveCurrentEmails(t *testing.T) {
+	ctx := context.Background()
+	tx := testEntTx(t)
+	txCtx := dbent.NewTxContext(ctx, tx)
+	client := tx.Client()
+	repo := NewAffiliateRepository(client, integrationDB)
+
+	inviter := mustCreateUser(t, client, &service.User{
+		Email:        fmt.Sprintf("affiliate-page-inviter-%d@example.com", time.Now().UnixNano()),
+		PasswordHash: "hash",
+		Role:         service.RoleInvitationExpert,
+		Status:       service.StatusActive,
+		Concurrency:  5,
+	})
+	activeInvitee := mustCreateUser(t, client, &service.User{
+		Email:        "active.current.email@example.com",
+		PasswordHash: "hash",
+		Role:         service.RoleUser,
+		Status:       service.StatusActive,
+		Concurrency:  5,
+	})
+	deletedInvitee := mustCreateUser(t, client, &service.User{
+		Email:        fmt.Sprintf("affiliate-page-deleted-%d@example.com", time.Now().UnixNano()),
+		PasswordHash: "hash",
+		Role:         service.RoleUser,
+		Status:       service.StatusActive,
+		Concurrency:  5,
+	})
+
+	for _, userID := range []int64{inviter.ID, activeInvitee.ID, deletedInvitee.ID} {
+		_, err := repo.EnsureUserAffiliate(txCtx, userID)
+		require.NoError(t, err)
+	}
+	for _, inviteeID := range []int64{activeInvitee.ID, deletedInvitee.ID} {
+		bound, err := repo.BindInviter(txCtx, inviteeID, inviter.ID)
+		require.NoError(t, err)
+		require.True(t, bound)
+	}
+	require.NoError(t, client.User.DeleteOneID(deletedInvitee.ID).Exec(txCtx))
+
+	invitees, total, err := repo.ListInviteesPage(txCtx, inviter.ID, 1, 20)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), total)
+	require.Len(t, invitees, 1)
+	require.Equal(t, activeInvitee.ID, invitees[0].UserID)
+	require.Equal(t, "active.current.email@example.com", invitees[0].Email)
+}
+
 // TestAffiliateRepository_AccrueQuota_ReusesOuterTransaction guards the
 // cross-layer tx propagation invariant: when AccrueQuota is called with a ctx
 // that already carries a transaction (via dbent.NewTxContext), repo.withTx
