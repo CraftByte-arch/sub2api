@@ -446,6 +446,7 @@ export interface SystemSettings {
   contact_info: string;
   doc_url: string;
   home_content: string;
+  compact_home_enabled: boolean;
   hide_ccs_import_button: boolean;
   legacy_subscription_purchase_enabled: boolean;
   legacy_subscription_visible: boolean;
@@ -776,6 +777,7 @@ export interface UpdateSettingsRequest {
   contact_info?: string;
   doc_url?: string;
   home_content?: string;
+  compact_home_enabled?: boolean;
   hide_ccs_import_button?: boolean;
   legacy_subscription_purchase_enabled?: boolean;
   legacy_subscription_visible?: boolean;
