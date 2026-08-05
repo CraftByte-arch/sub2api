@@ -111,6 +111,14 @@ func TestMigrationsRunner_IsIdempotent_AndSchemaIsUpToDate(t *testing.T) {
 		"'mixed'",
 	)
 
+	// group_usage_hourly: durable source for the administrator group summary.
+	requireColumn(t, tx, "group_usage_hourly", "group_id", "bigint", 0, false)
+	requireColumn(t, tx, "group_usage_hourly", "bucket_start", "timestamp with time zone", 0, false)
+	requireColumn(t, tx, "group_usage_hourly", "actual_cost", "numeric", 0, false)
+	requireIndex(t, tx, "group_usage_hourly", "idx_group_usage_hourly_bucket_start")
+	requireColumn(t, tx, "group_usage_aggregation_state", "ready", "boolean", 0, false)
+	requireColumn(t, tx, "group_usage_aggregation_state", "cursor", "timestamp with time zone", 0, true)
+
 	// usage_billing_dedup: billing idempotency narrow table
 	var usageBillingDedupRegclass sql.NullString
 	require.NoError(t, tx.QueryRowContext(context.Background(), "SELECT to_regclass('public.usage_billing_dedup')").Scan(&usageBillingDedupRegclass))

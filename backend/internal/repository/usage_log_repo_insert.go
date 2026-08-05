@@ -220,6 +220,7 @@ func (r *usageLogRepository) createSingle(ctx context.Context, sqlq sqlExecutor,
 	}
 
 	query := `
+		WITH inserted AS (
 		INSERT INTO usage_logs (
 			user_id,
 			api_key_id,
@@ -288,7 +289,9 @@ func (r *usageLogRepository) createSingle(ctx context.Context, sqlq sqlExecutor,
 			$24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57
 		)
 		ON CONFLICT (request_id, api_key_id) DO NOTHING
-		RETURNING id, created_at
+		RETURNING id, created_at, group_id, actual_cost
+		)` + groupUsageAggregationCTEs() + groupUsageAggregationWriteCTE() + `
+		SELECT id, created_at FROM inserted
 	`
 
 	if err := scanSingleRow(ctx, sqlq, query, prepared.args, &log.ID, &log.CreatedAt); err != nil {
@@ -886,8 +889,8 @@ func buildUsageLogBatchInsertQuery(keys []string, preparedByKey map[string]usage
 				created_at
 			FROM input
 			ON CONFLICT (request_id, api_key_id) DO NOTHING
-			RETURNING request_id, api_key_id, id, created_at
-		),
+			RETURNING request_id, api_key_id, id, created_at, group_id, actual_cost
+		)` + groupUsageAggregationCTEs() + groupUsageAggregationWriteCTE() + `,
 		resolved AS (
 			SELECT
 				input.input_idx,
@@ -1010,7 +1013,8 @@ func buildUsageLogBestEffortInsertQuery(preparedList []usageLogInsertPrepared) (
 	}
 
 	_, _ = query.WriteString(`
-		)
+		),
+		inserted AS (
 		INSERT INTO usage_logs (
 			user_id,
 			api_key_id,
@@ -1132,13 +1136,16 @@ func buildUsageLogBestEffortInsertQuery(preparedList []usageLogInsertPrepared) (
 			created_at
 		FROM input
 		ON CONFLICT (request_id, api_key_id) DO NOTHING
-	`)
+		RETURNING group_id, actual_cost, created_at
+		)` + groupUsageAggregationCTEs() + `
+	` + groupUsageBucketUpsertSQL)
 
 	return query.String(), args
 }
 
 func execUsageLogInsertNoResult(ctx context.Context, sqlq sqlExecutor, prepared usageLogInsertPrepared) error {
 	_, err := sqlq.ExecContext(ctx, `
+		WITH inserted AS (
 		INSERT INTO usage_logs (
 			user_id,
 			api_key_id,
@@ -1207,7 +1214,9 @@ func execUsageLogInsertNoResult(ctx context.Context, sqlq sqlExecutor, prepared 
 			$24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57
 		)
 		ON CONFLICT (request_id, api_key_id) DO NOTHING
-	`, prepared.args...)
+		RETURNING group_id, actual_cost, created_at
+		)`+groupUsageAggregationCTEs()+`
+	`+groupUsageBucketUpsertSQL, prepared.args...)
 	return err
 }
 

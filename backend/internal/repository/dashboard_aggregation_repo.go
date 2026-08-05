@@ -215,7 +215,12 @@ func (r *dashboardAggregationRepository) CleanupUsageLogs(ctx context.Context, c
 		return err
 	}
 	if isPartitioned {
-		return r.dropUsageLogsPartitions(ctx, cutoff)
+		if err := r.dropUsageLogsPartitions(ctx, cutoff); err != nil {
+			return err
+		}
+		// Partition cleanup retains the cutoff month, so use its actual boundary
+		// rather than the requested timestamp for matching bucket retention.
+		return newGroupUsageAggregation(r.sql).CleanupBefore(ctx, truncateToMonthUTC(cutoff))
 	}
 	for {
 		res, err := r.sql.ExecContext(ctx, `
@@ -236,7 +241,7 @@ func (r *dashboardAggregationRepository) CleanupUsageLogs(ctx context.Context, c
 			return err
 		}
 		if affected < usageLogsCleanupBatchSize {
-			return nil
+			return newGroupUsageAggregation(r.sql).CleanupBefore(ctx, cutoff)
 		}
 	}
 }

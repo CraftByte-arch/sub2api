@@ -95,6 +95,7 @@ func TestUsageLogRepositoryCreate_BatchPathConcurrent(t *testing.T) {
 	user := mustCreateUser(t, client, &service.User{Email: fmt.Sprintf("usage-batch-%d@example.com", time.Now().UnixNano())})
 	apiKey := mustCreateApiKey(t, client, &service.APIKey{UserID: user.ID, Key: "sk-usage-batch-" + uuid.NewString(), Name: "k"})
 	account := mustCreateAccount(t, client, &service.Account{Name: "acc-usage-batch-" + uuid.NewString()})
+	group := mustCreateGroup(t, client, &service.Group{Name: "usage-batch-" + uuid.NewString()})
 
 	const total = 16
 	results := make([]bool, total)
@@ -111,6 +112,7 @@ func TestUsageLogRepositoryCreate_BatchPathConcurrent(t *testing.T) {
 			AccountID:    account.ID,
 			RequestID:    uuid.NewString(),
 			Model:        "claude-3",
+			GroupID:      &group.ID,
 			InputTokens:  10 + i,
 			OutputTokens: 20 + i,
 			TotalCost:    0.5,
@@ -133,6 +135,9 @@ func TestUsageLogRepositoryCreate_BatchPathConcurrent(t *testing.T) {
 	var count int
 	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM usage_logs WHERE api_key_id = $1", apiKey.ID).Scan(&count))
 	require.Equal(t, total, count)
+	var actualCost float64
+	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT COALESCE(SUM(actual_cost), 0) FROM group_usage_hourly WHERE group_id = $1", group.ID).Scan(&actualCost))
+	require.InDelta(t, float64(total)*0.5, actualCost, 1e-9)
 }
 
 func TestUsageLogRepositoryCreate_BatchPathDuplicateRequestID(t *testing.T) {
@@ -143,6 +148,7 @@ func TestUsageLogRepositoryCreate_BatchPathDuplicateRequestID(t *testing.T) {
 	user := mustCreateUser(t, client, &service.User{Email: fmt.Sprintf("usage-dup-%d@example.com", time.Now().UnixNano())})
 	apiKey := mustCreateApiKey(t, client, &service.APIKey{UserID: user.ID, Key: "sk-usage-dup-" + uuid.NewString(), Name: "k"})
 	account := mustCreateAccount(t, client, &service.Account{Name: "acc-usage-dup-" + uuid.NewString()})
+	group := mustCreateGroup(t, client, &service.Group{Name: "usage-dup-" + uuid.NewString()})
 	requestID := uuid.NewString()
 
 	log1 := &service.UsageLog{
@@ -151,6 +157,7 @@ func TestUsageLogRepositoryCreate_BatchPathDuplicateRequestID(t *testing.T) {
 		AccountID:    account.ID,
 		RequestID:    requestID,
 		Model:        "claude-3",
+		GroupID:      &group.ID,
 		InputTokens:  10,
 		OutputTokens: 20,
 		TotalCost:    0.5,
@@ -163,6 +170,7 @@ func TestUsageLogRepositoryCreate_BatchPathDuplicateRequestID(t *testing.T) {
 		AccountID:    account.ID,
 		RequestID:    requestID,
 		Model:        "claude-3",
+		GroupID:      &group.ID,
 		InputTokens:  10,
 		OutputTokens: 20,
 		TotalCost:    0.5,
@@ -181,6 +189,9 @@ func TestUsageLogRepositoryCreate_BatchPathDuplicateRequestID(t *testing.T) {
 	var count int
 	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM usage_logs WHERE request_id = $1 AND api_key_id = $2", requestID, apiKey.ID).Scan(&count))
 	require.Equal(t, 1, count)
+	var actualCost float64
+	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT COALESCE(SUM(actual_cost), 0) FROM group_usage_hourly WHERE group_id = $1", group.ID).Scan(&actualCost))
+	require.InDelta(t, 0.5, actualCost, 1e-9)
 }
 
 func TestUsageLogRepositoryFlushCreateBatch_DeduplicatesSameKeyInMemory(t *testing.T) {
@@ -251,6 +262,7 @@ func TestUsageLogRepositoryCreateBestEffort_BatchPathDuplicateRequestID(t *testi
 	user := mustCreateUser(t, client, &service.User{Email: fmt.Sprintf("usage-best-effort-dup-%d@example.com", time.Now().UnixNano())})
 	apiKey := mustCreateApiKey(t, client, &service.APIKey{UserID: user.ID, Key: "sk-usage-best-effort-dup-" + uuid.NewString(), Name: "k"})
 	account := mustCreateAccount(t, client, &service.Account{Name: "acc-usage-best-effort-dup-" + uuid.NewString()})
+	group := mustCreateGroup(t, client, &service.Group{Name: "usage-best-effort-dup-" + uuid.NewString()})
 	requestID := uuid.NewString()
 
 	log1 := &service.UsageLog{
@@ -259,6 +271,7 @@ func TestUsageLogRepositoryCreateBestEffort_BatchPathDuplicateRequestID(t *testi
 		AccountID:    account.ID,
 		RequestID:    requestID,
 		Model:        "claude-3",
+		GroupID:      &group.ID,
 		InputTokens:  10,
 		OutputTokens: 20,
 		TotalCost:    0.5,
@@ -271,6 +284,7 @@ func TestUsageLogRepositoryCreateBestEffort_BatchPathDuplicateRequestID(t *testi
 		AccountID:    account.ID,
 		RequestID:    requestID,
 		Model:        "claude-3",
+		GroupID:      &group.ID,
 		InputTokens:  10,
 		OutputTokens: 20,
 		TotalCost:    0.5,
@@ -284,7 +298,12 @@ func TestUsageLogRepositoryCreateBestEffort_BatchPathDuplicateRequestID(t *testi
 	require.Eventually(t, func() bool {
 		var count int
 		err := integrationDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM usage_logs WHERE request_id = $1 AND api_key_id = $2", requestID, apiKey.ID).Scan(&count)
-		return err == nil && count == 1
+		if err != nil || count != 1 {
+			return false
+		}
+		var actualCost float64
+		err = integrationDB.QueryRowContext(ctx, "SELECT COALESCE(SUM(actual_cost), 0) FROM group_usage_hourly WHERE group_id = $1", group.ID).Scan(&actualCost)
+		return err == nil && actualCost == 0.5
 	}, 3*time.Second, 20*time.Millisecond)
 }
 
