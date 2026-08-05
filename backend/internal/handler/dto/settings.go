@@ -219,6 +219,7 @@ type SystemSettings struct {
 	DefaultUserRPMLimit                  int                          `json:"default_user_rpm_limit"`
 	DefaultSubscriptions                 []DefaultSubscriptionSetting `json:"default_subscriptions"`
 	DefaultUsageCards                    []DefaultUsageCardSetting    `json:"default_usage_cards"`
+	ImageStudioEnabled                   bool                         `json:"image_studio_enabled"`
 	ImageStudioAsyncConcurrency          int                          `json:"image_studio_async_concurrency"`
 	ImageStudioRetentionValue            int                          `json:"image_studio_retention_value"`
 	ImageStudioRetentionUnit             string                       `json:"image_studio_retention_unit"`
@@ -432,6 +433,7 @@ type PublicSettings struct {
 	TablePageSizeOptions              []int                    `json:"table_page_size_options"`
 	CustomMenuItems                   []CustomMenuItem         `json:"custom_menu_items"`
 	CustomEndpoints                   []CustomEndpoint         `json:"custom_endpoints"`
+	ImageStudioEnabled                bool                     `json:"image_studio_enabled"`
 	ImageStudioAvailableGroupIDs      []int64                  `json:"image_studio_available_group_ids"`
 	DingTalkOAuthEnabled              bool                     `json:"dingtalk_oauth_enabled"`
 	LinuxDoOAuthEnabled               bool                     `json:"linuxdo_oauth_enabled"`

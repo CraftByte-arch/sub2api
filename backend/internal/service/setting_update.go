@@ -173,6 +173,7 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	}
 
 	updates := make(map[string]string)
+	updates[SettingKeyImageStudioEnabled] = strconv.FormatBool(settings.ImageStudioEnabled)
 	updates[SettingKeyImageStudioAsyncConcurrency] = strconv.Itoa(settings.ImageStudioAsyncConcurrency)
 	updates[SettingKeyImageStudioRetentionValue] = strconv.Itoa(settings.ImageStudioRetentionValue)
 	updates[SettingKeyImageStudioRetentionUnit] = settings.ImageStudioRetentionUnit

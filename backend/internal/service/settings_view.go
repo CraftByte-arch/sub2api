@@ -173,6 +173,7 @@ type SystemSettings struct {
 	DefaultUserRPMLimit                  int
 	DefaultSubscriptions                 []DefaultSubscriptionSetting
 	DefaultUsageCards                    []DefaultUsageCardSetting
+	ImageStudioEnabled                   bool
 	ImageStudioAsyncConcurrency          int
 	ImageStudioRetentionValue            int
 	ImageStudioRetentionUnit             string
@@ -346,6 +347,7 @@ type PublicSettings struct {
 	TablePageSizeOptions              []int
 	CustomMenuItems                   string // JSON array of custom menu items
 	CustomEndpoints                   string // JSON array of custom endpoints
+	ImageStudioEnabled                bool
 	ImageStudioAvailableGroupIDs      []int64
 
 	LinuxDoOAuthEnabled      bool

@@ -3450,6 +3450,20 @@
               </p>
             </div>
             <div class="space-y-6 p-6">
+              <div class="flex items-center justify-between gap-6">
+                <div>
+                  <label class="font-medium text-gray-900 dark:text-white">
+                    {{ t("admin.settings.imageStudio.enabled") }}
+                  </label>
+                  <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                    {{ t("admin.settings.imageStudio.enabledHint") }}
+                  </p>
+                </div>
+                <Toggle
+                  v-model="form.image_studio_enabled"
+                  data-testid="image-studio-enabled"
+                />
+              </div>
               <div class="grid grid-cols-1 gap-6 md:grid-cols-2">
                 <div>
                   <label
@@ -9358,6 +9372,7 @@ const form = reactive<SettingsForm>({
   usage_card_redeem_enabled: false,
   usage_card_billing_enabled: false,
   usage_card_default_priority: "usage_card_first",
+  image_studio_enabled: true,
   image_studio_async_concurrency: 2,
   image_studio_retention_value: 0,
   image_studio_retention_unit: "day",
@@ -10799,6 +10814,7 @@ async function loadSettings() {
     Object.assign(authSourceDefaults, buildAuthSourceDefaultsState(settings));
     form.default_platform_quotas = normalizePlatformQuotasMap(settings.default_platform_quotas);
     form.backend_mode_enabled = settings.backend_mode_enabled;
+    form.image_studio_enabled = settings.image_studio_enabled !== false;
     form.default_subscriptions = normalizeDefaultSubscriptionSettings(
       settings.default_subscriptions,
     );
@@ -11258,6 +11274,7 @@ async function saveSettings() {
       default_usage_cards: normalizedDefaultUsageCards,
       force_email_on_third_party_signup: form.force_email_on_third_party_signup,
       default_user_rpm_limit: form.default_user_rpm_limit,
+      image_studio_enabled: form.image_studio_enabled,
       image_studio_async_concurrency: Math.max(
         1,
         Number(form.image_studio_async_concurrency) || 1,

@@ -455,6 +455,7 @@ export interface SystemSettings {
   usage_card_redeem_enabled: boolean;
   usage_card_billing_enabled: boolean;
   usage_card_default_priority: string;
+  image_studio_enabled: boolean;
   image_studio_async_concurrency: number;
   image_studio_retention_value: number;
   image_studio_retention_unit: string;
@@ -787,6 +788,7 @@ export interface UpdateSettingsRequest {
   usage_card_redeem_enabled?: boolean;
   usage_card_billing_enabled?: boolean;
   usage_card_default_priority?: string;
+  image_studio_enabled?: boolean;
   image_studio_async_concurrency?: number;
   image_studio_retention_value?: number;
   image_studio_retention_unit?: string;

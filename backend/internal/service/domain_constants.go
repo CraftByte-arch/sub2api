@@ -324,6 +324,7 @@ const (
 	SettingKeyDefaultUsageCards                    = "default_usage_cards"    // 新用户默认余额卡列表（JSON）
 	SettingKeyDefaultUserRPMLimit                  = "default_user_rpm_limit" // 新用户默认 RPM 限制（0 = 不限制）
 	SettingKeyImageStudioAsyncConcurrency          = "image_studio_async_concurrency"
+	SettingKeyImageStudioEnabled                   = "image_studio_enabled"
 	SettingKeyImageStudioRetentionValue            = "image_studio_retention_value"
 	SettingKeyImageStudioRetentionUnit             = "image_studio_retention_unit"
 	SettingKeyImageStudioInputRetentionHours       = "image_studio_input_retention_hours"

@@ -83,6 +83,7 @@ func (h *SettingHandler) GetPublicSettings(c *gin.Context) {
 		TablePageSizeOptions:              settings.TablePageSizeOptions,
 		CustomMenuItems:                   dto.ParseUserVisibleMenuItems(settings.CustomMenuItems),
 		CustomEndpoints:                   dto.ParseCustomEndpoints(settings.CustomEndpoints),
+		ImageStudioEnabled:                settings.ImageStudioEnabled,
 		ImageStudioAvailableGroupIDs:      settings.ImageStudioAvailableGroupIDs,
 		DingTalkOAuthEnabled:              settings.DingTalkOAuthEnabled,
 		LinuxDoOAuthEnabled:               settings.LinuxDoOAuthEnabled,

@@ -702,6 +702,7 @@ const flagAffiliate = makeSidebarFlag(FeatureFlags.affiliate)
 const flagRiskControl = makeSidebarFlag(FeatureFlags.riskControl)
 const flagUsageCard = () => isUsageCardFeatureVisible()
 const flagLegacySubscription = () => appStore.cachedPublicSettings?.legacy_subscription_visible !== false
+const flagImageStudio = makeSidebarFlag(FeatureFlags.imageStudio)
 const flagOpsMonitoring = () => adminSettingsStore.opsMonitoringEnabled
 const flagAdminPayment = () => adminSettingsStore.paymentEnabled
 const flagBatchImageAccess = () => canUseBatchImage.value
@@ -721,7 +722,7 @@ function buildSelfNavItems(withDashboard: boolean): NavItem[] {
     { path: '/batch-image', label: t('nav.batchImage'), icon: BatchImageIcon, hideInSimpleMode: true, featureFlag: flagBatchImageAccess },
     { path: '/usage', label: t('nav.usage'), icon: ChartIcon, hideInSimpleMode: true },
     { path: '/available-channels', label: t('nav.availableChannels'), icon: ChannelIcon, hideInSimpleMode: true, featureFlag: flagAvailableChannels },
-    { path: '/image-studio', label: t('nav.imageStudio'), icon: ImageStudioIcon, hideInSimpleMode: true },
+    { path: '/image-studio', label: t('nav.imageStudio'), icon: ImageStudioIcon, hideInSimpleMode: true, featureFlag: flagImageStudio },
     { path: '/monitor', label: t('nav.channelStatus'), icon: SignalIcon, featureFlag: flagChannelMonitor },
     { path: '/subscriptions', label: t('nav.mySubscriptions'), icon: CreditCardIcon, hideInSimpleMode: true, featureFlag: flagLegacySubscription },
     { path: '/usage-cards', label: t('nav.myUsageCards'), icon: CreditCardIcon, hideInSimpleMode: true, featureFlag: flagUsageCard },

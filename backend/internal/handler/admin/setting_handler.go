@@ -289,6 +289,7 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		MaxClaudeCodeVersion:                                   settings.MaxClaudeCodeVersion,
 		AllowUngroupedKeyScheduling:                            settings.AllowUngroupedKeyScheduling,
 		BackendModeEnabled:                                     settings.BackendModeEnabled,
+		ImageStudioEnabled:                                     settings.ImageStudioEnabled,
 		ImageStudioAsyncConcurrency:                            settings.ImageStudioAsyncConcurrency,
 		ImageStudioRetentionValue:                              settings.ImageStudioRetentionValue,
 		ImageStudioRetentionUnit:                               settings.ImageStudioRetentionUnit,

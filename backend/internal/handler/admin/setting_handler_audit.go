@@ -362,6 +362,9 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	if before.OpsMetricsIntervalSeconds != after.OpsMetricsIntervalSeconds {
 		changed = append(changed, "ops_metrics_interval_seconds")
 	}
+	if before.ImageStudioEnabled != after.ImageStudioEnabled {
+		changed = append(changed, "image_studio_enabled")
+	}
 	if before.MinClaudeCodeVersion != after.MinClaudeCodeVersion {
 		changed = append(changed, "min_claude_code_version")
 	}

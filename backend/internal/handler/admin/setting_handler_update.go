@@ -237,6 +237,7 @@ type UpdateSettingsRequest struct {
 	BackendModeEnabled bool `json:"backend_mode_enabled"`
 
 	// Image Studio
+	ImageStudioEnabled                   *bool    `json:"image_studio_enabled"`
 	ImageStudioAsyncConcurrency          *int     `json:"image_studio_async_concurrency"`
 	ImageStudioRetentionValue            *int     `json:"image_studio_retention_value"`
 	ImageStudioRetentionUnit             *string  `json:"image_studio_retention_unit"`
@@ -567,6 +568,10 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 	}
 	if affiliateRebatePerInviteeCap < 0 {
 		affiliateRebatePerInviteeCap = service.AffiliateRebatePerInviteeCapDefault
+	}
+	imageStudioEnabled := previousSettings.ImageStudioEnabled
+	if req.ImageStudioEnabled != nil {
+		imageStudioEnabled = *req.ImageStudioEnabled
 	}
 	imageStudioAsyncConcurrency := previousSettings.ImageStudioAsyncConcurrency
 	if req.ImageStudioAsyncConcurrency != nil {
@@ -1593,6 +1598,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		MaxClaudeCodeVersion:                   req.MaxClaudeCodeVersion,
 		AllowUngroupedKeyScheduling:            req.AllowUngroupedKeyScheduling,
 		BackendModeEnabled:                     req.BackendModeEnabled,
+		ImageStudioEnabled:                     imageStudioEnabled,
 		ImageStudioAsyncConcurrency:            imageStudioAsyncConcurrency,
 		ImageStudioRetentionValue:              imageStudioRetentionValue,
 		ImageStudioRetentionUnit:               imageStudioRetentionUnit,
@@ -2176,6 +2182,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		MaxClaudeCodeVersion:                                   updatedSettings.MaxClaudeCodeVersion,
 		AllowUngroupedKeyScheduling:                            updatedSettings.AllowUngroupedKeyScheduling,
 		BackendModeEnabled:                                     updatedSettings.BackendModeEnabled,
+		ImageStudioEnabled:                                     updatedSettings.ImageStudioEnabled,
 		ImageStudioAsyncConcurrency:                            updatedSettings.ImageStudioAsyncConcurrency,
 		ImageStudioRetentionValue:                              updatedSettings.ImageStudioRetentionValue,
 		ImageStudioRetentionUnit:                               updatedSettings.ImageStudioRetentionUnit,

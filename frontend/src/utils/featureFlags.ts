@@ -129,6 +129,11 @@ export const FeatureFlags = {
     mode: 'opt-in',
     label: 'Usage Card',
   }),
+  imageStudio: defineFlag({
+    key: 'image_studio_enabled',
+    mode: 'opt-out',
+    label: 'Image Studio',
+  }),
 } as const
 
 export type RegisteredFeatureFlag = keyof typeof FeatureFlags

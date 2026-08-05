@@ -254,6 +254,7 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyOpenAIAdvancedSchedulerWeightPreviousResponse:      "",
 		SettingKeyOpenAIAdvancedSchedulerWeightSessionSticky:         "",
 		SettingKeyImageStudioAsyncConcurrency:                        strconv.Itoa(defaultImageStudioAsyncConcurrency),
+		SettingKeyImageStudioEnabled:                                 "true",
 		SettingKeyImageStudioRetentionValue:                          strconv.Itoa(defaultImageStudioRetentionValue),
 		SettingKeyImageStudioRetentionUnit:                           defaultImageStudioRetentionUnit,
 		SettingKeyImageStudioInputRetentionHours:                     strconv.Itoa(DefaultImageStudioInputRetentionHours),
@@ -917,6 +918,7 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	result.OpenAIAdvancedSchedulerEffectiveWeightUpstreamCost = formatOpenAIAdvancedSchedulerFloat(effectiveWeights.UpstreamCost)
 	result.OpenAIAdvancedSchedulerEffectiveWeightPreviousResponse = formatOpenAIAdvancedSchedulerFloat(effectiveWeights.PreviousResponse)
 	result.OpenAIAdvancedSchedulerEffectiveWeightSessionSticky = formatOpenAIAdvancedSchedulerFloat(effectiveWeights.SessionSticky)
+	result.ImageStudioEnabled = settings[SettingKeyImageStudioEnabled] != "false"
 	result.ImageStudioAsyncConcurrency = parsePositiveIntSetting(settings[SettingKeyImageStudioAsyncConcurrency], defaultImageStudioAsyncConcurrency)
 	result.ImageStudioRetentionValue = parseNonNegativeIntSetting(settings[SettingKeyImageStudioRetentionValue], defaultImageStudioRetentionValue)
 	result.ImageStudioRetentionUnit = normalizeImageStudioRetentionUnit(settings[SettingKeyImageStudioRetentionUnit])

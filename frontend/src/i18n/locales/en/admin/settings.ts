@@ -14,6 +14,8 @@ export default {
         payment: 'Payment',
       },
       imageStudio: {
+        enabled: 'Enable Image Studio',
+        enabledHint: 'When off, only the Image Studio entry in the user sidebar is hidden.',
         inputRetentionHours: 'Input file retention (hours)',
         inputRetentionHoursHint: 'Keep inputs for queued or retryable failed jobs for up to this duration. The default is 24 hours; generated results continue to use the separate retention policy above.',
       },

@@ -243,6 +243,7 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		SettingKeyModelPlazaRequireAuth,
 		SettingKeyAffiliateEnabled,
 		SettingKeyRiskControlEnabled,
+		SettingKeyImageStudioEnabled,
 		SettingKeyImageStudioAvailableGroupIDs,
 		SettingKeyAllowUserViewErrorRequests,
 	}
@@ -371,6 +372,7 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 
 		RiskControlEnabled: settings[SettingKeyRiskControlEnabled] == "true",
 
+		ImageStudioEnabled:           settings[SettingKeyImageStudioEnabled] != "false",
 		ImageStudioAvailableGroupIDs: parseInt64ListSetting(settings[SettingKeyImageStudioAvailableGroupIDs]),
 
 		AllowUserViewErrorRequests: settings[SettingKeyAllowUserViewErrorRequests] == "true",
@@ -580,6 +582,7 @@ type PublicSettingsInjectionPayload struct {
 	RiskControlEnabled                   bool    `json:"risk_control_enabled"`
 	ModelPlazaEnabled                    bool    `json:"model_plaza_enabled"`
 	ModelPlazaRequireAuth                bool    `json:"model_plaza_require_auth"`
+	ImageStudioEnabled                   bool    `json:"image_studio_enabled"`
 	ImageStudioAvailableGroupIDs         []int64 `json:"image_studio_available_group_ids"`
 	AllowUserViewErrorRequests           bool    `json:"allow_user_view_error_requests"`
 }
@@ -658,6 +661,7 @@ func (s *SettingService) GetPublicSettingsForInjection(ctx context.Context) (any
 		ModelPlazaRequireAuth:                settings.ModelPlazaRequireAuth,
 		AffiliateEnabled:                     settings.AffiliateEnabled,
 		RiskControlEnabled:                   settings.RiskControlEnabled,
+		ImageStudioEnabled:                   settings.ImageStudioEnabled,
 		ImageStudioAvailableGroupIDs:         settings.ImageStudioAvailableGroupIDs,
 		AllowUserViewErrorRequests:           settings.AllowUserViewErrorRequests,
 	}, nil
