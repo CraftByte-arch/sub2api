@@ -128,6 +128,18 @@ func TestMigrationsRunner_IsIdempotent_AndSchemaIsUpToDate(t *testing.T) {
 	requireColumn(t, tx, "api_key_usage_daily_state", "coverage_start", "date", 0, true)
 	requireColumn(t, tx, "api_key_usage_daily_state", "cursor", "date", 0, true)
 
+	// account_usage_stats_daily: complete source for the account statistics dialog.
+	requireColumn(t, tx, "account_usage_stats_daily", "account_id", "bigint", 0, false)
+	requireColumn(t, tx, "account_usage_stats_daily", "bucket_date", "date", 0, false)
+	requireColumn(t, tx, "account_usage_stats_daily", "dimension_type", "smallint", 0, false)
+	requireColumn(t, tx, "account_usage_stats_daily", "duration_sum_ms", "bigint", 0, false)
+	requireColumn(t, tx, "account_usage_stats_daily", "duration_count", "bigint", 0, false)
+	requireIndex(t, tx, "account_usage_stats_daily", "account_usage_stats_daily_pkey")
+	requireIndex(t, tx, "account_usage_stats_daily", "idx_account_usage_stats_daily_bucket_date")
+	requireColumn(t, tx, "account_usage_stats_daily_state", "ready", "boolean", 0, false)
+	requireColumn(t, tx, "account_usage_stats_daily_state", "coverage_start", "date", 0, true)
+	requireColumn(t, tx, "account_usage_stats_daily_state", "cursor", "date", 0, true)
+
 	// usage_billing_dedup: billing idempotency narrow table
 	var usageBillingDedupRegclass sql.NullString
 	require.NoError(t, tx.QueryRowContext(context.Background(), "SELECT to_regclass('public.usage_billing_dedup')").Scan(&usageBillingDedupRegclass))
