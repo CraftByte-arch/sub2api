@@ -143,6 +143,7 @@ type usageLogRepository struct {
 	sql                   sqlExecutor
 	db                    *sql.DB
 	groupUsageAggregation *groupUsageAggregation
+	apiKeyUsageDaily      *apiKeyUsageDailyStore
 
 	createBatchOnce     sync.Once
 	createBatchCh       chan usageLogCreateRequest
@@ -154,6 +155,7 @@ type usageLogRepository struct {
 func NewUsageLogRepository(client *dbent.Client, sqlDB *sql.DB) service.UsageLogRepository {
 	repo := newUsageLogRepositoryWithSQL(client, sqlDB)
 	repo.groupUsageAggregation.StartAutomaticBackfill()
+	repo.apiKeyUsageDaily.StartAutomaticBackfill()
 	return repo
 }
 
@@ -164,6 +166,7 @@ func newUsageLogRepositoryWithSQL(client *dbent.Client, sqlq sqlExecutor) *usage
 		repo.db = db
 	}
 	repo.groupUsageAggregation = newGroupUsageAggregation(sqlq)
+	repo.apiKeyUsageDaily = newAPIKeyUsageDailyStore(sqlq)
 	repo.bestEffortRecent = gocache.New(usageLogBestEffortRecentTTL, time.Minute)
 	return repo
 }

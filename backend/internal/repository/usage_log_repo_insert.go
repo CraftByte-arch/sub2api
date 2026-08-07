@@ -286,11 +286,11 @@ func (r *usageLogRepository) createSingle(ctx context.Context, sqlq sqlExecutor,
 			$10, $11, $12, $13,
 			$14, $15, $16, $17,
 			$18, $19, $20, $21, $22, $23,
-			$24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57
+			$24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58
 		)
 		ON CONFLICT (request_id, api_key_id) DO NOTHING
-		RETURNING id, created_at, group_id, actual_cost
-		)` + groupUsageAggregationCTEs() + groupUsageAggregationWriteCTE() + `
+		RETURNING id, created_at, group_id, api_key_id, actual_cost
+		)` + groupUsageAggregationCTEs() + apiKeyUsageDailyAggregationCTEs() + groupUsageAggregationWriteCTE() + apiKeyUsageDailyAggregationWriteCTE() + `
 		SELECT id, created_at FROM inserted
 	`
 
@@ -890,7 +890,7 @@ func buildUsageLogBatchInsertQuery(keys []string, preparedByKey map[string]usage
 			FROM input
 			ON CONFLICT (request_id, api_key_id) DO NOTHING
 			RETURNING request_id, api_key_id, id, created_at, group_id, actual_cost
-		)` + groupUsageAggregationCTEs() + groupUsageAggregationWriteCTE() + `,
+		)` + groupUsageAggregationCTEs() + apiKeyUsageDailyAggregationCTEs() + groupUsageAggregationWriteCTE() + apiKeyUsageDailyAggregationWriteCTE() + `,
 		resolved AS (
 			SELECT
 				input.input_idx,
@@ -1136,8 +1136,8 @@ func buildUsageLogBestEffortInsertQuery(preparedList []usageLogInsertPrepared) (
 			created_at
 		FROM input
 		ON CONFLICT (request_id, api_key_id) DO NOTHING
-		RETURNING group_id, actual_cost, created_at
-		)` + groupUsageAggregationCTEs() + `
+		RETURNING group_id, api_key_id, actual_cost, created_at
+		)` + groupUsageAggregationCTEs() + apiKeyUsageDailyAggregationCTEs() + apiKeyUsageDailyAggregationWriteCTE() + `
 	` + groupUsageBucketUpsertSQL)
 
 	return query.String(), args
@@ -1211,11 +1211,11 @@ func execUsageLogInsertNoResult(ctx context.Context, sqlq sqlExecutor, prepared 
 			$10, $11, $12, $13,
 			$14, $15, $16, $17,
 			$18, $19, $20, $21, $22, $23,
-			$24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57
+			$24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58
 		)
 		ON CONFLICT (request_id, api_key_id) DO NOTHING
-		RETURNING group_id, actual_cost, created_at
-		)`+groupUsageAggregationCTEs()+`
+		RETURNING group_id, api_key_id, actual_cost, created_at
+		)`+groupUsageAggregationCTEs()+apiKeyUsageDailyAggregationCTEs()+apiKeyUsageDailyAggregationWriteCTE()+`
 	`+groupUsageBucketUpsertSQL, prepared.args...)
 	return err
 }

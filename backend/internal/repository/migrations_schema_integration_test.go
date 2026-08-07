@@ -119,6 +119,15 @@ func TestMigrationsRunner_IsIdempotent_AndSchemaIsUpToDate(t *testing.T) {
 	requireColumn(t, tx, "group_usage_aggregation_state", "ready", "boolean", 0, false)
 	requireColumn(t, tx, "group_usage_aggregation_state", "cursor", "timestamp with time zone", 0, true)
 
+	// api_key_usage_daily: compact source for batch API-key usage summaries.
+	requireColumn(t, tx, "api_key_usage_daily", "api_key_id", "bigint", 0, false)
+	requireColumn(t, tx, "api_key_usage_daily", "bucket_date", "date", 0, false)
+	requireColumn(t, tx, "api_key_usage_daily", "actual_cost", "numeric", 0, false)
+	requireIndex(t, tx, "api_key_usage_daily", "api_key_usage_daily_pkey")
+	requireColumn(t, tx, "api_key_usage_daily_state", "ready", "boolean", 0, false)
+	requireColumn(t, tx, "api_key_usage_daily_state", "coverage_start", "date", 0, true)
+	requireColumn(t, tx, "api_key_usage_daily_state", "cursor", "date", 0, true)
+
 	// usage_billing_dedup: billing idempotency narrow table
 	var usageBillingDedupRegclass sql.NullString
 	require.NoError(t, tx.QueryRowContext(context.Background(), "SELECT to_regclass('public.usage_billing_dedup')").Scan(&usageBillingDedupRegclass))
