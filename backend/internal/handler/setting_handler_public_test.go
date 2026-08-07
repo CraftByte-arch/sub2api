@@ -89,6 +89,7 @@ func TestSettingHandler_GetPublicSettings_ExposesTencentCaptchaConfiguration(t *
 		values: map[string]string{
 			service.SettingKeyTencentCaptchaEnabled: "true",
 			service.SettingKeyTencentCaptchaAppID:   "123456789",
+			service.SettingKeyTencentCaptchaRegion:  service.TencentCaptchaRegionINTL,
 		},
 	}, &config.Config{}), "test-version")
 
@@ -103,12 +104,14 @@ func TestSettingHandler_GetPublicSettings_ExposesTencentCaptchaConfiguration(t *
 		Data struct {
 			TencentCaptchaEnabled bool   `json:"tencent_captcha_enabled"`
 			TencentCaptchaAppID   string `json:"tencent_captcha_app_id"`
+			TencentCaptchaRegion  string `json:"tencent_captcha_region"`
 		} `json:"data"`
 	}
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &resp))
 	require.Equal(t, 0, resp.Code)
 	require.True(t, resp.Data.TencentCaptchaEnabled)
 	require.Equal(t, "123456789", resp.Data.TencentCaptchaAppID)
+	require.Equal(t, service.TencentCaptchaRegionINTL, resp.Data.TencentCaptchaRegion)
 }
 
 func TestSettingHandler_GetPublicSettings_ExposesImageStudioAvailableGroupIDs(t *testing.T) {
