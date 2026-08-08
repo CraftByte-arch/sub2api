@@ -80,6 +80,20 @@ func (_u *ChannelMonitorUpdate) SetNillableAPIMode(v *string) *ChannelMonitorUpd
 	return _u
 }
 
+// SetStream sets the "stream" field.
+func (_u *ChannelMonitorUpdate) SetStream(v bool) *ChannelMonitorUpdate {
+	_u.mutation.SetStream(v)
+	return _u
+}
+
+// SetNillableStream sets the "stream" field if the given value is not nil.
+func (_u *ChannelMonitorUpdate) SetNillableStream(v *bool) *ChannelMonitorUpdate {
+	if v != nil {
+		_u.SetStream(*v)
+	}
+	return _u
+}
+
 // SetEndpoint sets the "endpoint" field.
 func (_u *ChannelMonitorUpdate) SetEndpoint(v string) *ChannelMonitorUpdate {
 	_u.mutation.SetEndpoint(v)
@@ -520,6 +534,9 @@ func (_u *ChannelMonitorUpdate) sqlSave(ctx context.Context) (_node int, err err
 	if value, ok := _u.mutation.APIMode(); ok {
 		_spec.SetField(channelmonitor.FieldAPIMode, field.TypeString, value)
 	}
+	if value, ok := _u.mutation.Stream(); ok {
+		_spec.SetField(channelmonitor.FieldStream, field.TypeBool, value)
+	}
 	if value, ok := _u.mutation.Endpoint(); ok {
 		_spec.SetField(channelmonitor.FieldEndpoint, field.TypeString, value)
 	}
@@ -765,6 +782,20 @@ func (_u *ChannelMonitorUpdateOne) SetAPIMode(v string) *ChannelMonitorUpdateOne
 func (_u *ChannelMonitorUpdateOne) SetNillableAPIMode(v *string) *ChannelMonitorUpdateOne {
 	if v != nil {
 		_u.SetAPIMode(*v)
+	}
+	return _u
+}
+
+// SetStream sets the "stream" field.
+func (_u *ChannelMonitorUpdateOne) SetStream(v bool) *ChannelMonitorUpdateOne {
+	_u.mutation.SetStream(v)
+	return _u
+}
+
+// SetNillableStream sets the "stream" field if the given value is not nil.
+func (_u *ChannelMonitorUpdateOne) SetNillableStream(v *bool) *ChannelMonitorUpdateOne {
+	if v != nil {
+		_u.SetStream(*v)
 	}
 	return _u
 }
@@ -1238,6 +1269,9 @@ func (_u *ChannelMonitorUpdateOne) sqlSave(ctx context.Context) (_node *ChannelM
 	}
 	if value, ok := _u.mutation.APIMode(); ok {
 		_spec.SetField(channelmonitor.FieldAPIMode, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.Stream(); ok {
+		_spec.SetField(channelmonitor.FieldStream, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.Endpoint(); ok {
 		_spec.SetField(channelmonitor.FieldEndpoint, field.TypeString, value)

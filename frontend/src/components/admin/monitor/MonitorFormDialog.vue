@@ -48,6 +48,34 @@
         </div>
       </div>
 
+      <div class="rounded-lg border border-gray-200 bg-gray-50/50 p-3 dark:border-dark-700 dark:bg-dark-900/30">
+        <label class="input-label">{{ t('admin.channelMonitor.form.streamMode') }}</label>
+        <div class="grid gap-3 sm:grid-cols-2">
+          <button
+            type="button"
+            data-testid="monitor-stream-enabled"
+            :aria-pressed="form.stream"
+            class="rounded-lg border-2 px-3 py-2 text-left transition-colors"
+            :class="streamModeButtonClass(true)"
+            @click="form.stream = true"
+          >
+            <span class="block text-sm font-semibold">{{ t('admin.channelMonitor.form.streamModeStreaming') }}</span>
+            <span class="mt-0.5 block text-xs opacity-80">{{ t('admin.channelMonitor.form.streamModeStreamingHint') }}</span>
+          </button>
+          <button
+            type="button"
+            data-testid="monitor-stream-disabled"
+            :aria-pressed="!form.stream"
+            class="rounded-lg border-2 px-3 py-2 text-left transition-colors"
+            :class="streamModeButtonClass(false)"
+            @click="form.stream = false"
+          >
+            <span class="block text-sm font-semibold">{{ t('admin.channelMonitor.form.streamModeBuffered') }}</span>
+            <span class="mt-0.5 block text-xs opacity-80">{{ t('admin.channelMonitor.form.streamModeBufferedHint') }}</span>
+          </button>
+        </div>
+      </div>
+
       <div>
         <label class="input-label">{{ t('admin.channelMonitor.form.endpoint') }} <span class="text-red-500">*</span></label>
         <div class="space-y-3">
@@ -289,6 +317,7 @@ interface MonitorForm {
   name: string
   provider: Provider
   api_mode: APIMode
+  stream: boolean
   endpoint: string
   api_key: string
   primary_model: string
@@ -308,6 +337,7 @@ const form = reactive<MonitorForm>({
   name: '',
   provider: PROVIDER_ANTHROPIC,
   api_mode: API_MODE_CHAT_COMPLETIONS,
+  stream: true,
   endpoint: '',
   api_key: '',
   primary_model: '',
@@ -408,6 +438,13 @@ function apiModeButtonClass(mode: APIMode): string {
   return 'border-blue-100 bg-white/70 text-gray-600 hover:border-primary-300 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400'
 }
 
+function streamModeButtonClass(stream: boolean): string {
+  if (form.stream === stream) {
+    return 'border-primary-500 bg-white text-primary-700 shadow-sm dark:border-primary-400 dark:bg-primary-500/15 dark:text-primary-300'
+  }
+  return 'border-gray-200 bg-white text-gray-600 hover:border-primary-300 dark:border-dark-600 dark:bg-dark-800 dark:text-gray-300 dark:hover:border-primary-500/60'
+}
+
 function endpointModeButtonClass(active: boolean): string {
   if (active) {
     return 'border-primary-500 bg-white text-primary-700 shadow-sm dark:border-primary-400 dark:bg-primary-500/15 dark:text-primary-300'
@@ -485,6 +522,7 @@ function resetForm() {
   form.name = ''
   form.provider = PROVIDER_ANTHROPIC
   form.api_mode = API_MODE_CHAT_COMPLETIONS
+  form.stream = true
   form.endpoint = ''
   form.api_key = ''
   form.primary_model = ''
@@ -505,6 +543,7 @@ function loadFromMonitor(m: ChannelMonitor) {
   form.name = m.name
   form.provider = m.provider
   form.api_mode = normalizeAPIMode(m.api_mode)
+  form.stream = m.stream !== false
   form.endpoint = m.endpoint
   form.api_key = ''
   form.primary_model = m.primary_model
@@ -575,6 +614,7 @@ function buildPayload(): CreateParams {
     name: form.name.trim(),
     provider: form.provider,
     api_mode: form.provider === PROVIDER_OPENAI ? form.api_mode : API_MODE_CHAT_COMPLETIONS,
+    stream: form.stream,
     endpoint: isSelfEndpoint.value ? MONITOR_SELF_ENDPOINT : form.endpoint.trim(),
     api_key: form.api_key.trim(),
     primary_model: form.primary_model.trim(),

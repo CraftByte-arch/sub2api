@@ -14667,6 +14667,7 @@ type ChannelMonitorMutation struct {
 	name                    *string
 	provider                *channelmonitor.Provider
 	api_mode                *string
+	stream                  *bool
 	endpoint                *string
 	api_key_encrypted       *string
 	primary_model           *string
@@ -14974,6 +14975,42 @@ func (m *ChannelMonitorMutation) OldAPIMode(ctx context.Context) (v string, err 
 // ResetAPIMode resets all changes to the "api_mode" field.
 func (m *ChannelMonitorMutation) ResetAPIMode() {
 	m.api_mode = nil
+}
+
+// SetStream sets the "stream" field.
+func (m *ChannelMonitorMutation) SetStream(b bool) {
+	m.stream = &b
+}
+
+// Stream returns the value of the "stream" field in the mutation.
+func (m *ChannelMonitorMutation) Stream() (r bool, exists bool) {
+	v := m.stream
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldStream returns the old "stream" field's value of the ChannelMonitor entity.
+// If the ChannelMonitor object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ChannelMonitorMutation) OldStream(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldStream is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldStream requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldStream: %w", err)
+	}
+	return oldValue.Stream, nil
+}
+
+// ResetStream resets all changes to the "stream" field.
+func (m *ChannelMonitorMutation) ResetStream() {
+	m.stream = nil
 }
 
 // SetEndpoint sets the "endpoint" field.
@@ -15789,7 +15826,7 @@ func (m *ChannelMonitorMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *ChannelMonitorMutation) Fields() []string {
-	fields := make([]string, 0, 19)
+	fields := make([]string, 0, 20)
 	if m.created_at != nil {
 		fields = append(fields, channelmonitor.FieldCreatedAt)
 	}
@@ -15804,6 +15841,9 @@ func (m *ChannelMonitorMutation) Fields() []string {
 	}
 	if m.api_mode != nil {
 		fields = append(fields, channelmonitor.FieldAPIMode)
+	}
+	if m.stream != nil {
+		fields = append(fields, channelmonitor.FieldStream)
 	}
 	if m.endpoint != nil {
 		fields = append(fields, channelmonitor.FieldEndpoint)
@@ -15865,6 +15905,8 @@ func (m *ChannelMonitorMutation) Field(name string) (ent.Value, bool) {
 		return m.Provider()
 	case channelmonitor.FieldAPIMode:
 		return m.APIMode()
+	case channelmonitor.FieldStream:
+		return m.Stream()
 	case channelmonitor.FieldEndpoint:
 		return m.Endpoint()
 	case channelmonitor.FieldAPIKeyEncrypted:
@@ -15912,6 +15954,8 @@ func (m *ChannelMonitorMutation) OldField(ctx context.Context, name string) (ent
 		return m.OldProvider(ctx)
 	case channelmonitor.FieldAPIMode:
 		return m.OldAPIMode(ctx)
+	case channelmonitor.FieldStream:
+		return m.OldStream(ctx)
 	case channelmonitor.FieldEndpoint:
 		return m.OldEndpoint(ctx)
 	case channelmonitor.FieldAPIKeyEncrypted:
@@ -15983,6 +16027,13 @@ func (m *ChannelMonitorMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetAPIMode(v)
+		return nil
+	case channelmonitor.FieldStream:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetStream(v)
 		return nil
 	case channelmonitor.FieldEndpoint:
 		v, ok := value.(string)
@@ -16211,6 +16262,9 @@ func (m *ChannelMonitorMutation) ResetField(name string) error {
 		return nil
 	case channelmonitor.FieldAPIMode:
 		m.ResetAPIMode()
+		return nil
+	case channelmonitor.FieldStream:
+		m.ResetStream()
 		return nil
 	case channelmonitor.FieldEndpoint:
 		m.ResetEndpoint()

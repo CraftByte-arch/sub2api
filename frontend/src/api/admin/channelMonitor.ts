@@ -15,6 +15,7 @@ export interface ChannelMonitor {
   name: string
   provider: Provider
   api_mode: APIMode
+  stream: boolean
   endpoint: string
   api_key_masked: string
   /**
@@ -75,6 +76,7 @@ export interface CreateParams {
   name: string
   provider: Provider
   api_mode?: APIMode
+  stream?: boolean
   endpoint: string
   api_key: string
   primary_model: string

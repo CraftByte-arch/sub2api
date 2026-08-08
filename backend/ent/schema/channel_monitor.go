@@ -40,6 +40,9 @@ func (ChannelMonitor) Fields() []ent.Field {
 			Default("chat_completions").
 			MaxLen(32).
 			Comment("OpenAI request protocol: chat_completions or responses; non-OpenAI uses chat_completions"),
+		field.Bool("stream").
+			Default(true).
+			Comment("Whether health checks request streaming SSE responses"),
 		field.String("endpoint").
 			NotEmpty().
 			MaxLen(500).

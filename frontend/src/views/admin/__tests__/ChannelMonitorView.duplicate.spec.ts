@@ -65,6 +65,7 @@ function makeMonitor(overrides: Partial<ChannelMonitor> = {}): ChannelMonitor {
     name: 'primary',
     provider: 'openai',
     api_mode: 'chat_completions',
+    stream: true,
     endpoint: 'https://api.example.com',
     api_key_masked: 'sk-t***',
     primary_model: 'gpt-4o-mini',

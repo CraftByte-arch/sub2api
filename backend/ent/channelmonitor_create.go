@@ -79,6 +79,20 @@ func (_c *ChannelMonitorCreate) SetNillableAPIMode(v *string) *ChannelMonitorCre
 	return _c
 }
 
+// SetStream sets the "stream" field.
+func (_c *ChannelMonitorCreate) SetStream(v bool) *ChannelMonitorCreate {
+	_c.mutation.SetStream(v)
+	return _c
+}
+
+// SetNillableStream sets the "stream" field if the given value is not nil.
+func (_c *ChannelMonitorCreate) SetNillableStream(v *bool) *ChannelMonitorCreate {
+	if v != nil {
+		_c.SetStream(*v)
+	}
+	return _c
+}
+
 // SetEndpoint sets the "endpoint" field.
 func (_c *ChannelMonitorCreate) SetEndpoint(v string) *ChannelMonitorCreate {
 	_c.mutation.SetEndpoint(v)
@@ -307,6 +321,10 @@ func (_c *ChannelMonitorCreate) defaults() {
 		v := channelmonitor.DefaultAPIMode
 		_c.mutation.SetAPIMode(v)
 	}
+	if _, ok := _c.mutation.Stream(); !ok {
+		v := channelmonitor.DefaultStream
+		_c.mutation.SetStream(v)
+	}
 	if _, ok := _c.mutation.ExtraModels(); !ok {
 		v := channelmonitor.DefaultExtraModels
 		_c.mutation.SetExtraModels(v)
@@ -364,6 +382,9 @@ func (_c *ChannelMonitorCreate) check() error {
 		if err := channelmonitor.APIModeValidator(v); err != nil {
 			return &ValidationError{Name: "api_mode", err: fmt.Errorf(`ent: validator failed for field "ChannelMonitor.api_mode": %w`, err)}
 		}
+	}
+	if _, ok := _c.mutation.Stream(); !ok {
+		return &ValidationError{Name: "stream", err: errors.New(`ent: missing required field "ChannelMonitor.stream"`)}
 	}
 	if _, ok := _c.mutation.Endpoint(); !ok {
 		return &ValidationError{Name: "endpoint", err: errors.New(`ent: missing required field "ChannelMonitor.endpoint"`)}
@@ -476,6 +497,10 @@ func (_c *ChannelMonitorCreate) createSpec() (*ChannelMonitor, *sqlgraph.CreateS
 	if value, ok := _c.mutation.APIMode(); ok {
 		_spec.SetField(channelmonitor.FieldAPIMode, field.TypeString, value)
 		_node.APIMode = value
+	}
+	if value, ok := _c.mutation.Stream(); ok {
+		_spec.SetField(channelmonitor.FieldStream, field.TypeBool, value)
+		_node.Stream = value
 	}
 	if value, ok := _c.mutation.Endpoint(); ok {
 		_spec.SetField(channelmonitor.FieldEndpoint, field.TypeString, value)
@@ -675,6 +700,18 @@ func (u *ChannelMonitorUpsert) SetAPIMode(v string) *ChannelMonitorUpsert {
 // UpdateAPIMode sets the "api_mode" field to the value that was provided on create.
 func (u *ChannelMonitorUpsert) UpdateAPIMode() *ChannelMonitorUpsert {
 	u.SetExcluded(channelmonitor.FieldAPIMode)
+	return u
+}
+
+// SetStream sets the "stream" field.
+func (u *ChannelMonitorUpsert) SetStream(v bool) *ChannelMonitorUpsert {
+	u.Set(channelmonitor.FieldStream, v)
+	return u
+}
+
+// UpdateStream sets the "stream" field to the value that was provided on create.
+func (u *ChannelMonitorUpsert) UpdateStream() *ChannelMonitorUpsert {
+	u.SetExcluded(channelmonitor.FieldStream)
 	return u
 }
 
@@ -986,6 +1023,20 @@ func (u *ChannelMonitorUpsertOne) SetAPIMode(v string) *ChannelMonitorUpsertOne 
 func (u *ChannelMonitorUpsertOne) UpdateAPIMode() *ChannelMonitorUpsertOne {
 	return u.Update(func(s *ChannelMonitorUpsert) {
 		s.UpdateAPIMode()
+	})
+}
+
+// SetStream sets the "stream" field.
+func (u *ChannelMonitorUpsertOne) SetStream(v bool) *ChannelMonitorUpsertOne {
+	return u.Update(func(s *ChannelMonitorUpsert) {
+		s.SetStream(v)
+	})
+}
+
+// UpdateStream sets the "stream" field to the value that was provided on create.
+func (u *ChannelMonitorUpsertOne) UpdateStream() *ChannelMonitorUpsertOne {
+	return u.Update(func(s *ChannelMonitorUpsert) {
+		s.UpdateStream()
 	})
 }
 
@@ -1498,6 +1549,20 @@ func (u *ChannelMonitorUpsertBulk) SetAPIMode(v string) *ChannelMonitorUpsertBul
 func (u *ChannelMonitorUpsertBulk) UpdateAPIMode() *ChannelMonitorUpsertBulk {
 	return u.Update(func(s *ChannelMonitorUpsert) {
 		s.UpdateAPIMode()
+	})
+}
+
+// SetStream sets the "stream" field.
+func (u *ChannelMonitorUpsertBulk) SetStream(v bool) *ChannelMonitorUpsertBulk {
+	return u.Update(func(s *ChannelMonitorUpsert) {
+		s.SetStream(v)
+	})
+}
+
+// UpdateStream sets the "stream" field to the value that was provided on create.
+func (u *ChannelMonitorUpsertBulk) UpdateStream() *ChannelMonitorUpsertBulk {
+	return u.Update(func(s *ChannelMonitorUpsert) {
+		s.UpdateStream()
 	})
 }
 

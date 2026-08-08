@@ -25,6 +25,8 @@ const (
 	FieldProvider = "provider"
 	// FieldAPIMode holds the string denoting the api_mode field in the database.
 	FieldAPIMode = "api_mode"
+	// FieldStream holds the string denoting the stream field in the database.
+	FieldStream = "stream"
 	// FieldEndpoint holds the string denoting the endpoint field in the database.
 	FieldEndpoint = "endpoint"
 	// FieldAPIKeyEncrypted holds the string denoting the api_key_encrypted field in the database.
@@ -92,6 +94,7 @@ var Columns = []string{
 	FieldName,
 	FieldProvider,
 	FieldAPIMode,
+	FieldStream,
 	FieldEndpoint,
 	FieldAPIKeyEncrypted,
 	FieldPrimaryModel,
@@ -131,6 +134,8 @@ var (
 	DefaultAPIMode string
 	// APIModeValidator is a validator for the "api_mode" field. It is called by the builders before save.
 	APIModeValidator func(string) error
+	// DefaultStream holds the default value on creation for the "stream" field.
+	DefaultStream bool
 	// EndpointValidator is a validator for the "endpoint" field. It is called by the builders before save.
 	EndpointValidator func(string) error
 	// APIKeyEncryptedValidator is a validator for the "api_key_encrypted" field. It is called by the builders before save.
@@ -215,6 +220,11 @@ func ByProvider(opts ...sql.OrderTermOption) OrderOption {
 // ByAPIMode orders the results by the api_mode field.
 func ByAPIMode(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldAPIMode, opts...).ToFunc()
+}
+
+// ByStream orders the results by the stream field.
+func ByStream(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldStream, opts...).ToFunc()
 }
 
 // ByEndpoint orders the results by the endpoint field.

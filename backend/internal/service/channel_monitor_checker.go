@@ -56,6 +56,8 @@ func newLoopbackHTTPClient(timeout time.Duration) *http.Client {
 type CheckOptions struct {
 	// APIMode 仅对 OpenAI provider 生效；空串等同 chat_completions。
 	APIMode string
+	// Stream 为 nil 时使用默认流式探测；false 显式请求完整 JSON 响应。
+	Stream *bool
 	// ExtraHeaders 用户自定义 HTTP 头（merge 到 adapter 默认 headers，用户优先）。
 	ExtraHeaders map[string]string
 	// BodyOverrideMode: off | merge | replace
@@ -305,6 +307,7 @@ func callProvider(ctx context.Context, provider, endpoint, apiKey, model, prompt
 	if !ok {
 		return "", "", 0, fmt.Errorf("unsupported provider %q", provider)
 	}
+	adapter, opts = prepareMonitorStreamAdapter(adapter, provider, apiMode, opts)
 	body, err := buildRequestBody(adapter, provider, apiMode, model, prompt, opts)
 	if err != nil {
 		return "", "", 0, err
@@ -367,6 +370,9 @@ func monitorClientForEndpoint(endpoint string) *http.Client {
 // Responses 的 output 数组顺序由模型决定：reasoning / tool-call item 可能排在 message 前面，
 // 因此不能假设文本永远在 output.0.content.0.text。
 func extractOpenAIResponsesText(respBytes []byte) string {
+	if text := extractOpenAIResponsesStreamText(respBytes); strings.TrimSpace(text) != "" {
+		return text
+	}
 	if text := gjson.GetBytes(respBytes, "output_text").String(); strings.TrimSpace(text) != "" {
 		return text
 	}

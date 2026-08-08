@@ -75,6 +75,11 @@ func APIMode(v string) predicate.ChannelMonitor {
 	return predicate.ChannelMonitor(sql.FieldEQ(FieldAPIMode, v))
 }
 
+// Stream applies equality check predicate on the "stream" field. It's identical to StreamEQ.
+func Stream(v bool) predicate.ChannelMonitor {
+	return predicate.ChannelMonitor(sql.FieldEQ(FieldStream, v))
+}
+
 // Endpoint applies equality check predicate on the "endpoint" field. It's identical to EndpointEQ.
 func Endpoint(v string) predicate.ChannelMonitor {
 	return predicate.ChannelMonitor(sql.FieldEQ(FieldEndpoint, v))
@@ -358,6 +363,16 @@ func APIModeEqualFold(v string) predicate.ChannelMonitor {
 // APIModeContainsFold applies the ContainsFold predicate on the "api_mode" field.
 func APIModeContainsFold(v string) predicate.ChannelMonitor {
 	return predicate.ChannelMonitor(sql.FieldContainsFold(FieldAPIMode, v))
+}
+
+// StreamEQ applies the EQ predicate on the "stream" field.
+func StreamEQ(v bool) predicate.ChannelMonitor {
+	return predicate.ChannelMonitor(sql.FieldEQ(FieldStream, v))
+}
+
+// StreamNEQ applies the NEQ predicate on the "stream" field.
+func StreamNEQ(v bool) predicate.ChannelMonitor {
+	return predicate.ChannelMonitor(sql.FieldNEQ(FieldStream, v))
 }
 
 // EndpointEQ applies the EQ predicate on the "endpoint" field.
