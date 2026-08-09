@@ -198,6 +198,22 @@ func (firstTokenBillingGatewayCache) DeleteSessionAccountID(context.Context, int
 	return nil
 }
 
+func (firstTokenBillingGatewayCache) SetGrokVideoPendingBilling(context.Context, string, []byte, time.Duration) error {
+	return nil
+}
+
+func (firstTokenBillingGatewayCache) GetGrokVideoPendingBilling(context.Context, string) ([]byte, error) {
+	return nil, nil
+}
+
+func (firstTokenBillingGatewayCache) ClaimGrokVideoBilled(context.Context, string, time.Duration) (bool, error) {
+	return true, nil
+}
+
+func (firstTokenBillingGatewayCache) ReleaseGrokVideoBilled(context.Context, string) error {
+	return nil
+}
+
 func TestFirstTokenTimeoutBillingFailoverThenSuccessRecordsOnce(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	groupID := int64(9001)

@@ -89,6 +89,7 @@ func TestProvideCleanup_WithMinimalDependencies_NoPanic(t *testing.T) {
 		nil, // paymentOrderExpiry
 		nil, // channelMonitorRunner
 		nil, // imageStudioJobService
+		nil, // channelMonitorV2Aggregator
 		nil, // quotaFlusher
 		nil, // firstTokenTimeoutPolicy
 		nil, // firstTokenStatsRecorder
