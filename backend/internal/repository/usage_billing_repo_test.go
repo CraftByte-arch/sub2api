@@ -18,7 +18,7 @@ func TestDeductFirstAvailableUsageCardRequiresAvailableActiveCard(t *testing.T) 
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
 
-	mock.ExpectQuery("deleted_at IS NULL[\\s\\S]*status = 'active'[\\s\\S]*starts_at <= NOW\\(\\)[\\s\\S]*expires_at > NOW\\(\\)[\\s\\S]*total_limit_usd NOT IN[\\s\\S]*used_usd NOT IN[\\s\\S]*total_limit_usd > 0[\\s\\S]*used_usd >= 0[\\s\\S]*used_usd < total_limit_usd[\\s\\S]*used_usd \\+ \\$2 <= total_limit_usd").
+	mock.ExpectQuery("deleted_at IS NULL[\\s\\S]*status = 'active'[\\s\\S]*starts_at <= NOW\\(\\)[\\s\\S]*expires_at > NOW\\(\\)[\\s\\S]*total_limit_usd NOT IN[\\s\\S]*used_usd NOT IN[\\s\\S]*total_limit_usd > 0[\\s\\S]*used_usd >= 0[\\s\\S]*used_usd < total_limit_usd\\s+ORDER BY CASE WHEN used_usd \\+ \\$2 <= total_limit_usd THEN 0 ELSE 1 END").
 		WithArgs(int64(10), 2.0).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}))
 	mock.ExpectRollback()

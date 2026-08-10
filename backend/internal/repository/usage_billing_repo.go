@@ -292,8 +292,8 @@ func deductFirstAvailableUsageCard(ctx context.Context, tx *sql.Tx, userID int64
 				AND total_limit_usd > 0
 				AND used_usd >= 0
 				AND used_usd < total_limit_usd
-				AND used_usd + $2 <= total_limit_usd
-			ORDER BY expires_at ASC, (total_limit_usd - used_usd) ASC, created_at ASC, id ASC
+			ORDER BY CASE WHEN used_usd + $2 <= total_limit_usd THEN 0 ELSE 1 END,
+				expires_at ASC, (total_limit_usd - used_usd) ASC, created_at ASC, id ASC
 			FOR UPDATE SKIP LOCKED
 			LIMIT 1
 		)
