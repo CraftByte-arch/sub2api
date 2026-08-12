@@ -2183,6 +2183,8 @@ func TestOpenAIResponses_APIKeyPassthroughPoolAuthFailureRetriesThenSwitchesToHe
 				nil,
 				nil,
 				cfg,
+				nil,
+				nil,
 			)
 
 			rec := httptest.NewRecorder()
