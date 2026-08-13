@@ -1,0 +1,34 @@
+services:
+  account-auto-scheduler:
+    build:
+      context: .
+    container_name: account-auto-scheduler
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      AUTO_SCHEDULER_CREDENTIAL_KEY: ${AUTO_SCHEDULER_CREDENTIAL_KEY:-}
+      AUTO_SCHEDULER_UPSTREAM_SYNC_SECONDS: ${AUTO_SCHEDULER_UPSTREAM_SYNC_SECONDS:-600}
+    extra_hosts:
+      # Keep sidecar-to-Sub2API traffic on the host proxy across blue-green slot switches.
+      - "aixw.org:host-gateway"
+    volumes:
+      - account-auto-scheduler-data:/data
+    networks:
+      - sub2api-network
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8091/healthz"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  sub2api-network:
+    external: true
+    name: sub2api_sub2api-network
+
+volumes:
+  account-auto-scheduler-data:

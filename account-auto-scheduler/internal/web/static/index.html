@@ -1,0 +1,394 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>账号自动调度</title>
+  <link rel="stylesheet" href="app.css">
+  <script src="upstreams.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <svg class="icon-defs" aria-hidden="true">
+    <symbol id="icon-activity" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></symbol>
+    <symbol id="icon-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="icon-refresh" viewBox="0 0 24 24"><path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 4v5h5M4 13a8.1 8.1 0 0 0 15.5 2M20 20v-5h-5"/></symbol>
+    <symbol id="icon-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></symbol>
+    <symbol id="icon-play" viewBox="0 0 24 24"><path d="m6 3 14 9-14 9V3z"/></symbol>
+    <symbol id="icon-edit" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"/></symbol>
+    <symbol id="icon-trash" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v5M14 11v5"/></symbol>
+    <symbol id="icon-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+    <symbol id="icon-shield" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-8 9-4.5-1.5-8-4-8-9V5l8-3 8 3Z"/><path d="m9 12 2 2 4-4"/></symbol>
+    <symbol id="icon-inbox" viewBox="0 0 24 24"><path d="M4 4h16v16H4z"/><path d="M4 13h4l2 3h4l2-3h4"/></symbol>
+    <symbol id="icon-users" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></symbol>
+    <symbol id="icon-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.1.1l2-2a5 5 0 0 0-7.1-7.1l-1.1 1.1"/><path d="M14 11a5 5 0 0 0-7.1-.1l-2 2A5 5 0 0 0 12 20l1.1-1.1"/></symbol>
+    <symbol id="icon-chevron-left" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></symbol>
+    <symbol id="icon-chevron-right" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+    <symbol id="icon-server" viewBox="0 0 24 24"><rect width="20" height="8" x="2" y="2" rx="2"/><rect width="20" height="8" x="2" y="14" rx="2"/><path d="M6 6h.01M6 18h.01"/></symbol>
+    <symbol id="icon-log-in" viewBox="0 0 24 24"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M15 12H3"/></symbol>
+    <symbol id="icon-key" viewBox="0 0 24 24"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6M15 6l3 3M18 3l3 3"/></symbol>
+    <symbol id="icon-eye" viewBox="0 0 24 24"><path d="M2.1 12a10.9 10.9 0 0 1 19.8 0 10.9 10.9 0 0 1-19.8 0Z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="icon-eye-off" viewBox="0 0 24 24"><path d="m3 3 18 18M10.6 10.6a2 2 0 0 0 2.8 2.8M9.9 4.2A10.9 10.9 0 0 1 21.9 12a11.6 11.6 0 0 1-2 2.9M6.6 6.6A11.5 11.5 0 0 0 2.1 12a10.9 10.9 0 0 0 15.3 5.4"/></symbol>
+  </svg>
+
+  <section id="auth-state" class="state-screen" aria-live="polite">
+    <div class="state-mark"><svg class="icon"><use href="#icon-shield"/></svg></div>
+    <h1>正在验证管理员身份</h1>
+    <p id="auth-message">正在连接 Sub2API</p>
+  </section>
+
+  <main id="app" class="app-shell" hidden>
+    <header class="page-header">
+      <div class="heading-group">
+        <div class="heading-line">
+          <h1>账号自动调度</h1>
+          <span class="admin-badge"><svg class="icon"><use href="#icon-shield"/></svg>管理员</span>
+        </div>
+        <p id="sync-label">尚未同步</p>
+      </div>
+      <div class="header-actions">
+        <button id="register-tab-button" class="button secondary compact-command" type="button" hidden>注册后台 Tab</button>
+        <div id="groups-header-actions" class="action-cluster">
+          <button id="refresh-button" class="icon-button" type="button" title="刷新分组与账号" aria-label="刷新分组与账号">
+            <svg class="icon"><use href="#icon-refresh"/></svg>
+          </button>
+          <button id="add-button" class="button primary" type="button">
+            <svg class="icon"><use href="#icon-plus"/></svg>
+            <span>新增检测</span>
+          </button>
+        </div>
+        <div id="upstreams-header-actions" class="action-cluster" hidden>
+          <button id="upstream-refresh-button" class="icon-button" type="button" title="同步全部上游" aria-label="同步全部上游">
+            <svg class="icon"><use href="#icon-refresh"/></svg>
+          </button>
+          <button id="add-upstream-button" class="button primary" type="button">
+            <svg class="icon"><use href="#icon-plus"/></svg>
+            <span>添加上游</span>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <nav class="workspace-tabs" role="tablist" aria-label="账号调度工作区">
+      <button id="groups-tab" class="workspace-tab" type="button" role="tab" aria-selected="true" aria-controls="groups-panel" tabindex="0">
+        <svg class="icon"><use href="#icon-users"/></svg><span>分组与账号</span>
+      </button>
+      <button id="upstreams-tab" class="workspace-tab" type="button" role="tab" aria-selected="false" aria-controls="upstreams-panel" tabindex="-1">
+        <svg class="icon"><use href="#icon-server"/></svg><span>上游列表</span><span id="upstream-count-badge" class="tab-count" hidden>0</span>
+      </button>
+    </nav>
+
+    <section id="groups-panel" role="tabpanel" aria-labelledby="groups-tab" tabindex="0">
+      <section class="metrics-band" aria-label="账号概览">
+        <div class="metric"><span>分组</span><strong id="metric-groups">0</strong></div>
+        <div class="metric"><span>全部账号</span><strong id="metric-accounts">0</strong></div>
+        <div class="metric"><span>当前可用</span><strong id="metric-enabled" class="text-success">0</strong></div>
+        <div class="metric"><span>检测自动暂停</span><strong id="metric-auto-stopped" class="text-warning">0</strong></div>
+      </section>
+
+      <section class="filter-bar" aria-label="筛选账号">
+        <label class="search-field">
+          <svg class="icon"><use href="#icon-search"/></svg>
+          <input id="search-input" type="search" placeholder="搜索分组、账号或平台" autocomplete="off">
+        </label>
+        <label class="select-field">
+          <span class="sr-only">筛选调度状态</span>
+          <select id="status-filter">
+            <option value="all">全部状态</option>
+            <option value="enabled">当前可用</option>
+            <option value="manual">管理员停止</option>
+            <option value="auto">检测自动停止</option>
+            <option value="limited">临时受限</option>
+            <option value="inactive">账号停用</option>
+            <option value="error">账号异常</option>
+          </select>
+        </label>
+      </section>
+
+      <section id="group-list" class="group-list" aria-live="polite"></section>
+      <section id="empty-state" class="empty-state" hidden>
+        <svg class="icon"><use href="#icon-inbox"/></svg>
+        <h2>暂无分组或账号</h2>
+      </section>
+      <section id="no-match-state" class="empty-state compact" hidden>
+        <svg class="icon"><use href="#icon-search"/></svg>
+        <h2>没有匹配的分组或账号</h2>
+      </section>
+    </section>
+
+    <section id="upstreams-panel" role="tabpanel" aria-labelledby="upstreams-tab" tabindex="0" hidden>
+      <div id="upstream-credentials-notice" class="operational-notice warning" hidden>
+        <svg class="icon"><use href="#icon-shield"/></svg>
+        <div><strong>上游连接未启用</strong><span>请在调度侧车配置 AUTO_SCHEDULER_CREDENTIAL_KEY；现有账号检测不受影响。</span></div>
+      </div>
+      <section class="upstream-metrics" aria-label="上游概览">
+        <div><span>上游</span><strong id="upstream-metric-sites">0</strong></div>
+        <div><span>已连接身份</span><strong id="upstream-metric-identities">0</strong></div>
+        <div><span>同步 Key</span><strong id="upstream-metric-keys">0</strong></div>
+        <div><span>需处理</span><strong id="upstream-metric-attention" class="text-warning">0</strong></div>
+      </section>
+      <section class="filter-bar upstream-filter" aria-label="筛选上游">
+        <label class="search-field">
+          <svg class="icon"><use href="#icon-search"/></svg>
+          <input id="upstream-search-input" type="search" placeholder="搜索地址、身份、账号或 Key" autocomplete="off">
+        </label>
+        <label class="select-field">
+          <span class="sr-only">筛选上游状态</span>
+          <select id="upstream-status-filter">
+            <option value="all">全部上游</option>
+            <option value="connected">已连接</option>
+            <option value="attention">需处理</option>
+            <option value="unconnected">未连接</option>
+          </select>
+        </label>
+      </section>
+      <section id="upstream-loading-state" class="upstream-loading" aria-live="polite" hidden>
+        <div></div><div></div><div></div>
+        <span>正在读取上游列表</span>
+      </section>
+      <section id="upstream-error-state" class="empty-state compact" role="alert" hidden>
+        <svg class="icon"><use href="#icon-activity"/></svg>
+        <h2 id="upstream-error-message">上游列表加载失败</h2>
+        <button id="upstream-retry-button" class="button secondary" type="button">重试</button>
+      </section>
+      <section id="upstream-list" class="upstream-list" aria-live="polite"></section>
+      <section id="upstream-empty-state" class="empty-state compact" hidden>
+        <svg class="icon"><use href="#icon-server"/></svg>
+        <h2>暂无可管理的上游</h2>
+        <button id="upstream-empty-add-button" class="button secondary" type="button">添加上游地址</button>
+      </section>
+      <section id="upstream-no-match-state" class="empty-state compact" hidden>
+        <svg class="icon"><use href="#icon-search"/></svg>
+        <h2>没有匹配的上游、账号或 Key</h2>
+      </section>
+    </section>
+  </main>
+
+  <dialog id="config-dialog" class="modal">
+    <form id="config-form" method="dialog" class="modal-panel">
+      <header class="modal-header">
+        <div><h2 id="config-title">新增状态检测</h2><p>API Key 账号</p></div>
+        <button class="icon-button ghost" type="button" data-close-dialog="config-dialog" title="关闭" aria-label="关闭">
+          <svg class="icon"><use href="#icon-x"/></svg>
+        </button>
+      </header>
+      <div class="modal-body form-grid">
+        <label class="field full-width">
+          <span>账号</span>
+          <select id="account-select" required></select>
+        </label>
+        <label class="field">
+          <span>检测间隔（秒）</span>
+          <input id="interval-input" type="number" min="15" max="86400" step="1" required>
+        </label>
+        <label class="field">
+          <span>检测模型</span>
+          <input id="model-input" type="text" maxlength="200" placeholder="平台默认模型">
+        </label>
+        <label class="field">
+          <span>耗时上限（秒）</span>
+          <input id="latency-input" type="number" min="1" max="300" step="0.1" required>
+        </label>
+        <label class="field">
+          <span>连续异常后暂停</span>
+          <input id="failure-input" type="number" min="1" max="20" step="1" required>
+        </label>
+        <label class="field">
+          <span>连续正常后恢复</span>
+          <input id="recovery-input" type="number" min="1" max="20" step="1" required>
+        </label>
+        <label class="switch-field">
+          <span><strong>启用自动调度</strong></span>
+          <input id="enabled-input" type="checkbox" role="switch">
+          <i aria-hidden="true"></i>
+        </label>
+        <label class="field full-width">
+          <span>检测提示词</span>
+          <textarea id="prompt-input" rows="7" maxlength="8000" required></textarea>
+        </label>
+        <section id="direct-probe-control" class="direct-probe-control full-width" hidden aria-live="polite">
+          <div class="direct-probe-copy">
+            <span class="data-label">探测来源</span>
+            <strong id="direct-probe-state">通过 Sub2API 检测</strong>
+            <small id="direct-probe-message">直连上游探测需要管理员显式授权。</small>
+          </div>
+          <div class="direct-probe-actions">
+            <button id="direct-probe-authorize-button" class="button secondary" type="button">授权直连探测</button>
+            <button id="direct-probe-revoke-button" class="button danger" type="button" hidden>撤销授权</button>
+          </div>
+        </section>
+        <p id="form-error" class="form-error" hidden></p>
+      </div>
+      <footer class="modal-footer">
+        <button class="button secondary" type="button" data-close-dialog="config-dialog">取消</button>
+        <button id="save-button" class="button primary" type="submit">保存</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <dialog id="binding-dialog" class="modal wide-modal">
+    <article class="modal-panel">
+      <header class="modal-header">
+        <div><h2>管理分组账号</h2><p id="binding-group-name"></p></div>
+        <button class="icon-button ghost" type="button" data-close-dialog="binding-dialog" title="关闭" aria-label="关闭">
+          <svg class="icon"><use href="#icon-x"/></svg>
+        </button>
+      </header>
+      <div class="binding-toolbar">
+        <label class="search-field">
+          <svg class="icon"><use href="#icon-search"/></svg>
+          <input id="binding-search-input" type="search" placeholder="搜索可绑定的 API Key 账号" autocomplete="off">
+        </label>
+        <span id="binding-change-count" class="change-count">无待保存变更</span>
+      </div>
+      <div id="binding-list" class="binding-list"></div>
+      <p id="binding-error" class="dialog-error" hidden></p>
+      <footer class="modal-footer">
+        <button class="button secondary" type="button" data-close-dialog="binding-dialog">取消</button>
+        <button id="binding-save-button" class="button primary" type="button" disabled>保存账号绑定</button>
+      </footer>
+    </article>
+  </dialog>
+
+  <dialog id="account-detail-dialog" class="modal wide-modal">
+    <article class="modal-panel">
+      <header class="modal-header">
+        <div><h2 id="account-detail-title">OAuth 账号</h2><p id="account-detail-group-name"></p></div>
+        <button class="icon-button ghost" type="button" data-close-dialog="account-detail-dialog" title="关闭" aria-label="关闭">
+          <svg class="icon"><use href="#icon-x"/></svg>
+        </button>
+      </header>
+      <div class="detail-table-header" aria-hidden="true">
+        <span>账号</span><span>调度状态</span><span>今日用量</span><span>额度用量</span>
+      </div>
+      <div id="account-detail-list" class="account-detail-list"></div>
+      <footer class="modal-footer pagination-footer">
+        <span id="account-detail-page-label" class="page-label">第 1 / 1 页</span>
+        <div class="pagination-actions">
+          <button id="account-detail-prev" class="icon-button" type="button" title="上一页" aria-label="上一页"><svg class="icon"><use href="#icon-chevron-left"/></svg></button>
+          <button id="account-detail-next" class="icon-button" type="button" title="下一页" aria-label="下一页"><svg class="icon"><use href="#icon-chevron-right"/></svg></button>
+        </div>
+      </footer>
+    </article>
+  </dialog>
+
+  <dialog id="delete-dialog" class="modal small-modal">
+    <form method="dialog" class="modal-panel">
+      <header class="modal-header"><div><h2>删除检测配置</h2><p id="delete-account-name"></p></div></header>
+      <div class="confirm-body"><p>确认删除该账号的检测规则与最近 50 次历史记录？</p></div>
+      <footer class="modal-footer">
+        <button class="button secondary" type="button" data-close-dialog="delete-dialog">取消</button>
+        <button id="confirm-delete-button" class="button danger" type="button">删除</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <dialog id="result-dialog" class="modal small-modal">
+    <article class="modal-panel">
+      <header class="modal-header">
+        <div><h2>检测详情</h2><p id="result-account-name"></p></div>
+        <button class="icon-button ghost" type="button" data-close-dialog="result-dialog" title="关闭" aria-label="关闭">
+          <svg class="icon"><use href="#icon-x"/></svg>
+        </button>
+      </header>
+      <dl id="result-details" class="result-details"></dl>
+      <footer class="modal-footer"><button class="button secondary" type="button" data-close-dialog="result-dialog">关闭</button></footer>
+    </article>
+  </dialog>
+
+  <dialog id="upstream-create-dialog" class="modal small-modal">
+    <form id="upstream-create-form" method="dialog" class="modal-panel">
+      <header class="modal-header">
+        <div><h2>添加上游</h2><p>Sub2API 或 NewAPI 部署地址</p></div>
+        <button class="icon-button ghost" type="button" data-close-dialog="upstream-create-dialog" title="关闭" aria-label="关闭"><svg class="icon"><use href="#icon-x"/></svg></button>
+      </header>
+      <div class="modal-body form-grid upstream-form-grid">
+        <label class="field full-width"><span>上游地址</span><input id="upstream-url-input" type="url" inputmode="url" autocomplete="url" placeholder="https://example.com" required><small>可填写部署根地址或以 /v1、/api/v1 结尾的地址。</small></label>
+        <label class="field full-width"><span>显示名称</span><input id="upstream-name-input" type="text" maxlength="120" autocomplete="off" placeholder="留空时使用域名"></label>
+        <label class="field full-width"><span>网站类型</span><select id="upstream-create-type"><option value="unknown">自动探测</option><option value="sub2api">Sub2API</option><option value="newapi">NewAPI</option></select><small>自动探测不会发送任何登录信息，探测后仍可手动修改。</small></label>
+        <p id="upstream-create-error" class="form-error" role="alert" hidden></p>
+      </div>
+      <footer class="modal-footer"><button class="button secondary" type="button" data-close-dialog="upstream-create-dialog">取消</button><button id="upstream-create-save-button" class="button primary" type="submit">添加</button></footer>
+    </form>
+  </dialog>
+
+  <dialog id="upstream-connect-dialog" class="modal">
+    <form id="upstream-connect-form" method="dialog" class="modal-panel" autocomplete="off">
+      <header class="modal-header">
+        <div><h2 id="upstream-connect-title">连接上游</h2><p id="upstream-connect-url">API 地址</p></div>
+        <button class="icon-button ghost" type="button" data-close-dialog="upstream-connect-dialog" title="关闭" aria-label="关闭"><svg class="icon"><use href="#icon-x"/></svg></button>
+      </header>
+      <div class="modal-body connection-body">
+        <div id="upstream-detection-summary" class="detection-summary" aria-live="polite"></div>
+        <div class="form-grid upstream-form-grid">
+          <label class="field"><span>网站类型</span><select id="upstream-connect-type" required><option value="">请选择</option><option value="sub2api">Sub2API</option><option value="newapi">NewAPI</option></select></label>
+          <label class="field"><span>身份名称</span><input id="upstream-identity-label" type="text" maxlength="120" autocomplete="off" placeholder="例如：主账号"></label>
+          <label class="field full-width"><span>管理站点地址</span><input id="upstream-management-site-input" type="url" inputmode="url" autocomplete="url" placeholder="https://panel.example.com"><small>登录、身份验证、余额、Key 和倍率同步均使用此地址；留空时使用 API 地址。模型调用和本地账号关联始终保留 API 地址。</small></label>
+        </div>
+        <fieldset class="auth-methods"><legend>登录方式</legend>
+          <label><input type="radio" name="upstream-auth-mode" value="password" checked><span>账号密码</span></label>
+          <label><input type="radio" name="upstream-auth-mode" value="token"><span>访问 Token</span></label>
+          <label><input type="radio" name="upstream-auth-mode" value="session"><span>Cookie / Session</span></label>
+        </fieldset>
+        <div id="upstream-password-fields" class="form-grid upstream-form-grid auth-fields">
+          <label class="field full-width"><span>上游账号</span><input id="upstream-username-input" type="text" autocomplete="off" placeholder="邮箱或用户名（旧版 NewAPI 优先用户名）"></label>
+          <div class="field full-width"><label for="upstream-password-input">上游密码</label><span class="password-field"><input id="upstream-password-input" type="password" autocomplete="new-password"><button id="upstream-password-toggle" class="icon-button ghost" type="button" title="显示密码" aria-label="显示密码"><svg class="icon"><use href="#icon-eye"/></svg></button></span><small>请手动填写该上游的密码；密码只用于本次登录，不会写入状态文件。</small></div>
+        </div>
+        <div id="upstream-token-fields" class="auth-fields" hidden><label class="field"><span>访问 Token</span><textarea id="upstream-token-input" rows="4" maxlength="65536" autocomplete="off"></textarea><small>适用于已登录后复制的个人访问 Token。</small></label></div>
+        <div id="upstream-session-fields" class="auth-fields" hidden><label class="field"><span>Cookie / Session 内容</span><textarea id="upstream-session-input" rows="5" maxlength="65536" autocomplete="off" placeholder="session=...; token=..."></textarea><small>遇到 CAPTCHA、二次验证或仅支持浏览器登录时，在上游完成登录后粘贴会话内容。</small></label></div>
+        <div id="upstream-newapi-user-id-field" class="auth-fields" hidden><label class="field"><span>NewAPI 用户 ID</span><input id="upstream-newapi-user-id-input" type="text" inputmode="numeric" pattern="[0-9]+" maxlength="20" autocomplete="off" placeholder="例如：23"><small>旧版 NewAPI 使用 Token 或 Cookie 时需要；可在上游个人中心查看数字 ID。</small></label></div>
+        <p id="upstream-connect-error" class="form-error" role="alert" hidden></p>
+      </div>
+      <footer class="modal-footer"><button class="button secondary" type="button" data-close-dialog="upstream-connect-dialog">取消</button><button id="upstream-connect-save-button" class="button primary" type="submit"><svg class="icon"><use href="#icon-log-in"/></svg><span>验证并连接</span></button></footer>
+    </form>
+  </dialog>
+
+  <dialog id="upstream-recharge-dialog" class="modal small-modal">
+    <form id="upstream-recharge-form" method="dialog" class="modal-panel">
+      <header class="modal-header">
+        <div><h2>设置充值倍率</h2><p id="upstream-recharge-name"></p></div>
+        <button class="icon-button ghost" type="button" data-close-dialog="upstream-recharge-dialog" title="关闭" aria-label="关闭"><svg class="icon"><use href="#icon-x"/></svg></button>
+      </header>
+      <div class="modal-body connection-body">
+        <fieldset class="auth-methods recharge-methods"><legend>充值倍率输入方式</legend>
+          <label><input type="radio" name="upstream-recharge-mode" value="usd_per_cny" checked><span>1 CNY = N USD</span></label>
+          <label><input type="radio" name="upstream-recharge-mode" value="cny_per_usd"><span>N CNY = 1 USD</span></label>
+        </fieldset>
+        <label class="field"><span>充值换算值</span><span class="recharge-equation"><b id="upstream-recharge-prefix">1 CNY =</b><input id="upstream-recharge-value" type="number" inputmode="decimal" min="0" step="any" required><b id="upstream-recharge-suffix">USD</b></span></label>
+        <div class="recharge-preview" aria-live="polite"><span>统一充值倍率</span><strong id="upstream-recharge-preview">— CNY/USD</strong><small id="upstream-recharge-formula">最终倍率将在分组倍率同步后计算</small></div>
+        <p id="upstream-recharge-error" class="form-error" role="alert" hidden></p>
+      </div>
+      <footer class="modal-footer split-footer"><button id="upstream-recharge-clear-button" class="button danger" type="button" hidden>清除配置</button><span class="footer-spacer"></span><button class="button secondary" type="button" data-close-dialog="upstream-recharge-dialog">取消</button><button id="upstream-recharge-save-button" class="button primary" type="submit">保存</button></footer>
+    </form>
+  </dialog>
+
+  <dialog id="upstream-binding-dialog" class="modal wide-modal">
+    <article class="modal-panel">
+      <header class="modal-header">
+        <div><h2>绑定本地账号</h2><p id="upstream-binding-name"></p></div>
+        <button class="icon-button ghost" type="button" data-close-dialog="upstream-binding-dialog" title="关闭" aria-label="关闭"><svg class="icon"><use href="#icon-x"/></svg></button>
+      </header>
+      <div class="upstream-binding-toolbar">
+        <span id="upstream-binding-count" class="change-count">0 个上游 Key</span>
+        <button id="upstream-auto-match-button" class="button secondary" type="button"><svg class="icon"><use href="#icon-key"/></svg><span>自动精确匹配</span></button>
+      </div>
+      <p id="upstream-step-up-notice" class="operational-notice compact" hidden></p>
+      <div class="remote-binding-header" aria-hidden="true"><span>上游 Key</span><span>身份与状态</span><span>本地 API Key 账号</span></div>
+      <div id="upstream-binding-list" class="remote-binding-list"></div>
+      <p id="upstream-binding-error" class="dialog-error" role="alert" hidden></p>
+      <footer class="modal-footer"><button class="button secondary" type="button" data-close-dialog="upstream-binding-dialog">取消</button><button id="upstream-binding-save-button" class="button primary" type="button">保存绑定</button></footer>
+    </article>
+  </dialog>
+
+  <dialog id="upstream-delete-identity-dialog" class="modal small-modal">
+    <article class="modal-panel">
+      <header class="modal-header"><div><h2>删除登录身份</h2><p id="upstream-delete-identity-name"></p></div></header>
+      <div class="confirm-body"><p>将删除保存的加密登录材料和该身份的 Key 快照，操作无法撤销。</p></div>
+      <footer class="modal-footer"><button class="button secondary" type="button" data-close-dialog="upstream-delete-identity-dialog">取消</button><button id="upstream-delete-identity-button" class="button danger" type="button">删除身份</button></footer>
+    </article>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>
