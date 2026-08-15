@@ -10,6 +10,9 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/Wei-Shaw/sub2api-account-auto-scheduler/internal/model"
 )
 
 func TestNormalizeAPIRoot(t *testing.T) {
@@ -134,7 +137,8 @@ func TestListAccountsPaginatesAndKeepsConsoleFields(t *testing.T) {
 				"schedulable": false, "error_message": "upstream rejected", "group_ids": []int64{7, 8},
 				"quota_limit": 100.0, "quota_used": 12.5, "quota_daily_limit": 10.0, "quota_daily_used": 2.5,
 				"extra": map[string]any{
-					"credential_hint": "must-not-leak",
+					"credential_hint":       "must-not-leak",
+					"final_cost_multiplier": 0.16,
 					"upstream_billing_probe": map[string]any{
 						"status": "ok", "received_at": "2026-08-09T01:02:03Z",
 						"data": map[string]any{"effective_rate_multiplier": 1.25, "observed_at": "2026-08-09T01:02:01Z"},
@@ -162,12 +166,117 @@ func TestListAccountsPaginatesAndKeepsConsoleFields(t *testing.T) {
 	if accounts[1].DetectedRate == nil || accounts[1].DetectedRate.EffectiveMultiplier == nil || *accounts[1].DetectedRate.EffectiveMultiplier != 1.25 {
 		t.Fatalf("detected multiplier was not projected: %#v", accounts[1].DetectedRate)
 	}
+	if multiplier, ok := accounts[1].FinalCostMultiplier(); !ok || multiplier == nil || *multiplier != 0.16 {
+		t.Fatalf("final cost multiplier was not projected: %#v", accounts[1].Extra)
+	}
 	encoded, err := json.Marshal(accounts[1])
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(string(encoded), "credential_hint") || strings.Contains(string(encoded), `"extra"`) {
 		t.Fatalf("account extra leaked through client model: %s", encoded)
+	}
+}
+
+func TestSetFinalCostMultiplierUpdatesOnlySchedulingExtra(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/admin/accounts/bulk-update" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		if r.Header.Get("x-api-key") != "admin-secret" {
+			t.Fatal("missing admin API key")
+		}
+		var payload struct {
+			AccountIDs []int64        `json:"account_ids"`
+			Extra      map[string]any `json:"extra"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(payload.AccountIDs, []int64{7}) || payload.Extra[model.FinalCostMultiplierExtraKey] != 0.16 {
+			t.Fatalf("unexpected final cost payload: %#v", payload)
+		}
+		writeEnvelope(t, w, map[string]any{"success": 1, "failed": 0, "success_ids": []int64{7}})
+	}))
+	defer server.Close()
+
+	multiplier := 0.16
+	_, err := newTestClient(t, server.URL).SetFinalCostMultiplier(context.Background(), 7, &multiplier)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSetAccountBalanceQuotaUsesExistingBulkExtraMerge(t *testing.T) {
+	observedAt := time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/admin/accounts/bulk-update" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		var payload struct {
+			AccountIDs []int64        `json:"account_ids"`
+			Extra      map[string]any `json:"extra"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(payload.AccountIDs, []int64{7}) {
+			t.Fatalf("unexpected account ids: %#v", payload.AccountIDs)
+		}
+		if payload.Extra["quota_limit"] != 210.0 || payload.Extra[model.UpstreamBalanceQuotaManagedExtraKey] != true ||
+			payload.Extra[model.UpstreamBalanceQuotaRemainingExtraKey] != 200.0 ||
+			payload.Extra[model.UpstreamBalanceQuotaObservedAtExtraKey] != observedAt.Format(time.RFC3339Nano) {
+			t.Fatalf("unexpected quota payload: %#v", payload.Extra)
+		}
+		if _, exists := payload.Extra["quota_used"]; exists {
+			t.Fatalf("normal quota refresh overwrote quota_used: %#v", payload.Extra)
+		}
+		if _, exists := payload.Extra["rate_multiplier"]; exists {
+			t.Fatalf("quota refresh sent billing multiplier: %#v", payload.Extra)
+		}
+		writeEnvelope(t, w, map[string]any{"success": 1, "failed": 0, "success_ids": []int64{7}})
+	}))
+	defer server.Close()
+
+	remaining := 200.0
+	err := newTestClient(t, server.URL).SetAccountBalanceQuota(context.Background(), 7, model.AccountBalanceQuotaUpdate{
+		QuotaLimit: 210,
+		Managed:    true,
+		Remaining:  &remaining,
+		ObservedAt: &observedAt,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSetAccountBalanceQuotaSendsImmediateExhaustionSentinel(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			Extra map[string]any `json:"extra"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload.Extra["quota_limit"] != 1e-9 || payload.Extra["quota_used"] != 1e-9 ||
+			payload.Extra[model.UpstreamBalanceQuotaExhaustedExtraKey] != true {
+			t.Fatalf("unexpected exhaustion payload: %#v", payload.Extra)
+		}
+		writeEnvelope(t, w, map[string]any{"success": 1})
+	}))
+	defer server.Close()
+
+	sentinel := 1e-9
+	remaining := 0.0
+	err := newTestClient(t, server.URL).SetAccountBalanceQuota(context.Background(), 7, model.AccountBalanceQuotaUpdate{
+		QuotaLimit: sentinel,
+		QuotaUsed:  &sentinel,
+		Managed:    true,
+		Remaining:  &remaining,
+		Exhausted:  true,
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 

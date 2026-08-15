@@ -52,8 +52,11 @@
 
     return {
       activate() {
-        if (!state.loaded && !state.loading) return load()
-        return Promise.resolve()
+        if (state.loading) return Promise.resolve(false)
+        return load(state.loaded)
+      },
+      refresh(silent = true) {
+        return load(silent)
       },
       setCredentialsEnabled(value) {
         state.credentialsEnabled = Boolean(value)

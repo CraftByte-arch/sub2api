@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"sort"
@@ -366,6 +367,64 @@ func (c *Client) SetSchedulable(ctx context.Context, accountID int64, schedulabl
 		return model.UpstreamAccount{}, err
 	}
 	return account, nil
+}
+
+// SetFinalCostMultiplier updates only the optional scheduling signal through
+// Sub2API's existing atomic Extra-merge endpoint. It never sends
+// rate_multiplier, so account billing and quota accounting remain unchanged. A
+// nil multiplier clears the signal and restores legacy scheduling behavior.
+func (c *Client) SetFinalCostMultiplier(ctx context.Context, accountID int64, multiplier *float64) (model.UpstreamAccount, error) {
+	if accountID <= 0 {
+		return model.UpstreamAccount{}, errors.New("account ID must be positive")
+	}
+	body := map[string]any{
+		"account_ids": []int64{accountID},
+		"extra": map[string]any{
+			model.FinalCostMultiplierExtraKey: multiplier,
+		},
+	}
+	if err := c.adminJSON(ctx, http.MethodPost, "/admin/accounts/bulk-update", body, nil); err != nil {
+		return model.UpstreamAccount{}, err
+	}
+	return model.UpstreamAccount{}, nil
+}
+
+// SetAccountBalanceQuota projects an upstream balance into Sub2API's existing
+// account quota Extra fields. It never sends rate_multiplier, status, or
+// schedulable state.
+func (c *Client) SetAccountBalanceQuota(ctx context.Context, accountID int64, update model.AccountBalanceQuotaUpdate) error {
+	if accountID <= 0 {
+		return errors.New("account ID must be positive")
+	}
+	if update.QuotaLimit < 0 || math.IsNaN(update.QuotaLimit) || math.IsInf(update.QuotaLimit, 0) {
+		return errors.New("quota limit must be a finite number >= 0")
+	}
+	if update.QuotaUsed != nil && (*update.QuotaUsed < 0 || math.IsNaN(*update.QuotaUsed) || math.IsInf(*update.QuotaUsed, 0)) {
+		return errors.New("quota used must be a finite number >= 0")
+	}
+	if update.Remaining != nil && (*update.Remaining < 0 || math.IsNaN(*update.Remaining) || math.IsInf(*update.Remaining, 0)) {
+		return errors.New("quota remaining must be a finite number >= 0")
+	}
+
+	extra := map[string]any{
+		"quota_limit": update.QuotaLimit,
+		model.UpstreamBalanceQuotaManagedExtraKey:    update.Managed,
+		model.UpstreamBalanceQuotaRemainingExtraKey:  update.Remaining,
+		model.UpstreamBalanceQuotaExhaustedExtraKey:  update.Exhausted,
+		model.UpstreamBalanceQuotaUnlimitedExtraKey:  update.Unlimited,
+		model.UpstreamBalanceQuotaObservedAtExtraKey: nil,
+	}
+	if update.QuotaUsed != nil {
+		extra["quota_used"] = *update.QuotaUsed
+	}
+	if update.ObservedAt != nil && !update.ObservedAt.IsZero() {
+		extra[model.UpstreamBalanceQuotaObservedAtExtraKey] = update.ObservedAt.UTC().Format(time.RFC3339Nano)
+	}
+	body := map[string]any{
+		"account_ids": []int64{accountID},
+		"extra":       extra,
+	}
+	return c.adminJSON(ctx, http.MethodPost, "/admin/accounts/bulk-update", body, nil)
 }
 
 func (c *Client) ValidateAdminJWT(

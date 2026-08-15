@@ -9,15 +9,21 @@ import (
 )
 
 const (
-	StateVersion         = 3
-	LegacyStateVersion   = 1
-	UpstreamStateVersion = 2
-	HistoryLimit         = 50
-	MinIntervalSeconds   = 15
-	MaxIntervalSeconds   = 86400
-	MinLatencyLimitMS    = 1000
-	MaxLatencyLimitMS    = 300000
-	MaxThreshold         = 20
+	StateVersion                           = 3
+	LegacyStateVersion                     = 1
+	UpstreamStateVersion                   = 2
+	HistoryLimit                           = 50
+	MinIntervalSeconds                     = 15
+	MaxIntervalSeconds                     = 86400
+	MinLatencyLimitMS                      = 1000
+	MaxLatencyLimitMS                      = 300000
+	MaxThreshold                           = 20
+	FinalCostMultiplierExtraKey            = "final_cost_multiplier"
+	UpstreamBalanceQuotaManagedExtraKey    = "upstream_balance_quota_managed"
+	UpstreamBalanceQuotaRemainingExtraKey  = "upstream_balance_quota_remaining"
+	UpstreamBalanceQuotaObservedAtExtraKey = "upstream_balance_quota_observed_at"
+	UpstreamBalanceQuotaExhaustedExtraKey  = "upstream_balance_quota_exhausted"
+	UpstreamBalanceQuotaUnlimitedExtraKey  = "upstream_balance_quota_unlimited"
 )
 
 const DefaultPrompt = `Calculate and respond with ONLY the number, nothing else.
@@ -139,6 +145,16 @@ type UpstreamAccount struct {
 	Extra                   map[string]any `json:"-"`
 }
 
+type AccountBalanceQuotaUpdate struct {
+	QuotaLimit float64
+	QuotaUsed  *float64
+	Managed    bool
+	Remaining  *float64
+	ObservedAt *time.Time
+	Exhausted  bool
+	Unlimited  bool
+}
+
 type DetectedRate struct {
 	Status              string     `json:"status"`
 	EffectiveMultiplier *float64   `json:"effective_multiplier,omitempty"`
@@ -201,6 +217,82 @@ func (a *UpstreamAccount) UnmarshalJSON(data []byte) error {
 	}
 	a.DetectedRate = detected
 	return nil
+}
+
+// FinalCostMultiplier reads the optional scheduling-only signal from Extra.
+// It is intentionally not a serialized top-level account field and is kept
+// separate from any account billing multiplier.
+func (a UpstreamAccount) FinalCostMultiplier() (*float64, bool) {
+	if len(a.Extra) == 0 {
+		return nil, false
+	}
+	raw, ok := a.Extra[FinalCostMultiplierExtraKey]
+	value, ok := raw.(float64)
+	if pointer, pointerOK := raw.(*float64); pointerOK {
+		if pointer == nil {
+			return nil, false
+		}
+		value, ok = *pointer, true
+	}
+	if !ok || math.IsNaN(value) || math.IsInf(value, 0) || value < 0 {
+		return nil, false
+	}
+	return &value, true
+}
+
+// HasFinalCostMultiplier reports whether a non-null scheduling field is
+// present, including invalid values that should be cleared by reconciliation.
+func (a UpstreamAccount) HasFinalCostMultiplier() bool {
+	if len(a.Extra) == 0 {
+		return false
+	}
+	raw, ok := a.Extra[FinalCostMultiplierExtraKey]
+	return ok && raw != nil
+}
+
+func (a UpstreamAccount) HasManagedUpstreamBalanceQuota() bool {
+	if len(a.Extra) == 0 {
+		return false
+	}
+	managed, _ := a.Extra[UpstreamBalanceQuotaManagedExtraKey].(bool)
+	return managed
+}
+
+func (a UpstreamAccount) ManagedUpstreamBalanceQuotaRemaining() (*float64, bool) {
+	if len(a.Extra) == 0 {
+		return nil, false
+	}
+	raw, ok := a.Extra[UpstreamBalanceQuotaRemainingExtraKey]
+	value, ok := raw.(float64)
+	if !ok || value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+		return nil, false
+	}
+	return &value, true
+}
+
+func (a UpstreamAccount) ManagedUpstreamBalanceQuotaObservedAt() (*time.Time, bool) {
+	if len(a.Extra) == 0 {
+		return nil, false
+	}
+	raw, ok := a.Extra[UpstreamBalanceQuotaObservedAtExtraKey].(string)
+	if !ok || strings.TrimSpace(raw) == "" {
+		return nil, false
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(raw))
+	if err != nil {
+		return nil, false
+	}
+	return &parsed, true
+}
+
+func (a UpstreamAccount) ManagedUpstreamBalanceQuotaExhausted() bool {
+	value, _ := a.Extra[UpstreamBalanceQuotaExhaustedExtraKey].(bool)
+	return value
+}
+
+func (a UpstreamAccount) ManagedUpstreamBalanceQuotaUnlimited() bool {
+	value, _ := a.Extra[UpstreamBalanceQuotaUnlimitedExtraKey].(bool)
+	return value
 }
 
 func (a UpstreamAccount) IsAPIKey() bool {

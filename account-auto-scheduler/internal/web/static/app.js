@@ -59,7 +59,8 @@
       await loadOverview()
       state.pollTimer = window.setInterval(() => {
         if (document.visibilityState === 'visible' && !document.querySelector('dialog[open]')) {
-          loadOverview(true)
+          void loadOverview(true)
+          if (state.activeTab === 'upstreams') void state.upstreamWorkspace.refresh(true)
         }
       }, 10000)
     } catch (error) {

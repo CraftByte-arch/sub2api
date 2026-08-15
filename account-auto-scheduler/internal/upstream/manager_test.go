@@ -28,6 +28,14 @@ type managerLocalCore struct {
 	exportedAgent core.ForwardedIdentity
 }
 
+type finalCostWriterCore struct {
+	*managerLocalCore
+	updates []struct {
+		accountID int64
+		value     *float64
+	}
+}
+
 func (f *managerLocalCore) ListAccounts(context.Context) ([]model.UpstreamAccount, error) {
 	return append([]model.UpstreamAccount(nil), f.accounts...), f.listErr
 }
@@ -44,6 +52,32 @@ func (f *managerLocalCore) ExportAPIKeySecrets(_ context.Context, ids []int64, j
 		result[id] = secret
 	}
 	return result, nil
+}
+
+func (f *finalCostWriterCore) SetFinalCostMultiplier(_ context.Context, accountID int64, multiplier *float64) (model.UpstreamAccount, error) {
+	var copied *float64
+	if multiplier != nil {
+		value := *multiplier
+		copied = &value
+	}
+	f.updates = append(f.updates, struct {
+		accountID int64
+		value     *float64
+	}{accountID: accountID, value: copied})
+	for index := range f.accounts {
+		if f.accounts[index].ID == accountID {
+			if f.accounts[index].Extra == nil {
+				f.accounts[index].Extra = make(map[string]any)
+			}
+			if copied == nil {
+				f.accounts[index].Extra[model.FinalCostMultiplierExtraKey] = nil
+			} else {
+				f.accounts[index].Extra[model.FinalCostMultiplierExtraKey] = *copied
+			}
+			return f.accounts[index], nil
+		}
+	}
+	return model.UpstreamAccount{}, errors.New("account not found")
 }
 
 func managerTestStore(t *testing.T) *store.Store {
@@ -213,6 +247,59 @@ func TestManagerPersistsRechargeRateAndDerivesFinalMultiplier(t *testing.T) {
 	}
 	if cleared.RechargeRate != nil || cleared.Identities[0].Keys[0].FinalMultiplier != nil {
 		t.Fatalf("cleared recharge rate still affects view: %#v", cleared)
+	}
+}
+
+func TestDeriveFinalMultiplierRejectsNegativeGroupMultiplier(t *testing.T) {
+	recharge := &model.UpstreamRechargeRate{CNYPerUSD: 0.2}
+	negative := -0.8
+	if got := deriveFinalMultiplier(recharge, &negative); got != nil {
+		t.Fatalf("negative group multiplier produced final cost: %v", *got)
+	}
+}
+
+func TestManagerReconcilesFinalCostMultiplierWithoutBillingRate(t *testing.T) {
+	stateStore := managerTestStore(t)
+	baseURL := "https://upstream.example"
+	upstreamID := model.StableUpstreamID(baseURL)
+	now := time.Now().UTC()
+	groupMultiplier := 0.8
+	localAccountID := int64(1)
+	if err := stateStore.PutUpstream(model.ManagedUpstream{
+		ID: upstreamID, BaseURL: baseURL, TypeOverride: model.UpstreamTypeSub2API, CreatedAt: now, UpdatedAt: now,
+		RechargeRate: &model.UpstreamRechargeRate{CNYPerUSD: 0.2},
+		Identities: map[string]model.UpstreamIdentity{"identity": {
+			ID: "identity", CreatedAt: now, UpdatedAt: now,
+			Keys: map[string]model.RemoteKey{"key": {ID: "key", LocalAccountID: &localAccountID, Multiplier: &groupMultiplier, SyncedAt: now}},
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	local := &finalCostWriterCore{managerLocalCore: &managerLocalCore{accounts: []model.UpstreamAccount{apiKeyAccount(1, "local", baseURL+"/v1")}}}
+	manager := NewManager(stateStore, local, &CredentialBox{}, 0, nil)
+
+	if _, err := manager.SetRechargeRate(context.Background(), upstreamID, RechargeRateInput{Mode: model.RechargeRateCNYPerUSD, Value: 0.2}); err != nil {
+		t.Fatal(err)
+	}
+	if len(local.updates) != 1 || local.updates[0].value == nil || math.Abs(*local.updates[0].value-0.16) > 1e-12 {
+		t.Fatalf("unexpected final cost update: %#v", local.updates)
+	}
+	if multiplier, ok := local.accounts[0].FinalCostMultiplier(); !ok || multiplier == nil || math.Abs(*multiplier-0.16) > 1e-12 {
+		t.Fatalf("local account was not updated: %#v", local.accounts[0])
+	}
+
+	// A second reconciliation is idempotent because the local account already
+	// contains the desired scheduling-only value.
+	manager.reconcileFinalCostMultipliersBestEffort(context.Background())
+	if len(local.updates) != 1 {
+		t.Fatalf("idempotent reconciliation wrote again: %#v", local.updates)
+	}
+
+	if _, err := manager.ClearRechargeRate(context.Background(), upstreamID); err != nil {
+		t.Fatal(err)
+	}
+	if len(local.updates) != 2 || local.updates[1].value != nil {
+		t.Fatalf("expected final cost clear, got %#v", local.updates)
 	}
 }
 

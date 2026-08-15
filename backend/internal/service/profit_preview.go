@@ -13,6 +13,7 @@ import (
 const (
 	ProfitPreviewRateSourceManual        = "manual"
 	ProfitPreviewRateSourceUpstreamProbe = "upstream_probe_sync"
+	ProfitPreviewRateSourceFinalCost     = FinalCostMultiplierExtraKey
 
 	ProfitPreviewWarningProbeMissing     = "probe_snapshot_missing"
 	ProfitPreviewWarningProbeStale       = "probe_snapshot_stale"
@@ -163,19 +164,19 @@ func previewAccountProfitAdmission(
 		Platform:   account.Platform,
 		RateSource: ProfitPreviewRateSourceManual,
 	}
-	if enabled, _ := account.Extra[UpstreamBillingRateSyncEnabledExtraKey].(bool); enabled {
+	cost, validRate := resolveProfitSchedulingCostSignal(account)
+	hasFinalRate := validRate && cost.source == schedulingCostSourceFinalCost
+	if hasFinalRate {
+		verdict.RateSource = ProfitPreviewRateSourceFinalCost
+	} else if enabled, _ := account.Extra[UpstreamBillingRateSyncEnabledExtraKey].(bool); enabled {
 		verdict.RateSource = ProfitPreviewRateSourceUpstreamProbe
 		verdict.Warnings = append(verdict.Warnings, profitPreviewProbeWarnings(account, evalAt)...)
 	} else if account.RateMultiplier != nil && *account.RateMultiplier == 1 {
 		verdict.Warnings = append(verdict.Warnings, ProfitPreviewWarningManualRateOne)
 	}
 
-	validRate := account.RateMultiplier != nil &&
-		!math.IsNaN(*account.RateMultiplier) &&
-		!math.IsInf(*account.RateMultiplier, 0) &&
-		*account.RateMultiplier >= 0
 	if validRate {
-		rate := *account.RateMultiplier
+		rate := cost.multiplier
 		verdict.AccountRate = &rate
 	}
 	switch {
@@ -183,11 +184,11 @@ func previewAccountProfitAdmission(
 		verdict.Class = ProfitPreviewClassAdmitted
 	case !validRate:
 		verdict.Class = ProfitPreviewClassRejectedInvalidRate
-	case profitControlOverThreshold(*account.RateMultiplier, thresholdDefault):
+	case profitControlOverThreshold(cost.multiplier, thresholdDefault):
 		verdict.Class = ProfitPreviewClassRejectedThreshold
 	default:
 		verdict.Class = ProfitPreviewClassAdmitted
-		verdict.RejectedUnderMinD = profitControlOverThreshold(*account.RateMultiplier, thresholdMinD)
+		verdict.RejectedUnderMinD = profitControlOverThreshold(cost.multiplier, thresholdMinD)
 	}
 	return verdict
 }

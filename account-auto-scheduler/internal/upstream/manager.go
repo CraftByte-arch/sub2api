@@ -36,6 +36,13 @@ type LocalCore interface {
 	ExportAPIKeySecrets(ctx context.Context, accountIDs []int64, adminJWT string, identity core.ForwardedIdentity) (map[int64]string, error)
 }
 
+// FinalCostMultiplierWriter is implemented by the local Sub2API client. It is
+// kept separate from LocalCore so existing read-only test doubles and local
+// integrations remain source-compatible.
+type FinalCostMultiplierWriter interface {
+	SetFinalCostMultiplier(ctx context.Context, accountID int64, multiplier *float64) (model.UpstreamAccount, error)
+}
+
 type Manager struct {
 	store        StateStore
 	core         LocalCore
@@ -294,11 +301,152 @@ func (m *Manager) LocalAccountFinalMultipliers(accounts []model.UpstreamAccount)
 	return result
 }
 
+func sameOptionalMultiplier(left, right *float64) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return math.Abs(*left-*right) <= 1e-12
+}
+
+func currentLocalAPIKeyRoots(accounts []model.UpstreamAccount) map[int64]string {
+	roots := make(map[int64]string, len(accounts))
+	for _, account := range accounts {
+		if !account.IsAPIKey() {
+			continue
+		}
+		baseURL, err := model.NormalizeUpstreamBaseURL(account.BaseURL())
+		if err == nil && baseURL != "" {
+			roots[account.ID] = baseURL
+		}
+	}
+	return roots
+}
+
+// reconcileLocalAccountBindings removes only local correlation that is no
+// longer true. Persisted upstreams, identities, encrypted credentials,
+// recharge rates, and remote-key snapshots are deliberately retained.
+func (m *Manager) reconcileLocalAccountBindings(accounts []model.UpstreamAccount) (bool, error) {
+	if m == nil {
+		return false, nil
+	}
+	currentRoots := currentLocalAPIKeyRoots(accounts)
+	changedAny := false
+	for _, snapshot := range m.store.ListUpstreams() {
+		upstreamRoot, normalizeErr := model.NormalizeUpstreamBaseURL(snapshot.BaseURL)
+		needsUpdate := false
+		for _, identity := range snapshot.Identities {
+			for _, remoteKey := range identity.Keys {
+				if remoteKey.LocalAccountID == nil {
+					continue
+				}
+				currentRoot, exists := currentRoots[*remoteKey.LocalAccountID]
+				if !exists || normalizeErr != nil || currentRoot != upstreamRoot {
+					needsUpdate = true
+					break
+				}
+			}
+			if needsUpdate {
+				break
+			}
+		}
+		if !needsUpdate {
+			continue
+		}
+
+		now := time.Now().UTC()
+		if err := m.store.UpdateUpstream(snapshot.ID, func(upstream *model.ManagedUpstream) error {
+			currentUpstreamRoot, currentNormalizeErr := model.NormalizeUpstreamBaseURL(upstream.BaseURL)
+			changed := false
+			for identityID, identity := range upstream.Identities {
+				identityChanged := false
+				for keyID, remoteKey := range identity.Keys {
+					if remoteKey.LocalAccountID == nil {
+						continue
+					}
+					currentRoot, exists := currentRoots[*remoteKey.LocalAccountID]
+					if exists && currentNormalizeErr == nil && currentRoot == currentUpstreamRoot {
+						continue
+					}
+					remoteKey.LocalAccountID = nil
+					identity.Keys[keyID] = remoteKey
+					changed = true
+					identityChanged = true
+				}
+				if identityChanged {
+					upstream.Identities[identityID] = identity
+				}
+			}
+			if changed {
+				upstream.UpdatedAt = now
+			}
+			return nil
+		}); err != nil {
+			return changedAny, err
+		}
+		changedAny = true
+	}
+	return changedAny, nil
+}
+
+func (m *Manager) reconcileFinalCostMultipliersForAccounts(ctx context.Context, accounts []model.UpstreamAccount) error {
+	writer, ok := m.core.(FinalCostMultiplierWriter)
+	if !ok {
+		return nil
+	}
+	projections := m.LocalAccountFinalMultipliers(accounts)
+	var firstErr error
+	for _, account := range accounts {
+		if !account.IsAPIKey() {
+			continue
+		}
+		desired := projections[account.ID].FinalMultiplier
+		current, currentValid := account.FinalCostMultiplier()
+		if desired == nil && !account.HasFinalCostMultiplier() {
+			continue
+		}
+		if desired != nil && currentValid && sameOptionalMultiplier(current, desired) {
+			continue
+		}
+		if _, err := writer.SetFinalCostMultiplier(ctx, account.ID, desired); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			m.logger.Warn("final cost multiplier sync failed", "account_id", account.ID, "error", err)
+		}
+	}
+	return firstErr
+}
+
+// reconcileFinalCostMultipliers projects the sidecar's persisted binding state
+// into Sub2API's scheduling-only extra field. Billing rate_multiplier is never
+// sent. Errors are returned so callers can log them and let a later periodic
+// reconciliation retry the write.
+func (m *Manager) reconcileFinalCostMultipliers(ctx context.Context) error {
+	accounts, err := m.core.ListAccounts(ctx)
+	if err != nil {
+		return err
+	}
+	if _, err := m.reconcileLocalAccountBindings(accounts); err != nil {
+		return err
+	}
+	return m.reconcileFinalCostMultipliersForAccounts(ctx, accounts)
+}
+
+func (m *Manager) reconcileFinalCostMultipliersBestEffort(ctx context.Context) {
+	if err := m.reconcileFinalCostMultipliers(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		m.logger.Warn("final cost multiplier reconciliation incomplete", "error", err)
+	}
+}
+
 func (m *Manager) Start(ctx context.Context) {
-	if m == nil || m.syncInterval <= 0 {
+	if m == nil {
 		return
 	}
 	go func() {
+		m.reconcileLocalAccountStateBestEffort(ctx)
+		if m.syncInterval <= 0 {
+			return
+		}
 		ticker := time.NewTicker(m.syncInterval)
 		defer ticker.Stop()
 		for {
@@ -452,6 +600,7 @@ func (m *Manager) SetRechargeRate(ctx context.Context, upstreamID string, input 
 	}); err != nil {
 		return UpstreamView{}, err
 	}
+	m.reconcileLocalAccountStateBestEffort(ctx)
 	record, _ = m.store.GetUpstream(record.ID)
 	accounts, _ := m.accountsForBaseURL(ctx, record.BaseURL)
 	return publicUpstream(record, accounts, true), nil
@@ -470,6 +619,7 @@ func (m *Manager) ClearRechargeRate(ctx context.Context, upstreamID string) (Ups
 	}); err != nil {
 		return UpstreamView{}, err
 	}
+	m.reconcileLocalAccountStateBestEffort(ctx)
 	record, _ = m.store.GetUpstream(record.ID)
 	accounts, _ := m.accountsForBaseURL(ctx, record.BaseURL)
 	return publicUpstream(record, accounts, true), nil
@@ -581,6 +731,14 @@ func (m *Manager) DeleteIdentity(upstreamID, identityID string) error {
 }
 
 func (m *Manager) SyncIdentity(ctx context.Context, upstreamID, identityID string) error {
+	if err := m.syncIdentity(ctx, upstreamID, identityID); err != nil {
+		return err
+	}
+	m.reconcileLocalAccountStateBestEffort(ctx)
+	return nil
+}
+
+func (m *Manager) syncIdentity(ctx context.Context, upstreamID, identityID string) error {
 	if !m.CredentialsEnabled() {
 		return adapterError("CREDENTIALS_DISABLED", "请配置 AUTO_SCHEDULER_CREDENTIAL_KEY 后再同步上游", model.IdentityStatusInvalid, http.StatusServiceUnavailable)
 	}
@@ -663,7 +821,7 @@ func (m *Manager) SyncIdentity(ctx context.Context, upstreamID, identityID strin
 		previous.Stale = true
 		normalizedKeys[keyID] = previous
 	}
-	return m.store.UpdateUpstream(record.ID, func(upstream *model.ManagedUpstream) error {
+	if err := m.store.UpdateUpstream(record.ID, func(upstream *model.ManagedUpstream) error {
 		item, exists := upstream.Identities[identity.ID]
 		if !exists {
 			return adapterError("IDENTITY_NOT_FOUND", "上游登录身份不存在", model.IdentityStatusInvalid, http.StatusNotFound)
@@ -681,7 +839,10 @@ func (m *Manager) SyncIdentity(ctx context.Context, upstreamID, identityID strin
 		upstream.Identities[identity.ID] = item
 		upstream.UpdatedAt = now
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (m *Manager) SyncUpstream(ctx context.Context, upstreamID string) []SyncOutcome {
@@ -698,7 +859,7 @@ func (m *Manager) SyncUpstream(ctx context.Context, upstreamID string) []SyncOut
 	sort.Strings(identityIDs)
 	outcomes := make([]SyncOutcome, 0, len(identityIDs))
 	for _, identityID := range identityIDs {
-		err := m.SyncIdentity(ctx, record.ID, identityID)
+		err := m.syncIdentity(ctx, record.ID, identityID)
 		outcome := SyncOutcome{UpstreamID: record.ID, IdentityID: identityID, Success: err == nil}
 		if err != nil {
 			failure := AsAdapterError(err)
@@ -710,6 +871,7 @@ func (m *Manager) SyncUpstream(ctx context.Context, upstreamID string) []SyncOut
 		}
 		outcomes = append(outcomes, outcome)
 	}
+	m.reconcileLocalAccountStateBestEffort(ctx)
 	return outcomes
 }
 
@@ -795,6 +957,7 @@ func (m *Manager) SaveBindings(ctx context.Context, upstreamID string, bindings 
 	}); err != nil {
 		return UpstreamView{}, err
 	}
+	m.reconcileLocalAccountStateBestEffort(ctx)
 	updated, _ := m.store.GetUpstream(record.ID)
 	return publicUpstream(updated, sortedLocalViews(eligible), true), nil
 }
@@ -924,6 +1087,7 @@ func (m *Manager) AutoMatch(ctx context.Context, upstreamID, adminJWT string, fo
 		}); err != nil {
 			return MatchResult{}, err
 		}
+		m.reconcileLocalAccountStateBestEffort(ctx)
 	}
 	return result, nil
 }
@@ -955,6 +1119,12 @@ func (m *Manager) combinedRecords(ctx context.Context) ([]model.ManagedUpstream,
 	accounts, err := m.core.ListAccounts(ctx)
 	if err != nil {
 		return nil, nil, err
+	}
+	if _, err := m.reconcileLocalAccountBindings(accounts); err != nil {
+		return nil, nil, err
+	}
+	if err := m.reconcileLocalAccountStateForAccounts(ctx, accounts); err != nil && !errors.Is(err, context.Canceled) {
+		m.logger.Warn("local account state reconciliation during upstream list failed", "error", err)
 	}
 	now := time.Now().UTC()
 	recordByID := make(map[string]model.ManagedUpstream)
@@ -1098,13 +1268,14 @@ func (m *Manager) syncPersisted(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			}
-			if err := m.SyncIdentity(ctx, item.upstreamID, item.identityID); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, ErrSyncInProgress) {
+			if err := m.syncIdentity(ctx, item.upstreamID, item.identityID); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, ErrSyncInProgress) {
 				failure := AsAdapterError(err)
 				m.logger.Warn("periodic upstream sync failed", "upstream_id", item.upstreamID, "identity_id", item.identityID, "code", failure.Code)
 			}
 		}()
 	}
 	wait.Wait()
+	m.reconcileLocalAccountStateBestEffort(ctx)
 }
 
 func (m *Manager) beginBusy(key string) bool {
@@ -1302,7 +1473,7 @@ func rechargeRateValue(rate *model.UpstreamRechargeRate) *float64 {
 }
 
 func finiteMultiplierValue(multiplier *float64) *float64 {
-	if multiplier == nil || math.IsNaN(*multiplier) || math.IsInf(*multiplier, 0) {
+	if multiplier == nil || *multiplier < 0 || math.IsNaN(*multiplier) || math.IsInf(*multiplier, 0) {
 		return nil
 	}
 	value := *multiplier
