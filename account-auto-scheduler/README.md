@@ -7,6 +7,7 @@
 - `POST /api/v1/admin/accounts/today-stats/batch`：读取账号今日请求、Token 和成本
 - `GET /api/v1/admin/accounts/:id/usage?source=passive`：按需读取 OAuth 账号额度快照
 - `PUT /api/v1/admin/accounts/:id`：保留其他分组关系，只增删当前分组绑定
+- `GET /api/v1/admin/channels/model-pricing?model=:model`：读取现有模型单 Token 定价，仅用于按 1 倍率估算状态检测消耗
 - `POST /api/v1/admin/accounts/:id/test`：未授权直连探测的旧配置继续使用该接口检测
 - `GET /api/v1/admin/accounts/data?ids=:id&include_proxies=true`：仅在管理员显式授权直连探测时，使用当前浏览器 JWT 通过原有 step-up 校验导入单个账号
 - `POST /api/v1/admin/accounts/:id/schedulable`：关闭或恢复账号调度
@@ -20,6 +21,9 @@
 - OAuth 和 Setup Token 账号按组折叠为数量入口，弹窗每页显示 10 个账号及今日用量、被动额度快照。
 - 每组内当前可用账号优先排列，其余账号再按名称和 ID 稳定排序。
 - API Key 账号显示今日用量、管理员配置的日/周/总额度、上游列表中已显式绑定 Key 的最终倍率、检测规则和最近 50 次结果。最终倍率只在充值倍率和上游分组倍率均已同步时显示；未绑定、绑定失效、存在歧义或缺少配置时会显示原因，不会回退显示 Sub2API 探测倍率。
+- 每个“分组-API Key 账号”可以单独设置保护倍率。最终倍率严格超过保护倍率时，旁路服务通过现有账号更新接口解除该分组的实际绑定，但保留逻辑成员关系并显示“超过保护倍率”；最终倍率恢复到保护值或以下时自动重新绑定。未设置保护倍率时沿用原绑定逻辑。
+- “解除倍率保护”会先恢复实际绑定，成功后才删除保护设置；“移除绑定”会先删除保护设置和自动回绑关系，再解除实际绑定。即使后一步失败，之后倍率下降也不会把已手动移除的关系重新绑定。
+- 账号行独立显示状态检测请求数、输入/输出/缓存 Token 与按 1 倍率计算的已知检测成本。流式响应没有 usage 或模型定价不存在时仍累计请求和可得 Token，但金额显示不可用，不使用猜测价格。
 - 每个 API Key 账号都有自动调度开关；无配置账号开启时创建默认检测规则，已有规则则保留原配置。
 - 检测色块沿用渠道监控口径：成功且低于 `6000ms` 为绿色，成功且达到 `6000ms` 或耗时超限为黄色，失败为红色，无历史为灰色。
 - 每个真实分组都有“管理账号”入口：弹窗只列出与分组平台兼容的 API Key 账号，Composite 分组可接收所有具体平台账号，Anthropic/Gemini 分组按现有规则接收已开启混合调度的 Antigravity 账号；已存在的跨平台旧绑定仍会显示并可解绑。
@@ -100,6 +104,7 @@ openssl rand -base64 32
 - 后台检测只恢复由本服务亲自暂停的账号，不会自行打开管理员手动停调的账号。管理员在本页面明确开启该账号的自动调度时，会先恢复调度，再交给检测规则自动管理。
 - 停用或删除一条由本服务暂停的规则前，会先恢复该账号调度；恢复失败时拒绝停用或删除。
 - 每个账号只保留最近 50 次检测结果，状态文件使用 `0600` 权限原子写入。
+- 保护倍率、逻辑分组成员关系和检测消耗统计都只保存在旁路状态文件中；不会修改 Sub2API 数据库结构、正式计费倍率、账号额度计费或调度算法代码。对 Sub2API 的唯一写操作仍是调用现有 HTTP 接口更新实际分组绑定。
 
 ## 部署
 
@@ -141,7 +146,7 @@ docker compose -f compose.hc2.yml up -d --build --no-deps account-auto-scheduler
 docker cp account-auto-scheduler:/data/state.json ./state.pre-direct-probe.json
 ```
 
-状态文件会在下一次写入时从 v1 或 v2 原子迁移为 v3，并保留全部检测配置、最近 50 次历史、上游、登录身份和 Key 绑定。余额是 v3 身份记录上的可选字段，已有 v3 状态无余额字段时直接显示待登录/同步，无需迁移版本。迁移后的旧检测配置默认保持 `legacy`，不会自动导入账号或改成直连。旧版旁路服务不能读取 v3；回滚旧镜像时必须同时恢复部署前的状态备份。余额版本回滚只需替换此前的旁路镜像，旧版 v3 二进制会忽略新增余额字段；发布和回滚都只操作 `account-auto-scheduler`，不要重建 Sub2API、数据库、Redis、Nginx 或 Nginx UI。
+状态文件会在下一次写入时从 v1、v2 或 v3 原子迁移为 v4，并保留全部检测配置、最近 50 次历史、上游、登录身份和 Key 绑定。v4 新增可选的分组账号保护关系和检测消耗累计字段；旧状态默认使用空保护关系和零统计，不会改变任何现有物理绑定。迁移后的旧检测配置默认保持 `legacy`，不会自动导入账号或改成直连。旧版旁路服务不能读取 v4；回滚旧镜像时必须同时恢复部署前的状态备份。发布和回滚都只操作 `account-auto-scheduler`，不要重建 Sub2API、数据库、Redis、Nginx 或 Nginx UI。
 
 hc2 发布前还应确认 `.env` 中已有非空且有效的 `AUTO_SCHEDULER_CREDENTIAL_KEY`，但检查过程不要输出密钥值。发布只允许执行：
 
@@ -149,7 +154,7 @@ hc2 发布前还应确认 `.env` 中已有非空且有效的 `AUTO_SCHEDULER_CRE
 docker compose -f compose.hc2.yml up -d --build --no-deps account-auto-scheduler
 ```
 
-发布前后分别记录全部容器的名称和 restart count，并确认除 `account-auto-scheduler` 外没有容器被重建或重启。若需要回滚，只替换该旁路容器并恢复 `state.pre-direct-probe.json`；不能让 v2 二进制直接读取已迁移的 v3 状态。
+发布前后分别记录全部容器的名称和 restart count，并确认除 `account-auto-scheduler` 外没有容器被重建或重启。若需要回滚，只替换该旁路容器并恢复升级前的状态备份；不能让旧版二进制直接读取已迁移的 v4 状态。
 
 ## 管理员鉴权
 

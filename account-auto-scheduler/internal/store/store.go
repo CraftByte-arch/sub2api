@@ -17,6 +17,7 @@ import (
 
 var ErrNotFound = errors.New("account configuration not found")
 var ErrUpstreamNotFound = errors.New("upstream not found")
+var ErrProtectionNotFound = errors.New("group-account protection not found")
 
 type Store struct {
 	mu    sync.RWMutex
@@ -28,9 +29,10 @@ func Open(path string) (*Store, error) {
 	s := &Store{
 		path: path,
 		state: model.State{
-			Version:   model.StateVersion,
-			Accounts:  map[string]model.ManagedAccount{},
-			Upstreams: map[string]model.ManagedUpstream{},
+			Version:     model.StateVersion,
+			Accounts:    map[string]model.ManagedAccount{},
+			Upstreams:   map[string]model.ManagedUpstream{},
+			Protections: map[string]model.GroupAccountProtection{},
 		},
 	}
 	if err := s.load(); err != nil {
@@ -51,7 +53,7 @@ func (s *Store) load() error {
 	if err := json.Unmarshal(raw, &state); err != nil {
 		return fmt.Errorf("decode state: %w", err)
 	}
-	if state.Version != model.LegacyStateVersion && state.Version != model.UpstreamStateVersion && state.Version != model.StateVersion {
+	if state.Version != model.LegacyStateVersion && state.Version != model.UpstreamStateVersion && state.Version != model.ProtectionStateVersion && state.Version != model.StateVersion {
 		return fmt.Errorf("unsupported state version %d", state.Version)
 	}
 	if state.Accounts == nil {
@@ -60,11 +62,15 @@ func (s *Store) load() error {
 	if state.Upstreams == nil {
 		state.Upstreams = map[string]model.ManagedUpstream{}
 	}
+	if state.Protections == nil {
+		state.Protections = map[string]model.GroupAccountProtection{}
+	}
 	for key, account := range state.Accounts {
 		account.Running = false
 		if len(account.History) > model.HistoryLimit {
 			account.History = account.History[:model.HistoryLimit]
 		}
+		account.DetectionStats = cloneDetectionStats(account.DetectionStats)
 		state.Accounts[key] = account
 	}
 	for key, upstream := range state.Upstreams {
@@ -79,9 +85,102 @@ func (s *Store) load() error {
 		}
 		state.Upstreams[key] = upstream
 	}
+	for key, protection := range state.Protections {
+		if !protection.Valid() {
+			return fmt.Errorf("invalid group-account protection %q", key)
+		}
+		normalizedKey := protectionKey(protection.GroupID, protection.AccountID)
+		if key != normalizedKey {
+			delete(state.Protections, key)
+			state.Protections[normalizedKey] = protection
+		}
+	}
 	state.Version = model.StateVersion
 	s.state = state
 	return nil
+}
+
+// ProtectionStore is optional so older manager test doubles and integrations
+// remain source-compatible. The production store implements it.
+type ProtectionStore interface {
+	ListProtections() []model.GroupAccountProtection
+	GetProtection(groupID, accountID int64) (model.GroupAccountProtection, error)
+	PutProtection(protection model.GroupAccountProtection) error
+	UpdateProtection(groupID, accountID int64, change func(*model.GroupAccountProtection) error) error
+	DeleteProtection(groupID, accountID int64) error
+}
+
+func protectionKey(groupID, accountID int64) string {
+	return strconv.FormatInt(groupID, 10) + ":" + strconv.FormatInt(accountID, 10)
+}
+
+func (s *Store) ListProtections() []model.GroupAccountProtection {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	items := make([]model.GroupAccountProtection, 0, len(s.state.Protections))
+	for _, item := range s.state.Protections {
+		items = append(items, cloneProtection(item))
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].GroupID == items[j].GroupID {
+			return items[i].AccountID < items[j].AccountID
+		}
+		return items[i].GroupID < items[j].GroupID
+	})
+	return items
+}
+
+func (s *Store) GetProtection(groupID, accountID int64) (model.GroupAccountProtection, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	item, ok := s.state.Protections[protectionKey(groupID, accountID)]
+	if !ok {
+		return model.GroupAccountProtection{}, ErrProtectionNotFound
+	}
+	return cloneProtection(item), nil
+}
+
+func (s *Store) PutProtection(protection model.GroupAccountProtection) error {
+	if !protection.Valid() {
+		return errors.New("invalid group-account protection")
+	}
+	return s.UpdateState(func(state *model.State) error {
+		if state.Protections == nil {
+			state.Protections = map[string]model.GroupAccountProtection{}
+		}
+		state.Protections[protectionKey(protection.GroupID, protection.AccountID)] = cloneProtection(protection)
+		return nil
+	})
+}
+
+func (s *Store) UpdateProtection(groupID, accountID int64, change func(*model.GroupAccountProtection) error) error {
+	return s.UpdateState(func(state *model.State) error {
+		key := protectionKey(groupID, accountID)
+		item, ok := state.Protections[key]
+		if !ok {
+			return ErrProtectionNotFound
+		}
+		item = cloneProtection(item)
+		if err := change(&item); err != nil {
+			return err
+		}
+		if !item.Valid() {
+			return errors.New("invalid group-account protection")
+		}
+		state.Protections[key] = item
+		return nil
+	})
+}
+
+func (s *Store) DeleteProtection(groupID, accountID int64) error {
+	return s.UpdateState(func(state *model.State) error {
+		key := protectionKey(groupID, accountID)
+		if _, ok := state.Protections[key]; !ok {
+			return ErrProtectionNotFound
+		}
+		delete(state.Protections, key)
+		return nil
+	})
 }
 
 func (s *Store) List() []model.ManagedAccount {
@@ -267,9 +366,10 @@ func writeAtomic(path string, state model.State) error {
 
 func cloneState(state model.State) model.State {
 	cloned := model.State{
-		Version:   state.Version,
-		Accounts:  make(map[string]model.ManagedAccount, len(state.Accounts)),
-		Upstreams: make(map[string]model.ManagedUpstream, len(state.Upstreams)),
+		Version:     state.Version,
+		Accounts:    make(map[string]model.ManagedAccount, len(state.Accounts)),
+		Upstreams:   make(map[string]model.ManagedUpstream, len(state.Upstreams)),
+		Protections: make(map[string]model.GroupAccountProtection, len(state.Protections)),
 	}
 	for key, account := range state.Accounts {
 		cloned.Accounts[key] = cloneAccount(account)
@@ -277,11 +377,25 @@ func cloneState(state model.State) model.State {
 	for key, upstream := range state.Upstreams {
 		cloned.Upstreams[key] = cloneUpstream(upstream)
 	}
+	for key, protection := range state.Protections {
+		cloned.Protections[key] = cloneProtection(protection)
+	}
 	return cloned
 }
 
 func cloneAccount(account model.ManagedAccount) model.ManagedAccount {
 	account.History = append([]model.CheckResult(nil), account.History...)
+	for index := range account.History {
+		if account.History[index].Usage != nil {
+			usage := *account.History[index].Usage
+			account.History[index].Usage = &usage
+		}
+		if account.History[index].Cost != nil {
+			cost := *account.History[index].Cost
+			account.History[index].Cost = &cost
+		}
+	}
+	account.DetectionStats = cloneDetectionStats(account.DetectionStats)
 	account.LastCheckAt = cloneTime(account.LastCheckAt)
 	account.NextCheckAt = cloneTime(account.NextCheckAt)
 	if account.DirectProbe != nil {
@@ -298,6 +412,22 @@ func cloneAccount(account model.ManagedAccount) model.ManagedAccount {
 		account.DirectProbe = &direct
 	}
 	return account
+}
+
+func cloneDetectionStats(stats model.DetectionStats) model.DetectionStats {
+	if stats.LastCost != nil {
+		copy := *stats.LastCost
+		stats.LastCost = &copy
+	}
+	if stats.LastUsageAt != nil {
+		copy := *stats.LastUsageAt
+		stats.LastUsageAt = &copy
+	}
+	return stats
+}
+
+func cloneProtection(protection model.GroupAccountProtection) model.GroupAccountProtection {
+	return protection
 }
 
 func cloneTime(value *time.Time) *time.Time {

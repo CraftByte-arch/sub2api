@@ -11,6 +11,7 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
 	"sort"
@@ -71,6 +72,19 @@ type overviewMultiplierProjection interface {
 	LocalAccountFinalMultipliers(accounts []model.UpstreamAccount) map[int64]upstream.LocalAccountFinalMultiplier
 }
 
+type groupProtectionProjection interface {
+	GroupAccountProtectionViews(accounts []model.UpstreamAccount) map[int64]map[string]upstream.GroupAccountProtectionView
+	LogicalGroupIDs(accounts []model.UpstreamAccount) map[int64][]int64
+}
+
+type protectedGroupBindingConsole interface {
+	SaveGroupBindings(ctx context.Context, groupID int64, selected []int64) ([]int64, []upstream.GroupBindingFailure, error)
+	SetGroupAccountProtection(ctx context.Context, groupID, accountID int64, multiplier float64) (upstream.GroupAccountProtectionView, error)
+	ReleaseGroupAccountProtection(ctx context.Context, groupID, accountID int64) (upstream.GroupAccountProtectionView, error)
+	RemoveGroupAccountBinding(ctx context.Context, groupID, accountID int64) error
+	SetGroupAccountBinding(ctx context.Context, groupID, accountID int64, bound bool) error
+}
+
 type Server struct {
 	engine    *engine.Engine
 	core      AdminCore
@@ -109,6 +123,10 @@ type groupBindingRequest struct {
 	Bound *bool `json:"bound"`
 }
 
+type protectionRequest struct {
+	ProtectionMultiplier *float64 `json:"protection_multiplier"`
+}
+
 type bulkGroupBindingRequest struct {
 	AccountIDs *[]int64 `json:"account_ids"`
 }
@@ -143,9 +161,11 @@ type directProbeBatchResponse struct {
 
 type overviewAccount struct {
 	model.UpstreamAccount
-	TodayUsage              model.WindowStats                     `json:"today_usage"`
-	Config                  *model.ManagedAccountView             `json:"config,omitempty"`
-	UpstreamFinalMultiplier *upstream.LocalAccountFinalMultiplier `json:"upstream_final_multiplier,omitempty"`
+	TodayUsage              model.WindowStats                              `json:"today_usage"`
+	Config                  *model.ManagedAccountView                      `json:"config,omitempty"`
+	UpstreamFinalMultiplier *upstream.LocalAccountFinalMultiplier          `json:"upstream_final_multiplier,omitempty"`
+	LogicalGroupIDs         []int64                                        `json:"logical_group_ids,omitempty"`
+	GroupProtections        map[string]upstream.GroupAccountProtectionView `json:"group_protections,omitempty"`
 }
 
 func NewServer(scheduler *engine.Engine, coreClient AdminCore, options Options, logger *slog.Logger) *Server {
@@ -173,6 +193,9 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/accounts/{accountID}/usage", s.requireAdmin(http.HandlerFunc(s.handleAccountUsage)))
 	mux.Handle("PUT /api/groups/{groupID}/accounts", s.requireAdmin(http.HandlerFunc(s.handleBulkGroupBindings)))
 	mux.Handle("PUT /api/groups/{groupID}/accounts/{accountID}", s.requireAdmin(http.HandlerFunc(s.handleGroupBinding)))
+	mux.Handle("PUT /api/groups/{groupID}/accounts/{accountID}/protection", s.requireAdmin(http.HandlerFunc(s.handleSetGroupProtection)))
+	mux.Handle("POST /api/groups/{groupID}/accounts/{accountID}/protection/release", s.requireAdmin(http.HandlerFunc(s.handleReleaseGroupProtection)))
+	mux.Handle("DELETE /api/groups/{groupID}/accounts/{accountID}/binding", s.requireAdmin(http.HandlerFunc(s.handleRemoveGroupBinding)))
 	mux.Handle("GET /api/configs", s.requireAdmin(http.HandlerFunc(s.handleListConfigs)))
 	mux.Handle("POST /api/configs", s.requireAdmin(http.HandlerFunc(s.handleCreateConfig)))
 	mux.Handle("PUT /api/configs/{accountID}", s.requireAdmin(http.HandlerFunc(s.handleUpdateConfig)))
@@ -261,8 +284,14 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		configByID[config.AccountID] = config
 	}
 	finalMultipliers := map[int64]upstream.LocalAccountFinalMultiplier{}
+	logicalGroupIDs := map[int64][]int64{}
+	groupProtections := map[int64]map[string]upstream.GroupAccountProtectionView{}
 	if projections, ok := s.upstreams.(overviewMultiplierProjection); ok {
 		finalMultipliers = projections.LocalAccountFinalMultipliers(accounts)
+	}
+	if projections, ok := s.upstreams.(groupProtectionProjection); ok {
+		logicalGroupIDs = projections.LogicalGroupIDs(accounts)
+		groupProtections = projections.GroupAccountProtectionViews(accounts)
 	}
 	overviewAccounts := make([]overviewAccount, 0, len(accounts))
 	for _, account := range accounts {
@@ -279,6 +308,12 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 				projection.Status = "unavailable"
 			}
 			item.UpstreamFinalMultiplier = &projection
+			if ids := logicalGroupIDs[account.ID]; len(ids) > 0 {
+				item.LogicalGroupIDs = append([]int64(nil), ids...)
+			}
+			if protections := groupProtections[account.ID]; len(protections) > 0 {
+				item.GroupProtections = protections
+			}
 		}
 		if config, ok := configByID[account.ID]; ok {
 			configCopy := config.PublicView()
@@ -330,6 +365,15 @@ func (s *Server) handleGroupBinding(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 		return
 	}
+	if manager, ok := s.upstreams.(protectedGroupBindingConsole); ok {
+		if err := manager.SetGroupAccountBinding(r.Context(), groupID, accountID, *request.Bound); err != nil {
+			status, code, message := classifyGroupBindingError(err)
+			writeError(w, status, code, message)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"account_id": accountID, "group_id": groupID, "bound": *request.Bound})
+		return
+	}
 	updated, err := s.console.SetAccountGroup(r.Context(), accountID, groupID, *request.Bound)
 	if err != nil {
 		status, code, message := classifyGroupBindingError(err)
@@ -337,6 +381,84 @@ func (s *Server) handleGroupBinding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"account": updated})
+}
+
+func (s *Server) handleSetGroupProtection(w http.ResponseWriter, r *http.Request) {
+	manager, ok := s.upstreams.(protectedGroupBindingConsole)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "PROTECTION_UNAVAILABLE", "倍率保护功能暂不可用")
+		return
+	}
+	groupID, err := pathPositiveID(r, "groupID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_GROUP", err.Error())
+		return
+	}
+	accountID, err := pathAccountID(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_ACCOUNT", err.Error())
+		return
+	}
+	request, err := decodeProtectionRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_PROTECTION", err.Error())
+		return
+	}
+	view, err := manager.SetGroupAccountProtection(r.Context(), groupID, accountID, *request.ProtectionMultiplier)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_PROTECTION", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"protection": view})
+}
+
+func (s *Server) handleReleaseGroupProtection(w http.ResponseWriter, r *http.Request) {
+	manager, ok := s.upstreams.(protectedGroupBindingConsole)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "PROTECTION_UNAVAILABLE", "倍率保护功能暂不可用")
+		return
+	}
+	groupID, err := pathPositiveID(r, "groupID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_GROUP", err.Error())
+		return
+	}
+	accountID, err := pathAccountID(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_ACCOUNT", err.Error())
+		return
+	}
+	view, err := manager.ReleaseGroupAccountProtection(r.Context(), groupID, accountID)
+	if err != nil {
+		status, code, message := classifyGroupBindingError(err)
+		writeError(w, status, code, message)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"protection": view, "released": true})
+}
+
+func (s *Server) handleRemoveGroupBinding(w http.ResponseWriter, r *http.Request) {
+	manager, ok := s.upstreams.(protectedGroupBindingConsole)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "PROTECTION_UNAVAILABLE", "倍率保护功能暂不可用")
+		return
+	}
+	groupID, err := pathPositiveID(r, "groupID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_GROUP", err.Error())
+		return
+	}
+	accountID, err := pathAccountID(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_ACCOUNT", err.Error())
+		return
+	}
+	if err := manager.RemoveGroupAccountBinding(r.Context(), groupID, accountID); err != nil {
+		status, code, message := classifyGroupBindingError(err)
+		writeError(w, status, code, message)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"group_id": groupID, "account_id": accountID, "removed": true})
 }
 
 func (s *Server) handleBulkGroupBindings(w http.ResponseWriter, r *http.Request) {
@@ -374,6 +496,38 @@ func (s *Server) handleBulkGroupBindings(w http.ResponseWriter, r *http.Request)
 	accountByID := make(map[int64]model.UpstreamAccount, len(accounts))
 	for _, account := range accounts {
 		accountByID[account.ID] = account
+	}
+	if manager, ok := s.upstreams.(protectedGroupBindingConsole); ok {
+		for _, accountID := range *request.AccountIDs {
+			account, exists := accountByID[accountID]
+			if !exists {
+				writeError(w, http.StatusBadRequest, "INVALID_ACCOUNT", fmt.Sprintf("账号 %d 不存在", accountID))
+				return
+			}
+			if !account.IsAPIKey() {
+				writeError(w, http.StatusBadRequest, "INVALID_ACCOUNT_TYPE", fmt.Sprintf("账号 %s 不是 API Key 账号", accountDisplayName(account)))
+				return
+			}
+			if !containsID(account.GroupIDs, groupID) && !accountCompatibleWithGroup(account, group) {
+				writeError(w, http.StatusBadRequest, "INCOMPATIBLE_PLATFORM", fmt.Sprintf("账号 %s 的平台 %s 与分组平台 %s 不兼容", accountDisplayName(account), account.Platform, group.Platform))
+				return
+			}
+		}
+		updatedIDs, failures, err := manager.SaveGroupBindings(r.Context(), groupID, *request.AccountIDs)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, "BINDING_FAILED", err.Error())
+			return
+		}
+		response := bulkGroupBindingResponse{GroupID: groupID, UpdatedAccountIDs: updatedIDs, Failures: make([]groupBindingFailure, 0, len(failures))}
+		for _, failure := range failures {
+			response.Failures = append(response.Failures, groupBindingFailure{AccountID: failure.AccountID, Name: failure.Name, Code: failure.Code, Message: failure.Message})
+		}
+		status := http.StatusOK
+		if len(response.Failures) > 0 {
+			status = http.StatusMultiStatus
+		}
+		writeJSON(w, status, response)
+		return
 	}
 	selected := make(map[int64]struct{}, len(*request.AccountIDs))
 	for _, accountID := range *request.AccountIDs {
@@ -438,6 +592,9 @@ func (s *Server) handleBulkGroupBindings(w http.ResponseWriter, r *http.Request)
 func classifyGroupBindingError(err error) (int, string, string) {
 	var upstreamErr *core.HTTPError
 	if !errors.As(err, &upstreamErr) {
+		if strings.Contains(err.Error(), "保护倍率") {
+			return http.StatusConflict, "RATE_PROTECTED", err.Error()
+		}
 		return http.StatusBadGateway, "BINDING_FAILED", err.Error()
 	}
 	switch upstreamErr.StatusCode {
@@ -823,6 +980,24 @@ func decodeGroupBindingRequest(r *http.Request) (groupBindingRequest, error) {
 	}
 	if request.Bound == nil {
 		return groupBindingRequest{}, errors.New("必须提供 bound")
+	}
+	return request, nil
+}
+
+func decodeProtectionRequest(r *http.Request) (protectionRequest, error) {
+	defer func() { _ = r.Body.Close() }()
+	decoder := json.NewDecoder(io.LimitReader(r.Body, (8<<10)+1))
+	decoder.DisallowUnknownFields()
+	var request protectionRequest
+	if err := decoder.Decode(&request); err != nil {
+		return protectionRequest{}, fmt.Errorf("无效的保护倍率: %w", err)
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		return protectionRequest{}, errors.New("无效的保护倍率: 请求只能包含一个 JSON 对象")
+	}
+	if request.ProtectionMultiplier == nil || *request.ProtectionMultiplier < 0 || math.IsNaN(*request.ProtectionMultiplier) || math.IsInf(*request.ProtectionMultiplier, 0) {
+		return protectionRequest{}, errors.New("保护倍率必须是大于等于 0 的有限数值")
 	}
 	return request, nil
 }

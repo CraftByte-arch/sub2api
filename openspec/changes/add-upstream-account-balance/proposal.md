@@ -10,7 +10,7 @@ The upstream list currently shows synchronized API-key quota and usage but not t
 - Preserve the last successful balance when a later synchronization fails, while marking it stale and keeping the failure isolated to that identity.
 - Show per-identity balances and a concise upstream-level balance summary in the existing Upstreams tab, with synchronization refreshing both keys and balances.
 - Project each fresh USD identity balance onto every explicitly bound local API-key account as Sub2API remaining account quota: `identity balance ÷ bound key group multiplier`, without dividing the site balance among multiple local accounts.
-- Preserve each local account's accumulated `quota_used`, update only the derived total `quota_limit` in the normal case, and represent an authoritative zero balance as immediately exhausted so Sub2API removes the account from scheduling until a later positive balance refresh.
+- On each new authoritative balance observation, reset the local account's `quota_used` to zero and set `quota_limit` directly to the derived remaining balance, while representing an authoritative zero balance as immediately exhausted so Sub2API removes the account from scheduling until a later positive balance refresh.
 - Keep balance data administrator-only and avoid adding browser-direct upstream requests, new credentials, or changes to the original Sub2API source and database.
 
 ## Capabilities

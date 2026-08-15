@@ -39,6 +39,15 @@ type ProbeOutcome struct {
 	ResponseText string
 	ErrorMessage string
 	Latency      time.Duration
+	Usage        *model.ProbeUsage
+}
+
+type ModelPricing struct {
+	Found           bool
+	InputPrice      *float64
+	OutputPrice     *float64
+	CacheWritePrice *float64
+	CacheReadPrice  *float64
 }
 
 type ForwardedIdentity struct {
@@ -84,10 +93,12 @@ type pageResponse[T any] struct {
 }
 
 type testEvent struct {
-	Type    string `json:"type"`
-	Text    string `json:"text"`
-	Success bool   `json:"success"`
-	Error   string `json:"error"`
+	Type    string         `json:"type"`
+	Text    string         `json:"text"`
+	Success bool           `json:"success"`
+	Error   string         `json:"error"`
+	Model   string         `json:"model"`
+	Usage   map[string]any `json:"usage"`
 }
 
 func NewClient(baseURL, adminAPIKey string) (*Client, error) {
@@ -223,6 +234,31 @@ func (c *Client) GetPassiveUsage(ctx context.Context, accountID int64) (model.Ac
 	return usage, nil
 }
 
+func (c *Client) GetModelPricing(ctx context.Context, modelID string) (ModelPricing, error) {
+	modelID = strings.TrimSpace(modelID)
+	if modelID == "" {
+		return ModelPricing{}, errors.New("model ID is required")
+	}
+	query := url.Values{"model": {modelID}}
+	var response struct {
+		Found           bool     `json:"found"`
+		InputPrice      *float64 `json:"input_price"`
+		OutputPrice     *float64 `json:"output_price"`
+		CacheWritePrice *float64 `json:"cache_write_price"`
+		CacheReadPrice  *float64 `json:"cache_read_price"`
+	}
+	if err := c.adminJSON(ctx, http.MethodGet, "/admin/channels/model-pricing?"+query.Encode(), nil, &response); err != nil {
+		return ModelPricing{}, err
+	}
+	return ModelPricing{
+		Found:           response.Found,
+		InputPrice:      response.InputPrice,
+		OutputPrice:     response.OutputPrice,
+		CacheWritePrice: response.CacheWritePrice,
+		CacheReadPrice:  response.CacheReadPrice,
+	}, nil
+}
+
 func (c *Client) SetAccountGroup(ctx context.Context, accountID, groupID int64, bound bool) (model.UpstreamAccount, error) {
 	if accountID <= 0 || groupID <= 0 {
 		return model.UpstreamAccount{}, errors.New("account ID and group ID must be positive")
@@ -300,6 +336,7 @@ func (c *Client) TestAccount(
 	completed := false
 	success := false
 	errorMessage := ""
+	var outcomeUsage *model.ProbeUsage
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 64*1024), maxSSEEventBytes)
 	for scanner.Scan() {
@@ -315,6 +352,9 @@ func (c *Client) TestAccount(
 		if err := json.Unmarshal(data, &event); err != nil {
 			continue
 		}
+		if usage := normalizeProbeUsage(event.Usage, event.Model); usage != nil {
+			outcomeUsage = usage
+		}
 		switch event.Type {
 		case "content":
 			appendLimited(&responseText, event.Text, maxResponseTextBytes)
@@ -328,6 +368,7 @@ func (c *Client) TestAccount(
 				ResponseText: responseText.String(),
 				ErrorMessage: errorMessage,
 				Latency:      time.Since(startedAt),
+				Usage:        outcomeUsage,
 			}, nil
 		case "test_complete":
 			completed = true
@@ -346,6 +387,7 @@ func (c *Client) TestAccount(
 			ResponseText: responseText.String(),
 			ErrorMessage: "stream ended before test_complete",
 			Latency:      time.Since(startedAt),
+			Usage:        outcomeUsage,
 		}, nil
 	}
 	if !success {
@@ -356,6 +398,7 @@ func (c *Client) TestAccount(
 		ResponseText: responseText.String(),
 		ErrorMessage: errorMessage,
 		Latency:      time.Since(startedAt),
+		Usage:        outcomeUsage,
 	}, nil
 }
 

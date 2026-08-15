@@ -279,6 +279,28 @@ func TestGroupsAppUsesFinalMultiplierInsteadOfProbeMultiplier(t *testing.T) {
 			t.Fatalf("groups app constructs forbidden direct-probe secret field %q", forbidden)
 		}
 	}
+	for _, required := range []string{
+		"group_protections", "logical_group_ids", "设置保护倍率", "解除倍率保护", "移除绑定",
+		"状态检测消耗（1 倍率）", "binding-action-dialog", "protection-dialog",
+		"`/api/groups/${groupID}/accounts/${accountID}/protection`",
+		"`/api/groups/${groupID}/accounts/${accountID}/binding`",
+	} {
+		if !strings.Contains(body, required) {
+			t.Fatalf("groups app is missing protection UI behavior %q", required)
+		}
+	}
+
+	styleResponse := httptest.NewRecorder()
+	server.Handler().ServeHTTP(styleResponse, httptest.NewRequest(http.MethodGet, "/app.css", nil))
+	style := styleResponse.Body.String()
+	for _, required := range []string{
+		".multiplier-pair", ".protection-multiplier.exceeded", ".binding-row-actions",
+		"@media (max-width: 620px)", ".multiplier-pair { grid-template-columns: minmax(0, 1fr); }",
+	} {
+		if !strings.Contains(style, required) {
+			t.Fatalf("groups stylesheet is missing protection responsive rule %q", required)
+		}
+	}
 }
 
 func TestUpstreamAssetsRenderBalanceStatesAndNarrowLayout(t *testing.T) {

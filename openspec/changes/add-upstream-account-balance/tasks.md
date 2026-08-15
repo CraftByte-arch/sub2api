@@ -26,3 +26,4 @@
 - [x] 5.2 Derive per-bound-account remaining quota from fresh identity USD balance divided by the remote-key multiplier, including full-balance fan-out, zero-multiplier unlimited behavior, and immediate zero-balance exhaustion.
 - [x] 5.3 Reconcile quota after connect/sync/start/periodic/binding changes, preserve unsupported or stale observations, and clear only sidecar-managed limits after explicit unbinding or account movement.
 - [x] 5.4 Add client/manager regression coverage and run formatting, all Go tests, race tests, vet, JavaScript syntax checks, strict OpenSpec validation, and final diff review.
+- [x] 5.5 Reset `quota_used` to zero once per new authoritative balance observation, set the positive projected limit directly to the derived remaining quota, preserve immediate zero-balance exhaustion, and add regression coverage.

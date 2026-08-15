@@ -64,6 +64,7 @@ type directPrompt struct {
 type directStreamState struct {
 	text      strings.Builder
 	completed bool
+	usage     *model.ProbeUsage
 }
 
 // ProbeDirect sends a streaming health check directly to a previously
@@ -130,25 +131,28 @@ func (c *Client) ProbeDirect(ctx context.Context, snapshot model.DirectProbeSnap
 	state, err := consumeDirectSSEWithIdleTimeout(requestCtx, resp.Body, protocol, requestTimeout)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(requestCtx.Err(), context.DeadlineExceeded) {
-			return ProbeOutcome{Latency: time.Since(startedAt), ResponseText: state.text.String()}, context.DeadlineExceeded
+			return ProbeOutcome{Latency: time.Since(startedAt), ResponseText: state.text.String(), Usage: state.usage}, context.DeadlineExceeded
 		}
 		detail := sanitizeDirectProbeErrorText(err.Error(), snapshot)
 		if detail == "" {
 			detail = "读取直连上游流失败"
 		}
-		return ProbeOutcome{Latency: time.Since(startedAt), ResponseText: state.text.String()}, errors.New(detail)
+		return ProbeOutcome{Latency: time.Since(startedAt), ResponseText: state.text.String(), Usage: state.usage}, errors.New(detail)
 	}
 	responseText := strings.TrimSpace(state.text.String())
 	if !state.completed {
-		return ProbeOutcome{Latency: time.Since(startedAt), ResponseText: responseText, ErrorMessage: "直连流在完成前结束"}, nil
+		return ProbeOutcome{Latency: time.Since(startedAt), ResponseText: responseText, ErrorMessage: "直连流在完成前结束", Usage: state.usage}, nil
 	}
 	if responseText == "" {
-		return ProbeOutcome{Latency: time.Since(startedAt), ErrorMessage: "直连流未返回文本"}, nil
+		return ProbeOutcome{Latency: time.Since(startedAt), ErrorMessage: "直连流未返回文本", Usage: state.usage}, nil
 	}
 	if prompt.Expected != "" && !directProbeAnswerMatches(responseText, prompt.Expected) {
-		return ProbeOutcome{Latency: time.Since(startedAt), ResponseText: responseText, ErrorMessage: "默认算术题答案不正确"}, nil
+		return ProbeOutcome{Latency: time.Since(startedAt), ResponseText: responseText, ErrorMessage: "默认算术题答案不正确", Usage: state.usage}, nil
 	}
-	return ProbeOutcome{Success: true, ResponseText: responseText, Latency: time.Since(startedAt)}, nil
+	if state.usage != nil && strings.TrimSpace(state.usage.Model) == "" {
+		state.usage.Model = upstreamModel
+	}
+	return ProbeOutcome{Success: true, ResponseText: responseText, Latency: time.Since(startedAt), Usage: state.usage}, nil
 }
 
 // directProbeRequestTimeout keeps an untrusted upstream bounded without
@@ -256,9 +260,10 @@ func buildDirectProbeRequest(snapshot model.DirectProbeSnapshot, protocol direct
 	switch protocol {
 	case directProbeOpenAIChat:
 		body = map[string]any{
-			"model":      modelID,
-			"stream":     true,
-			"max_tokens": 128,
+			"model":          modelID,
+			"stream":         true,
+			"stream_options": map[string]bool{"include_usage": true},
+			"max_tokens":     128,
 			"messages": []map[string]string{{
 				"role": "user", "content": prompt,
 			}},
@@ -657,10 +662,11 @@ func consumeDirectSSEWithIdleTimeout(ctx context.Context, body io.ReadCloser, pr
 			if len(data) == 0 {
 				continue
 			}
-			text, completed, err := parseDirectSSEData(protocol, eventName, data)
+			text, completed, usage, err := parseDirectSSEData(protocol, eventName, data)
 			if err != nil {
 				return state, err
 			}
+			state.usage = mergeProbeUsage(state.usage, usage)
 			appendLimited(&state.text, text, maxResponseTextBytes)
 			if completed {
 				state.completed = true
@@ -710,26 +716,88 @@ func resetDirectProbeTimer(timer *time.Timer, timeout time.Duration) {
 	timer.Reset(timeout)
 }
 
-func parseDirectSSEData(protocol directProbeProtocol, eventName string, data []byte) (string, bool, error) {
+func parseDirectSSEData(protocol directProbeProtocol, eventName string, data []byte) (string, bool, *model.ProbeUsage, error) {
 	var payload map[string]any
 	if err := json.Unmarshal(data, &payload); err != nil {
-		return "", false, errors.New("直连上游返回无效流事件")
+		return "", false, nil, errors.New("直连上游返回无效流事件")
 	}
 	if hasDirectStreamError(payload, eventName) {
-		return "", false, directProbeStreamPayloadError(payload)
+		return "", false, nil, directProbeStreamPayloadError(payload)
 	}
+	usage := directProbeUsageFromPayload(payload)
+	var text string
+	var completed bool
+	var err error
 	switch protocol {
 	case directProbeOpenAIChat:
-		return parseOpenAIChatStreamData(payload)
+		text, completed, err = parseOpenAIChatStreamData(payload)
 	case directProbeOpenAIResponses:
-		return parseOpenAIResponsesStreamData(payload)
+		text, completed, err = parseOpenAIResponsesStreamData(payload)
 	case directProbeAnthropic:
-		return parseAnthropicStreamData(payload)
+		text, completed, err = parseAnthropicStreamData(payload)
 	case directProbeGemini:
-		return parseGeminiStreamData(payload)
+		text, completed, err = parseGeminiStreamData(payload)
 	default:
-		return "", false, errors.New("直连探测协议不受支持")
+		return "", false, nil, errors.New("直连探测协议不受支持")
 	}
+	return text, completed, usage, err
+}
+
+func directProbeUsageFromPayload(payload map[string]any) *model.ProbeUsage {
+	modelID := strings.TrimSpace(stringFromAny(payload["model"]))
+	usagePayload := payload
+	if response, ok := payload["response"].(map[string]any); ok {
+		usagePayload = response
+		if modelID == "" {
+			modelID = strings.TrimSpace(stringFromAny(response["model"]))
+		}
+	}
+	if message, ok := payload["message"].(map[string]any); ok {
+		usagePayload = message
+		if modelID == "" {
+			modelID = strings.TrimSpace(stringFromAny(message["model"]))
+		}
+	}
+	if modelID == "" {
+		modelID = strings.TrimSpace(stringFromAny(payload["modelVersion"]))
+	}
+	for _, key := range []string{"usage", "usageMetadata", "usage_metadata"} {
+		if usage, ok := usagePayload[key].(map[string]any); ok {
+			return normalizeProbeUsage(usage, modelID)
+		}
+		if usage, ok := payload[key].(map[string]any); ok {
+			return normalizeProbeUsage(usage, modelID)
+		}
+	}
+	return nil
+}
+
+func mergeProbeUsage(current, next *model.ProbeUsage) *model.ProbeUsage {
+	if current == nil {
+		if next == nil {
+			return nil
+		}
+		copy := *next
+		return &copy
+	}
+	if next == nil {
+		return current
+	}
+	if strings.TrimSpace(next.Model) != "" {
+		current.Model = strings.TrimSpace(next.Model)
+	}
+	current.InputTokens = maxUsageInt(current.InputTokens, next.InputTokens)
+	current.OutputTokens = maxUsageInt(current.OutputTokens, next.OutputTokens)
+	current.CacheReadTokens = maxUsageInt(current.CacheReadTokens, next.CacheReadTokens)
+	current.CacheWriteTokens = maxUsageInt(current.CacheWriteTokens, next.CacheWriteTokens)
+	return current
+}
+
+func maxUsageInt(left, right int64) int64 {
+	if right > left {
+		return right
+	}
+	return left
 }
 
 func hasDirectStreamError(payload map[string]any, eventName string) bool {
@@ -752,7 +820,12 @@ func parseOpenAIChatStreamData(payload map[string]any) (string, bool, error) {
 				return text, false, nil
 			}
 		}
-		if value, exists := choice["finish_reason"]; exists && value != nil {
+		// With stream_options.include_usage, the usage-only terminal chunk is
+		// emitted after finish_reason and before [DONE]. Do not stop early or the
+		// sidecar would miss the tokens it is meant to account for.
+	}
+	if len(choices) == 0 {
+		if _, ok := payload["usage"].(map[string]any); ok {
 			return "", true, nil
 		}
 	}

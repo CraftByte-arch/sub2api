@@ -227,6 +227,92 @@ func TestStoreDeepCopiesDirectProbeConfig(t *testing.T) {
 	}
 }
 
+func TestStoreMigratesVersionThreeWithEmptyProtectionState(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	raw, err := json.Marshal(map[string]any{
+		"version": 3,
+		"accounts": map[string]any{
+			"31": map[string]any{"account_id": 31, "name": "v3", "history": []any{}},
+		},
+		"upstreams": map[string]any{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	stateStore, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if protections := stateStore.ListProtections(); len(protections) != 0 {
+		t.Fatalf("legacy v3 protections = %#v, want empty", protections)
+	}
+	now := time.Now().UTC()
+	protection := model.GroupAccountProtection{
+		GroupID: 9, AccountID: 31, ProtectionMultiplier: 0.16,
+		Status: model.ProtectionBound, PhysicalBound: true, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := stateStore.PutProtection(protection); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, err := reloaded.GetProtection(9, 31)
+	if err != nil || stored.ProtectionMultiplier != 0.16 || !stored.PhysicalBound {
+		t.Fatalf("protection was not persisted: %#v err=%v", stored, err)
+	}
+}
+
+func TestStorePersistsAndDeepCopiesDetectionStatistics(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	stateStore, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	knownCost := &model.ProbeCost{Amount: 0.0012, Currency: "USD", Known: true}
+	account := model.ManagedAccount{
+		AccountID: 42,
+		History: []model.CheckResult{{
+			ID: "check", CheckedAt: now,
+			Usage: &model.ProbeUsage{Model: "gpt-test", InputTokens: 10, OutputTokens: 2},
+			Cost:  knownCost,
+		}},
+		DetectionStats: model.DetectionStats{Requests: 1, InputTokens: 10, OutputTokens: 2, KnownCost: 0.0012, KnownCostChecks: 1, LastCost: knownCost, LastUsageAt: &now},
+		CreatedAt:      now, UpdatedAt: now,
+	}
+	if err := stateStore.Put(account); err != nil {
+		t.Fatal(err)
+	}
+	first, err := stateStore.Get(42)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.History[0].Usage.InputTokens = 999
+	first.History[0].Cost.Amount = 999
+	first.DetectionStats.LastCost.Amount = 999
+	second, err := stateStore.Get(42)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.History[0].Usage.InputTokens != 10 || second.History[0].Cost.Amount != 0.0012 || second.DetectionStats.LastCost.Amount != 0.0012 {
+		t.Fatalf("store detection state was mutated through a clone: %#v", second)
+	}
+	reloaded, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, err := reloaded.Get(42)
+	if err != nil || stored.DetectionStats.Requests != 1 || stored.DetectionStats.KnownCost != 0.0012 {
+		t.Fatalf("detection statistics were not restored: %#v err=%v", stored.DetectionStats, err)
+	}
+}
+
 func TestUpstreamStoreReturnsDeepCopies(t *testing.T) {
 	stateStore, err := Open(filepath.Join(t.TempDir(), "state.json"))
 	if err != nil {

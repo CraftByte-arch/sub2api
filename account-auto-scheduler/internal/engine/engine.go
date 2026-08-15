@@ -24,6 +24,10 @@ type CoreClient interface {
 	SetSchedulable(ctx context.Context, accountID int64, schedulable bool) (model.UpstreamAccount, error)
 }
 
+type modelPricingClient interface {
+	GetModelPricing(ctx context.Context, modelID string) (core.ModelPricing, error)
+}
+
 // DirectProbeCredentialBox is intentionally narrow. The engine can manage the
 // lifecycle of an encrypted snapshot without knowing the encryption key or
 // importing any upstream login/session behavior.
@@ -498,6 +502,9 @@ func (e *Engine) finishCheck(
 	counted := result.Status != model.CheckSkipped
 	healthy := result.Status == model.CheckOperational
 	if counted {
+		e.attachProbeCost(ctx, started.Policy.Model, &result)
+	}
+	if counted {
 		if healthy {
 			latest.ConsecutiveSuccesses++
 			latest.ConsecutiveFailures = 0
@@ -557,6 +564,9 @@ func (e *Engine) finishCheck(
 		latest.NextCheckAt = nil
 	}
 	latest.UpdatedAt = checkedAt
+	if counted {
+		latest.DetectionStats.Add(result.Usage, result.Cost, checkedAt)
+	}
 	latest.AddHistory(result)
 	if err := e.store.Put(latest); err != nil {
 		e.logger.Error("persist account check", "account_id", latest.AccountID, "error", err)
@@ -600,6 +610,7 @@ func classifyResult(
 		LatencyMS:    outcome.Latency.Milliseconds(),
 		ResponseText: truncate(outcome.ResponseText, 2000),
 		CheckedAt:    checkedAt,
+		Usage:        cloneProbeUsage(outcome.Usage),
 	}
 	if probeErr != nil {
 		result.Status = model.CheckError
@@ -627,6 +638,41 @@ func classifyResult(
 	result.Status = model.CheckOperational
 	result.Message = "检测正常"
 	return result
+}
+
+func (e *Engine) attachProbeCost(ctx context.Context, configuredModel string, result *model.CheckResult) {
+	if result == nil {
+		return
+	}
+	result.Cost = &model.ProbeCost{Currency: "USD", Known: false}
+	if result.Usage == nil {
+		return
+	}
+	modelID := strings.TrimSpace(result.Usage.Model)
+	if modelID == "" {
+		modelID = strings.TrimSpace(configuredModel)
+		result.Usage.Model = modelID
+	}
+	pricingClient, ok := e.core.(modelPricingClient)
+	if !ok || modelID == "" {
+		return
+	}
+	pricingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	pricing, err := pricingClient.GetModelPricing(pricingCtx, modelID)
+	if err != nil {
+		e.logger.Debug("probe pricing unavailable", "model", modelID, "error", err)
+		return
+	}
+	result.Cost = core.CalculateProbeCost(result.Usage, pricing)
+}
+
+func cloneProbeUsage(usage *model.ProbeUsage) *model.ProbeUsage {
+	if usage == nil {
+		return nil
+	}
+	copy := *usage
+	return &copy
 }
 
 func (e *Engine) syncSnapshots(accounts []model.UpstreamAccount) {

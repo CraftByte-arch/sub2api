@@ -2,7 +2,6 @@ package upstream
 
 import (
 	"context"
-	"math"
 	"testing"
 	"time"
 
@@ -136,10 +135,10 @@ func TestAccountBalanceQuotaFansOutFullIdentityBalancePerBoundAccount(t *testing
 
 	one := quotaUpdateByAccount(t, local.updates, 1)
 	two := quotaUpdateByAccount(t, local.updates, 2)
-	if one.Remaining == nil || *one.Remaining != 200 || one.QuotaLimit != 210 || one.QuotaUsed != nil {
+	if one.Remaining == nil || *one.Remaining != 200 || one.QuotaLimit != 200 || one.QuotaUsed == nil || *one.QuotaUsed != 0 {
 		t.Fatalf("account one did not receive full balance / 0.5: %#v", one)
 	}
-	if two.Remaining == nil || *two.Remaining != 50 || two.QuotaLimit != 55 || two.QuotaUsed != nil {
+	if two.Remaining == nil || *two.Remaining != 50 || two.QuotaLimit != 50 || two.QuotaUsed == nil || *two.QuotaUsed != 0 {
 		t.Fatalf("account two did not receive full balance / 2: %#v", two)
 	}
 
@@ -187,7 +186,7 @@ func TestAccountBalanceQuotaZeroImmediatelyExhaustsAndPositiveBalanceRecovers(t 
 	}
 	recovered := local.updates[len(local.updates)-1].update
 	if recovered.Exhausted || recovered.Remaining == nil || *recovered.Remaining != 50 ||
-		math.Abs(recovered.QuotaLimit-(50+accountQuotaExhaustedSentinel)) > 1e-12 {
+		recovered.QuotaLimit != 50 || recovered.QuotaUsed == nil || *recovered.QuotaUsed != 0 {
 		t.Fatalf("positive balance did not recover account quota: %#v", recovered)
 	}
 }
@@ -210,7 +209,7 @@ func TestAccountBalanceQuotaZeroMultiplierIsUnlimited(t *testing.T) {
 		t.Fatal(err)
 	}
 	update := quotaUpdateByAccount(t, local.updates, 1)
-	if !update.Unlimited || update.QuotaLimit != 0 || update.Exhausted {
+	if !update.Unlimited || update.QuotaLimit != 0 || update.QuotaUsed == nil || *update.QuotaUsed != 0 || update.Exhausted {
 		t.Fatalf("zero multiplier was not treated as unlimited: %#v", update)
 	}
 }

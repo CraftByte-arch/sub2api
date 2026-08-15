@@ -83,7 +83,11 @@ The sidecar SHALL project a fresh USD identity balance onto each explicitly boun
 
 #### Scenario: Fresh balance and positive group multiplier
 - **WHEN** an identity has a fresh balance of `100 USD`, a bound remote key has group multiplier `0.5`, and the local account has `quota_used = 10`
-- **THEN** the sidecar SHALL set that local account's `quota_limit` to `210`, leaving `quota_used` unchanged so the displayed remaining quota is `200`
+- **THEN** the sidecar SHALL set that local account's `quota_limit` to `200` and reset `quota_used` to `0` so the displayed remaining quota is `200`
+
+#### Scenario: Same balance observation is reconciled repeatedly
+- **WHEN** a previously applied balance observation is encountered again after local usage has increased
+- **THEN** the sidecar SHALL NOT reset `quota_used` again until a newer authoritative balance observation is available
 
 #### Scenario: Multiple local accounts use one site balance
 - **WHEN** multiple local accounts are bound to keys under the same upstream identity
@@ -95,11 +99,11 @@ The sidecar SHALL project a fresh USD identity balance onto each explicitly boun
 
 #### Scenario: Balance becomes positive again
 - **WHEN** a previously exhausted managed account later receives a positive fresh upstream balance
-- **THEN** the sidecar SHALL raise its quota limit above the preserved used value and native Sub2API scheduling SHALL be able to include it again
+- **THEN** the sidecar SHALL replace the exhaustion sentinel with the projected quota limit, reset `quota_used` to zero, and native Sub2API scheduling SHALL be able to include it again
 
 #### Scenario: Group multiplier is zero
 - **WHEN** a bound key has an exact group multiplier of zero
-- **THEN** the sidecar SHALL represent the account quota as unlimited because requests do not consume the upstream identity balance
+- **THEN** the sidecar SHALL represent the account quota as unlimited with `quota_limit = 0` and `quota_used = 0` because requests do not consume the upstream identity balance
 
 #### Scenario: Projection input is not authoritative
 - **WHEN** the identity balance is stale, unavailable, non-USD/raw quota, non-finite, or the bound key multiplier is missing, negative, non-finite, stale, or ambiguous

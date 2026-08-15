@@ -52,6 +52,8 @@ type Manager struct {
 
 	busyMu sync.Mutex
 	busy   map[string]struct{}
+
+	protectionMu sync.Mutex
 }
 
 type LocalAccountView struct {

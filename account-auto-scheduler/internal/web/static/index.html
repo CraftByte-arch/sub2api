@@ -99,6 +99,7 @@
             <option value="enabled">当前可用</option>
             <option value="manual">管理员停止</option>
             <option value="auto">检测自动停止</option>
+            <option value="protected">超过保护倍率</option>
             <option value="limited">临时受限</option>
             <option value="inactive">账号停用</option>
             <option value="error">账号异常</option>
@@ -294,6 +295,30 @@
       </header>
       <dl id="result-details" class="result-details"></dl>
       <footer class="modal-footer"><button class="button secondary" type="button" data-close-dialog="result-dialog">关闭</button></footer>
+    </article>
+  </dialog>
+
+  <dialog id="protection-dialog" class="modal small-modal">
+    <form id="protection-form" method="dialog" class="modal-panel">
+      <header class="modal-header">
+        <div><h2>设置保护倍率</h2><p id="protection-account-name"></p></div>
+        <button class="icon-button ghost" type="button" data-close-dialog="protection-dialog" title="关闭" aria-label="关闭"><svg class="icon"><use href="#icon-x"/></svg></button>
+      </header>
+      <div class="modal-body form-grid">
+        <label class="field full-width"><span>保护倍率</span><input id="protection-multiplier-input" type="number" inputmode="decimal" min="0" step="any" required><small>最终倍率严格超过此值时自动解除当前分组绑定；恢复到此值或以下时自动重新绑定。</small></label>
+        <div class="protection-preview full-width"><span>当前最终倍率</span><strong id="protection-final-preview">—</strong></div>
+        <p id="protection-error" class="form-error full-width" role="alert" hidden></p>
+      </div>
+      <footer class="modal-footer"><button class="button secondary" type="button" data-close-dialog="protection-dialog">取消</button><button id="protection-save-button" class="button primary" type="submit">保存保护倍率</button></footer>
+    </form>
+  </dialog>
+
+  <dialog id="binding-action-dialog" class="modal small-modal">
+    <article class="modal-panel">
+      <header class="modal-header"><div><h2 id="binding-action-title">确认操作</h2><p id="binding-action-account-name"></p></div></header>
+      <div class="confirm-body"><p id="binding-action-message"></p></div>
+      <p id="binding-action-error" class="dialog-error" role="alert" hidden></p>
+      <footer class="modal-footer"><button class="button secondary" type="button" data-close-dialog="binding-action-dialog">取消</button><button id="binding-action-confirm-button" class="button danger" type="button">确认</button></footer>
     </article>
   </dialog>
 

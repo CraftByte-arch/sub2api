@@ -149,13 +149,14 @@ func sameQuotaValue(left, right float64) bool {
 	return math.Abs(left-right) <= 1e-9*math.Max(1, math.Max(math.Abs(left), math.Abs(right)))
 }
 
-func accountBalanceQuotaUpdate(account model.UpstreamAccount, projection localAccountBalanceQuotaProjection) (model.AccountBalanceQuotaUpdate, bool) {
+func accountBalanceQuotaUpdate(_ model.UpstreamAccount, projection localAccountBalanceQuotaProjection) (model.AccountBalanceQuotaUpdate, bool) {
 	if projection.status != accountBalanceQuotaStatusAvailable {
 		return model.AccountBalanceQuotaUpdate{}, false
 	}
-	used := finiteQuotaValue(account.QuotaUsed)
+	zero := 0.0
 	update := model.AccountBalanceQuotaUpdate{
 		Managed:    true,
+		QuotaUsed:  &zero,
 		ObservedAt: projection.observedAt,
 		Unlimited:  projection.unlimited,
 	}
@@ -170,20 +171,12 @@ func accountBalanceQuotaUpdate(account model.UpstreamAccount, projection localAc
 	}
 	if remaining <= 0 {
 		update.Exhausted = true
-		if used <= 0 {
-			sentinel := accountQuotaExhaustedSentinel
-			update.QuotaLimit = sentinel
-			update.QuotaUsed = &sentinel
-			return update, true
-		}
-		update.QuotaLimit = used
+		sentinel := accountQuotaExhaustedSentinel
+		update.QuotaLimit = sentinel
+		update.QuotaUsed = &sentinel
 		return update, true
 	}
-	limit := used + remaining
-	if math.IsNaN(limit) || math.IsInf(limit, 0) {
-		return model.AccountBalanceQuotaUpdate{}, false
-	}
-	update.QuotaLimit = limit
+	update.QuotaLimit = remaining
 	return update, true
 }
 
@@ -262,6 +255,7 @@ func (m *Manager) reconcileAccountBalanceQuotasForAccounts(ctx context.Context, 
 
 func (m *Manager) reconcileLocalAccountStateForAccounts(ctx context.Context, accounts []model.UpstreamAccount) error {
 	return errors.Join(
+		m.reconcileProtectedBindings(ctx, accounts),
 		m.reconcileFinalCostMultipliersForAccounts(ctx, accounts),
 		m.reconcileAccountBalanceQuotasForAccounts(ctx, accounts),
 	)

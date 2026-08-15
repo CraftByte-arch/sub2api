@@ -1,5 +1,6 @@
 services:
   account-auto-scheduler:
+    image: ${AUTO_SCHEDULER_IMAGE:-account-auto-scheduler-account-auto-scheduler}
     build:
       context: .
     container_name: account-auto-scheduler

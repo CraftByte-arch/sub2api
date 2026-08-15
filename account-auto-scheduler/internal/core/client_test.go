@@ -51,7 +51,7 @@ func TestTestAccountParsesSuccessfulSSE(t *testing.T) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = fmt.Fprint(w, "data: {\"type\":\"test_start\"}\n\n")
 		_, _ = fmt.Fprint(w, "data:{\"type\":\"content\",\"text\":\"4\"}\n\n")
-		_, _ = fmt.Fprint(w, "data: {\"type\":\"test_complete\",\"success\":true}\n\n")
+		_, _ = fmt.Fprint(w, "data: {\"type\":\"test_complete\",\"success\":true,\"model\":\"gpt-test\",\"usage\":{\"prompt_tokens\":8,\"completion_tokens\":2}}\n\n")
 	}))
 	defer server.Close()
 
@@ -60,8 +60,29 @@ func TestTestAccountParsesSuccessfulSSE(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !outcome.Success || outcome.ResponseText != "4" || outcome.ErrorMessage != "" {
+	if !outcome.Success || outcome.ResponseText != "4" || outcome.ErrorMessage != "" || outcome.Usage == nil || outcome.Usage.InputTokens != 8 || outcome.Usage.OutputTokens != 2 || outcome.Usage.Model != "gpt-test" {
 		t.Fatalf("unexpected outcome: %#v", outcome)
+	}
+}
+
+func TestGetModelPricingUsesExistingAdministratorEndpoint(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/admin/channels/model-pricing" || r.URL.Query().Get("model") != "gpt-test" || r.Header.Get("x-api-key") != "admin-secret" {
+			t.Fatalf("unexpected pricing request: %s?%s headers=%#v", r.URL.Path, r.URL.RawQuery, r.Header)
+		}
+		writeEnvelope(t, w, map[string]any{
+			"found": true, "input_price": 0.001, "output_price": 0.002,
+			"cache_write_price": 0.00125, "cache_read_price": 0.0001,
+		})
+	}))
+	defer server.Close()
+
+	pricing, err := newTestClient(t, server.URL).GetModelPricing(context.Background(), "gpt-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pricing.Found || pricing.InputPrice == nil || *pricing.InputPrice != 0.001 || pricing.OutputPrice == nil || *pricing.OutputPrice != 0.002 || pricing.CacheReadPrice == nil || *pricing.CacheReadPrice != 0.0001 {
+		t.Fatalf("unexpected pricing: %#v", pricing)
 	}
 }
 
@@ -223,13 +244,11 @@ func TestSetAccountBalanceQuotaUsesExistingBulkExtraMerge(t *testing.T) {
 		if !reflect.DeepEqual(payload.AccountIDs, []int64{7}) {
 			t.Fatalf("unexpected account ids: %#v", payload.AccountIDs)
 		}
-		if payload.Extra["quota_limit"] != 210.0 || payload.Extra[model.UpstreamBalanceQuotaManagedExtraKey] != true ||
+		if payload.Extra["quota_limit"] != 200.0 || payload.Extra["quota_used"] != 0.0 ||
+			payload.Extra[model.UpstreamBalanceQuotaManagedExtraKey] != true ||
 			payload.Extra[model.UpstreamBalanceQuotaRemainingExtraKey] != 200.0 ||
 			payload.Extra[model.UpstreamBalanceQuotaObservedAtExtraKey] != observedAt.Format(time.RFC3339Nano) {
 			t.Fatalf("unexpected quota payload: %#v", payload.Extra)
-		}
-		if _, exists := payload.Extra["quota_used"]; exists {
-			t.Fatalf("normal quota refresh overwrote quota_used: %#v", payload.Extra)
 		}
 		if _, exists := payload.Extra["rate_multiplier"]; exists {
 			t.Fatalf("quota refresh sent billing multiplier: %#v", payload.Extra)
@@ -239,8 +258,10 @@ func TestSetAccountBalanceQuotaUsesExistingBulkExtraMerge(t *testing.T) {
 	defer server.Close()
 
 	remaining := 200.0
+	zero := 0.0
 	err := newTestClient(t, server.URL).SetAccountBalanceQuota(context.Background(), 7, model.AccountBalanceQuotaUpdate{
-		QuotaLimit: 210,
+		QuotaLimit: 200,
+		QuotaUsed:  &zero,
 		Managed:    true,
 		Remaining:  &remaining,
 		ObservedAt: &observedAt,

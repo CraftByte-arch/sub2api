@@ -9,9 +9,10 @@ import (
 )
 
 const (
-	StateVersion                           = 3
+	StateVersion                           = 4
 	LegacyStateVersion                     = 1
 	UpstreamStateVersion                   = 2
+	ProtectionStateVersion                 = 3
 	HistoryLimit                           = 50
 	MinIntervalSeconds                     = 15
 	MaxIntervalSeconds                     = 86400
@@ -359,6 +360,95 @@ type CheckResult struct {
 	ResponseText string      `json:"response_text,omitempty"`
 	Action       string      `json:"action,omitempty"`
 	CheckedAt    time.Time   `json:"checked_at"`
+	Usage        *ProbeUsage `json:"usage,omitempty"`
+	Cost         *ProbeCost  `json:"cost,omitempty"`
+}
+
+// ProbeUsage is normalized usage reported by a probe. It is deliberately
+// optional because legacy Sub2API test events and some upstream relays do not
+// expose token accounting in their streaming terminal event.
+type ProbeUsage struct {
+	Model            string `json:"model,omitempty"`
+	InputTokens      int64  `json:"input_tokens,omitempty"`
+	OutputTokens     int64  `json:"output_tokens,omitempty"`
+	CacheReadTokens  int64  `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens int64  `json:"cache_write_tokens,omitempty"`
+}
+
+func (u *ProbeUsage) TotalTokens() int64 {
+	if u == nil {
+		return 0
+	}
+	return maxInt64(0, u.InputTokens) + maxInt64(0, u.OutputTokens) + maxInt64(0, u.CacheReadTokens) + maxInt64(0, u.CacheWriteTokens)
+}
+
+// ProbeCost is a sidecar-only estimate. Amount is only present when both
+// usage and model pricing were available; it never affects Sub2API billing.
+type ProbeCost struct {
+	Amount   float64 `json:"amount"`
+	Currency string  `json:"currency,omitempty"`
+	Known    bool    `json:"known"`
+}
+
+type DetectionStats struct {
+	Requests         int64      `json:"requests"`
+	InputTokens      int64      `json:"input_tokens"`
+	OutputTokens     int64      `json:"output_tokens"`
+	CacheReadTokens  int64      `json:"cache_read_tokens"`
+	CacheWriteTokens int64      `json:"cache_write_tokens"`
+	KnownCost        float64    `json:"known_cost"`
+	KnownCostChecks  int64      `json:"known_cost_checks"`
+	LastCost         *ProbeCost `json:"last_cost,omitempty"`
+	LastUsageAt      *time.Time `json:"last_usage_at,omitempty"`
+}
+
+func (s *DetectionStats) Add(usage *ProbeUsage, cost *ProbeCost, observedAt time.Time) {
+	s.Requests++
+	if usage != nil {
+		s.InputTokens += maxInt64(0, usage.InputTokens)
+		s.OutputTokens += maxInt64(0, usage.OutputTokens)
+		s.CacheReadTokens += maxInt64(0, usage.CacheReadTokens)
+		s.CacheWriteTokens += maxInt64(0, usage.CacheWriteTokens)
+		s.LastUsageAt = cloneTime(&observedAt)
+	}
+	if cost != nil {
+		copy := *cost
+		s.LastCost = &copy
+		if cost.Known && !math.IsNaN(cost.Amount) && !math.IsInf(cost.Amount, 0) && cost.Amount >= 0 {
+			s.KnownCost += cost.Amount
+			s.KnownCostChecks++
+		}
+	}
+}
+
+type GroupAccountProtectionStatus string
+
+const (
+	ProtectionBound       GroupAccountProtectionStatus = "bound"
+	ProtectionExceeded    GroupAccountProtectionStatus = "rate_protected"
+	ProtectionUnavailable GroupAccountProtectionStatus = "multiplier_unavailable"
+	ProtectionUnbound     GroupAccountProtectionStatus = "rebind_pending"
+)
+
+// GroupAccountProtection is a persisted logical membership record. It stays
+// present when the sidecar removes the physical Sub2API group binding, so the
+// account can still be displayed and automatically rebound later.
+type GroupAccountProtection struct {
+	GroupID              int64                        `json:"group_id"`
+	AccountID            int64                        `json:"account_id"`
+	ProtectionMultiplier float64                      `json:"protection_multiplier"`
+	UpstreamID           string                       `json:"upstream_id,omitempty"`
+	IdentityID           string                       `json:"identity_id,omitempty"`
+	RemoteKeyID          string                       `json:"remote_key_id,omitempty"`
+	Status               GroupAccountProtectionStatus `json:"status"`
+	PhysicalBound        bool                         `json:"physical_bound"`
+	LastError            string                       `json:"last_error,omitempty"`
+	CreatedAt            time.Time                    `json:"created_at"`
+	UpdatedAt            time.Time                    `json:"updated_at"`
+}
+
+func (p GroupAccountProtection) Valid() bool {
+	return p.GroupID > 0 && p.AccountID > 0 && p.ProtectionMultiplier >= 0 && !math.IsNaN(p.ProtectionMultiplier) && !math.IsInf(p.ProtectionMultiplier, 0)
 }
 
 type ManagedAccount struct {
@@ -375,6 +465,7 @@ type ManagedAccount struct {
 	NextCheckAt          *time.Time         `json:"next_check_at,omitempty"`
 	LastError            string             `json:"last_error,omitempty"`
 	History              []CheckResult      `json:"history"`
+	DetectionStats       DetectionStats     `json:"detection_stats,omitempty"`
 	ProbeSource          ProbeSource        `json:"probe_source,omitempty"`
 	DirectProbe          *DirectProbeConfig `json:"direct_probe,omitempty"`
 	CreatedAt            time.Time          `json:"created_at"`
@@ -438,6 +529,7 @@ type ManagedAccountView struct {
 	NextCheckAt          *time.Time      `json:"next_check_at,omitempty"`
 	LastError            string          `json:"last_error,omitempty"`
 	History              []CheckResult   `json:"history"`
+	DetectionStats       DetectionStats  `json:"detection_stats,omitempty"`
 	Probe                DirectProbeView `json:"probe"`
 	CreatedAt            time.Time       `json:"created_at"`
 	UpdatedAt            time.Time       `json:"updated_at"`
@@ -466,6 +558,7 @@ func (m ManagedAccount) PublicView() ManagedAccountView {
 		NextCheckAt:          cloneTime(m.NextCheckAt),
 		LastError:            m.LastError,
 		History:              append([]CheckResult(nil), m.History...),
+		DetectionStats:       cloneDetectionStats(m.DetectionStats),
 		CreatedAt:            m.CreatedAt,
 		UpdatedAt:            m.UpdatedAt,
 		Running:              m.Running,
@@ -513,7 +606,24 @@ func (m *ManagedAccount) AddHistory(result CheckResult) {
 }
 
 type State struct {
-	Version   int                        `json:"version"`
-	Accounts  map[string]ManagedAccount  `json:"accounts"`
-	Upstreams map[string]ManagedUpstream `json:"upstreams,omitempty"`
+	Version     int                               `json:"version"`
+	Accounts    map[string]ManagedAccount         `json:"accounts"`
+	Upstreams   map[string]ManagedUpstream        `json:"upstreams,omitempty"`
+	Protections map[string]GroupAccountProtection `json:"group_account_protections,omitempty"`
+}
+
+func maxInt64(value, minimum int64) int64 {
+	if value < minimum {
+		return minimum
+	}
+	return value
+}
+
+func cloneDetectionStats(stats DetectionStats) DetectionStats {
+	if stats.LastCost != nil {
+		copy := *stats.LastCost
+		stats.LastCost = &copy
+	}
+	stats.LastUsageAt = cloneTime(stats.LastUsageAt)
+	return stats
 }

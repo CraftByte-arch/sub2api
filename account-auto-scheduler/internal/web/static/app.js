@@ -29,6 +29,9 @@
     usageCache: new Map(),
     collapsedGroups: new Set(),
     automationBusy: new Set(),
+    protectionBusy: new Set(),
+    protectionTarget: null,
+    bindingAction: null,
     activeTab: 'groups',
     upstreamWorkspace: null,
     pollTimer: null,
@@ -80,6 +83,10 @@
       'account-detail-dialog', 'account-detail-title', 'account-detail-group-name', 'account-detail-list',
       'account-detail-page-label', 'account-detail-prev', 'account-detail-next', 'delete-dialog',
       'delete-account-name', 'confirm-delete-button', 'result-dialog', 'result-account-name', 'result-details', 'toast',
+      'protection-dialog', 'protection-form', 'protection-account-name', 'protection-multiplier-input',
+      'protection-final-preview', 'protection-error', 'protection-save-button', 'binding-action-dialog',
+      'binding-action-title', 'binding-action-account-name', 'binding-action-message', 'binding-action-error',
+      'binding-action-confirm-button',
       'groups-tab', 'upstreams-tab', 'groups-panel', 'upstreams-panel', 'groups-header-actions', 'upstreams-header-actions'
     ]
     for (const id of ids) elements[toCamel(id)] = document.getElementById(id)
@@ -117,6 +124,8 @@
     elements.directProbeAuthorizeButton.addEventListener('click', authorizeDirectProbe)
     elements.directProbeRevokeButton.addEventListener('click', revokeDirectProbe)
     elements.confirmDeleteButton.addEventListener('click', deleteConfig)
+    elements.protectionForm.addEventListener('submit', saveProtection)
+    elements.bindingActionConfirmButton.addEventListener('click', confirmBindingAction)
     elements.bindingSearchInput.addEventListener('input', (event) => {
       state.bindingSearch = event.target.value.trim().toLocaleLowerCase()
       renderBindingList()
@@ -138,6 +147,10 @@
       if (state.bindingSaving) event.preventDefault()
     })
     elements.bindingDialog.addEventListener('close', restoreBindingFocus)
+    elements.protectionDialog.addEventListener('close', () => { state.protectionTarget = null })
+    elements.bindingActionDialog.addEventListener('close', () => {
+      if (elements.bindingActionDialog.dataset.busy !== 'true') state.bindingAction = null
+    })
     document.addEventListener('keydown', (event) => {
       if (event.key !== 'Escape') return
       const dialogs = [...document.querySelectorAll('dialog[open]')]
@@ -221,10 +234,10 @@
     const views = state.groups.map((group) => ({
       key: String(group.id),
       group,
-      accounts: state.accounts.filter((account) => (account.group_ids || []).includes(group.id)),
+      accounts: state.accounts.filter((account) => membershipIDs(account).includes(group.id)),
       synthetic: false,
     }))
-    const ungrouped = state.accounts.filter((account) => !(account.group_ids || []).some((id) => validGroupIDs.has(id)))
+    const ungrouped = state.accounts.filter((account) => !membershipIDs(account).some((id) => validGroupIDs.has(id)))
     if (ungrouped.length > 0) {
       views.push({
         key: 'ungrouped',
@@ -248,14 +261,14 @@
   function filterGroupView(view) {
     const groupHaystack = `${view.group.name || ''} ${view.group.platform || ''} ${view.group.description || ''}`.toLocaleLowerCase()
     const groupMatchesSearch = Boolean(state.search && groupHaystack.includes(state.search))
-    const accounts = view.accounts.filter((account) => accountMatchesFilters(account, groupMatchesSearch))
+    const accounts = view.accounts.filter((account) => accountMatchesFilters(account, groupMatchesSearch, view.group.id))
     const noFilters = !state.search && state.status === 'all'
     if (!noFilters && accounts.length === 0) return null
     return { ...view, visibleAccounts: noFilters ? view.accounts : accounts }
   }
 
-  function accountMatchesFilters(account, groupMatchesSearch = false) {
-    const accountView = accountState(account)
+  function accountMatchesFilters(account, groupMatchesSearch = false, groupID = 0) {
+    const accountView = groupAccountState(account, groupID)
     if (state.status !== 'all' && accountView.key !== state.status) return false
     if (!state.search || groupMatchesSearch) return true
     const haystack = `${account.name || ''} ${account.platform || ''} ${account.type || ''} ${account.id}`.toLocaleLowerCase()
@@ -263,12 +276,12 @@
   }
 
   function renderGroup(view) {
-    const visible = sortAccounts(view.visibleAccounts || view.accounts)
+    const visible = sortAccounts(view.visibleAccounts || view.accounts, view.group.id)
     const apiKeys = visible.filter(isAPIKey)
     const oauthAccounts = visible.filter(isOAuthLike)
     const otherAccounts = visible.filter((account) => !isAPIKey(account) && !isOAuthLike(account))
     const total = view.accounts.length
-    const enabled = view.accounts.filter((account) => accountState(account).key === 'enabled').length
+    const enabled = view.accounts.filter((account) => groupAccountState(account, view.group.id).key === 'enabled').length
     const limited = view.accounts.filter((account) => accountState(account).key === 'limited').length
     const groupKey = String(view.key)
     const contentID = `group-content-${groupKey.replace(/[^a-zA-Z0-9_-]/g, '-')}`
@@ -310,7 +323,7 @@
         </header>
         <div id="${escapeAttr(contentID)}" class="api-key-table" ${collapsed ? 'hidden' : ''}>
           <div class="api-key-header" aria-hidden="true"><span>账号状态</span><span>用量与管理员额度</span><span>检测规则与最终倍率</span><span>自动调度 / 操作</span></div>
-          ${apiKeys.length ? apiKeys.map(renderAPIKeyAccount).join('') : '<div class="group-empty">暂无 API Key 账号</div>'}
+          ${apiKeys.length ? apiKeys.map((account) => renderAPIKeyAccount(account, view.group.id)).join('') : '<div class="group-empty">暂无 API Key 账号</div>'}
         </div>
       </article>`
   }
@@ -319,12 +332,15 @@
     return `<button class="summary-button" type="button" data-action="open-detail" data-group-key="${escapeAttr(groupKey)}" data-kind="${escapeAttr(kind)}"><svg class="icon"><use href="#icon-users"/></svg><span>${escapeHTML(label)}</span></button>`
   }
 
-  function renderAPIKeyAccount(account) {
+  function renderAPIKeyAccount(account, groupID) {
     const config = account.config || null
-    const scheduling = accountState(account)
+    const protection = protectionFor(account, groupID)
+    const scheduling = groupAccountState(account, groupID)
     const policy = config?.policy
     const latest = config?.history?.[0]
     const automation = automationState(account)
+    const protectionKey = relationKey(groupID, account.id)
+    const protectionBusy = state.protectionBusy.has(protectionKey)
     const policyText = policy
       ? `<strong>${escapeHTML(policy.model || '平台默认模型')}</strong><span>每 ${formatInterval(policy.interval_seconds)} · 上限 ${formatSeconds(policy.latency_limit_ms)}</span><span>${policy.enabled ? '自动规则启用' : '自动规则停用'} · ${policy.failure_threshold} 次暂停 / ${policy.recovery_threshold} 次恢复</span>${renderProbeSummary(config.probe)}`
       : '<strong>未配置自动调度</strong><span>开启开关后使用默认检测规则</span>'
@@ -333,17 +349,22 @@
       <button class="icon-button" type="button" data-action="edit" title="编辑检测规则" aria-label="编辑检测规则"><svg class="icon"><use href="#icon-edit"/></svg></button>
       <button class="icon-button danger-tool" type="button" data-action="delete" title="删除检测配置" aria-label="删除检测配置" ${config.running ? 'disabled' : ''}><svg class="icon"><use href="#icon-trash"/></svg></button>` : `
       <button class="icon-button" type="button" data-action="create" title="配置状态检测" aria-label="配置状态检测"><svg class="icon"><use href="#icon-plus"/></svg></button>`
+    const relationActions = groupID > 0 ? `<div class="binding-row-actions">
+      <button class="button secondary relation-button" type="button" data-action="edit-protection" ${protectionBusy ? 'disabled' : ''}>${protection ? '编辑保护倍率' : '设置保护倍率'}</button>
+      ${protection?.status === 'rate_protected' ? `<button class="button warning relation-button" type="button" data-action="release-protection" ${protectionBusy ? 'disabled' : ''}>解除倍率保护</button>` : ''}
+      <button class="button danger relation-button" type="button" data-action="remove-binding" ${protectionBusy ? 'disabled' : ''}>移除绑定</button>
+    </div>` : ''
     const latestText = latest ? `${statusLabel(latest.status)} · ${formatMilliseconds(latest.latency_ms)}` : '尚未检测'
     const nextText = policy?.enabled && config.next_check_at ? `下次 ${formatRelative(config.next_check_at)}` : '—'
     return `
-      <section class="api-key-row" data-account-id="${account.id}">
+      <section class="api-key-row" data-account-id="${account.id}" data-group-id="${groupID}">
         <div class="account-cell">
           <div class="account-name-line"><strong>${escapeHTML(account.name || `账号 ${account.id}`)}</strong><span>#${account.id}</span></div>
           <div class="account-meta"><span class="platform-tag">${escapeHTML(account.platform || 'unknown')}</span><span>API Key</span></div>
           <div class="account-state ${escapeAttr(scheduling.tone)}"><i class="status-dot"></i><span><strong>${escapeHTML(scheduling.label)}</strong><small title="${escapeAttr(scheduling.reason)}">${escapeHTML(scheduling.reason)}</small></span></div>
         </div>
-        <div class="usage-cell">${renderTodayUsage(account)}${renderQuota(account)}</div>
-        <div class="policy-cell">${policyText}${renderFinalMultiplier(account)}<span class="latest-check">${escapeHTML(latestText)} · ${escapeHTML(nextText)}</span></div>
+        <div class="usage-cell">${renderTodayUsage(account)}${renderDetectionStats(config)}${renderQuota(account)}</div>
+        <div class="policy-cell">${policyText}${renderFinalMultiplier(account, protection)}<span class="latest-check">${escapeHTML(latestText)} · ${escapeHTML(nextText)}</span></div>
         <div class="row-actions">
           <div class="automation-control ${automation.busy ? 'busy' : ''}" title="${escapeAttr(automation.reason)}">
             <span class="automation-copy"><strong>自动调度</strong><small>${escapeHTML(automation.label)}</small></span>
@@ -354,6 +375,7 @@
             </label>
           </div>
           <div class="row-tools">${actions}</div>
+          ${relationActions}
         </div>
         <div class="history-row">
           <span class="history-label">最近 50 次</span>
@@ -383,6 +405,20 @@
     return `<strong>${formatInteger(usage.requests || 0)} 请求 · ${formatCompact(usage.tokens || 0)} tokens</strong><span>${formatCurrency(usage.cost || 0)} 今日成本</span>`
   }
 
+  function renderDetectionStats(config) {
+    const stats = config?.detection_stats
+    if (!stats || !Number(stats.requests)) {
+      return '<div class="detection-consumption"><span class="data-label">状态检测消耗（1 倍率）</span><strong>尚无检测消耗</strong></div>'
+    }
+    const totalTokens = ['input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_write_tokens']
+      .reduce((sum, key) => sum + (Number(stats[key]) || 0), 0)
+    const knownChecks = Number(stats.known_cost_checks) || 0
+    const requests = Number(stats.requests) || 0
+    const costText = knownChecks > 0 ? formatProbeCost(stats.known_cost || 0) : '金额不可用'
+    const detail = knownChecks < requests ? `其中 ${formatInteger(knownChecks)} 次取得模型定价` : '全部检测均已取得模型定价'
+    return `<div class="detection-consumption" title="${escapeAttr(detail)}"><span class="data-label">状态检测消耗（1 倍率）</span><strong>${formatInteger(requests)} 次 · ${formatCompact(totalTokens)} tokens</strong><span>${escapeHTML(costText)} · ${escapeHTML(detail)}</span></div>`
+  }
+
   function renderQuota(account) {
     const quotas = [
       quotaDimension('日额度', account.quota_daily_used, account.quota_daily_limit),
@@ -401,29 +437,37 @@
     return `<div title="${escapeAttr(detail)}"><dt>${escapeHTML(label)}</dt><dd><span>${escapeHTML(formatCurrency(normalizedUsed))}</span><i aria-hidden="true">/</i><strong>${escapeHTML(formatCurrency(Number(limit)))}</strong></dd></div>`
   }
 
-  function renderFinalMultiplier(account) {
+  function renderFinalMultiplier(account, protection = null) {
     const projection = account.upstream_final_multiplier || {}
-    const finalMultiplier = Number(projection.final_multiplier)
-    if (projection.status === 'available' && Number.isFinite(finalMultiplier)) {
+    const protectedFinal = Number(protection?.final_multiplier)
+    const finalMultiplier = Number.isFinite(protectedFinal) ? protectedFinal : Number(projection.final_multiplier)
+    const finalAvailable = Number.isFinite(finalMultiplier) && (protection || projection.status === 'available')
+    let finalBlock = ''
+    if (finalAvailable) {
       const recharge = Number(projection.recharge_rate_cny_per_usd)
       const group = Number(projection.group_multiplier)
       const detail = Number.isFinite(recharge) && Number.isFinite(group)
         ? `充值 ${formatMultiplier(recharge)} × 分组 ${formatMultiplier(group)}`
         : '来自上游列表的已绑定 Key'
-      return `<div class="final-multiplier" title="${escapeAttr(detail)}"><span class="data-label">最终倍率</span><strong>${escapeHTML(formatMultiplier(finalMultiplier))}x</strong><span>${escapeHTML(detail)}</span></div>`
+      finalBlock = `<div class="multiplier-item final-multiplier" title="${escapeAttr(detail)}"><span class="data-label">最终倍率</span><strong>${escapeHTML(formatMultiplier(finalMultiplier))}x</strong><span>${escapeHTML(detail)}</span></div>`
+    } else {
+      const status = String(projection.status || 'unavailable')
+      const labels = {
+        unbound: '未绑定上游 Key',
+        stale: '上游 Key 绑定已失效',
+        ambiguous: '存在多个有效上游 Key 绑定',
+        recharge_unset: '请在上游列表设置充值倍率',
+        group_multiplier_unknown: '上游尚未同步分组倍率',
+        invalid_upstream: '本地上游地址无效',
+        unavailable: '上游列表暂不可用',
+      }
+      const label = protection?.last_error || labels[status] || '最终倍率未计算'
+      finalBlock = `<div class="multiplier-item final-multiplier unavailable" title="${escapeAttr(label)}"><span class="data-label">最终倍率</span><strong>未计算</strong><span>${escapeHTML(label)}</span></div>`
     }
-    const status = String(projection.status || 'unavailable')
-    const labels = {
-      unbound: '未绑定上游 Key',
-      stale: '上游 Key 绑定已失效',
-      ambiguous: '存在多个有效上游 Key 绑定',
-      recharge_unset: '请在上游列表设置充值倍率',
-      group_multiplier_unknown: '上游尚未同步分组倍率',
-      invalid_upstream: '本地上游地址无效',
-      unavailable: '上游列表暂不可用',
-    }
-    const label = labels[status] || '最终倍率未计算'
-    return `<div class="final-multiplier unavailable" title="${escapeAttr(label)}"><span class="data-label">最终倍率</span><strong>未计算</strong><span>${escapeHTML(label)}</span></div>`
+    const protectionBlock = protection
+      ? `<div class="multiplier-item protection-multiplier ${protection.status === 'rate_protected' ? 'exceeded' : ['multiplier_unavailable', 'rebind_pending'].includes(protection.status) ? 'unavailable' : ''}"><span class="data-label">保护倍率</span><strong>${escapeHTML(formatMultiplier(protection.protection_multiplier))}x</strong><span>${protection.status === 'rate_protected' ? '已触发保护' : protection.status === 'multiplier_unavailable' ? '等待有效倍率' : protection.status === 'rebind_pending' ? '等待自动回绑' : '保护中'}</span></div>`
+      : '<div class="multiplier-item protection-multiplier unset"><span class="data-label">保护倍率</span><strong>未设置</strong><span>沿用原绑定逻辑</span></div>'
+    return `<div class="multiplier-pair">${finalBlock}${protectionBlock}</div>`
   }
 
   function automationState(account) {
@@ -491,6 +535,39 @@
     return { key: 'enabled', tone: 'success', label: '调度启用', reason: '账号当前可以参与调度' }
   }
 
+  function groupAccountState(account, groupID) {
+    const protection = protectionFor(account, groupID)
+    if (protection?.status === 'rate_protected') {
+      const finalValue = Number(protection.final_multiplier)
+      const transition = protection.physical_bound ? (protection.last_error || '正在重试解除当前分组绑定') : '已解除当前分组绑定'
+      const reason = Number.isFinite(finalValue)
+        ? `最终倍率 ${formatMultiplier(finalValue)}x 超过保护倍率 ${formatMultiplier(protection.protection_multiplier)}x，${transition}`
+        : `最终倍率超过保护倍率，${transition}`
+      return { key: 'protected', tone: 'warning', label: '超过保护倍率', reason }
+    }
+    if (protection?.status === 'multiplier_unavailable') {
+      return { key: 'protected', tone: 'warning', label: '保护倍率待确认', reason: protection.last_error || '当前最终倍率不可用，侧车保持上一次物理绑定状态' }
+    }
+    if (protection?.status === 'rebind_pending') {
+      return { key: 'protected', tone: 'warning', label: '等待自动回绑', reason: protection.last_error || '最终倍率已恢复到保护范围，但实际分组绑定尚未恢复，侧车会继续重试' }
+    }
+    return accountState(account)
+  }
+
+  function protectionFor(account, groupID) {
+    if (!account || !groupID) return null
+    return account.group_protections?.[String(groupID)] || null
+  }
+
+  function membershipIDs(account) {
+    const source = Array.isArray(account.logical_group_ids) ? account.logical_group_ids : account.group_ids
+    return [...new Set((source || []).map(Number).filter((id) => Number.isInteger(id) && id > 0))]
+  }
+
+  function relationKey(groupID, accountID) {
+    return `${groupID}:${accountID}`
+  }
+
   async function handleGroupClick(event) {
     const button = event.target.closest('[data-action]')
     if (!button || button.tagName === 'INPUT') return
@@ -510,6 +587,7 @@
     const row = button.closest('[data-account-id]')
     if (!row) return
     const account = findAccount(Number(row.dataset.accountId))
+    const groupID = Number(row.dataset.groupId)
     if (!account) return
     switch (action) {
       case 'create': openCreateDialog(account.id); break
@@ -517,6 +595,9 @@
       case 'edit': openEditDialog(account); break
       case 'delete': openDeleteDialog(account); break
       case 'result': openResultDialog(account, button.dataset.resultId); break
+      case 'edit-protection': openProtectionDialog(account, groupID); break
+      case 'release-protection': openBindingActionDialog('release', account, groupID); break
+      case 'remove-binding': openBindingActionDialog('remove', account, groupID); break
     }
   }
 
@@ -771,6 +852,112 @@
     }
   }
 
+  function openProtectionDialog(account, groupID) {
+    if (!account || !groupID) return
+    const protection = protectionFor(account, groupID)
+    state.protectionTarget = { accountID: account.id, groupID }
+    elements.protectionAccountName.textContent = `${account.name || `账号 ${account.id}`} · 分组 #${groupID}`
+    elements.protectionMultiplierInput.value = protection ? String(protection.protection_multiplier) : ''
+    const finalMultiplier = Number(protection?.final_multiplier ?? account.upstream_final_multiplier?.final_multiplier)
+    elements.protectionFinalPreview.textContent = Number.isFinite(finalMultiplier) ? `${formatMultiplier(finalMultiplier)}x` : '暂不可用'
+    elements.protectionError.hidden = true
+    elements.protectionSaveButton.disabled = false
+    elements.protectionDialog.showModal()
+    window.requestAnimationFrame(() => elements.protectionMultiplierInput.focus())
+  }
+
+  async function saveProtection(event) {
+    event.preventDefault()
+    if (!elements.protectionForm.reportValidity() || !state.protectionTarget) return
+    const multiplier = Number(elements.protectionMultiplierInput.value)
+    if (!Number.isFinite(multiplier) || multiplier < 0) {
+      elements.protectionError.textContent = '保护倍率必须是大于等于 0 的有限数值'
+      elements.protectionError.hidden = false
+      return
+    }
+    const { accountID, groupID } = state.protectionTarget
+    const key = relationKey(groupID, accountID)
+    state.protectionBusy.add(key)
+    elements.protectionDialog.dataset.busy = 'true'
+    document.querySelectorAll('[data-close-dialog="protection-dialog"]').forEach((button) => { button.disabled = true })
+    elements.protectionSaveButton.disabled = true
+    elements.protectionSaveButton.textContent = '保存中…'
+    elements.protectionError.hidden = true
+    try {
+      await api(`/api/groups/${groupID}/accounts/${accountID}/protection`, {
+        method: 'PUT',
+        body: { protection_multiplier: multiplier },
+      })
+      elements.protectionDialog.close()
+      showToast('保护倍率已保存，侧车已立即检查当前绑定状态')
+      await loadOverview(true)
+    } catch (error) {
+      elements.protectionError.textContent = error.message || '保护倍率保存失败'
+      elements.protectionError.hidden = false
+    } finally {
+      state.protectionBusy.delete(key)
+      elements.protectionDialog.dataset.busy = 'false'
+      document.querySelectorAll('[data-close-dialog="protection-dialog"]').forEach((button) => { button.disabled = false })
+      elements.protectionSaveButton.disabled = false
+      elements.protectionSaveButton.textContent = '保存保护倍率'
+      render()
+    }
+  }
+
+  function openBindingActionDialog(type, account, groupID) {
+    if (!account || !groupID) return
+    state.bindingAction = { type, accountID: account.id, groupID }
+    elements.bindingActionAccountName.textContent = account.name || `账号 ${account.id}`
+    elements.bindingActionError.hidden = true
+    if (type === 'release') {
+      elements.bindingActionTitle.textContent = '解除倍率保护'
+      elements.bindingActionMessage.textContent = '确认后会先把账号重新绑定到当前分组，再移除保护倍率。即使当前最终倍率仍然较高，也不会再自动解除该绑定。'
+      elements.bindingActionConfirmButton.textContent = '确认解除保护'
+      elements.bindingActionConfirmButton.className = 'button warning'
+    } else {
+      elements.bindingActionTitle.textContent = '移除账号绑定'
+      elements.bindingActionMessage.textContent = '确认后会先删除保护倍率和自动回绑关系，再解除实际分组绑定。之后即使最终倍率下降，也不会自动重新绑定。'
+      elements.bindingActionConfirmButton.textContent = '确认移除绑定'
+      elements.bindingActionConfirmButton.className = 'button danger'
+    }
+    elements.bindingActionConfirmButton.disabled = false
+    elements.bindingActionDialog.showModal()
+    window.requestAnimationFrame(() => elements.bindingActionConfirmButton.focus())
+  }
+
+  async function confirmBindingAction() {
+    if (!state.bindingAction) return
+    const { type, accountID, groupID } = state.bindingAction
+    const key = relationKey(groupID, accountID)
+    state.protectionBusy.add(key)
+    elements.bindingActionDialog.dataset.busy = 'true'
+    document.querySelectorAll('[data-close-dialog="binding-action-dialog"]').forEach((button) => { button.disabled = true })
+    elements.bindingActionConfirmButton.disabled = true
+    elements.bindingActionError.hidden = true
+    const originalText = elements.bindingActionConfirmButton.textContent
+    elements.bindingActionConfirmButton.textContent = '处理中…'
+    try {
+      const path = type === 'release'
+        ? `/api/groups/${groupID}/accounts/${accountID}/protection/release`
+        : `/api/groups/${groupID}/accounts/${accountID}/binding`
+      await api(path, { method: type === 'release' ? 'POST' : 'DELETE' })
+      elements.bindingActionDialog.close()
+      state.bindingAction = null
+      showToast(type === 'release' ? '倍率保护已解除，账号已重新绑定' : '账号绑定和倍率保护已移除')
+      await loadOverview(true)
+    } catch (error) {
+      elements.bindingActionError.textContent = error.message || '操作失败'
+      elements.bindingActionError.hidden = false
+    } finally {
+      state.protectionBusy.delete(key)
+      elements.bindingActionDialog.dataset.busy = 'false'
+      document.querySelectorAll('[data-close-dialog="binding-action-dialog"]').forEach((button) => { button.disabled = false })
+      elements.bindingActionConfirmButton.disabled = false
+      elements.bindingActionConfirmButton.textContent = originalText
+      render()
+    }
+  }
+
   function openResultDialog(account, resultID) {
     const result = account.config?.history?.find((item) => item.id === resultID)
     if (!result) return
@@ -782,6 +969,13 @@
       ['调度动作', actionLabel(result.action)],
       ['信息', result.message || '—'],
     ]
+    if (result.usage) {
+      const usageTokens = ['input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_write_tokens']
+        .reduce((sum, key) => sum + (Number(result.usage[key]) || 0), 0)
+      rows.push(['检测 Token', `${formatInteger(usageTokens)} · 输入 ${formatInteger(result.usage.input_tokens || 0)} / 输出 ${formatInteger(result.usage.output_tokens || 0)}`])
+      if (result.usage.model) rows.push(['计费模型', result.usage.model])
+    }
+    if (result.cost) rows.push(['检测成本（1 倍率）', result.cost.known ? formatProbeCost(result.cost.amount || 0) : '定价不可用'])
     if (result.response_text) rows.push(['响应片段', result.response_text])
     elements.resultDetails.innerHTML = rows.map(([term, detail]) => `<dt>${escapeHTML(term)}</dt><dd>${escapeHTML(detail)}</dd>`).join('')
     elements.resultDialog.showModal()
@@ -812,7 +1006,7 @@
       return `${account.name || ''} ${account.platform || ''} ${account.type || ''} ${account.id}`.toLocaleLowerCase().includes(state.bindingSearch)
     })
     elements.bindingList.innerHTML = accounts.length ? accounts.map((account) => {
-      const scheduling = accountState(account)
+      const scheduling = groupAccountState(account, state.bindingGroupID)
       const checked = state.bindingDraft.has(account.id)
       const originallyBound = state.bindingOriginal.has(account.id)
       const compatible = accountCompatibleWithGroup(account, group)
@@ -827,7 +1021,7 @@
         <input type="checkbox" data-account-id="${account.id}" ${checked ? 'checked' : ''} ${state.bindingSaving ? 'disabled' : ''}>
         <span class="binding-account"><strong>${escapeHTML(account.name || `账号 ${account.id}`)}</strong><small>${escapeHTML(account.platform || 'unknown')} · API Key · #${account.id}</small></span>
         <span class="binding-state ${escapeAttr(scheduling.tone)}"><i class="status-dot"></i>${escapeHTML(scheduling.label)}</span>
-        <span class="binding-memberships ${compatible ? '' : 'incompatible'}"><strong>${escapeHTML(membershipLabel)}</strong><small>${formatInteger((account.group_ids || []).length)} 个分组</small></span>
+        <span class="binding-memberships ${compatible ? '' : 'incompatible'}"><strong>${escapeHTML(membershipLabel)}</strong><small>${formatInteger(membershipIDs(account).length)} 个分组</small></span>
       </label>`
     }).join('') : `<div class="dialog-empty">${candidates.length ? '没有匹配的 API Key 账号' : '当前分组没有可绑定的 API Key 账号'}</div>`
     const changes = bindingChanges()
@@ -903,7 +1097,7 @@
 
   function currentBindingIDs(groupID) {
     return new Set(state.accounts
-      .filter((account) => isAPIKey(account) && (account.group_ids || []).includes(groupID))
+      .filter((account) => isAPIKey(account) && membershipIDs(account).includes(groupID))
       .map((account) => account.id))
   }
 
@@ -912,7 +1106,7 @@
     if (!group) return []
     return sortAccounts(state.accounts.filter((account) => isAPIKey(account) && (
       accountCompatibleWithGroup(account, group) || state.bindingOriginal.has(account.id)
-    )))
+    )), group.id)
   }
 
   function accountCompatibleWithGroup(account, group) {
@@ -1099,9 +1293,9 @@
     return state.accounts.find((account) => account.id === accountID)
   }
 
-  function sortAccounts(accounts) {
+  function sortAccounts(accounts, groupID = 0) {
     return [...accounts].sort((a, b) => {
-      const availability = Number(accountState(a).key !== 'enabled') - Number(accountState(b).key !== 'enabled')
+      const availability = Number(groupAccountState(a, groupID).key !== 'enabled') - Number(groupAccountState(b, groupID).key !== 'enabled')
       return availability || String(a.name || '').localeCompare(String(b.name || ''), 'zh-CN') || a.id - b.id
     })
   }
@@ -1179,6 +1373,12 @@
   function formatCurrency(value) {
     const normalized = Number(value) || 0
     return `$${normalized.toLocaleString('en-US', { minimumFractionDigits: normalized > 0 && normalized < 0.01 ? 4 : 2, maximumFractionDigits: 4 })}`
+  }
+
+  function formatProbeCost(value) {
+    const normalized = Number(value) || 0
+    const digits = normalized > 0 && normalized < 0.0001 ? 8 : normalized > 0 && normalized < 0.01 ? 6 : 4
+    return `$${normalized.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: digits })}`
   }
 
   function formatPercent(value) {
