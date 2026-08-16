@@ -325,6 +325,43 @@ func TestDirectProbeFailureNeverFallsBackToLegacyTest(t *testing.T) {
 	}
 }
 
+func TestInsufficientBalanceFailureSuspendsPersistsAndHealthyCheckClearsClassification(t *testing.T) {
+	fake := healthyAPIKeyAccount()
+	fake.directErrors = []error{&core.DirectProbeHTTPError{
+		StatusCode: 403,
+		Message:    "直连上游拒绝访问 (HTTP 403 Forbidden): 用户额度不足, 剩余额度: ¥-0.000358",
+	}}
+	fake.directOutcomes = []core.ProbeOutcome{{}, healthyOutcome()}
+	box := &fakeDirectBox{enabled: true, snapshot: directSnapshotForAccount(t, fake.account)}
+	scheduler := newTestEngineWithDirect(t, fake, box)
+	putAuthorizedDirectConfig(t, scheduler, fake.account.ID, box.snapshot)
+	if err := scheduler.store.Update(fake.account.ID, func(account *model.ManagedAccount) error {
+		account.Policy.FailureThreshold = 1
+		account.Policy.RecoveryThreshold = 1
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	scheduler.runOne(context.Background(), fake.account.ID)
+	failed := scheduler.List()[0]
+	if failed.LastFailureKind != model.CheckFailureBalanceInsufficient || failed.History[0].FailureKind != model.CheckFailureBalanceInsufficient {
+		t.Fatalf("balance failure classification was not persisted: %#v", failed)
+	}
+	if !strings.Contains(failed.LastError, "用户额度不足") || !failed.ManagedSuspended || failed.Schedulable || failed.History[0].Action != "disabled" {
+		t.Fatalf("balance failure did not use the normal suspension path: %#v calls=%#v", failed, fake.setCalls)
+	}
+
+	scheduler.runOne(context.Background(), fake.account.ID)
+	recovered := scheduler.List()[0]
+	if recovered.LastFailureKind != "" || recovered.LastError != "" || recovered.ManagedSuspended || !recovered.Schedulable || recovered.History[0].Action != "restored" {
+		t.Fatalf("healthy recovery did not clear balance classification: %#v", recovered)
+	}
+	if len(fake.setCalls) != 2 || fake.setCalls[0] || !fake.setCalls[1] {
+		t.Fatalf("unexpected scheduling calls: %#v", fake.setCalls)
+	}
+}
+
 func TestStaleOrUnreadableDirectProbeSkipsWithoutSchedulerCountersOrFallback(t *testing.T) {
 	tests := []struct {
 		name    string

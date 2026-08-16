@@ -277,9 +277,10 @@ func TestStorePersistsAndDeepCopiesDetectionStatistics(t *testing.T) {
 	now := time.Now().UTC()
 	knownCost := &model.ProbeCost{Amount: 0.0012, Currency: "USD", Known: true}
 	account := model.ManagedAccount{
-		AccountID: 42,
+		AccountID:       42,
+		LastFailureKind: model.CheckFailureBalanceInsufficient,
 		History: []model.CheckResult{{
-			ID: "check", CheckedAt: now,
+			ID: "check", CheckedAt: now, FailureKind: model.CheckFailureBalanceInsufficient,
 			Usage: &model.ProbeUsage{Model: "gpt-test", InputTokens: 10, OutputTokens: 2},
 			Cost:  knownCost,
 		}},
@@ -308,8 +309,9 @@ func TestStorePersistsAndDeepCopiesDetectionStatistics(t *testing.T) {
 		t.Fatal(err)
 	}
 	stored, err := reloaded.Get(42)
-	if err != nil || stored.DetectionStats.Requests != 1 || stored.DetectionStats.KnownCost != 0.0012 {
-		t.Fatalf("detection statistics were not restored: %#v err=%v", stored.DetectionStats, err)
+	if err != nil || stored.DetectionStats.Requests != 1 || stored.DetectionStats.KnownCost != 0.0012 ||
+		stored.LastFailureKind != model.CheckFailureBalanceInsufficient || stored.History[0].FailureKind != model.CheckFailureBalanceInsufficient {
+		t.Fatalf("detection state was not restored: %#v err=%v", stored, err)
 	}
 }
 

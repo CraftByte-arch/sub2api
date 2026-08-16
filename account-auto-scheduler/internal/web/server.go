@@ -163,9 +163,19 @@ type overviewAccount struct {
 	model.UpstreamAccount
 	TodayUsage              model.WindowStats                              `json:"today_usage"`
 	Config                  *model.ManagedAccountView                      `json:"config,omitempty"`
+	AdminBalance            overviewAdminBalance                           `json:"admin_balance"`
 	UpstreamFinalMultiplier *upstream.LocalAccountFinalMultiplier          `json:"upstream_final_multiplier,omitempty"`
 	LogicalGroupIDs         []int64                                        `json:"logical_group_ids,omitempty"`
 	GroupProtections        map[string]upstream.GroupAccountProtectionView `json:"group_protections,omitempty"`
+}
+
+type overviewAdminBalance struct {
+	Configured          bool     `json:"configured"`
+	Managed             bool     `json:"managed"`
+	Unlimited           bool     `json:"unlimited"`
+	Insufficient        bool     `json:"insufficient"`
+	Remaining           *float64 `json:"remaining,omitempty"`
+	ExhaustedDimensions []string `json:"exhausted_dimensions,omitempty"`
 }
 
 func NewServer(scheduler *engine.Engine, coreClient AdminCore, options Options, logger *slog.Logger) *Server {
@@ -301,6 +311,7 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		item := overviewAccount{
 			UpstreamAccount: account,
 			TodayUsage:      todayStats[strconv.FormatInt(account.ID, 10)],
+			AdminBalance:    projectAdminBalance(account),
 		}
 		if account.IsAPIKey() {
 			projection, exists := finalMultipliers[account.ID]
@@ -325,6 +336,75 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		"groups":   groups,
 		"accounts": overviewAccounts,
 	})
+}
+
+func projectAdminBalance(account model.UpstreamAccount) overviewAdminBalance {
+	managed := account.HasManagedUpstreamBalanceQuota()
+	projection := overviewAdminBalance{
+		Managed:   managed,
+		Unlimited: managed && account.ManagedUpstreamBalanceQuotaUnlimited(),
+	}
+	if projection.Managed {
+		projection.Configured = true
+		projection.Insufficient = account.ManagedUpstreamBalanceQuotaExhausted()
+		if remaining, ok := account.ManagedUpstreamBalanceQuotaRemaining(); ok {
+			value := *remaining
+			projection.Remaining = &value
+		}
+	}
+
+	dimensions := []struct {
+		name  string
+		used  *float64
+		limit *float64
+	}{
+		{name: "daily", used: account.QuotaDailyUsed, limit: account.QuotaDailyLimit},
+		{name: "weekly", used: account.QuotaWeeklyUsed, limit: account.QuotaWeeklyLimit},
+		{name: "total", used: account.QuotaUsed, limit: account.QuotaLimit},
+	}
+	for _, dimension := range dimensions {
+		limit, configured := finitePositiveQuota(dimension.limit)
+		if !configured {
+			continue
+		}
+		projection.Configured = true
+		used := finiteQuotaUsed(dimension.used)
+		if used >= limit {
+			projection.Insufficient = true
+			projection.ExhaustedDimensions = append(projection.ExhaustedDimensions, dimension.name)
+		}
+		if dimension.name == "total" && !projection.Unlimited {
+			remaining := math.Max(limit-used, 0)
+			projection.Remaining = &remaining
+		}
+	}
+	if projection.Managed && projection.Insufficient && !containsString(projection.ExhaustedDimensions, "total") {
+		projection.ExhaustedDimensions = append(projection.ExhaustedDimensions, "total")
+	}
+	return projection
+}
+
+func finitePositiveQuota(value *float64) (float64, bool) {
+	if value == nil || *value <= 0 || math.IsNaN(*value) || math.IsInf(*value, 0) {
+		return 0, false
+	}
+	return *value, true
+}
+
+func finiteQuotaUsed(value *float64) float64 {
+	if value == nil || *value < 0 || math.IsNaN(*value) || math.IsInf(*value, 0) {
+		return 0
+	}
+	return *value
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) handleAccountUsage(w http.ResponseWriter, r *http.Request) {

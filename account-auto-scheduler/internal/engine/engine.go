@@ -554,8 +554,10 @@ func (e *Engine) finishCheck(
 	checkedAt := result.CheckedAt.UTC()
 	latest.LastCheckAt = &checkedAt
 	latest.LastError = ""
+	latest.LastFailureKind = ""
 	if counted && !healthy {
 		latest.LastError = result.Message
+		latest.LastFailureKind = result.FailureKind
 	}
 	if latest.Policy.Enabled {
 		next := checkedAt.Add(time.Duration(latest.Policy.IntervalSeconds) * time.Second)
@@ -619,6 +621,9 @@ func classifyResult(
 			result.Message = fmt.Sprintf("检测超过耗时上限 %dms", policy.LatencyLimitMS)
 		} else {
 			result.Message = truncate(probeErr.Error(), 500)
+			if core.IsDirectProbeInsufficientBalance(probeErr) {
+				result.FailureKind = model.CheckFailureBalanceInsufficient
+			}
 		}
 		return result
 	}

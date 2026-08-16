@@ -48,6 +48,12 @@ const (
 	CheckSkipped     CheckStatus = "skipped"
 )
 
+type CheckFailureKind string
+
+const (
+	CheckFailureBalanceInsufficient CheckFailureKind = "balance_insufficient"
+)
+
 type ProbeSource string
 
 const (
@@ -353,15 +359,16 @@ type AccountUsageInfo struct {
 }
 
 type CheckResult struct {
-	ID           string      `json:"id"`
-	Status       CheckStatus `json:"status"`
-	LatencyMS    int64       `json:"latency_ms"`
-	Message      string      `json:"message"`
-	ResponseText string      `json:"response_text,omitempty"`
-	Action       string      `json:"action,omitempty"`
-	CheckedAt    time.Time   `json:"checked_at"`
-	Usage        *ProbeUsage `json:"usage,omitempty"`
-	Cost         *ProbeCost  `json:"cost,omitempty"`
+	ID           string           `json:"id"`
+	Status       CheckStatus      `json:"status"`
+	FailureKind  CheckFailureKind `json:"failure_kind,omitempty"`
+	LatencyMS    int64            `json:"latency_ms"`
+	Message      string           `json:"message"`
+	ResponseText string           `json:"response_text,omitempty"`
+	Action       string           `json:"action,omitempty"`
+	CheckedAt    time.Time        `json:"checked_at"`
+	Usage        *ProbeUsage      `json:"usage,omitempty"`
+	Cost         *ProbeCost       `json:"cost,omitempty"`
 }
 
 // ProbeUsage is normalized usage reported by a probe. It is deliberately
@@ -464,6 +471,7 @@ type ManagedAccount struct {
 	LastCheckAt          *time.Time         `json:"last_check_at,omitempty"`
 	NextCheckAt          *time.Time         `json:"next_check_at,omitempty"`
 	LastError            string             `json:"last_error,omitempty"`
+	LastFailureKind      CheckFailureKind   `json:"last_failure_kind,omitempty"`
 	History              []CheckResult      `json:"history"`
 	DetectionStats       DetectionStats     `json:"detection_stats,omitempty"`
 	ProbeSource          ProbeSource        `json:"probe_source,omitempty"`
@@ -516,24 +524,25 @@ type DirectProbeView struct {
 }
 
 type ManagedAccountView struct {
-	AccountID            int64           `json:"account_id"`
-	Name                 string          `json:"name"`
-	Platform             string          `json:"platform"`
-	AccountStatus        string          `json:"account_status"`
-	Schedulable          bool            `json:"schedulable"`
-	Policy               Policy          `json:"policy"`
-	ConsecutiveFailures  int             `json:"consecutive_failures"`
-	ConsecutiveSuccesses int             `json:"consecutive_successes"`
-	ManagedSuspended     bool            `json:"managed_suspended"`
-	LastCheckAt          *time.Time      `json:"last_check_at,omitempty"`
-	NextCheckAt          *time.Time      `json:"next_check_at,omitempty"`
-	LastError            string          `json:"last_error,omitempty"`
-	History              []CheckResult   `json:"history"`
-	DetectionStats       DetectionStats  `json:"detection_stats,omitempty"`
-	Probe                DirectProbeView `json:"probe"`
-	CreatedAt            time.Time       `json:"created_at"`
-	UpdatedAt            time.Time       `json:"updated_at"`
-	Running              bool            `json:"running"`
+	AccountID            int64            `json:"account_id"`
+	Name                 string           `json:"name"`
+	Platform             string           `json:"platform"`
+	AccountStatus        string           `json:"account_status"`
+	Schedulable          bool             `json:"schedulable"`
+	Policy               Policy           `json:"policy"`
+	ConsecutiveFailures  int              `json:"consecutive_failures"`
+	ConsecutiveSuccesses int              `json:"consecutive_successes"`
+	ManagedSuspended     bool             `json:"managed_suspended"`
+	LastCheckAt          *time.Time       `json:"last_check_at,omitempty"`
+	NextCheckAt          *time.Time       `json:"next_check_at,omitempty"`
+	LastError            string           `json:"last_error,omitempty"`
+	LastFailureKind      CheckFailureKind `json:"last_failure_kind,omitempty"`
+	History              []CheckResult    `json:"history"`
+	DetectionStats       DetectionStats   `json:"detection_stats,omitempty"`
+	Probe                DirectProbeView  `json:"probe"`
+	CreatedAt            time.Time        `json:"created_at"`
+	UpdatedAt            time.Time        `json:"updated_at"`
+	Running              bool             `json:"running"`
 }
 
 func (m ManagedAccount) EffectiveProbeSource() ProbeSource {
@@ -557,6 +566,7 @@ func (m ManagedAccount) PublicView() ManagedAccountView {
 		LastCheckAt:          cloneTime(m.LastCheckAt),
 		NextCheckAt:          cloneTime(m.NextCheckAt),
 		LastError:            m.LastError,
+		LastFailureKind:      m.LastFailureKind,
 		History:              append([]CheckResult(nil), m.History...),
 		DetectionStats:       cloneDetectionStats(m.DetectionStats),
 		CreatedAt:            m.CreatedAt,

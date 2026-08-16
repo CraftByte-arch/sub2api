@@ -214,6 +214,34 @@ func TestProbeDirectPreservesSanitizedHTTPErrorDetails(t *testing.T) {
 	}
 }
 
+func TestDirectProbeInsufficientBalanceClassificationRequiresForbiddenStatusAndPhrase(t *testing.T) {
+	snapshot := directTestSnapshot("openai", "https://relay.example/v1")
+	tests := []struct {
+		name   string
+		status int
+		body   string
+		want   bool
+	}{
+		{name: "Chinese user quota", status: http.StatusForbidden, body: `{"message":"用户额度不足, 剩余额度: ¥-0.000358"}`, want: true},
+		{name: "Chinese balance exhausted", status: http.StatusForbidden, body: `{"error":{"message":"余额已耗尽"}}`, want: true},
+		{name: "English insufficient quota", status: http.StatusForbidden, body: `{"message":"INSUFFICIENT QUOTA for this request"}`, want: true},
+		{name: "unrelated forbidden", status: http.StatusForbidden, body: `{"message":"region policy denied this request"}`},
+		{name: "same phrase on rate limit", status: http.StatusTooManyRequests, body: `{"message":"用户额度不足"}`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := directProbeHTTPStatusError(test.status, strings.NewReader(test.body), snapshot)
+			statusErr, ok := err.(*DirectProbeHTTPError)
+			if !ok || statusErr.StatusCode != test.status {
+				t.Fatalf("HTTP status was not retained: %#v", err)
+			}
+			if got := IsDirectProbeInsufficientBalance(fmt.Errorf("wrapped: %w", err)); got != test.want {
+				t.Fatalf("classification = %v, want %v for %q", got, test.want, err)
+			}
+		})
+	}
+}
+
 func TestProbeDirectPreservesSanitizedSSEErrorDetails(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")

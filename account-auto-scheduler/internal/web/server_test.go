@@ -282,6 +282,7 @@ func TestGroupsAppUsesFinalMultiplierInsteadOfProbeMultiplier(t *testing.T) {
 	for _, required := range []string{
 		"group_protections", "logical_group_ids", "设置保护倍率", "解除倍率保护", "移除绑定",
 		"状态检测消耗（1 倍率）", "binding-action-dialog", "protection-dialog",
+		"admin_balance", "admin-balance-card", "余额不足导致检测失败", "failure_kind === 'balance_insufficient'",
 		"`/api/groups/${groupID}/accounts/${accountID}/protection`",
 		"`/api/groups/${groupID}/accounts/${accountID}/binding`",
 	} {
@@ -295,11 +296,57 @@ func TestGroupsAppUsesFinalMultiplierInsteadOfProbeMultiplier(t *testing.T) {
 	style := styleResponse.Body.String()
 	for _, required := range []string{
 		".multiplier-pair", ".protection-multiplier.exceeded", ".binding-row-actions",
+		".admin-balance-card.insufficient", ".admin-balance-value", ".history-bar.balance-insufficient",
 		"@media (max-width: 620px)", ".multiplier-pair { grid-template-columns: minmax(0, 1fr); }",
+		".quota-list > div { grid-template-columns: 58px minmax(0, 1fr); }",
 	} {
 		if !strings.Contains(style, required) {
 			t.Fatalf("groups stylesheet is missing protection responsive rule %q", required)
 		}
+	}
+}
+
+func TestProjectAdminBalanceUsesManagedMetadataAndConfiguredQuotaDimensions(t *testing.T) {
+	managedRemaining := 100.0
+	managedLimit := 100.0
+	managedUsed := 20.0
+	managed := projectAdminBalance(model.UpstreamAccount{
+		QuotaLimit: &managedLimit,
+		QuotaUsed:  &managedUsed,
+		Extra: map[string]any{
+			model.UpstreamBalanceQuotaManagedExtraKey:   true,
+			model.UpstreamBalanceQuotaRemainingExtraKey: managedRemaining,
+		},
+	})
+	if !managed.Configured || !managed.Managed || managed.Insufficient || managed.Remaining == nil || *managed.Remaining != 80 {
+		t.Fatalf("managed balance projection = %#v, want remaining administrator quota 80", managed)
+	}
+
+	sentinel := 1e-9
+	zero := 0.0
+	exhausted := projectAdminBalance(model.UpstreamAccount{
+		QuotaLimit: &sentinel,
+		QuotaUsed:  &sentinel,
+		Extra: map[string]any{
+			model.UpstreamBalanceQuotaManagedExtraKey:   true,
+			model.UpstreamBalanceQuotaRemainingExtraKey: zero,
+			model.UpstreamBalanceQuotaExhaustedExtraKey: true,
+		},
+	})
+	if !exhausted.Managed || !exhausted.Insufficient || exhausted.Remaining == nil || *exhausted.Remaining != 0 || !containsString(exhausted.ExhaustedDimensions, "total") {
+		t.Fatalf("managed exhausted projection = %#v", exhausted)
+	}
+
+	dailyLimit := 5.0
+	dailyUsed := 5.0
+	ordinary := projectAdminBalance(model.UpstreamAccount{QuotaDailyLimit: &dailyLimit, QuotaDailyUsed: &dailyUsed})
+	if !ordinary.Configured || ordinary.Managed || !ordinary.Insufficient || ordinary.Remaining != nil || !containsString(ordinary.ExhaustedDimensions, "daily") {
+		t.Fatalf("ordinary exhausted projection = %#v", ordinary)
+	}
+
+	unconfigured := projectAdminBalance(model.UpstreamAccount{})
+	if unconfigured.Configured || unconfigured.Managed || unconfigured.Unlimited || unconfigured.Insufficient || unconfigured.Remaining != nil || len(unconfigured.ExhaustedDimensions) != 0 {
+		t.Fatalf("unconfigured quota was misclassified: %#v", unconfigured)
 	}
 }
 

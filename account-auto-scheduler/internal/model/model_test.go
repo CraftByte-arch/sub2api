@@ -270,3 +270,25 @@ func TestManagedAccountPublicViewRedactsDirectProbeCredentials(t *testing.T) {
 		t.Fatalf("public view omitted direct-probe metadata: %s", serialized)
 	}
 }
+
+func TestManagedAccountPublicViewIncludesBalanceFailureClassification(t *testing.T) {
+	now := time.Now().UTC()
+	managed := ManagedAccount{
+		AccountID:       21,
+		LastError:       "直连上游拒绝访问: 用户额度不足",
+		LastFailureKind: CheckFailureBalanceInsufficient,
+		History: []CheckResult{{
+			ID:          "check-balance",
+			Status:      CheckError,
+			FailureKind: CheckFailureBalanceInsufficient,
+			Message:     "直连上游拒绝访问: 用户额度不足",
+			CheckedAt:   now,
+		}},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	view := managed.PublicView()
+	if view.LastFailureKind != CheckFailureBalanceInsufficient || len(view.History) != 1 || view.History[0].FailureKind != CheckFailureBalanceInsufficient {
+		t.Fatalf("public view omitted balance failure classification: %#v", view)
+	}
+}

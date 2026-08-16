@@ -425,9 +425,41 @@
       quotaDimension('周额度', account.quota_weekly_used, account.quota_weekly_limit),
       quotaDimension('总额度', account.quota_used, account.quota_limit),
     ].filter(Boolean)
-    return quotas.length
-      ? `<div class="quota-summary"><span class="data-label">管理员额度</span><dl class="quota-list">${quotas.join('')}</dl></div>`
-      : '<div class="quota-summary"><span class="data-label">管理员额度</span><strong class="quota-unlimited">未配置（不限）</strong></div>'
+    const balance = account.admin_balance || {}
+    const configured = typeof balance.configured === 'boolean' ? balance.configured : quotas.length > 0
+    const totalLimit = Number(account.quota_limit)
+    const totalUsed = Number(account.quota_used) || 0
+    const projectedRemaining = Number(balance.remaining)
+    const fallbackRemaining = Number.isFinite(totalLimit) && totalLimit > 0 ? Math.max(totalLimit - totalUsed, 0) : NaN
+    const remaining = Number.isFinite(projectedRemaining) ? projectedRemaining : fallbackRemaining
+    const exhausted = Array.isArray(balance.exhausted_dimensions) ? balance.exhausted_dimensions : []
+    const insufficient = Boolean(balance.insufficient) || exhausted.length > 0
+    const dimensionLabels = { daily: '日额度', weekly: '周额度', total: '总额度' }
+    const exhaustedLabel = exhausted.map((dimension) => dimensionLabels[dimension]).filter(Boolean).join('、')
+    const source = balance.managed ? '<span class="admin-balance-source">上游同步</span>' : ''
+    let tone = 'neutral'
+    let value = '未配置（不限）'
+    let note = '当前没有管理员额度上限'
+    if (insufficient) {
+      tone = 'insufficient'
+      value = '余额不足'
+      note = exhaustedLabel ? `${exhaustedLabel}已耗尽` : '管理员配置额度已耗尽'
+    } else if (balance.unlimited) {
+      tone = 'available'
+      value = '不限额度'
+      note = balance.managed ? '上游同步为不限额度' : '管理员未配置额度上限'
+    } else if (Number.isFinite(remaining)) {
+      tone = 'available'
+      value = formatCurrency(remaining)
+      note = '剩余可用额度'
+    } else if (configured) {
+      tone = 'available'
+      value = '额度可用'
+      note = '未配置总额度，请查看周期额度'
+    }
+    const detail = quotas.length ? `<dl class="quota-list">${quotas.join('')}</dl>` : ''
+    const label = insufficient ? `管理员余额不足，${note}` : `管理员余额：${value}，${note}`
+    return `<div class="quota-summary"><div class="admin-balance-card ${tone}" aria-label="${escapeAttr(label)}"><div class="admin-balance-heading"><span>管理员余额</span>${source}</div><strong class="admin-balance-value">${escapeHTML(value)}</strong><span class="admin-balance-note">${escapeHTML(note)}</span></div>${detail}</div>`
   }
 
   function quotaDimension(label, used, limit) {
@@ -494,15 +526,16 @@
     const padding = Array.from({ length: 50 - history.length }, () => '<span class="history-bar empty"></span>')
     const bars = history.map((result) => {
       const failed = result.status === 'failed' || result.status === 'error'
+      const balanceFailure = result.failure_kind === 'balance_insufficient'
       const title = failed
-        ? `${formatDateTime(result.checked_at)} · ${result.message || statusLabel(result.status)}`
+        ? `${formatDateTime(result.checked_at)} · ${balanceFailure ? '余额不足 · ' : ''}${result.message || statusLabel(result.status)}`
         : `${formatDateTime(result.checked_at)} · 耗时 ${formatMilliseconds(result.latency_ms)}`
       const color = failed
         ? 'failed'
         : result.status === 'skipped'
           ? 'skipped'
           : (result.status === 'degraded' || Number(result.latency_ms) >= CHANNEL_SLOW_MS ? 'slow' : 'success')
-      return `<button type="button" class="history-bar ${color}" data-action="result" data-result-id="${escapeAttr(result.id)}" title="${escapeAttr(title)}" aria-label="${escapeAttr(title)}"></button>`
+      return `<button type="button" class="history-bar ${color} ${balanceFailure ? 'balance-insufficient' : ''}" data-action="result" data-result-id="${escapeAttr(result.id)}" title="${escapeAttr(title)}" aria-label="${escapeAttr(title)}"></button>`
     })
     return padding.concat(bars).join('')
   }
@@ -513,6 +546,10 @@
     }
     if (account.status !== 'active') {
       return { key: 'inactive', tone: 'neutral', label: '账号停用', reason: '账号状态由管理员设为 inactive' }
+    }
+    if (account.config?.last_failure_kind === 'balance_insufficient') {
+      const key = account.config?.managed_suspended && !account.schedulable ? 'auto' : account.schedulable ? 'enabled' : 'manual'
+      return { key, tone: 'danger', label: '余额不足导致检测失败', reason: account.config.last_error || '直连上游返回额度或余额不足' }
     }
     if (account.config?.managed_suspended && !account.schedulable) {
       return { key: 'auto', tone: 'warning', label: '检测自动停止', reason: account.config.last_error || '连续检测异常达到暂停阈值' }
@@ -969,6 +1006,7 @@
       ['调度动作', actionLabel(result.action)],
       ['信息', result.message || '—'],
     ]
+    if (result.failure_kind) rows.splice(1, 0, ['失败原因', failureKindLabel(result.failure_kind)])
     if (result.usage) {
       const usageTokens = ['input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_write_tokens']
         .reduce((sum, key) => sum + (Number(result.usage[key]) || 0), 0)
@@ -1318,6 +1356,10 @@
 
   function actionLabel(action) {
     return ({ disabled: '已关闭调度', restored: '已恢复调度', disable_failed: '关闭调度失败', restore_failed: '恢复调度失败', restore_blocked: '等待恢复' })[action] || '无'
+  }
+
+  function failureKindLabel(kind) {
+    return ({ balance_insufficient: '余额不足导致检测失败' })[kind] || String(kind || '未分类')
   }
 
   function formatInterval(seconds) {

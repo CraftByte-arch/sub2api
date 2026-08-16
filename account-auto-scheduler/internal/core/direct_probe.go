@@ -41,6 +41,50 @@ var (
 	directProbeSensitiveAssignmentPattern = regexp.MustCompile(`(?i)(^|[\s,{;])["']?(api[_ -]?key|x-api-key|x-goog-api-key|authorization|proxy-authorization|cookie|set-cookie|password|access[_ -]?token|refresh[_ -]?token|token|secret)["']?\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,}\]]+)`)
 )
 
+var directProbeInsufficientBalancePhrases = []string{
+	"用户额度不足",
+	"额度不足",
+	"余额不足",
+	"余额耗尽",
+	"余额已耗尽",
+	"额度耗尽",
+	"额度已耗尽",
+	"insufficient balance",
+	"insufficient quota",
+	"quota exhausted",
+}
+
+// DirectProbeHTTPError retains the upstream status code while exposing only
+// the already-sanitized operator-facing message.
+type DirectProbeHTTPError struct {
+	StatusCode int
+	Message    string
+}
+
+func (e *DirectProbeHTTPError) Error() string {
+	if e == nil {
+		return ""
+	}
+	return e.Message
+}
+
+// IsDirectProbeInsufficientBalance reports a conservative balance failure:
+// the error must be a real direct-probe HTTP 403 and include an explicit
+// insufficient/exhausted balance phrase.
+func IsDirectProbeInsufficientBalance(err error) bool {
+	var statusErr *DirectProbeHTTPError
+	if !errors.As(err, &statusErr) || statusErr.StatusCode != http.StatusForbidden {
+		return false
+	}
+	message := strings.ToLower(statusErr.Message)
+	for _, phrase := range directProbeInsufficientBalancePhrases {
+		if strings.Contains(message, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
 // DirectProber is kept separate from the legacy Sub2API account-test client so
 // a direct source can never silently fall back to that route.
 type DirectProber interface {
@@ -452,7 +496,7 @@ func directProbeHTTPStatusError(status int, body io.Reader, snapshot model.Direc
 	if detail != "" && !strings.EqualFold(detail, http.StatusText(status)) {
 		message += ": " + detail
 	}
-	return errors.New(message)
+	return &DirectProbeHTTPError{StatusCode: status, Message: message}
 }
 
 func directProbeErrorDetail(raw []byte) string {

@@ -173,7 +173,16 @@ button:disabled, input:disabled, select:disabled { cursor: not-allowed; opacity:
 .quota-summary, .detection-consumption, .multiplier-pair { margin-top: 7px; padding-top: 7px; border-top: 1px solid var(--border); }
 .detection-consumption strong { font-variant-numeric: tabular-nums; }
 .detection-consumption > span:last-child { font-size: 10px; }
-.quota-list { margin: 0; display: grid; gap: 2px; }
+.admin-balance-card { min-width: 0; padding: 9px 10px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-subtle); }
+.admin-balance-card.available { border-color: color-mix(in srgb, var(--primary) 28%, var(--border)); background: color-mix(in srgb, var(--primary-soft) 64%, var(--surface)); }
+.admin-balance-card.insufficient { border-color: color-mix(in srgb, var(--danger) 52%, var(--border)); background: var(--danger-soft); }
+.admin-balance-heading { min-width: 0; display: flex; align-items: center; gap: 6px; color: var(--text-secondary); font-size: 10px; font-weight: 700; }
+.admin-balance-source { min-height: 18px; margin: 0 !important; padding: 1px 5px; display: inline-flex !important; align-items: center; border-radius: 4px; background: var(--surface); color: var(--primary-hover) !important; font-size: 9px !important; font-weight: 700; white-space: nowrap; }
+.admin-balance-value { grid-column: 1 / -1; color: var(--primary-hover) !important; font-size: 18px !important; line-height: 24px; font-weight: 750; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.admin-balance-note { grid-column: 1 / -1; margin: 0 !important; color: var(--text-secondary) !important; font-size: 10px; line-height: 15px; }
+.admin-balance-card.neutral .admin-balance-value { color: var(--text-secondary) !important; font-size: 13px !important; line-height: 20px; font-weight: 600; }
+.admin-balance-card.insufficient .admin-balance-heading, .admin-balance-card.insufficient .admin-balance-value, .admin-balance-card.insufficient .admin-balance-note { color: var(--danger-hover) !important; }
+.quota-list { margin: 6px 0 0; display: grid; gap: 2px; }
 .quota-list > div { min-width: 0; display: grid; grid-template-columns: 52px minmax(0, 1fr); align-items: baseline; gap: 7px; }
 .quota-list dt { color: var(--text-muted); font-size: 10px; }
 .quota-list dd { min-width: 0; margin: 0; display: flex; align-items: baseline; gap: 4px; color: var(--text-secondary); font-size: 10px; font-variant-numeric: tabular-nums; }
@@ -222,6 +231,7 @@ button:disabled, input:disabled, select:disabled { cursor: not-allowed; opacity:
 .history-bar.success { height: 100%; background: var(--success); }
 .history-bar.slow { height: 65%; background: var(--warning); }
 .history-bar.failed { height: 35%; background: var(--danger); }
+.history-bar.balance-insufficient { box-shadow: 0 0 0 1px color-mix(in srgb, var(--danger) 72%, var(--surface)); }
 .history-bar.skipped { height: 22%; background: var(--text-muted); }
 .history-bar:hover:not(.empty) { filter: brightness(0.88); }
 .group-empty { min-height: 64px; display: flex; align-items: center; justify-content: center; padding: 16px; color: var(--text-muted); font-size: 12px; }
@@ -534,6 +544,10 @@ button:disabled, input:disabled, select:disabled { cursor: not-allowed; opacity:
   .history-row { grid-row: 5; grid-template-columns: 1fr; gap: 5px; }
   .history-range { display: none; }
   .history-bars { gap: 1px; }
+  .admin-balance-card { width: 100%; }
+  .admin-balance-value, .admin-balance-note { max-width: 100%; }
+  .quota-list > div { grid-template-columns: 58px minmax(0, 1fr); }
+  .quota-list dd { flex-wrap: wrap; }
   .multiplier-pair { grid-template-columns: minmax(0, 1fr); }
   .button, .summary-button, .search-field input, .select-field select { min-height: 44px; }
   .icon-button, .row-actions .icon-button { width: 44px; height: 44px; }
