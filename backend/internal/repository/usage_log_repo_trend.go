@@ -715,14 +715,9 @@ func (r *usageLogRepository) GetUserBreakdownStats(ctx context.Context, startTim
 	return results, nil
 }
 
-// GetAllGroupUsageSummary returns today's and cumulative actual_cost for every
-// visible group. The aggregation implementation preserves this service contract
-// while using durable hourly buckets after its initial backfill is ready.
+// GetAllGroupUsageSummary 返回所有分组在服务端配置时区内的今日、昨日与当前保留记录累计金额。
 func (r *usageLogRepository) GetAllGroupUsageSummary(ctx context.Context, todayStart time.Time) ([]usagestats.GroupUsageSummary, error) {
-	if r == nil || r.groupUsageAggregation == nil {
-		return nil, fmt.Errorf("group usage aggregation is not initialized")
-	}
-	return r.groupUsageAggregation.GetAllGroupUsageSummary(ctx, todayStart)
+	return r.getAllGroupUsageSummaryFromRollups(ctx, todayStart)
 }
 
 // resolveModelDimensionExpression maps model source type to a safe SQL expression.
