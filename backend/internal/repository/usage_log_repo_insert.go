@@ -1154,6 +1154,7 @@ func buildUsageLogBestEffortInsertQuery(preparedList []usageLogInsertPrepared) (
 		ON CONFLICT (request_id, api_key_id) DO NOTHING
 		RETURNING group_id, api_key_id, actual_cost, created_at
 		)` + apiKeyUsageDailyAggregationCTEs() + apiKeyUsageDailyAggregationWriteCTE() + `
+		SELECT 1
 	`)
 
 	return query.String(), args
@@ -1234,6 +1235,7 @@ func execUsageLogInsertNoResult(ctx context.Context, sqlq sqlExecutor, prepared 
 		ON CONFLICT (request_id, api_key_id) DO NOTHING
 		RETURNING group_id, api_key_id, actual_cost, created_at
 		)`+apiKeyUsageDailyAggregationCTEs()+apiKeyUsageDailyAggregationWriteCTE()+`
+		SELECT 1
 	`, prepared.args...)
 	return err
 }
