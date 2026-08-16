@@ -278,7 +278,7 @@ func (r *dashboardAggregationRepository) cleanupUsageLogsBatches(ctx context.Con
 			return err
 		}
 		if affected < usageLogsCleanupBatchSize {
-			return newGroupUsageAggregation(r.sql).CleanupBefore(ctx, cutoff)
+			return nil
 		}
 	}
 }

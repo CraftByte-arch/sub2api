@@ -136,8 +136,6 @@ func TestUsageLogRepositoryCreate_BatchPathConcurrent(t *testing.T) {
 	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM usage_logs WHERE api_key_id = $1", apiKey.ID).Scan(&count))
 	require.Equal(t, total, count)
 	var actualCost float64
-	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT COALESCE(SUM(actual_cost), 0) FROM group_usage_hourly WHERE group_id = $1", group.ID).Scan(&actualCost))
-	require.InDelta(t, float64(total)*0.5, actualCost, 1e-9)
 	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT COALESCE(SUM(actual_cost), 0) FROM api_key_usage_daily WHERE api_key_id = $1", apiKey.ID).Scan(&actualCost))
 	require.InDelta(t, float64(total)*0.5, actualCost, 1e-9)
 }
@@ -192,8 +190,6 @@ func TestUsageLogRepositoryCreate_BatchPathDuplicateRequestID(t *testing.T) {
 	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM usage_logs WHERE request_id = $1 AND api_key_id = $2", requestID, apiKey.ID).Scan(&count))
 	require.Equal(t, 1, count)
 	var actualCost float64
-	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT COALESCE(SUM(actual_cost), 0) FROM group_usage_hourly WHERE group_id = $1", group.ID).Scan(&actualCost))
-	require.InDelta(t, 0.5, actualCost, 1e-9)
 	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT COALESCE(SUM(actual_cost), 0) FROM api_key_usage_daily WHERE api_key_id = $1", apiKey.ID).Scan(&actualCost))
 	require.InDelta(t, 0.5, actualCost, 1e-9)
 }
@@ -306,10 +302,6 @@ func TestUsageLogRepositoryCreateBestEffort_BatchPathDuplicateRequestID(t *testi
 			return false
 		}
 		var actualCost float64
-		err = integrationDB.QueryRowContext(ctx, "SELECT COALESCE(SUM(actual_cost), 0) FROM group_usage_hourly WHERE group_id = $1", group.ID).Scan(&actualCost)
-		if err != nil || actualCost != 0.5 {
-			return false
-		}
 		err = integrationDB.QueryRowContext(ctx, "SELECT COALESCE(SUM(actual_cost), 0) FROM api_key_usage_daily WHERE api_key_id = $1", apiKey.ID).Scan(&actualCost)
 		return err == nil && actualCost == 0.5
 	}, 3*time.Second, 20*time.Millisecond)

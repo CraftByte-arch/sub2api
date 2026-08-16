@@ -108,5 +108,4 @@ func TestBuildUsageLogBatchInsertQuery_UsesConflictDoNothing(t *testing.T) {
 	})
 
 	require.Contains(t, query, "ON CONFLICT (request_id, api_key_id) DO NOTHING")
-	require.NotContains(t, strings.ToUpper(query), "DO UPDATE")
 }

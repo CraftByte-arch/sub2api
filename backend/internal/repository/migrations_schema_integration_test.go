@@ -129,14 +129,6 @@ WHERE ns.nspname = 'public'
 		"'mixed'",
 	)
 
-	// group_usage_hourly: durable source for the administrator group summary.
-	requireColumn(t, tx, "group_usage_hourly", "group_id", "bigint", 0, false)
-	requireColumn(t, tx, "group_usage_hourly", "bucket_start", "timestamp with time zone", 0, false)
-	requireColumn(t, tx, "group_usage_hourly", "actual_cost", "numeric", 0, false)
-	requireIndex(t, tx, "group_usage_hourly", "idx_group_usage_hourly_bucket_start")
-	requireColumn(t, tx, "group_usage_aggregation_state", "ready", "boolean", 0, false)
-	requireColumn(t, tx, "group_usage_aggregation_state", "cursor", "timestamp with time zone", 0, true)
-
 	// api_key_usage_daily: compact source for batch API-key usage summaries.
 	requireColumn(t, tx, "api_key_usage_daily", "api_key_id", "bigint", 0, false)
 	requireColumn(t, tx, "api_key_usage_daily", "bucket_date", "date", 0, false)

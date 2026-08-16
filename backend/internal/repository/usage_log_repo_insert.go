@@ -294,7 +294,7 @@ func (r *usageLogRepository) createSingle(ctx context.Context, sqlq sqlExecutor,
 		)
 		ON CONFLICT (request_id, api_key_id) DO NOTHING
 		RETURNING id, created_at, group_id, api_key_id, actual_cost
-		)` + groupUsageAggregationCTEs() + apiKeyUsageDailyAggregationCTEs() + groupUsageAggregationWriteCTE() + apiKeyUsageDailyAggregationWriteCTE() + `
+		)` + apiKeyUsageDailyAggregationCTEs() + apiKeyUsageDailyAggregationWriteCTE() + `
 		SELECT id, created_at FROM inserted
 	`
 
@@ -900,7 +900,7 @@ func buildUsageLogBatchInsertQuery(keys []string, preparedByKey map[string]usage
 			FROM input
 			ON CONFLICT (request_id, api_key_id) DO NOTHING
 			RETURNING request_id, api_key_id, id, created_at, group_id, actual_cost
-		)` + groupUsageAggregationCTEs() + apiKeyUsageDailyAggregationCTEs() + groupUsageAggregationWriteCTE() + apiKeyUsageDailyAggregationWriteCTE() + `,
+		)` + apiKeyUsageDailyAggregationCTEs() + apiKeyUsageDailyAggregationWriteCTE() + `,
 		resolved AS (
 			SELECT
 				input.input_idx,
@@ -1153,8 +1153,8 @@ func buildUsageLogBestEffortInsertQuery(preparedList []usageLogInsertPrepared) (
 		FROM input
 		ON CONFLICT (request_id, api_key_id) DO NOTHING
 		RETURNING group_id, api_key_id, actual_cost, created_at
-		)` + groupUsageAggregationCTEs() + apiKeyUsageDailyAggregationCTEs() + apiKeyUsageDailyAggregationWriteCTE() + `
-	` + groupUsageBucketUpsertSQL)
+		)` + apiKeyUsageDailyAggregationCTEs() + apiKeyUsageDailyAggregationWriteCTE() + `
+	`)
 
 	return query.String(), args
 }
@@ -1233,8 +1233,8 @@ func execUsageLogInsertNoResult(ctx context.Context, sqlq sqlExecutor, prepared 
 		)
 		ON CONFLICT (request_id, api_key_id) DO NOTHING
 		RETURNING group_id, api_key_id, actual_cost, created_at
-		)`+groupUsageAggregationCTEs()+apiKeyUsageDailyAggregationCTEs()+apiKeyUsageDailyAggregationWriteCTE()+`
-	`+groupUsageBucketUpsertSQL, prepared.args...)
+		)`+apiKeyUsageDailyAggregationCTEs()+apiKeyUsageDailyAggregationWriteCTE()+`
+	`, prepared.args...)
 	return err
 }
 
