@@ -18,6 +18,23 @@ type sub2APIAdapter struct{}
 
 func (sub2APIAdapter) Type() model.UpstreamSiteType { return model.UpstreamTypeSub2API }
 
+type sub2APIPublicVerificationSettings struct {
+	TurnstileEnabled      bool `json:"turnstile_enabled"`
+	RecaptchaEnabled      bool `json:"recaptcha_enabled"`
+	CAPEnabled            bool `json:"cap_enabled"`
+	TencentCaptchaEnabled bool `json:"tencent_captcha_enabled"`
+	AliyunCaptchaEnabled  bool `json:"aliyun_captcha_enabled"`
+	LocalCaptchaEnabled   bool `json:"local_captcha_enabled"`
+}
+
+func (settings sub2APIPublicVerificationSettings) externalVerificationEnabled() bool {
+	return settings.TurnstileEnabled ||
+		settings.RecaptchaEnabled ||
+		settings.CAPEnabled ||
+		settings.TencentCaptchaEnabled ||
+		settings.AliyunCaptchaEnabled
+}
+
 type sub2APIUser struct {
 	ID       int64           `json:"id"`
 	Email    string          `json:"email"`
@@ -54,6 +71,63 @@ type sub2APIPage[T any] struct {
 	Page     int   `json:"page"`
 	PageSize int   `json:"page_size"`
 	Pages    int   `json:"pages"`
+}
+
+func (sub2APIAdapter) StartLoginChallenge(ctx context.Context, managementURL string) (LoginChallenge, error) {
+	client, err := newRemoteClient(managementURL)
+	if err != nil {
+		return LoginChallenge{}, err
+	}
+	settingsResponse, requestErr := client.do(ctx, http.MethodGet, "/api/v1/settings/public", nil, AuthMaterial{})
+	if requestErr != nil || settingsResponse.StatusCode < 200 || settingsResponse.StatusCode >= 300 {
+		return LoginChallenge{}, nil
+	}
+	var settings sub2APIPublicVerificationSettings
+	if err := decodeSub2APIResponse(settingsResponse, &settings); err != nil {
+		return LoginChallenge{}, nil
+	}
+	if settings.externalVerificationEnabled() {
+		return LoginChallenge{}, adapterError(
+			"CAPTCHA_REQUIRED",
+			"上游启用了浏览器人机验证；当前只支持手动输入本地图片验证码，请在上游完成登录后粘贴 Token 或 Cookie/session",
+			model.IdentityStatusCaptcha,
+			http.StatusConflict,
+		)
+	}
+	if !settings.LocalCaptchaEnabled {
+		return LoginChallenge{}, nil
+	}
+
+	settingsCookie := joinResponseCookies(settingsResponse.Header)
+	challengeResponse, err := client.do(ctx, http.MethodGet, "/api/v1/auth/captcha", nil, AuthMaterial{Cookie: settingsCookie})
+	if err != nil {
+		return LoginChallenge{}, adapterError("UPSTREAM_NETWORK_ERROR", "无法获取上游验证码，请稍后重试", model.IdentityStatusNetworkError, http.StatusBadGateway)
+	}
+	var challenge struct {
+		CaptchaID string `json:"captcha_id"`
+		ImageData string `json:"image_data"`
+	}
+	if err := decodeSub2APIResponse(challengeResponse, &challenge); err != nil {
+		return LoginChallenge{}, adapterError("UPSTREAM_CAPTCHA_UNAVAILABLE", "上游验证码暂不可用，请稍后重试", model.IdentityStatusCaptcha, http.StatusBadGateway)
+	}
+	captchaID, err := normalizeCaptchaID(challenge.CaptchaID)
+	if err != nil {
+		return LoginChallenge{}, err
+	}
+	imageData, err := normalizeCaptchaImageData(challenge.ImageData)
+	if err != nil {
+		return LoginChallenge{}, err
+	}
+	return LoginChallenge{
+		Required:  true,
+		Provider:  localCaptchaProviderName,
+		CaptchaID: captchaID,
+		ImageData: imageData,
+		Cookie: mergeCookieMaterial(
+			settingsCookie,
+			joinResponseCookies(challengeResponse.Header),
+		),
+	}, nil
 }
 
 func (sub2APIAdapter) Connect(ctx context.Context, managementURL string, input LoginInput) (LoginResult, error) {
@@ -153,9 +227,26 @@ func sub2APILoginMaterial(ctx context.Context, client *remoteClient, input Login
 		if email == "" || input.Password == "" {
 			return AuthMaterial{}, "", adapterError("INVALID_CREDENTIALS", "请输入上游账号和密码", model.IdentityStatusInvalid, http.StatusBadRequest)
 		}
-		response, err := client.do(ctx, http.MethodPost, "/api/v1/auth/login", map[string]string{
-			"email": email, "password": input.Password,
-		}, AuthMaterial{})
+		payload := map[string]string{"email": email, "password": input.Password}
+		challengeMaterial := AuthMaterial{}
+		if strings.TrimSpace(input.CaptchaID) != "" || strings.TrimSpace(input.CaptchaCode) != "" || strings.TrimSpace(input.ChallengeCookie) != "" {
+			captchaID, err := normalizeCaptchaID(input.CaptchaID)
+			if err != nil {
+				return AuthMaterial{}, "", err
+			}
+			captchaCode, err := normalizeCaptchaCode(input.CaptchaCode)
+			if err != nil {
+				return AuthMaterial{}, "", err
+			}
+			challengeCookie := cleanHeaderValue(input.ChallengeCookie)
+			if strings.TrimSpace(input.ChallengeCookie) != "" && challengeCookie == "" {
+				return AuthMaterial{}, "", adapterError("INVALID_CAPTCHA_CHALLENGE", "验证码挑战已失效，请刷新后重试", model.IdentityStatusCaptcha, http.StatusBadRequest)
+			}
+			payload["captcha_id"] = captchaID
+			payload["captcha_code"] = captchaCode
+			challengeMaterial.Cookie = challengeCookie
+		}
+		response, err := client.do(ctx, http.MethodPost, "/api/v1/auth/login", payload, challengeMaterial)
 		if err != nil {
 			return AuthMaterial{}, "", adapterError("UPSTREAM_NETWORK_ERROR", "无法连接 Sub2API 登录接口", model.IdentityStatusNetworkError, http.StatusBadGateway)
 		}
@@ -175,7 +266,7 @@ func sub2APILoginMaterial(ctx context.Context, client *remoteClient, input Login
 		material := AuthMaterial{
 			AccessToken:  strings.TrimSpace(login.AccessToken),
 			RefreshToken: strings.TrimSpace(login.RefreshToken),
-			Cookie:       joinResponseCookies(response.Header),
+			Cookie:       mergeCookieMaterial(challengeMaterial.Cookie, joinResponseCookies(response.Header)),
 			UserID:       strconv.FormatInt(login.User.ID, 10),
 		}
 		if material.Empty() {

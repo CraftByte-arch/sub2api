@@ -248,6 +248,10 @@ func TestStaticPageIsPublicButFramingIsRestricted(t *testing.T) {
 	if !strings.Contains(response.Body.String(), `id="upstream-connect-form" method="dialog" class="modal-panel" autocomplete="off"`) ||
 		!strings.Contains(response.Body.String(), `id="upstream-password-input" type="password" autocomplete="new-password"`) ||
 		!strings.Contains(response.Body.String(), `id="upstream-management-site-input" type="url"`) ||
+		!strings.Contains(response.Body.String(), `id="upstream-captcha-fields"`) ||
+		!strings.Contains(response.Body.String(), `id="upstream-captcha-image"`) ||
+		!strings.Contains(response.Body.String(), `id="upstream-captcha-code-input"`) ||
+		!strings.Contains(response.Body.String(), `id="upstream-captcha-refresh-button"`) ||
 		!strings.Contains(response.Body.String(), "登录、身份验证、余额、Key 和倍率同步均使用此地址；留空时使用 API 地址。模型调用和本地账号关联始终保留 API 地址。") {
 		t.Fatal("upstream login form must not reuse the current admin site's saved password")
 	}
@@ -369,6 +373,8 @@ func TestUpstreamAssetsRenderBalanceStatesAndNarrowLayout(t *testing.T) {
 		"upstream-summary", "renderResourceSummary", "upstream-resource-summary", "充值倍率",
 		"identity-key-section", "identity-key-heading", "上游 Key", "添加身份",
 		"site_url: elements.upstreamManagementSiteInput.value.trim()", "API 地址（模型调用）：${upstream.base_url}", "管理站点", "upstream-management-site-input", "UPSTREAM_MANAGEMENT_ACCESS_DENIED",
+		"fetchConnectChallenge", "/login-challenges", "login_challenge_id", "captcha_code",
+		"submittedChallenge", "refreshConnectChallenge", "LOGIN_CHALLENGE_EXPIRED", "upstreamCaptchaCodeInput",
 	} {
 		if !strings.Contains(script, required) {
 			t.Fatalf("upstream script is missing balance state %q", required)
@@ -386,6 +392,9 @@ func TestUpstreamAssetsRenderBalanceStatesAndNarrowLayout(t *testing.T) {
 		"@media (max-width: 620px)", ".identity-balance, .identity-timestamps, .identity-actions { grid-column: 1; grid-row: auto; }",
 		".upstream-summary", ".upstream-balance-stat strong", ".identity-key-section", ".identity-key-heading",
 		".upstream-summary { grid-template-columns: minmax(0, 1fr);", ".upstream-routes", ".management-site-url > span",
+		".upstream-captcha-panel", ".upstream-captcha-image-frame", ".upstream-captcha-content",
+		".upstream-captcha-content { grid-template-columns: minmax(0, 1fr); }",
+		".upstream-captcha-heading .button { min-height: 44px; }",
 	} {
 		if !strings.Contains(style, required) {
 			t.Fatalf("upstream stylesheet is missing responsive balance rule %q", required)

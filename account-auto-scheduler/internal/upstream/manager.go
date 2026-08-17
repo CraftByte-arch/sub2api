@@ -175,6 +175,16 @@ type ConnectInput struct {
 	Login            LoginInput
 }
 
+type LoginChallengeInput struct {
+	ManagementURL    string
+	ManagementURLSet bool
+}
+
+type LoginChallengeResult struct {
+	Challenge     LoginChallenge
+	ManagementURL string
+}
+
 type RechargeRateInput struct {
 	Mode  model.RechargeRateInputMode
 	Value float64
@@ -670,6 +680,36 @@ func (m *Manager) ClearRechargeRate(ctx context.Context, upstreamID string) (Ups
 	record, _ = m.store.GetUpstream(record.ID)
 	accounts, _ := m.accountsForBaseURL(ctx, record.BaseURL)
 	return publicUpstream(record, accounts, true), nil
+}
+
+func (m *Manager) StartLoginChallenge(ctx context.Context, upstreamID string, input LoginChallengeInput) (LoginChallengeResult, error) {
+	if !m.CredentialsEnabled() {
+		return LoginChallengeResult{}, adapterError("CREDENTIALS_DISABLED", "请配置 AUTO_SCHEDULER_CREDENTIAL_KEY 后再连接上游", model.IdentityStatusInvalid, http.StatusServiceUnavailable)
+	}
+	record, err := m.ensureUpstream(ctx, upstreamID)
+	if err != nil {
+		return LoginChallengeResult{}, err
+	}
+	adapter, err := AdapterFor(record.EffectiveType())
+	if err != nil {
+		return LoginChallengeResult{}, err
+	}
+	managementURL, _, _, err := resolveManagementURL(record, ConnectInput{
+		ManagementURL:    input.ManagementURL,
+		ManagementURLSet: input.ManagementURLSet,
+	})
+	if err != nil {
+		return LoginChallengeResult{}, err
+	}
+	challengeAdapter, ok := adapter.(LoginChallengeAdapter)
+	if !ok {
+		return LoginChallengeResult{ManagementURL: managementURL}, nil
+	}
+	challenge, err := challengeAdapter.StartLoginChallenge(ctx, managementURL)
+	if err != nil {
+		return LoginChallengeResult{}, err
+	}
+	return LoginChallengeResult{Challenge: challenge, ManagementURL: managementURL}, nil
 }
 
 func (m *Manager) Connect(ctx context.Context, upstreamID string, input ConnectInput) (IdentityView, error) {

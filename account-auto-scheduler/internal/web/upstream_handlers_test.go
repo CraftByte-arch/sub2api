@@ -26,6 +26,7 @@ type fakeUpstreamConsole struct {
 	rechargeRateInput  upstream.RechargeRateInput
 	rechargeRateClear  bool
 	connectInput       upstream.ConnectInput
+	connectCalls       int
 	finalMultipliers   map[int64]upstream.LocalAccountFinalMultiplier
 }
 
@@ -68,6 +69,7 @@ func (f *fakeUpstreamConsole) ClearRechargeRate(context.Context, string) (upstre
 
 func (f *fakeUpstreamConsole) Connect(_ context.Context, _ string, input upstream.ConnectInput) (upstream.IdentityView, error) {
 	f.connectInput = input
+	f.connectCalls++
 	return upstream.IdentityView{}, nil
 }
 
@@ -171,7 +173,7 @@ func TestUpstreamConnectForwardsOptionalNewAPIUserIDAndManagementSite(t *testing
 	request.Header.Set("Authorization", "Bearer valid")
 	response := httptest.NewRecorder()
 	server.Handler().ServeHTTP(response, request)
-	if response.Code != http.StatusCreated || console.connectInput.Login.UserID != "23" || console.connectInput.Login.Session != "session=value" || console.connectInput.ManagementURL != "https://panel.example.com" || !console.connectInput.ManagementURLSet {
+	if response.Code != http.StatusCreated || console.connectInput.Login.UserID != "23" || console.connectInput.Login.Session != "session=value" || console.connectInput.ManagementURL != "https://panel.example.com" || !console.connectInput.ManagementURLSet || console.connectInput.Login.CaptchaID != "" || console.connectInput.Login.CaptchaCode != "" || console.connectInput.Login.ChallengeCookie != "" {
 		t.Fatalf("legacy NewAPI session and management site input were not forwarded: status=%d input=%#v body=%s", response.Code, console.connectInput, response.Body.String())
 	}
 }

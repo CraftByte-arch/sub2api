@@ -437,8 +437,18 @@
           <label class="field full-width"><span>上游账号</span><input id="upstream-username-input" type="text" autocomplete="off" placeholder="邮箱或用户名（旧版 NewAPI 优先用户名）"></label>
           <div class="field full-width"><label for="upstream-password-input">上游密码</label><span class="password-field"><input id="upstream-password-input" type="password" autocomplete="new-password"><button id="upstream-password-toggle" class="icon-button ghost" type="button" title="显示密码" aria-label="显示密码"><svg class="icon"><use href="#icon-eye"/></svg></button></span><small>请手动填写该上游的密码；密码只用于本次登录，不会写入状态文件。</small></div>
         </div>
+        <section id="upstream-captcha-fields" class="upstream-captcha-panel" aria-live="polite" hidden>
+          <div class="upstream-captcha-heading">
+            <div><strong>上游登录验证码</strong><span id="upstream-captcha-expiry">验证码将在 5 分钟内失效</span></div>
+            <button id="upstream-captcha-refresh-button" class="button secondary compact" type="button"><svg class="icon"><use href="#icon-refresh"/></svg><span>换一张</span></button>
+          </div>
+          <div class="upstream-captcha-content">
+            <div class="upstream-captcha-image-frame"><img id="upstream-captcha-image" alt="上游登录验证码" decoding="async"></div>
+            <label class="field"><span>手动输入验证码</span><input id="upstream-captcha-code-input" type="text" inputmode="text" maxlength="64" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="请输入图片中的字符"><small>验证码只用于这一次 HC2 登录请求，不会保存。</small></label>
+          </div>
+        </section>
         <div id="upstream-token-fields" class="auth-fields" hidden><label class="field"><span>访问 Token</span><textarea id="upstream-token-input" rows="4" maxlength="65536" autocomplete="off"></textarea><small>适用于已登录后复制的个人访问 Token。</small></label></div>
-        <div id="upstream-session-fields" class="auth-fields" hidden><label class="field"><span>Cookie / Session 内容</span><textarea id="upstream-session-input" rows="5" maxlength="65536" autocomplete="off" placeholder="session=...; token=..."></textarea><small>遇到 CAPTCHA、二次验证或仅支持浏览器登录时，在上游完成登录后粘贴会话内容。</small></label></div>
+        <div id="upstream-session-fields" class="auth-fields" hidden><label class="field"><span>Cookie / Session 内容</span><textarea id="upstream-session-input" rows="5" maxlength="65536" autocomplete="off" placeholder="session=...; token=..."></textarea><small>适用于外部 Turnstile、滑块、浏览器指纹或二次验证；本地图片验证码会直接在上方弹出。</small></label></div>
         <div id="upstream-newapi-user-id-field" class="auth-fields" hidden><label class="field"><span>NewAPI 用户 ID</span><input id="upstream-newapi-user-id-input" type="text" inputmode="numeric" pattern="[0-9]+" maxlength="20" autocomplete="off" placeholder="例如：23"><small>旧版 NewAPI 使用 Token 或 Cookie 时需要；可在上游个人中心查看数字 ID。</small></label></div>
         <p id="upstream-connect-error" class="form-error" role="alert" hidden></p>
       </div>

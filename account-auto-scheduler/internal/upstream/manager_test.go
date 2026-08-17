@@ -209,6 +209,51 @@ func TestManagerDisabledCredentialBoxDoesNotBlockListing(t *testing.T) {
 	}
 }
 
+func TestManagerStartsLocalCaptchaWithoutPersistingIncompleteState(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/settings/public":
+			writeTestJSON(t, w, http.StatusOK, map[string]any{"code": 0, "data": map[string]any{"local_captcha_enabled": true}})
+		case "/api/v1/auth/captcha":
+			writeTestJSON(t, w, http.StatusOK, map[string]any{"code": 0, "data": map[string]any{"captcha_id": "captcha-id", "image_data": testCaptchaImage}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	stateStore := managerTestStore(t)
+	now := time.Now().UTC()
+	record := model.ManagedUpstream{
+		ID: "up_captcha", Name: "Captcha", BaseURL: "https://model.example", TypeOverride: model.UpstreamTypeSub2API,
+		CreatedAt: now, UpdatedAt: now, Identities: map[string]model.UpstreamIdentity{},
+	}
+	if err := stateStore.PutUpstream(record); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := stateStore.GetUpstream(record.ID)
+	beforeJSON, _ := json.Marshal(before)
+	box, err := NewCredentialBox(testCredentialKey())
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := NewManager(stateStore, &managerLocalCore{}, box, 0, nil)
+	result, err := manager.StartLoginChallenge(context.Background(), record.ID, LoginChallengeInput{
+		ManagementURL: server.URL + "/api/v1", ManagementURLSet: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Challenge.Required || result.Challenge.CaptchaID != "captcha-id" || result.ManagementURL != server.URL {
+		t.Fatalf("unexpected challenge result: %#v", result)
+	}
+	after, _ := stateStore.GetUpstream(record.ID)
+	afterJSON, _ := json.Marshal(after)
+	if string(beforeJSON) != string(afterJSON) || after.ManagementURL != "" || len(after.Identities) != 0 {
+		t.Fatalf("challenge preflight mutated persisted upstream: before=%s after=%s", beforeJSON, afterJSON)
+	}
+}
+
 func TestManagerPersistsRechargeRateAndDerivesFinalMultiplier(t *testing.T) {
 	stateStore := managerTestStore(t)
 	baseURL := "https://upstream.example"

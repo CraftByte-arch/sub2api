@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
+	"unicode"
 
 	"github.com/Wei-Shaw/sub2api-account-auto-scheduler/internal/core"
 	"github.com/Wei-Shaw/sub2api-account-auto-scheduler/internal/model"
@@ -29,14 +31,30 @@ type setUpstreamRechargeRateRequest struct {
 }
 
 type connectUpstreamRequest struct {
-	Label         string  `json:"label"`
+	Label            string  `json:"label"`
+	ManagementURL    *string `json:"site_url"`
+	AuthMode         string  `json:"auth_mode"`
+	Username         string  `json:"username"`
+	Password         string  `json:"password"`
+	Token            string  `json:"token"`
+	Session          string  `json:"session"`
+	UserID           string  `json:"user_id"`
+	LoginChallengeID string  `json:"login_challenge_id"`
+	CaptchaCode      string  `json:"captcha_code"`
+}
+
+type startUpstreamLoginChallengeRequest struct {
+	IdentityID    string  `json:"identity_id"`
 	ManagementURL *string `json:"site_url"`
 	AuthMode      string  `json:"auth_mode"`
-	Username      string  `json:"username"`
-	Password      string  `json:"password"`
-	Token         string  `json:"token"`
-	Session       string  `json:"session"`
-	UserID        string  `json:"user_id"`
+}
+
+type upstreamLoginChallengeResponse struct {
+	Required  bool       `json:"required"`
+	ID        string     `json:"id,omitempty"`
+	Provider  string     `json:"provider,omitempty"`
+	ImageData string     `json:"image_data,omitempty"`
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 }
 
 type saveBindingsRequest struct {
@@ -146,6 +164,66 @@ func (s *Server) handleClearUpstreamRechargeRate(w http.ResponseWriter, r *http.
 	writeJSON(w, http.StatusOK, map[string]any{"upstream": result})
 }
 
+func (s *Server) handleStartUpstreamLoginChallenge(w http.ResponseWriter, r *http.Request) {
+	if !s.requireUpstreamConsole(w) {
+		return
+	}
+	manager, ok := s.upstreams.(upstreamLoginChallengeConsole)
+	if !ok {
+		writeJSON(w, http.StatusOK, upstreamLoginChallengeResponse{Required: false})
+		return
+	}
+	var request startUpstreamLoginChallengeRequest
+	if err := decodeLimitedJSON(r, 32<<10, &request); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		return
+	}
+	mode, err := model.ParseUpstreamAuthMode(request.AuthMode)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_AUTH_MODE", err.Error())
+		return
+	}
+	if mode != model.UpstreamAuthPassword {
+		writeJSON(w, http.StatusOK, upstreamLoginChallengeResponse{Required: false})
+		return
+	}
+	result, err := manager.StartLoginChallenge(r.Context(), r.PathValue("upstreamID"), upstream.LoginChallengeInput{
+		ManagementURL:    optionalString(request.ManagementURL),
+		ManagementURLSet: request.ManagementURL != nil,
+	})
+	if err != nil {
+		writeUpstreamError(w, err)
+		return
+	}
+	if !result.Challenge.Required {
+		writeJSON(w, http.StatusOK, upstreamLoginChallengeResponse{Required: false})
+		return
+	}
+	user, _ := r.Context().Value(adminUserKey).(core.AdminUser)
+	handle, err := s.loginChallenges.Create(loginChallengeScope{
+		AdminID:       user.ID,
+		UpstreamID:    r.PathValue("upstreamID"),
+		IdentityID:    request.IdentityID,
+		ManagementURL: result.ManagementURL,
+	}, result.Challenge)
+	if err != nil {
+		if errors.Is(err, errLoginChallengeCapacity) {
+			writeError(w, http.StatusServiceUnavailable, "LOGIN_CHALLENGE_CAPACITY", "当前验证码请求过多，请稍后重试")
+			return
+		}
+		writeError(w, http.StatusBadGateway, "LOGIN_CHALLENGE_FAILED", "无法创建验证码挑战，请稍后重试")
+		return
+	}
+	expiresAt := handle.ExpiresAt
+	writeJSON(w, http.StatusOK, upstreamLoginChallengeResponse{
+		Required:  true,
+		ID:        handle.ID,
+		Provider:  handle.Provider,
+		ImageData: result.Challenge.ImageData,
+		ExpiresAt: &expiresAt,
+	})
+}
+
 func (s *Server) handleConnectUpstreamIdentity(w http.ResponseWriter, r *http.Request) {
 	if !s.requireUpstreamConsole(w) {
 		return
@@ -160,14 +238,48 @@ func (s *Server) handleConnectUpstreamIdentity(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusBadRequest, "INVALID_AUTH_MODE", err.Error())
 		return
 	}
+	login := upstream.LoginInput{
+		Mode: mode, Username: request.Username, Password: request.Password, Token: request.Token, Session: request.Session, UserID: request.UserID,
+	}
+	challengeID := strings.TrimSpace(request.LoginChallengeID)
+	captchaCode := strings.TrimSpace(request.CaptchaCode)
+	if challengeID != "" || captchaCode != "" {
+		if mode != model.UpstreamAuthPassword || challengeID == "" || captchaCode == "" || len(captchaCode) > 64 || strings.IndexFunc(captchaCode, unicode.IsControl) >= 0 {
+			writeError(w, http.StatusBadRequest, "INVALID_LOGIN_CHALLENGE", "验证码挑战或验证码无效，请刷新后重试")
+			return
+		}
+		if request.ManagementURL == nil || strings.TrimSpace(*request.ManagementURL) == "" {
+			writeError(w, http.StatusConflict, "LOGIN_CHALLENGE_EXPIRED", "验证码挑战已失效，请刷新后重试")
+			return
+		}
+		managementURL, normalizeErr := model.NormalizeUpstreamBaseURL(*request.ManagementURL)
+		if normalizeErr != nil {
+			writeError(w, http.StatusBadRequest, "INVALID_MANAGEMENT_SITE_URL", normalizeErr.Error())
+			return
+		}
+		user, _ := r.Context().Value(adminUserKey).(core.AdminUser)
+		attempt, consumeErr := s.loginChallenges.Consume(challengeID, loginChallengeScope{
+			AdminID:       user.ID,
+			UpstreamID:    r.PathValue("upstreamID"),
+			IdentityID:    r.PathValue("identityID"),
+			ManagementURL: managementURL,
+		})
+		if consumeErr != nil {
+			writeError(w, http.StatusConflict, "LOGIN_CHALLENGE_EXPIRED", "验证码挑战已过期或已使用，请刷新后重试")
+			return
+		}
+		resolvedManagementURL := attempt.Scope.ManagementURL
+		request.ManagementURL = &resolvedManagementURL
+		login.CaptchaID = attempt.CaptchaID
+		login.CaptchaCode = captchaCode
+		login.ChallengeCookie = attempt.Cookie
+	}
 	identity, err := s.upstreams.Connect(r.Context(), r.PathValue("upstreamID"), upstream.ConnectInput{
 		IdentityID:       strings.TrimSpace(r.PathValue("identityID")),
 		Label:            request.Label,
 		ManagementURL:    optionalString(request.ManagementURL),
 		ManagementURLSet: request.ManagementURL != nil,
-		Login: upstream.LoginInput{
-			Mode: mode, Username: request.Username, Password: request.Password, Token: request.Token, Session: request.Session, UserID: request.UserID,
-		},
+		Login:            login,
 	})
 	if err != nil {
 		writeUpstreamErrorWithData(w, err, map[string]any{"identity": identity})

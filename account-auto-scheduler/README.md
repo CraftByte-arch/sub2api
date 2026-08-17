@@ -71,11 +71,12 @@
 - `API 地址`始终用于实际模型调用和本地 API Key 账号关联。连接或重新连接身份时可填写可选的`管理站点地址`；登录、身份校验、会话刷新、余额、Key 和倍率同步都通过它完成，留空时才回退到 API 地址。成功验证后才会保存该覆盖地址，因此错误地址不会替换已有可用设置。
 - 同一个上游可以保存多个登录身份，支持账号密码、访问 Token、Cookie/session 三种方式。密码只用于本次登录，验证结束后不会保存。
 - 账号密码模式要求手动填写目标上游自己的凭据，不复用当前 Sub2API 后台的自动填充密码；旧版 NewAPI 优先使用站内用户名。上游明确拒绝账号或密码时，页面会显示专用提示，不再归为模糊的协议错误。
+- Sub2API 上游明确开启本地图片验证码时，密码登录会先由旁路服务从服务器出口获取验证码，再在管理员登录弹窗中展示图片供人工输入。验证码挑战最多保留 5 分钟、只能使用一次，并绑定当前管理员、上游、登录身份和管理站点地址；验证码图片、答案、上游挑战 ID、临时 Cookie 和密码都不会写入状态文件。
 - 展开上游后可查看每个登录身份的实际站点余额、最近获取时间、本地账号、登录状态、远端 Key 状态、分组、用量、额度、固定倍率以及 NewAPI `auto` 分组的最近动态倍率观测。余额属于登录身份；同一站点存在多个身份时分别展示，上游摘要只显示有余额的账号数量，绝不合计。
 - 每个上游可以手动设置充值倍率，支持 `1 CNY = N USD` 和 `N CNY = 1 USD` 两种输入。服务统一保存为 `CNY / USD`，每个 Key 的最终倍率为 `充值倍率 × 分组倍率`；例如 `1 CNY = 5 USD` 与分组倍率 `0.8` 得到 `0.2 × 0.8 = 0.16`。
 - 旧版 NewAPI 的账号密码登录会自动从登录响应取得用户 ID 并发送 `New-Api-User`；手动 Token 或 Cookie/session 模式可填写个人中心显示的数字用户 ID。用户 ID 与会话材料一起加密，不会出现在上游列表响应中。
 - 远端 Key 可以手动批量绑定到同一上游的本地 API Key 账号。自动匹配是单独的敏感操作，只接受完整 Key 的唯一精确匹配；掩码 Key、重复 Key 或不确定结果不会猜测绑定。
-- CAPTCHA、Cloudflare、人机验证和二次验证不会被绕过。请先在上游网站完成交互式登录，再粘贴可复用的 Token 或 Cookie/session。
+- Turnstile、reCAPTCHA、腾讯/阿里云验证码、Cloudflare、滑块、浏览器指纹和二次验证不会被绕过。遇到这些外部浏览器挑战时，请先在上游网站完成交互式登录，再粘贴可复用的 Token 或 Cookie/session；本地图片验证码则使用上面的人工输入流程。
 
 ### 支持的上游接口
 
@@ -83,7 +84,7 @@
 
 | 网站类型 | 匿名识别 | 登录、验证与站点余额 | Key、额度、用量与倍率 |
 | --- | --- | --- | --- |
-| Sub2API | `GET /api/v1/settings/public` | `POST /api/v1/auth/login`、`GET /api/v1/auth/me` 的 `balance`、`POST /api/v1/auth/refresh` | `GET /api/v1/keys`、`GET /api/v1/groups/available`、`GET /api/v1/groups/rates` |
+| Sub2API | `GET /api/v1/settings/public` | 可选 `GET /api/v1/auth/captcha`、`POST /api/v1/auth/login`、`GET /api/v1/auth/me` 的 `balance`、`POST /api/v1/auth/refresh` | `GET /api/v1/keys`、`GET /api/v1/groups/available`、`GET /api/v1/groups/rates` |
 | NewAPI | `GET /api/status` 的 `quota_per_unit`，必要时 `GET /api/user/groups` | `POST /api/user/login`、`GET /api/user/self` 的 `quota`、`POST /api/user/auth/refresh` | `GET /api/token/`、`GET /api/user/self/groups`、`GET /api/log/self` |
 
 同步只读取远端信息，不创建、修改、删除或显示完整上游 Key，也不会把探测到的倍率写回 Sub2API 账号。NewAPI `auto` 分组没有明确的近期消费日志时只显示“动态”，不会用 `0` 代替未知倍率。

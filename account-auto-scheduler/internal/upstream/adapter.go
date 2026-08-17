@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,15 +14,20 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/Wei-Shaw/sub2api-account-auto-scheduler/internal/model"
 )
 
 const (
-	maxRemoteJSONBytes   = 4 << 20
-	maxRemoteErrorBody   = 16 << 10
-	remoteRequestTimeout = 25 * time.Second
-	remoteUserAgent      = "Sub2API-Account-Auto-Scheduler/1.0"
+	maxRemoteJSONBytes       = 4 << 20
+	maxRemoteErrorBody       = 16 << 10
+	maxCaptchaImageBytes     = 1 << 20
+	maxCaptchaIDLength       = 256
+	maxCaptchaCodeLength     = 64
+	remoteRequestTimeout     = 25 * time.Second
+	remoteUserAgent          = "Sub2API-Account-Auto-Scheduler/1.0"
+	localCaptchaProviderName = "local"
 )
 
 type DetectionResult struct {
@@ -30,12 +36,26 @@ type DetectionResult struct {
 }
 
 type LoginInput struct {
-	Mode     model.UpstreamAuthMode
-	Username string
-	Password string
-	Token    string
-	Session  string
-	UserID   string
+	Mode            model.UpstreamAuthMode
+	Username        string
+	Password        string
+	Token           string
+	Session         string
+	UserID          string
+	CaptchaID       string
+	CaptchaCode     string
+	ChallengeCookie string
+}
+
+// LoginChallenge contains ephemeral upstream challenge material. CaptchaID and
+// Cookie must remain server-side and are wrapped by an opaque web-layer attempt
+// before any response is returned to a browser.
+type LoginChallenge struct {
+	Required  bool
+	Provider  string
+	CaptchaID string
+	ImageData string
+	Cookie    string
 }
 
 type LoginResult struct {
@@ -60,6 +80,12 @@ type Adapter interface {
 	Type() model.UpstreamSiteType
 	Connect(ctx context.Context, managementURL string, input LoginInput) (LoginResult, error)
 	Sync(ctx context.Context, managementURL string, material AuthMaterial) (SyncResult, error)
+}
+
+// LoginChallengeAdapter is optional. Adapters that do not implement it retain
+// the existing direct login behavior without a challenge preflight.
+type LoginChallengeAdapter interface {
+	StartLoginChallenge(ctx context.Context, managementURL string) (LoginChallenge, error)
 }
 
 type AdapterError struct {
@@ -252,6 +278,50 @@ func cleanHeaderValue(value string) string {
 	return value
 }
 
+func normalizeCaptchaID(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" || len(value) > maxCaptchaIDLength || containsControlCharacter(value) {
+		return "", adapterError("UPSTREAM_CAPTCHA_INVALID", "上游验证码挑战无效，请刷新后重试", model.IdentityStatusCaptcha, http.StatusBadGateway)
+	}
+	return value, nil
+}
+
+func normalizeCaptchaCode(value string) (string, error) {
+	value = strings.ToUpper(strings.TrimSpace(value))
+	if value == "" || len(value) > maxCaptchaCodeLength || containsControlCharacter(value) {
+		return "", adapterError("INVALID_CAPTCHA_CODE", "请输入有效的验证码", model.IdentityStatusCaptcha, http.StatusBadRequest)
+	}
+	return value, nil
+}
+
+func containsControlCharacter(value string) bool {
+	return strings.IndexFunc(value, unicode.IsControl) >= 0
+}
+
+func normalizeCaptchaImageData(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	prefixes := []string{
+		"data:image/png;base64,",
+		"data:image/jpeg;base64,",
+		"data:image/webp;base64,",
+	}
+	encoded := ""
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(value, prefix) {
+			encoded = strings.TrimPrefix(value, prefix)
+			break
+		}
+	}
+	if encoded == "" || len(encoded) > base64.StdEncoding.EncodedLen(maxCaptchaImageBytes) {
+		return "", adapterError("UPSTREAM_CAPTCHA_IMAGE_INVALID", "上游验证码图片无效，请稍后重试", model.IdentityStatusCaptcha, http.StatusBadGateway)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil || len(decoded) == 0 || len(decoded) > maxCaptchaImageBytes {
+		return "", adapterError("UPSTREAM_CAPTCHA_IMAGE_INVALID", "上游验证码图片无效，请稍后重试", model.IdentityStatusCaptcha, http.StatusBadGateway)
+	}
+	return value, nil
+}
+
 func recognizesSub2API(raw []byte) bool {
 	var envelope struct {
 		Code json.RawMessage `json:"code"`
@@ -299,6 +369,30 @@ func joinResponseCookies(header http.Header) string {
 			continue
 		}
 		parts = append(parts, cookie.Name+"="+cookie.Value)
+	}
+	return strings.Join(parts, "; ")
+}
+
+func mergeCookieMaterial(values ...string) string {
+	order := make([]string, 0)
+	byName := make(map[string]string)
+	for _, value := range values {
+		for _, part := range strings.Split(value, ";") {
+			part = strings.TrimSpace(part)
+			name, _, ok := strings.Cut(part, "=")
+			name = strings.TrimSpace(name)
+			if !ok || name == "" || cleanHeaderValue(part) == "" {
+				continue
+			}
+			if _, exists := byName[name]; !exists {
+				order = append(order, name)
+			}
+			byName[name] = part
+		}
+	}
+	parts := make([]string, 0, len(order))
+	for _, name := range order {
+		parts = append(parts, byName[name])
 	}
 	return strings.Join(parts, "; ")
 }

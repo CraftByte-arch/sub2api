@@ -34,6 +34,7 @@
       connectTrigger: null,
       connectUpstreamID: '',
       connectIdentityID: '',
+      connectChallenge: null,
       rechargeTrigger: null,
       rechargeUpstreamID: '',
       bindingTrigger: null,
@@ -75,6 +76,8 @@
         'upstream-create-save-button', 'upstream-connect-dialog', 'upstream-connect-form', 'upstream-connect-title',
         'upstream-connect-url', 'upstream-detection-summary', 'upstream-connect-type', 'upstream-identity-label', 'upstream-management-site-input',
         'upstream-password-fields', 'upstream-username-input', 'upstream-password-input', 'upstream-password-toggle',
+        'upstream-captcha-fields', 'upstream-captcha-expiry', 'upstream-captcha-refresh-button',
+        'upstream-captcha-image', 'upstream-captcha-code-input',
         'upstream-token-fields', 'upstream-token-input', 'upstream-session-fields', 'upstream-session-input',
         'upstream-newapi-user-id-field', 'upstream-newapi-user-id-input',
         'upstream-connect-error', 'upstream-connect-save-button', 'upstream-binding-dialog', 'upstream-binding-name',
@@ -107,9 +110,14 @@
       elements.upstreamCreateForm.addEventListener('submit', saveCreate)
       elements.upstreamConnectForm.addEventListener('submit', saveConnection)
       elements.upstreamConnectForm.addEventListener('change', (event) => {
-        if (event.target.name === 'upstream-auth-mode' || event.target === elements.upstreamConnectType) renderAuthMode()
+        if (event.target.name === 'upstream-auth-mode' || event.target === elements.upstreamConnectType) {
+          clearConnectChallenge()
+          renderAuthMode()
+        }
       })
+      elements.upstreamManagementSiteInput.addEventListener('input', clearConnectChallenge)
       elements.upstreamPasswordToggle.addEventListener('click', togglePassword)
+      elements.upstreamCaptchaRefreshButton.addEventListener('click', refreshConnectChallenge)
       elements.upstreamRechargeForm.addEventListener('submit', saveRechargeRate)
       elements.upstreamRechargeForm.addEventListener('change', (event) => {
         if (event.target.name === 'upstream-recharge-mode') renderRechargePreview()
@@ -121,7 +129,10 @@
       elements.upstreamAutoMatchButton.addEventListener('click', autoMatch)
       elements.upstreamDeleteIdentityButton.addEventListener('click', deleteIdentity)
       elements.upstreamCreateDialog.addEventListener('close', () => restoreFocus('create'))
-      elements.upstreamConnectDialog.addEventListener('close', () => restoreFocus('connect'))
+      elements.upstreamConnectDialog.addEventListener('close', () => {
+        clearConnectChallenge()
+        restoreFocus('connect')
+      })
       elements.upstreamRechargeDialog.addEventListener('close', () => restoreFocus('recharge'))
       elements.upstreamBindingDialog.addEventListener('close', () => restoreFocus('binding'))
       elements.upstreamDeleteIdentityDialog.addEventListener('close', () => restoreFocus('delete'))
@@ -455,6 +466,7 @@
       state.connectUpstreamID = upstream.id
       state.connectIdentityID = identity?.id || ''
       elements.upstreamConnectForm.reset()
+      clearConnectChallenge()
       elements.upstreamConnectTitle.textContent = identity ? '重新连接登录身份' : '连接上游'
       elements.upstreamConnectUrl.textContent = `API 地址（模型调用）：${upstream.base_url}`
       elements.upstreamConnectType.value = upstream.type && upstream.type !== 'unknown' ? upstream.type : ''
@@ -495,6 +507,42 @@
       elements.upstreamPasswordInput.required = mode === 'password'
       elements.upstreamTokenInput.required = mode === 'token'
       elements.upstreamSessionInput.required = mode === 'session'
+      renderConnectChallenge()
+    }
+
+    function clearConnectChallenge() {
+      state.connectChallenge = null
+      if (!elements.upstreamCaptchaFields) return
+      elements.upstreamCaptchaCodeInput.value = ''
+      elements.upstreamCaptchaCodeInput.required = false
+      elements.upstreamCaptchaImage.removeAttribute('src')
+      elements.upstreamCaptchaFields.hidden = true
+      if (elements.upstreamConnectDialog.dataset.busy !== 'true') {
+        const labelNode = elements.upstreamConnectSaveButton.querySelector('span')
+        if (labelNode) labelNode.textContent = '验证并连接'
+      }
+    }
+
+    function renderConnectChallenge() {
+      const challenge = state.connectChallenge
+      const visible = selectedAuthMode() === 'password' && Boolean(challenge?.id && challenge?.image_data)
+      elements.upstreamCaptchaFields.hidden = !visible
+      elements.upstreamCaptchaCodeInput.required = visible
+      elements.upstreamCaptchaRefreshButton.disabled = elements.upstreamConnectDialog.dataset.busy === 'true'
+      if (!visible) {
+        elements.upstreamCaptchaImage.removeAttribute('src')
+        return
+      }
+      if (elements.upstreamCaptchaImage.getAttribute('src') !== challenge.image_data) {
+        elements.upstreamCaptchaImage.src = challenge.image_data
+      }
+      elements.upstreamCaptchaExpiry.textContent = challenge.expires_at
+        ? `验证码有效至 ${formatDateTime(challenge.expires_at)}`
+        : '验证码将在 5 分钟内失效'
+    }
+
+    function connectSubmitLabel() {
+      return state.connectChallenge ? '提交验证码并连接' : '验证并连接'
     }
 
     function selectedAuthMode() {
@@ -510,6 +558,51 @@
       elements.upstreamPasswordInput.focus()
     }
 
+    async function fetchConnectChallenge(upstream) {
+      const response = await api(`/api/upstreams/${encodeURIComponent(upstream.id)}/login-challenges`, {
+        method: 'POST',
+        body: {
+          identity_id: state.connectIdentityID,
+          site_url: elements.upstreamManagementSiteInput.value.trim(),
+          auth_mode: 'password',
+        },
+      })
+      if (!response?.required) {
+        clearConnectChallenge()
+        return false
+      }
+      if (!response.id || !response.image_data) {
+        const error = new Error('上游验证码响应无效，请稍后重试')
+        error.code = 'LOGIN_CHALLENGE_FAILED'
+        throw error
+      }
+      state.connectChallenge = response
+      elements.upstreamCaptchaCodeInput.value = ''
+      renderConnectChallenge()
+      return true
+    }
+
+    async function refreshConnectChallenge() {
+      const upstream = getUpstream(state.connectUpstreamID)
+      if (!upstream || selectedAuthMode() !== 'password' || elements.upstreamConnectDialog.dataset.busy === 'true') return
+      setDialogBusy(elements.upstreamConnectDialog, elements.upstreamConnectSaveButton, true, '获取验证码')
+      elements.upstreamConnectError.hidden = true
+      try {
+        const required = await fetchConnectChallenge(upstream)
+        if (!required) {
+          elements.upstreamConnectError.textContent = '该上游当前未要求本地图片验证码，可直接登录'
+          elements.upstreamConnectError.hidden = false
+          return
+        }
+        elements.upstreamCaptchaCodeInput.focus()
+      } catch (error) {
+        clearConnectChallenge()
+        showConnectError(error)
+      } finally {
+        setDialogBusy(elements.upstreamConnectDialog, elements.upstreamConnectSaveButton, false, connectSubmitLabel())
+      }
+    }
+
     async function saveConnection(event) {
       event.preventDefault()
       if (!elements.upstreamConnectForm.reportValidity()) return
@@ -521,14 +614,22 @@
         elements.upstreamConnectType.focus()
         return
       }
-      setDialogBusy(elements.upstreamConnectDialog, elements.upstreamConnectSaveButton, true, '验证中')
+      const mode = selectedAuthMode()
+      const submittedChallenge = mode === 'password' ? state.connectChallenge : null
+      setDialogBusy(elements.upstreamConnectDialog, elements.upstreamConnectSaveButton, true, submittedChallenge ? '登录中' : '验证中')
       elements.upstreamConnectError.hidden = true
       try {
         if (upstream.type !== siteType || upstream.type_override !== siteType) {
           const typeResponse = await api(`/api/upstreams/${encodeURIComponent(upstream.id)}/type`, { method: 'PUT', body: { type: siteType } })
           replaceUpstream(typeResponse.upstream)
         }
-        const mode = selectedAuthMode()
+        if (mode === 'password' && !submittedChallenge) {
+          const required = await fetchConnectChallenge(upstream)
+          if (required) {
+            elements.upstreamCaptchaCodeInput.focus()
+            return
+          }
+        }
         const body = {
           label: elements.upstreamIdentityLabel.value.trim(),
           site_url: elements.upstreamManagementSiteInput.value.trim(),
@@ -538,6 +639,8 @@
           token: mode === 'token' ? elements.upstreamTokenInput.value.trim() : '',
           session: mode === 'session' ? elements.upstreamSessionInput.value.trim() : '',
           user_id: siteType === 'newapi' && mode !== 'password' ? elements.upstreamNewapiUserIdInput.value.trim() : '',
+          login_challenge_id: submittedChallenge?.id || '',
+          captcha_code: submittedChallenge ? elements.upstreamCaptchaCodeInput.value.trim() : '',
         }
         const identityPath = state.connectIdentityID ? `/${encodeURIComponent(state.connectIdentityID)}` : ''
         await api(`/api/upstreams/${encodeURIComponent(upstream.id)}/identities${identityPath}`, {
@@ -546,19 +649,33 @@
         state.expanded.add(upstream.id)
         persistExpanded()
         await load(true)
+        clearConnectChallenge()
         elements.upstreamConnectDialog.close()
         showToast(state.connectIdentityID ? '登录身份已重新连接' : '上游登录成功并已同步 Key')
       } catch (error) {
+        if (submittedChallenge) {
+          clearConnectChallenge()
+          try {
+            await fetchConnectChallenge(upstream)
+          } catch {
+            clearConnectChallenge()
+          }
+        }
         await load(true)
         showConnectError(error)
       } finally {
-        setDialogBusy(elements.upstreamConnectDialog, elements.upstreamConnectSaveButton, false, '验证并连接')
+        setDialogBusy(elements.upstreamConnectDialog, elements.upstreamConnectSaveButton, false, connectSubmitLabel())
       }
     }
 
     function showConnectError(error) {
       const action = {
-        CAPTCHA_REQUIRED: '上游要求人机验证。请在上游网站手动登录，然后改用 Cookie / Session 方式。',
+        CAPTCHA_REQUIRED: '上游要求浏览器人机验证。当前自动弹窗只支持本地图片验证码，请在上游网站完成验证后改用 Cookie / Session。',
+        LOGIN_CHALLENGE_EXPIRED: '验证码已过期或已使用，已为你刷新，请重新输入。',
+        INVALID_LOGIN_CHALLENGE: '验证码挑战无效，请刷新验证码后重试。',
+        INVALID_CAPTCHA_CODE: '请输入有效的验证码。',
+        UPSTREAM_CAPTCHA_UNAVAILABLE: '上游验证码暂不可用，请稍后换一张。',
+        UPSTREAM_CAPTCHA_IMAGE_INVALID: '上游返回的验证码图片无效，无法安全显示。',
         TWO_FACTOR_REQUIRED: '上游要求二次验证。请在上游完成验证后粘贴 Token 或 Cookie/session。',
         UPSTREAM_INVALID_CREDENTIALS: '上游明确拒绝了账号或密码。请手动填写该上游自己的凭据；旧版 NewAPI 优先使用站内用户名。',
         UPSTREAM_SESSION_EXPIRED: '登录材料已过期，请重新复制 Token 或 Cookie/session。',
@@ -807,6 +924,7 @@
       if (labelNode) labelNode.textContent = label
       else button.textContent = label
       dialog.querySelectorAll('[data-close-dialog]').forEach((item) => { item.disabled = busy })
+      if (dialog === elements.upstreamConnectDialog) renderConnectChallenge()
     }
 
     function restoreFocus(kind) {

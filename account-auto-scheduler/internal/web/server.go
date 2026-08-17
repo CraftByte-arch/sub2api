@@ -81,6 +81,10 @@ type UpstreamConsole interface {
 	AutoMatch(ctx context.Context, upstreamID, adminJWT string, forwarded core.ForwardedIdentity) (upstream.MatchResult, error)
 }
 
+type upstreamLoginChallengeConsole interface {
+	StartLoginChallenge(ctx context.Context, upstreamID string, input upstream.LoginChallengeInput) (upstream.LoginChallengeResult, error)
+}
+
 type overviewMultiplierProjection interface {
 	LocalAccountFinalMultipliers(accounts []model.UpstreamAccount) map[int64]upstream.LocalAccountFinalMultiplier
 }
@@ -109,13 +113,14 @@ type groupProtectionDefaultConsole interface {
 }
 
 type Server struct {
-	engine        *engine.Engine
-	core          AdminCore
-	console       ConsoleCore
-	options       Options
-	logger        *slog.Logger
-	upstreams     UpstreamConsole
-	notifications NotificationConsole
+	engine          *engine.Engine
+	core            AdminCore
+	console         ConsoleCore
+	options         Options
+	logger          *slog.Logger
+	upstreams       UpstreamConsole
+	notifications   NotificationConsole
+	loginChallenges *loginChallengeStore
 
 	cacheMu   sync.Mutex
 	authCache map[string]cachedSession
@@ -220,13 +225,14 @@ func NewServer(scheduler *engine.Engine, coreClient AdminCore, options Options, 
 		logger = slog.Default()
 	}
 	server := &Server{
-		engine:        scheduler,
-		core:          coreClient,
-		options:       options,
-		logger:        logger,
-		upstreams:     options.Upstreams,
-		notifications: options.Notifications,
-		authCache:     map[string]cachedSession{},
+		engine:          scheduler,
+		core:            coreClient,
+		options:         options,
+		logger:          logger,
+		upstreams:       options.Upstreams,
+		notifications:   options.Notifications,
+		loginChallenges: newLoginChallengeStore(defaultLoginChallengeTTL),
+		authCache:       map[string]cachedSession{},
 	}
 	server.console, _ = coreClient.(ConsoleCore)
 	return server
@@ -272,6 +278,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("PUT /api/upstreams/{upstreamID}/type", s.requireAdmin(http.HandlerFunc(s.handleSetUpstreamType)))
 	mux.Handle("PUT /api/upstreams/{upstreamID}/recharge-rate", s.requireAdmin(http.HandlerFunc(s.handleSetUpstreamRechargeRate)))
 	mux.Handle("DELETE /api/upstreams/{upstreamID}/recharge-rate", s.requireAdmin(http.HandlerFunc(s.handleClearUpstreamRechargeRate)))
+	mux.Handle("POST /api/upstreams/{upstreamID}/login-challenges", s.requireAdmin(http.HandlerFunc(s.handleStartUpstreamLoginChallenge)))
 	mux.Handle("POST /api/upstreams/{upstreamID}/identities", s.requireAdmin(http.HandlerFunc(s.handleConnectUpstreamIdentity)))
 	mux.Handle("PUT /api/upstreams/{upstreamID}/identities/{identityID}", s.requireAdmin(http.HandlerFunc(s.handleConnectUpstreamIdentity)))
 	mux.Handle("DELETE /api/upstreams/{upstreamID}/identities/{identityID}", s.requireAdmin(http.HandlerFunc(s.handleDeleteUpstreamIdentity)))
