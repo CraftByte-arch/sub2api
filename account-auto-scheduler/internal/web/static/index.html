@@ -30,6 +30,7 @@
     <symbol id="icon-key" viewBox="0 0 24 24"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6M15 6l3 3M18 3l3 3"/></symbol>
     <symbol id="icon-eye" viewBox="0 0 24 24"><path d="M2.1 12a10.9 10.9 0 0 1 19.8 0 10.9 10.9 0 0 1-19.8 0Z"/><circle cx="12" cy="12" r="3"/></symbol>
     <symbol id="icon-eye-off" viewBox="0 0 24 24"><path d="m3 3 18 18M10.6 10.6a2 2 0 0 0 2.8 2.8M9.9 4.2A10.9 10.9 0 0 1 21.9 12a11.6 11.6 0 0 1-2 2.9M6.6 6.6A11.5 11.5 0 0 0 2.1 12a10.9 10.9 0 0 0 15.3 5.4"/></symbol>
+    <symbol id="icon-bell" viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></symbol>
   </svg>
 
   <section id="auth-state" class="state-screen" aria-live="polite">
@@ -48,6 +49,9 @@
         <p id="sync-label">尚未同步</p>
       </div>
       <div class="header-actions">
+        <button id="notification-settings-button" class="icon-button" type="button" title="Bark 通知设置" aria-label="Bark 通知设置">
+          <svg class="icon"><use href="#icon-bell"/></svg>
+        </button>
         <button id="register-tab-button" class="button secondary compact-command" type="button" hidden>注册后台 Tab</button>
         <div id="groups-header-actions" class="action-cluster">
           <button id="refresh-button" class="icon-button" type="button" title="刷新分组与账号" aria-label="刷新分组与账号">
@@ -205,6 +209,11 @@
           <i aria-hidden="true"></i>
         </label>
         <label class="field full-width">
+          <span>账号余额告警阈值（可选）</span>
+          <input id="balance-alert-input" type="number" inputmode="decimal" min="0" max="1000000000000" step="any" placeholder="留空则继承分组阈值">
+          <small>设置后优先于分组余额告警阈值；可用余额低于该值时只推送一次，恢复后才会再次触发。</small>
+        </label>
+        <label class="field full-width">
           <span>检测提示词</span>
           <textarea id="prompt-input" rows="7" maxlength="8000" required></textarea>
         </label>
@@ -310,6 +319,74 @@
         <p id="protection-error" class="form-error full-width" role="alert" hidden></p>
       </div>
       <footer class="modal-footer"><button class="button secondary" type="button" data-close-dialog="protection-dialog">取消</button><button id="protection-save-button" class="button primary" type="submit">保存保护倍率</button></footer>
+    </form>
+  </dialog>
+
+  <dialog id="group-protection-dialog" class="modal small-modal">
+    <form id="group-protection-form" method="dialog" class="modal-panel">
+      <header class="modal-header">
+        <div><h2>设置分组保护倍率</h2><p id="group-protection-name"></p></div>
+        <button class="icon-button ghost" type="button" data-close-dialog="group-protection-dialog" title="关闭" aria-label="关闭"><svg class="icon"><use href="#icon-x"/></svg></button>
+      </header>
+      <div class="modal-body form-grid">
+        <label class="field full-width"><span>分组默认保护倍率</span><input id="group-protection-multiplier-input" type="number" inputmode="decimal" min="0" step="any" required><small>账号没有账号级保护倍率时继承此值；最终倍率严格超过此值时自动解除分组绑定。</small></label>
+        <p id="group-protection-error" class="form-error full-width" role="alert" hidden></p>
+      </div>
+      <footer class="modal-footer">
+        <button class="button danger" id="group-protection-clear-button" type="button">清除分组保护</button>
+        <span class="modal-footer-spacer"></span>
+        <button class="button secondary" type="button" data-close-dialog="group-protection-dialog">取消</button>
+        <button id="group-protection-save-button" class="button primary" type="submit">保存分组保护</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <dialog id="group-balance-alert-dialog" class="modal small-modal">
+    <form id="group-balance-alert-form" method="dialog" class="modal-panel">
+      <header class="modal-header">
+        <div><h2>设置分组余额告警</h2><p id="group-balance-alert-name"></p></div>
+        <button class="icon-button ghost" type="button" data-close-dialog="group-balance-alert-dialog" title="关闭" aria-label="关闭"><svg class="icon"><use href="#icon-x"/></svg></button>
+      </header>
+      <div class="modal-body form-grid">
+        <label class="field full-width"><span>分组默认余额阈值</span><input id="group-balance-alert-input" type="number" inputmode="decimal" min="0" max="1000000000000" step="any" required><small>分组内没有账号级阈值的 API Key 账号继承此值；账号级阈值优先。</small></label>
+        <p id="group-balance-alert-error" class="form-error full-width" role="alert" hidden></p>
+      </div>
+      <footer class="modal-footer">
+        <button class="button danger" id="group-balance-alert-clear-button" type="button">清除分组告警</button>
+        <span class="modal-footer-spacer"></span>
+        <button class="button secondary" type="button" data-close-dialog="group-balance-alert-dialog">取消</button>
+        <button id="group-balance-alert-save-button" class="button primary" type="submit">保存余额告警</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <dialog id="notification-settings-dialog" class="modal">
+    <form id="notification-settings-form" method="dialog" class="modal-panel">
+      <header class="modal-header">
+        <div><h2>Bark 加密推送</h2><p>单设备 · AES-128-CBC · 管理员告警</p></div>
+        <button class="icon-button ghost" type="button" data-close-dialog="notification-settings-dialog" title="关闭" aria-label="关闭"><svg class="icon"><use href="#icon-x"/></svg></button>
+      </header>
+      <div class="modal-body form-grid notification-form-grid">
+        <div id="notification-settings-status" class="notification-status full-width" aria-live="polite"><strong>正在读取配置</strong><span>请稍候</span></div>
+        <label class="switch-field full-width notification-enable-field">
+          <span><strong>启用 Bark 告警</strong><small>停用时保留配置和阈值，但不评估或发送通知。</small></span>
+          <input id="notification-enabled-input" type="checkbox" role="switch">
+          <i aria-hidden="true"></i>
+        </label>
+        <label class="field full-width"><span>Bark Server 地址</span><input id="notification-endpoint-input" type="url" inputmode="url" autocomplete="url" placeholder="https://bark.aixw.org" required><small>填写服务器根地址，不要包含设备 Key、账号密码或查询参数。</small></label>
+        <label class="field"><span>设备 Key</span><input id="notification-device-key-input" type="password" autocomplete="new-password" placeholder="已保存时留空不修改"><small>从 Bark App 自定义服务器页面获取。</small></label>
+        <label class="field"><span>推送加密 Key</span><input id="notification-encryption-key-input" type="password" autocomplete="new-password" minlength="16" maxlength="16" placeholder="16 个 ASCII 字符"><small>必须与 Bark App“推送加密”中的 AES-128-CBC Key 完全一致。</small></label>
+        <label class="field"><span>Basic Auth 用户名</span><input id="notification-basic-user-input" type="text" autocomplete="username" placeholder="可选"></label>
+        <label class="field"><span>Basic Auth 密码</span><input id="notification-basic-password-input" type="password" autocomplete="new-password" placeholder="已保存时留空不修改"></label>
+        <p id="notification-settings-error" class="form-error full-width" role="alert" hidden></p>
+      </div>
+      <footer class="modal-footer split-footer">
+        <button id="notification-clear-button" class="button danger" type="button">清除配置</button>
+        <button id="notification-test-button" class="button secondary" type="button">发送测试通知</button>
+        <span class="modal-footer-spacer"></span>
+        <button class="button secondary" type="button" data-close-dialog="notification-settings-dialog">取消</button>
+        <button id="notification-save-button" class="button primary" type="submit">保存通知设置</button>
+      </footer>
     </form>
   </dialog>
 

@@ -18,6 +18,7 @@ import (
 var ErrNotFound = errors.New("account configuration not found")
 var ErrUpstreamNotFound = errors.New("upstream not found")
 var ErrProtectionNotFound = errors.New("group-account protection not found")
+var ErrGroupProtectionDefaultNotFound = errors.New("group protection default not found")
 
 type Store struct {
 	mu    sync.RWMutex
@@ -29,10 +30,11 @@ func Open(path string) (*Store, error) {
 	s := &Store{
 		path: path,
 		state: model.State{
-			Version:     model.StateVersion,
-			Accounts:    map[string]model.ManagedAccount{},
-			Upstreams:   map[string]model.ManagedUpstream{},
-			Protections: map[string]model.GroupAccountProtection{},
+			Version:                 model.StateVersion,
+			Accounts:                map[string]model.ManagedAccount{},
+			Upstreams:               map[string]model.ManagedUpstream{},
+			Protections:             map[string]model.GroupAccountProtection{},
+			GroupProtectionDefaults: map[string]model.GroupProtectionDefault{},
 		},
 	}
 	if err := s.load(); err != nil {
@@ -53,7 +55,7 @@ func (s *Store) load() error {
 	if err := json.Unmarshal(raw, &state); err != nil {
 		return fmt.Errorf("decode state: %w", err)
 	}
-	if state.Version != model.LegacyStateVersion && state.Version != model.UpstreamStateVersion && state.Version != model.ProtectionStateVersion && state.Version != model.StateVersion {
+	if state.Version != model.LegacyStateVersion && state.Version != model.UpstreamStateVersion && state.Version != model.ProtectionStateVersion && state.Version != model.GroupProtectionDefaultStateVersion && state.Version != model.StateVersion {
 		return fmt.Errorf("unsupported state version %d", state.Version)
 	}
 	if state.Accounts == nil {
@@ -64,6 +66,21 @@ func (s *Store) load() error {
 	}
 	if state.Protections == nil {
 		state.Protections = map[string]model.GroupAccountProtection{}
+	}
+	if state.GroupProtectionDefaults == nil {
+		state.GroupProtectionDefaults = map[string]model.GroupProtectionDefault{}
+	}
+	if state.GroupBalanceThresholds == nil {
+		state.GroupBalanceThresholds = map[string]float64{}
+	}
+	if state.BalanceAlertStates == nil {
+		state.BalanceAlertStates = map[string]model.BalanceAlertState{}
+	}
+	if state.CapacityAlertStates == nil {
+		state.CapacityAlertStates = map[string]model.CapacityAlertState{}
+	}
+	if state.MultiplierAlertStates == nil {
+		state.MultiplierAlertStates = map[string]model.MultiplierAlertState{}
 	}
 	for key, account := range state.Accounts {
 		account.Running = false
@@ -89,10 +106,24 @@ func (s *Store) load() error {
 		if !protection.Valid() {
 			return fmt.Errorf("invalid group-account protection %q", key)
 		}
+		if protection.Scope == "" {
+			protection.Scope = model.ProtectionScopeAccount
+			state.Protections[key] = protection
+		}
 		normalizedKey := protectionKey(protection.GroupID, protection.AccountID)
 		if key != normalizedKey {
 			delete(state.Protections, key)
 			state.Protections[normalizedKey] = protection
+		}
+	}
+	for key, setting := range state.GroupProtectionDefaults {
+		if !setting.Valid() {
+			return fmt.Errorf("invalid group protection default %q", key)
+		}
+		normalizedKey := groupDefaultKey(setting.GroupID)
+		if key != normalizedKey {
+			delete(state.GroupProtectionDefaults, key)
+			state.GroupProtectionDefaults[normalizedKey] = setting
 		}
 	}
 	state.Version = model.StateVersion
@@ -110,8 +141,188 @@ type ProtectionStore interface {
 	DeleteProtection(groupID, accountID int64) error
 }
 
+type GroupProtectionDefaultStore interface {
+	ListGroupProtectionDefaults() []model.GroupProtectionDefault
+	GetGroupProtectionDefault(groupID int64) (model.GroupProtectionDefault, error)
+	PutGroupProtectionDefault(setting model.GroupProtectionDefault) error
+	DeleteGroupProtectionDefault(groupID int64) error
+}
+
+// NotificationStore is implemented by the JSON store and keeps notification
+// configuration and edge state separate from the probing engine's account API.
+type NotificationStore interface {
+	GetNotificationSettings() model.NotificationSettings
+	PutNotificationSettings(settings model.NotificationSettings) error
+	ListGroupBalanceThresholds() map[int64]float64
+	GetGroupBalanceThreshold(groupID int64) (float64, bool)
+	PutGroupBalanceThreshold(groupID int64, threshold *float64) error
+	GetBalanceAlertState(key string) (model.BalanceAlertState, bool)
+	PutBalanceAlertState(key string, state model.BalanceAlertState) error
+	GetCapacityAlertState(key string) (model.CapacityAlertState, bool)
+	PutCapacityAlertState(key string, state model.CapacityAlertState) error
+	GetMultiplierAlertState(key string) (model.MultiplierAlertState, bool)
+	PutMultiplierAlertState(key string, state model.MultiplierAlertState) error
+}
+
+func (s *Store) GetNotificationSettings() model.NotificationSettings {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.state.Notification == nil {
+		return model.NotificationSettings{}
+	}
+	return cloneNotificationSettings(*s.state.Notification)
+}
+
+func (s *Store) PutNotificationSettings(settings model.NotificationSettings) error {
+	return s.UpdateState(func(state *model.State) error {
+		copy := cloneNotificationSettings(settings)
+		state.Notification = &copy
+		return nil
+	})
+}
+
+func (s *Store) ListGroupBalanceThresholds() map[int64]float64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := make(map[int64]float64, len(s.state.GroupBalanceThresholds))
+	for key, value := range s.state.GroupBalanceThresholds {
+		groupID, err := strconv.ParseInt(key, 10, 64)
+		if err == nil && groupID > 0 {
+			result[groupID] = value
+		}
+	}
+	return result
+}
+
+func (s *Store) GetGroupBalanceThreshold(groupID int64) (float64, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	value, ok := s.state.GroupBalanceThresholds[strconv.FormatInt(groupID, 10)]
+	return value, ok
+}
+
+func (s *Store) PutGroupBalanceThreshold(groupID int64, threshold *float64) error {
+	if groupID <= 0 {
+		return errors.New("invalid group id")
+	}
+	if _, err := model.NormalizeBalanceAlertThreshold(threshold); err != nil {
+		return err
+	}
+	return s.UpdateState(func(state *model.State) error {
+		if state.GroupBalanceThresholds == nil {
+			state.GroupBalanceThresholds = map[string]float64{}
+		}
+		key := strconv.FormatInt(groupID, 10)
+		if threshold == nil {
+			delete(state.GroupBalanceThresholds, key)
+			return nil
+		}
+		state.GroupBalanceThresholds[key] = *threshold
+		return nil
+	})
+}
+
+func (s *Store) GetBalanceAlertState(key string) (model.BalanceAlertState, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	value, ok := s.state.BalanceAlertStates[strings.TrimSpace(key)]
+	return value, ok
+}
+
+func (s *Store) PutBalanceAlertState(key string, stateValue model.BalanceAlertState) error {
+	return s.UpdateState(func(state *model.State) error {
+		if state.BalanceAlertStates == nil {
+			state.BalanceAlertStates = map[string]model.BalanceAlertState{}
+		}
+		state.BalanceAlertStates[strings.TrimSpace(key)] = stateValue
+		return nil
+	})
+}
+
+func (s *Store) GetCapacityAlertState(key string) (model.CapacityAlertState, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	value, ok := s.state.CapacityAlertStates[strings.TrimSpace(key)]
+	return value, ok
+}
+
+func (s *Store) PutCapacityAlertState(key string, stateValue model.CapacityAlertState) error {
+	return s.UpdateState(func(state *model.State) error {
+		if state.CapacityAlertStates == nil {
+			state.CapacityAlertStates = map[string]model.CapacityAlertState{}
+		}
+		state.CapacityAlertStates[strings.TrimSpace(key)] = stateValue
+		return nil
+	})
+}
+
+func (s *Store) GetMultiplierAlertState(key string) (model.MultiplierAlertState, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	value, ok := s.state.MultiplierAlertStates[strings.TrimSpace(key)]
+	return value, ok
+}
+
+func (s *Store) PutMultiplierAlertState(key string, stateValue model.MultiplierAlertState) error {
+	return s.UpdateState(func(state *model.State) error {
+		if state.MultiplierAlertStates == nil {
+			state.MultiplierAlertStates = map[string]model.MultiplierAlertState{}
+		}
+		state.MultiplierAlertStates[strings.TrimSpace(key)] = stateValue
+		return nil
+	})
+}
+
 func protectionKey(groupID, accountID int64) string {
 	return strconv.FormatInt(groupID, 10) + ":" + strconv.FormatInt(accountID, 10)
+}
+
+func groupDefaultKey(groupID int64) string {
+	return strconv.FormatInt(groupID, 10)
+}
+
+func (s *Store) ListGroupProtectionDefaults() []model.GroupProtectionDefault {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	items := make([]model.GroupProtectionDefault, 0, len(s.state.GroupProtectionDefaults))
+	for _, item := range s.state.GroupProtectionDefaults {
+		items = append(items, item)
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].GroupID < items[j].GroupID })
+	return items
+}
+
+func (s *Store) GetGroupProtectionDefault(groupID int64) (model.GroupProtectionDefault, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	item, ok := s.state.GroupProtectionDefaults[groupDefaultKey(groupID)]
+	if !ok {
+		return model.GroupProtectionDefault{}, ErrGroupProtectionDefaultNotFound
+	}
+	return item, nil
+}
+
+func (s *Store) PutGroupProtectionDefault(setting model.GroupProtectionDefault) error {
+	if !setting.Valid() {
+		return errors.New("invalid group protection default")
+	}
+	return s.UpdateState(func(state *model.State) error {
+		if state.GroupProtectionDefaults == nil {
+			state.GroupProtectionDefaults = map[string]model.GroupProtectionDefault{}
+		}
+		state.GroupProtectionDefaults[groupDefaultKey(setting.GroupID)] = setting
+		return nil
+	})
+}
+
+func (s *Store) DeleteGroupProtectionDefault(groupID int64) error {
+	return s.UpdateState(func(state *model.State) error {
+		if _, ok := state.GroupProtectionDefaults[groupDefaultKey(groupID)]; !ok {
+			return ErrGroupProtectionDefaultNotFound
+		}
+		delete(state.GroupProtectionDefaults, groupDefaultKey(groupID))
+		return nil
+	})
 }
 
 func (s *Store) ListProtections() []model.GroupAccountProtection {
@@ -366,10 +577,19 @@ func writeAtomic(path string, state model.State) error {
 
 func cloneState(state model.State) model.State {
 	cloned := model.State{
-		Version:     state.Version,
-		Accounts:    make(map[string]model.ManagedAccount, len(state.Accounts)),
-		Upstreams:   make(map[string]model.ManagedUpstream, len(state.Upstreams)),
-		Protections: make(map[string]model.GroupAccountProtection, len(state.Protections)),
+		Version:                 state.Version,
+		Accounts:                make(map[string]model.ManagedAccount, len(state.Accounts)),
+		Upstreams:               make(map[string]model.ManagedUpstream, len(state.Upstreams)),
+		Protections:             make(map[string]model.GroupAccountProtection, len(state.Protections)),
+		GroupProtectionDefaults: make(map[string]model.GroupProtectionDefault, len(state.GroupProtectionDefaults)),
+		GroupBalanceThresholds:  make(map[string]float64, len(state.GroupBalanceThresholds)),
+		BalanceAlertStates:      make(map[string]model.BalanceAlertState, len(state.BalanceAlertStates)),
+		CapacityAlertStates:     make(map[string]model.CapacityAlertState, len(state.CapacityAlertStates)),
+		MultiplierAlertStates:   make(map[string]model.MultiplierAlertState, len(state.MultiplierAlertStates)),
+	}
+	if state.Notification != nil {
+		copy := cloneNotificationSettings(*state.Notification)
+		cloned.Notification = &copy
 	}
 	for key, account := range state.Accounts {
 		cloned.Accounts[key] = cloneAccount(account)
@@ -380,7 +600,42 @@ func cloneState(state model.State) model.State {
 	for key, protection := range state.Protections {
 		cloned.Protections[key] = cloneProtection(protection)
 	}
+	for key, setting := range state.GroupProtectionDefaults {
+		cloned.GroupProtectionDefaults[key] = setting
+	}
+	for key, threshold := range state.GroupBalanceThresholds {
+		cloned.GroupBalanceThresholds[key] = threshold
+	}
+	for key, value := range state.BalanceAlertStates {
+		value.LastAvailable = cloneTimeFloat(value.LastAvailable)
+		cloned.BalanceAlertStates[key] = value
+	}
+	for key, value := range state.CapacityAlertStates {
+		cloned.CapacityAlertStates[key] = value
+	}
+	for key, value := range state.MultiplierAlertStates {
+		value.LastFinalMultiplier = cloneTimeFloat(value.LastFinalMultiplier)
+		cloned.MultiplierAlertStates[key] = value
+	}
 	return cloned
+}
+
+func cloneNotificationSettings(settings model.NotificationSettings) model.NotificationSettings {
+	settings.BarkCredentials = model.CredentialEnvelope{
+		Version:    settings.BarkCredentials.Version,
+		Nonce:      settings.BarkCredentials.Nonce,
+		Ciphertext: settings.BarkCredentials.Ciphertext,
+	}
+	settings.LastDeliveryAt = cloneTime(settings.LastDeliveryAt)
+	return settings
+}
+
+func cloneTimeFloat(value *float64) *float64 {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	return &copy
 }
 
 func cloneAccount(account model.ManagedAccount) model.ManagedAccount {
@@ -396,6 +651,7 @@ func cloneAccount(account model.ManagedAccount) model.ManagedAccount {
 		}
 	}
 	account.DetectionStats = cloneDetectionStats(account.DetectionStats)
+	account.BalanceAlertThreshold = cloneTimeFloat(account.BalanceAlertThreshold)
 	account.LastCheckAt = cloneTime(account.LastCheckAt)
 	account.NextCheckAt = cloneTime(account.NextCheckAt)
 	if account.DirectProbe != nil {

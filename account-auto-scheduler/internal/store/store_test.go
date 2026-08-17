@@ -2,6 +2,7 @@ package store
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -263,8 +264,121 @@ func TestStoreMigratesVersionThreeWithEmptyProtectionState(t *testing.T) {
 		t.Fatal(err)
 	}
 	stored, err := reloaded.GetProtection(9, 31)
-	if err != nil || stored.ProtectionMultiplier != 0.16 || !stored.PhysicalBound {
+	if err != nil || stored.ProtectionMultiplier != 0.16 || !stored.PhysicalBound || stored.EffectiveScope() != model.ProtectionScopeAccount {
 		t.Fatalf("protection was not persisted: %#v err=%v", stored, err)
+	}
+}
+
+func TestStoreMigratesVersionFourAndPersistsNotificationState(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	raw, err := json.Marshal(map[string]any{
+		"version": 4,
+		"accounts": map[string]any{
+			"41": map[string]any{"account_id": 41, "name": "v4", "history": []any{}},
+		},
+		"upstreams":                 map[string]any{},
+		"group_account_protections": map[string]any{},
+		"group_protection_defaults": map[string]any{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stateStore, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := stateStore.GetGroupBalanceThreshold(9); ok {
+		t.Fatal("legacy v4 state unexpectedly contained a balance threshold")
+	}
+	threshold := 50.0
+	if err := stateStore.PutGroupBalanceThreshold(9, &threshold); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	settings := model.NotificationSettings{
+		Enabled:           true,
+		BarkEndpoint:      "https://bark.example.com",
+		BarkBasicAuthUser: "bark-user",
+		BarkCredentials:   model.CredentialEnvelope{Version: 1, Nonce: "nonce", Ciphertext: "ciphertext"},
+		LastDeliveryAt:    &now,
+		UpdatedAt:         now,
+	}
+	if err := stateStore.PutNotificationSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+	if err := stateStore.PutBalanceAlertState("balance:9:41", model.BalanceAlertState{Configured: true, Below: true, Threshold: 50, LastAvailable: float64Pointer(10), UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+
+	reloaded, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := reloaded.GetGroupBalanceThreshold(9); !ok || got != 50 {
+		t.Fatalf("group threshold = %v, configured=%v", got, ok)
+	}
+	loadedSettings := reloaded.GetNotificationSettings()
+	if !loadedSettings.Enabled || loadedSettings.BarkCredentials.Ciphertext != "ciphertext" || loadedSettings.LastDeliveryAt == nil {
+		t.Fatalf("notification settings were not retained: %#v", loadedSettings)
+	}
+	loadedSettings.BarkCredentials.Ciphertext = "mutated"
+	loadedSettings.LastDeliveryAt = nil
+	again := reloaded.GetNotificationSettings()
+	if again.BarkCredentials.Ciphertext != "ciphertext" || again.LastDeliveryAt == nil {
+		t.Fatalf("notification settings were not deep-copied: %#v", again)
+	}
+	stateRaw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var persisted model.State
+	if err := json.Unmarshal(stateRaw, &persisted); err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Version != model.StateVersion {
+		t.Fatalf("persisted version = %d, want %d", persisted.Version, model.StateVersion)
+	}
+}
+
+func float64Pointer(value float64) *float64 { return &value }
+
+func TestStorePersistsGroupProtectionDefaultsAndMigratesMissingField(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	legacy, err := json.Marshal(map[string]any{
+		"version":   4,
+		"accounts":  map[string]any{},
+		"upstreams": map[string]any{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, legacy, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stateStore, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if defaults := stateStore.ListGroupProtectionDefaults(); len(defaults) != 0 {
+		t.Fatalf("missing group defaults should load as empty: %#v", defaults)
+	}
+	now := time.Now().UTC()
+	setting := model.GroupProtectionDefault{GroupID: 17, ProtectionMultiplier: 0.24, CreatedAt: now, UpdatedAt: now}
+	if err := stateStore.PutGroupProtectionDefault(setting); err != nil {
+		t.Fatal(err)
+	}
+	got, err := stateStore.GetGroupProtectionDefault(17)
+	if err != nil || got.ProtectionMultiplier != 0.24 {
+		t.Fatalf("group default was not persisted: %#v err=%v", got, err)
+	}
+	if err := stateStore.DeleteGroupProtectionDefault(17); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stateStore.GetGroupProtectionDefault(17); !errors.Is(err, ErrGroupProtectionDefaultNotFound) {
+		t.Fatalf("deleted group default still exists: %v", err)
 	}
 }
 

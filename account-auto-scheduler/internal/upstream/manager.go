@@ -112,6 +112,16 @@ type LocalAccountFinalMultiplier struct {
 	RechargeRateCNYPerUSD *float64 `json:"recharge_rate_cny_per_usd,omitempty"`
 }
 
+// LocalAccountAvailableBalance is the account-level balance projection already
+// used when syncing Sub2API administrator quotas. It intentionally exposes no
+// upstream credentials or remote-key material.
+type LocalAccountAvailableBalance struct {
+	Status     string     `json:"status"`
+	Remaining  *float64   `json:"remaining,omitempty"`
+	Unlimited  bool       `json:"unlimited,omitempty"`
+	ObservedAt *time.Time `json:"observed_at,omitempty"`
+}
+
 type IdentityView struct {
 	ID            string                       `json:"id"`
 	Label         string                       `json:"label"`
@@ -301,6 +311,41 @@ func (m *Manager) LocalAccountFinalMultipliers(accounts []model.UpstreamAccount)
 		result[account.ID] = projection
 	}
 	return result
+}
+
+// LocalAccountAvailableBalances projects the same upstream-balance/divisor
+// value that is written to Sub2API's managed account quota. It performs no
+// upstream HTTP calls and is safe for the notification polling loop.
+func (m *Manager) LocalAccountAvailableBalances(accounts []model.UpstreamAccount) map[int64]LocalAccountAvailableBalance {
+	result := make(map[int64]LocalAccountAvailableBalance)
+	if m == nil {
+		return result
+	}
+	for accountID, projection := range m.localAccountBalanceQuotaProjections(accounts) {
+		result[accountID] = LocalAccountAvailableBalance{
+			Status:     projection.status,
+			Remaining:  cloneOptionalFloat(projection.remaining),
+			Unlimited:  projection.unlimited,
+			ObservedAt: cloneOptionalTime(projection.observedAt),
+		}
+	}
+	return result
+}
+
+func cloneOptionalFloat(value *float64) *float64 {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	return &copy
+}
+
+func cloneOptionalTime(value *time.Time) *time.Time {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	return &copy
 }
 
 func sameOptionalMultiplier(left, right *float64) bool {

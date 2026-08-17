@@ -23,6 +23,7 @@ import (
 	"github.com/Wei-Shaw/sub2api-account-auto-scheduler/internal/core"
 	"github.com/Wei-Shaw/sub2api-account-auto-scheduler/internal/engine"
 	"github.com/Wei-Shaw/sub2api-account-auto-scheduler/internal/model"
+	"github.com/Wei-Shaw/sub2api-account-auto-scheduler/internal/notify"
 	"github.com/Wei-Shaw/sub2api-account-auto-scheduler/internal/store"
 	"github.com/Wei-Shaw/sub2api-account-auto-scheduler/internal/upstream"
 )
@@ -49,6 +50,18 @@ type Options struct {
 	TrustProxyHeaders bool
 	AuthCacheTTL      time.Duration
 	Upstreams         UpstreamConsole
+	Notifications     NotificationConsole
+}
+
+type NotificationConsole interface {
+	Settings() notify.SettingsView
+	SaveSettings(input notify.SettingsInput) (notify.SettingsView, error)
+	ClearSettings() error
+	Test(ctx context.Context) error
+	GroupBalanceThresholds() map[int64]float64
+	GroupBalanceThreshold(groupID int64) (float64, bool)
+	SetGroupBalanceThreshold(groupID int64, threshold *float64) error
+	SetAccountBalanceThreshold(accountID int64, threshold *float64) error
 }
 
 type UpstreamConsole interface {
@@ -77,6 +90,10 @@ type groupProtectionProjection interface {
 	LogicalGroupIDs(accounts []model.UpstreamAccount) map[int64][]int64
 }
 
+type groupProtectionDefaultProjection interface {
+	GroupProtectionDefaults() map[int64]upstream.GroupProtectionDefaultView
+}
+
 type protectedGroupBindingConsole interface {
 	SaveGroupBindings(ctx context.Context, groupID int64, selected []int64) ([]int64, []upstream.GroupBindingFailure, error)
 	SetGroupAccountProtection(ctx context.Context, groupID, accountID int64, multiplier float64) (upstream.GroupAccountProtectionView, error)
@@ -85,13 +102,20 @@ type protectedGroupBindingConsole interface {
 	SetGroupAccountBinding(ctx context.Context, groupID, accountID int64, bound bool) error
 }
 
+type groupProtectionDefaultConsole interface {
+	GetGroupProtectionDefault(groupID int64) (upstream.GroupProtectionDefaultView, error)
+	SetGroupProtectionDefault(ctx context.Context, groupID int64, multiplier float64) (upstream.GroupProtectionDefaultView, error)
+	DeleteGroupProtectionDefault(ctx context.Context, groupID int64) error
+}
+
 type Server struct {
-	engine    *engine.Engine
-	core      AdminCore
-	console   ConsoleCore
-	options   Options
-	logger    *slog.Logger
-	upstreams UpstreamConsole
+	engine        *engine.Engine
+	core          AdminCore
+	console       ConsoleCore
+	options       Options
+	logger        *slog.Logger
+	upstreams     UpstreamConsole
+	notifications NotificationConsole
 
 	cacheMu   sync.Mutex
 	authCache map[string]cachedSession
@@ -117,6 +141,19 @@ type policyRequest struct {
 	LatencyLimitMS    *int64  `json:"latency_limit_ms"`
 	FailureThreshold  *int    `json:"failure_threshold"`
 	RecoveryThreshold *int    `json:"recovery_threshold"`
+}
+
+type notificationSettingsRequest struct {
+	Enabled           bool   `json:"enabled"`
+	BarkEndpoint      string `json:"bark_endpoint"`
+	BarkBasicAuthUser string `json:"bark_basic_auth_user"`
+	DeviceKey         string `json:"device_key"`
+	EncryptionKey     string `json:"encryption_key"`
+	BasicAuthPassword string `json:"basic_auth_password"`
+}
+
+type balanceAlertRequest struct {
+	Threshold *float64 `json:"threshold"`
 }
 
 type groupBindingRequest struct {
@@ -183,12 +220,13 @@ func NewServer(scheduler *engine.Engine, coreClient AdminCore, options Options, 
 		logger = slog.Default()
 	}
 	server := &Server{
-		engine:    scheduler,
-		core:      coreClient,
-		options:   options,
-		logger:    logger,
-		upstreams: options.Upstreams,
-		authCache: map[string]cachedSession{},
+		engine:        scheduler,
+		core:          coreClient,
+		options:       options,
+		logger:        logger,
+		upstreams:     options.Upstreams,
+		notifications: options.Notifications,
+		authCache:     map[string]cachedSession{},
 	}
 	server.console, _ = coreClient.(ConsoleCore)
 	return server
@@ -201,11 +239,22 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/overview", s.requireAdmin(http.HandlerFunc(s.handleOverview)))
 	mux.Handle("GET /api/accounts", s.requireAdmin(http.HandlerFunc(s.handleAccounts)))
 	mux.Handle("GET /api/accounts/{accountID}/usage", s.requireAdmin(http.HandlerFunc(s.handleAccountUsage)))
+	mux.Handle("GET /api/notifications", s.requireAdmin(http.HandlerFunc(s.handleNotificationSettings)))
+	mux.Handle("PUT /api/notifications", s.requireAdmin(http.HandlerFunc(s.handleSaveNotificationSettings)))
+	mux.Handle("DELETE /api/notifications", s.requireAdmin(http.HandlerFunc(s.handleClearNotificationSettings)))
+	mux.Handle("POST /api/notifications/test", s.requireAdmin(http.HandlerFunc(s.handleTestNotification)))
+	mux.Handle("PUT /api/groups/{groupID}/balance-alert", s.requireAdmin(http.HandlerFunc(s.handleSetGroupBalanceAlert)))
+	mux.Handle("DELETE /api/groups/{groupID}/balance-alert", s.requireAdmin(http.HandlerFunc(s.handleClearGroupBalanceAlert)))
+	mux.Handle("PUT /api/configs/{accountID}/balance-alert", s.requireAdmin(http.HandlerFunc(s.handleSetAccountBalanceAlert)))
+	mux.Handle("DELETE /api/configs/{accountID}/balance-alert", s.requireAdmin(http.HandlerFunc(s.handleClearAccountBalanceAlert)))
 	mux.Handle("PUT /api/groups/{groupID}/accounts", s.requireAdmin(http.HandlerFunc(s.handleBulkGroupBindings)))
 	mux.Handle("PUT /api/groups/{groupID}/accounts/{accountID}", s.requireAdmin(http.HandlerFunc(s.handleGroupBinding)))
 	mux.Handle("PUT /api/groups/{groupID}/accounts/{accountID}/protection", s.requireAdmin(http.HandlerFunc(s.handleSetGroupProtection)))
 	mux.Handle("POST /api/groups/{groupID}/accounts/{accountID}/protection/release", s.requireAdmin(http.HandlerFunc(s.handleReleaseGroupProtection)))
 	mux.Handle("DELETE /api/groups/{groupID}/accounts/{accountID}/binding", s.requireAdmin(http.HandlerFunc(s.handleRemoveGroupBinding)))
+	mux.Handle("GET /api/groups/{groupID}/protection-default", s.requireAdmin(http.HandlerFunc(s.handleGetGroupProtectionDefault)))
+	mux.Handle("PUT /api/groups/{groupID}/protection-default", s.requireAdmin(http.HandlerFunc(s.handleSetGroupProtectionDefault)))
+	mux.Handle("DELETE /api/groups/{groupID}/protection-default", s.requireAdmin(http.HandlerFunc(s.handleDeleteGroupProtectionDefault)))
 	mux.Handle("GET /api/configs", s.requireAdmin(http.HandlerFunc(s.handleListConfigs)))
 	mux.Handle("POST /api/configs", s.requireAdmin(http.HandlerFunc(s.handleCreateConfig)))
 	mux.Handle("PUT /api/configs/{accountID}", s.requireAdmin(http.HandlerFunc(s.handleUpdateConfig)))
@@ -248,10 +297,11 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 	user, _ := r.Context().Value(adminUserKey).(core.AdminUser)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"user":                user,
-		"default_policy":      model.DefaultPolicy(),
-		"public_url":          s.options.PublicURL,
-		"credentials_enabled": s.upstreams != nil && s.upstreams.CredentialsEnabled(),
+		"user":                    user,
+		"default_policy":          model.DefaultPolicy(),
+		"public_url":              s.options.PublicURL,
+		"credentials_enabled":     s.upstreams != nil && s.upstreams.CredentialsEnabled(),
+		"notifications_available": s.notifications != nil,
 	})
 }
 
@@ -296,12 +346,20 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	finalMultipliers := map[int64]upstream.LocalAccountFinalMultiplier{}
 	logicalGroupIDs := map[int64][]int64{}
 	groupProtections := map[int64]map[string]upstream.GroupAccountProtectionView{}
+	groupProtectionDefaults := map[int64]upstream.GroupProtectionDefaultView{}
+	groupBalanceThresholds := map[int64]float64{}
 	if projections, ok := s.upstreams.(overviewMultiplierProjection); ok {
 		finalMultipliers = projections.LocalAccountFinalMultipliers(accounts)
 	}
 	if projections, ok := s.upstreams.(groupProtectionProjection); ok {
 		logicalGroupIDs = projections.LogicalGroupIDs(accounts)
 		groupProtections = projections.GroupAccountProtectionViews(accounts)
+	}
+	if projections, ok := s.upstreams.(groupProtectionDefaultProjection); ok {
+		groupProtectionDefaults = projections.GroupProtectionDefaults()
+	}
+	if s.notifications != nil {
+		groupBalanceThresholds = s.notifications.GroupBalanceThresholds()
 	}
 	overviewAccounts := make([]overviewAccount, 0, len(accounts))
 	for _, account := range accounts {
@@ -333,9 +391,87 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		overviewAccounts = append(overviewAccounts, item)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"groups":   groups,
-		"accounts": overviewAccounts,
+		"groups":                    groups,
+		"accounts":                  overviewAccounts,
+		"group_protection_defaults": groupProtectionDefaults,
+		"group_balance_thresholds":  groupBalanceThresholds,
 	})
+}
+
+func (s *Server) handleGetGroupProtectionDefault(w http.ResponseWriter, r *http.Request) {
+	manager, ok := s.upstreams.(groupProtectionDefaultConsole)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "PROTECTION_UNAVAILABLE", "分组保护功能暂不可用")
+		return
+	}
+	groupID, err := pathPositiveID(r, "groupID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_GROUP", err.Error())
+		return
+	}
+	setting, err := manager.GetGroupProtectionDefault(groupID)
+	if errors.Is(err, store.ErrGroupProtectionDefaultNotFound) {
+		writeJSON(w, http.StatusOK, map[string]any{"group_id": groupID, "configured": false})
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "PROTECTION_READ_FAILED", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"configured": true, "protection": setting})
+}
+
+func (s *Server) handleSetGroupProtectionDefault(w http.ResponseWriter, r *http.Request) {
+	manager, ok := s.upstreams.(groupProtectionDefaultConsole)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "PROTECTION_UNAVAILABLE", "分组保护功能暂不可用")
+		return
+	}
+	groupID, err := pathPositiveID(r, "groupID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_GROUP", err.Error())
+		return
+	}
+	if s.console != nil {
+		groups, listErr := s.console.ListGroups(r.Context())
+		if listErr != nil {
+			writeError(w, http.StatusBadGateway, "GROUPS_UNAVAILABLE", listErr.Error())
+			return
+		}
+		if _, found := findGroup(groups, groupID); !found {
+			writeError(w, http.StatusNotFound, "GROUP_NOT_FOUND", "分组不存在")
+			return
+		}
+	}
+	request, err := decodeProtectionRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_PROTECTION", err.Error())
+		return
+	}
+	setting, err := manager.SetGroupProtectionDefault(r.Context(), groupID, *request.ProtectionMultiplier)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_PROTECTION", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"protection": setting})
+}
+
+func (s *Server) handleDeleteGroupProtectionDefault(w http.ResponseWriter, r *http.Request) {
+	manager, ok := s.upstreams.(groupProtectionDefaultConsole)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "PROTECTION_UNAVAILABLE", "分组保护功能暂不可用")
+		return
+	}
+	groupID, err := pathPositiveID(r, "groupID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_GROUP", err.Error())
+		return
+	}
+	if err := manager.DeleteGroupProtectionDefault(r.Context(), groupID); err != nil {
+		writeError(w, http.StatusBadGateway, "PROTECTION_DELETE_FAILED", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"group_id": groupID, "deleted": true})
 }
 
 func projectAdminBalance(account model.UpstreamAccount) overviewAdminBalance {

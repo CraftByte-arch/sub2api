@@ -187,6 +187,54 @@ func (b *CredentialBox) Fingerprint(secret string) (string, error) {
 	return base64.RawURLEncoding.EncodeToString(digest.Sum(nil)), nil
 }
 
+// EncryptBytes stores a small opaque secret under a caller-specific AEAD
+// domain. It is used by sidecar features such as Bark notifications that need
+// the same deployment key but must not share AAD with upstream sessions.
+func (b *CredentialBox) EncryptBytes(domain string, raw []byte) (model.CredentialEnvelope, error) {
+	if !b.Enabled() {
+		return model.CredentialEnvelope{}, ErrCredentialsDisabled
+	}
+	domain = strings.TrimSpace(domain)
+	if domain == "" || len(raw) == 0 || len(raw) > model.MaxUpstreamCredentialSize {
+		return model.CredentialEnvelope{}, errors.New("加密内容无效或过大")
+	}
+	nonce := make([]byte, b.aead.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return model.CredentialEnvelope{}, fmt.Errorf("生成凭证随机数失败: %w", err)
+	}
+	ciphertext := b.aead.Seal(nil, nonce, raw, genericCredentialAAD(domain))
+	return model.CredentialEnvelope{
+		Version:    credentialEnvelopeVersion,
+		Nonce:      base64.RawStdEncoding.EncodeToString(nonce),
+		Ciphertext: base64.RawStdEncoding.EncodeToString(ciphertext),
+	}, nil
+}
+
+// DecryptBytes reverses EncryptBytes and rejects domain or ciphertext
+// tampering through AES-GCM associated data and authentication.
+func (b *CredentialBox) DecryptBytes(domain string, envelope model.CredentialEnvelope) ([]byte, error) {
+	if !b.Enabled() {
+		return nil, ErrCredentialsDisabled
+	}
+	domain = strings.TrimSpace(domain)
+	if domain == "" || envelope.Version != credentialEnvelopeVersion {
+		return nil, errors.New("加密内容版本无效")
+	}
+	nonce, err := base64.RawStdEncoding.DecodeString(envelope.Nonce)
+	if err != nil || len(nonce) != b.aead.NonceSize() {
+		return nil, errors.New("加密内容随机数无效")
+	}
+	ciphertext, err := base64.RawStdEncoding.DecodeString(envelope.Ciphertext)
+	if err != nil || len(ciphertext) == 0 || len(ciphertext) > model.MaxUpstreamCredentialSize+1024 {
+		return nil, errors.New("加密内容密文无效")
+	}
+	plaintext, err := b.aead.Open(nil, nonce, ciphertext, genericCredentialAAD(domain))
+	if err != nil {
+		return nil, errors.New("无法解密加密内容")
+	}
+	return plaintext, nil
+}
+
 func FingerprintsEqual(first, second string) bool {
 	if first == "" || second == "" {
 		return false
@@ -216,6 +264,10 @@ func decodeCredentialKey(value string) ([]byte, error) {
 
 func credentialAAD(upstreamID, identityID string) []byte {
 	return []byte("upstream-credential/v1\x00" + strings.TrimSpace(upstreamID) + "\x00" + strings.TrimSpace(identityID))
+}
+
+func genericCredentialAAD(domain string) []byte {
+	return []byte("generic-credential/v1\x00" + strings.TrimSpace(domain))
 }
 
 func directProbeAAD(accountID int64) []byte {

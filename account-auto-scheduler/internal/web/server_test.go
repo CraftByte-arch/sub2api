@@ -281,10 +281,12 @@ func TestGroupsAppUsesFinalMultiplierInsteadOfProbeMultiplier(t *testing.T) {
 	}
 	for _, required := range []string{
 		"group_protections", "logical_group_ids", "设置保护倍率", "解除倍率保护", "移除绑定",
+		"group_protection_defaults", "设置分组保护", "group-protection-dialog", "分组默认保护倍率",
 		"状态检测消耗（1 倍率）", "binding-action-dialog", "protection-dialog",
 		"admin_balance", "admin-balance-card", "余额不足导致检测失败", "failure_kind === 'balance_insufficient'",
 		"`/api/groups/${groupID}/accounts/${accountID}/protection`",
 		"`/api/groups/${groupID}/accounts/${accountID}/binding`",
+		"`/api/groups/${groupID}/protection-default`",
 	} {
 		if !strings.Contains(body, required) {
 			t.Fatalf("groups app is missing protection UI behavior %q", required)
@@ -296,6 +298,7 @@ func TestGroupsAppUsesFinalMultiplierInsteadOfProbeMultiplier(t *testing.T) {
 	style := styleResponse.Body.String()
 	for _, required := range []string{
 		".multiplier-pair", ".protection-multiplier.exceeded", ".binding-row-actions",
+		".group-protection-badge", ".modal-footer-spacer",
 		".admin-balance-card.insufficient", ".admin-balance-value", ".history-bar.balance-insufficient",
 		"@media (max-width: 620px)", ".multiplier-pair { grid-template-columns: minmax(0, 1fr); }",
 		".quota-list > div { grid-template-columns: 58px minmax(0, 1fr); }",

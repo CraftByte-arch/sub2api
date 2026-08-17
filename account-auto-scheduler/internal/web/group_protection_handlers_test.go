@@ -20,16 +20,20 @@ import (
 
 type fakeProtectedUpstreamConsole struct {
 	*fakeUpstreamConsole
-	protections  map[int64]map[string]upstream.GroupAccountProtectionView
-	logical      map[int64][]int64
-	setCalls     []protectionHandlerCall
-	releaseCalls []protectionHandlerCall
-	removeCalls  []protectionHandlerCall
-	singleCalls  []singleBindingHandlerCall
-	bulkGroupID  int64
-	bulkSelected []int64
-	bulkUpdated  []int64
-	bulkFailures []upstream.GroupBindingFailure
+	protections    map[int64]map[string]upstream.GroupAccountProtectionView
+	logical        map[int64][]int64
+	setCalls       []protectionHandlerCall
+	releaseCalls   []protectionHandlerCall
+	removeCalls    []protectionHandlerCall
+	singleCalls    []singleBindingHandlerCall
+	bulkGroupID    int64
+	bulkSelected   []int64
+	bulkUpdated    []int64
+	bulkFailures   []upstream.GroupBindingFailure
+	defaults       map[int64]upstream.GroupProtectionDefaultView
+	defaultSets    []protectionHandlerCall
+	defaultGets    []int64
+	defaultDeletes []int64
 }
 
 type protectionHandlerCall struct {
@@ -50,6 +54,34 @@ func (f *fakeProtectedUpstreamConsole) GroupAccountProtectionViews([]model.Upstr
 
 func (f *fakeProtectedUpstreamConsole) LogicalGroupIDs([]model.UpstreamAccount) map[int64][]int64 {
 	return f.logical
+}
+
+func (f *fakeProtectedUpstreamConsole) GroupProtectionDefaults() map[int64]upstream.GroupProtectionDefaultView {
+	return f.defaults
+}
+
+func (f *fakeProtectedUpstreamConsole) GetGroupProtectionDefault(groupID int64) (upstream.GroupProtectionDefaultView, error) {
+	f.defaultGets = append(f.defaultGets, groupID)
+	if value, ok := f.defaults[groupID]; ok {
+		return value, nil
+	}
+	return upstream.GroupProtectionDefaultView{}, store.ErrGroupProtectionDefaultNotFound
+}
+
+func (f *fakeProtectedUpstreamConsole) SetGroupProtectionDefault(_ context.Context, groupID int64, multiplier float64) (upstream.GroupProtectionDefaultView, error) {
+	f.defaultSets = append(f.defaultSets, protectionHandlerCall{groupID: groupID, multiplier: multiplier})
+	if f.defaults == nil {
+		f.defaults = map[int64]upstream.GroupProtectionDefaultView{}
+	}
+	view := upstream.GroupProtectionDefaultView{GroupID: groupID, ProtectionMultiplier: multiplier}
+	f.defaults[groupID] = view
+	return view, nil
+}
+
+func (f *fakeProtectedUpstreamConsole) DeleteGroupProtectionDefault(_ context.Context, groupID int64) error {
+	f.defaultDeletes = append(f.defaultDeletes, groupID)
+	delete(f.defaults, groupID)
+	return nil
 }
 
 func (f *fakeProtectedUpstreamConsole) SaveGroupBindings(_ context.Context, groupID int64, selected []int64) ([]int64, []upstream.GroupBindingFailure, error) {
@@ -105,8 +137,9 @@ func TestOverviewMergesProtectedLogicalMembershipAndDetectionStats(t *testing.T)
 	protected := &fakeProtectedUpstreamConsole{
 		fakeUpstreamConsole: &fakeUpstreamConsole{finalMultipliers: map[int64]upstream.LocalAccountFinalMultiplier{7: {Status: "available", FinalMultiplier: &final}}},
 		logical:             map[int64][]int64{7: {11}},
+		defaults:            map[int64]upstream.GroupProtectionDefaultView{11: {GroupID: 11, ProtectionMultiplier: 0.16}},
 		protections: map[int64]map[string]upstream.GroupAccountProtectionView{
-			7: {"11": {GroupID: 11, AccountID: 7, ProtectionMultiplier: 0.16, FinalMultiplier: &final, Status: model.ProtectionExceeded, PhysicalBound: false}},
+			7: {"11": {GroupID: 11, AccountID: 7, ProtectionMultiplier: 0.16, Scope: model.ProtectionScopeGroup, Inherited: true, FinalMultiplier: &final, Status: model.ProtectionExceeded, PhysicalBound: false}},
 		},
 	}
 	server := NewServer(engine.New(stateStore, coreClient, 1, nil), coreClient, Options{Upstreams: protected}, nil)
@@ -118,7 +151,8 @@ func TestOverviewMergesProtectedLogicalMembershipAndDetectionStats(t *testing.T)
 		t.Fatalf("overview status=%d body=%s", response.Code, response.Body.String())
 	}
 	var payload struct {
-		Accounts []struct {
+		GroupProtectionDefaults map[string]upstream.GroupProtectionDefaultView `json:"group_protection_defaults"`
+		Accounts                []struct {
 			LogicalGroupIDs  []int64                                        `json:"logical_group_ids"`
 			GroupProtections map[string]upstream.GroupAccountProtectionView `json:"group_protections"`
 			Config           model.ManagedAccountView                       `json:"config"`
@@ -127,7 +161,7 @@ func TestOverviewMergesProtectedLogicalMembershipAndDetectionStats(t *testing.T)
 	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
 		t.Fatal(err)
 	}
-	if len(payload.Accounts) != 1 || !reflect.DeepEqual(payload.Accounts[0].LogicalGroupIDs, []int64{11}) || payload.Accounts[0].GroupProtections["11"].Status != model.ProtectionExceeded || payload.Accounts[0].Config.DetectionStats.Requests != 3 {
+	if len(payload.Accounts) != 1 || payload.GroupProtectionDefaults["11"].ProtectionMultiplier != 0.16 || !reflect.DeepEqual(payload.Accounts[0].LogicalGroupIDs, []int64{11}) || !payload.Accounts[0].GroupProtections["11"].Inherited || payload.Accounts[0].GroupProtections["11"].Status != model.ProtectionExceeded || payload.Accounts[0].Config.DetectionStats.Requests != 3 {
 		t.Fatalf("protected overview projection missing: %#v", payload)
 	}
 }
@@ -166,6 +200,54 @@ func TestProtectionMutationRoutesRequireAdminAndForwardActions(t *testing.T) {
 	server.Handler().ServeHTTP(removeResponse, removeRequest)
 	if removeResponse.Code != http.StatusOK || len(protected.removeCalls) != 1 {
 		t.Fatalf("remove failed: status=%d calls=%#v body=%s", removeResponse.Code, protected.removeCalls, removeResponse.Body.String())
+	}
+}
+
+func TestGroupProtectionDefaultRoutesRequireAdminAndValidateGroup(t *testing.T) {
+	coreClient := &fakeConsoleCore{
+		fakeAdminCore: fakeAdminCore{user: core.AdminUser{ID: 1, Role: "admin"}},
+		groups:        []model.UpstreamGroup{{ID: 11, Name: "Protected", Platform: "openai", Status: "active"}},
+	}
+	protected := &fakeProtectedUpstreamConsole{fakeUpstreamConsole: &fakeUpstreamConsole{}, defaults: map[int64]upstream.GroupProtectionDefaultView{}}
+	server := NewServer(nil, coreClient, Options{Upstreams: protected}, nil)
+
+	unauthorized := httptest.NewRequest(http.MethodPut, "/api/groups/11/protection-default", strings.NewReader(`{"protection_multiplier":0.16}`))
+	unauthorizedResponse := httptest.NewRecorder()
+	server.Handler().ServeHTTP(unauthorizedResponse, unauthorized)
+	if unauthorizedResponse.Code != http.StatusUnauthorized || len(protected.defaultSets) != 0 {
+		t.Fatalf("unauthorized group default reached manager: status=%d calls=%#v", unauthorizedResponse.Code, protected.defaultSets)
+	}
+
+	invalid := httptest.NewRequest(http.MethodPut, "/api/groups/11/protection-default", strings.NewReader(`{"protection_multiplier":-1}`))
+	invalid.Header.Set("Authorization", "Bearer valid")
+	invalidResponse := httptest.NewRecorder()
+	server.Handler().ServeHTTP(invalidResponse, invalid)
+	if invalidResponse.Code != http.StatusBadRequest || len(protected.defaultSets) != 0 {
+		t.Fatalf("invalid group default was accepted: status=%d calls=%#v body=%s", invalidResponse.Code, protected.defaultSets, invalidResponse.Body.String())
+	}
+
+	setRequest := httptest.NewRequest(http.MethodPut, "/api/groups/11/protection-default", strings.NewReader(`{"protection_multiplier":0.16}`))
+	setRequest.Header.Set("Authorization", "Bearer valid")
+	setResponse := httptest.NewRecorder()
+	server.Handler().ServeHTTP(setResponse, setRequest)
+	if setResponse.Code != http.StatusOK || len(protected.defaultSets) != 1 || protected.defaultSets[0].multiplier != 0.16 {
+		t.Fatalf("group default set failed: status=%d calls=%#v body=%s", setResponse.Code, protected.defaultSets, setResponse.Body.String())
+	}
+
+	getRequest := httptest.NewRequest(http.MethodGet, "/api/groups/11/protection-default", nil)
+	getRequest.Header.Set("Authorization", "Bearer valid")
+	getResponse := httptest.NewRecorder()
+	server.Handler().ServeHTTP(getResponse, getRequest)
+	if getResponse.Code != http.StatusOK || !strings.Contains(getResponse.Body.String(), `"protection_multiplier":0.16`) {
+		t.Fatalf("group default get failed: status=%d body=%s", getResponse.Code, getResponse.Body.String())
+	}
+
+	deleteRequest := httptest.NewRequest(http.MethodDelete, "/api/groups/11/protection-default", nil)
+	deleteRequest.Header.Set("Authorization", "Bearer valid")
+	deleteResponse := httptest.NewRecorder()
+	server.Handler().ServeHTTP(deleteResponse, deleteRequest)
+	if deleteResponse.Code != http.StatusOK || len(protected.defaultDeletes) != 1 {
+		t.Fatalf("group default delete failed: status=%d calls=%#v body=%s", deleteResponse.Code, protected.defaultDeletes, deleteResponse.Body.String())
 	}
 }
 

@@ -10,6 +10,7 @@ services:
     environment:
       AUTO_SCHEDULER_CREDENTIAL_KEY: ${AUTO_SCHEDULER_CREDENTIAL_KEY:-}
       AUTO_SCHEDULER_UPSTREAM_SYNC_SECONDS: ${AUTO_SCHEDULER_UPSTREAM_SYNC_SECONDS:-600}
+      AUTO_SCHEDULER_NOTIFICATION_INTERVAL_SECONDS: ${AUTO_SCHEDULER_NOTIFICATION_INTERVAL_SECONDS:-30}
     extra_hosts:
       # Keep sidecar-to-Sub2API traffic on the host proxy across blue-green slot switches.
       - "aixw.org:host-gateway"

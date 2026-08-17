@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -264,5 +265,175 @@ func TestConcurrentProtectionReconciliationIsSerialized(t *testing.T) {
 	stored, err := stateStore.GetProtection(11, 7)
 	if err != nil || containsGroupID(accounts[0].GroupIDs, 11) || stored.Status != model.ProtectionExceeded {
 		t.Fatalf("concurrent reconciliation produced an invalid state: groups=%#v protection=%#v err=%v", accounts[0].GroupIDs, stored, err)
+	}
+}
+
+func TestGroupDefaultProtectionAutomaticallyUnbindsAndRebinds(t *testing.T) {
+	manager, stateStore, local, upstreamID := newProtectionManager(t, 1)
+	setting, err := manager.SetGroupProtectionDefault(context.Background(), 11, 0.15)
+	if err != nil || setting.ProtectionMultiplier != 0.15 {
+		t.Fatalf("group default was not saved: %#v err=%v", setting, err)
+	}
+	accounts, _ := local.ListAccounts(context.Background())
+	if containsGroupID(accounts[0].GroupIDs, 11) {
+		t.Fatal("group default did not unbind an over-threshold account")
+	}
+	stored, err := stateStore.GetProtection(11, 7)
+	if err != nil || stored.EffectiveScope() != model.ProtectionScopeGroup || stored.Status != model.ProtectionExceeded {
+		t.Fatalf("unexpected derived protection: %#v err=%v", stored, err)
+	}
+	views := manager.GroupAccountProtectionViews(accounts)
+	view := views[7]["11"]
+	if !view.Inherited || view.Scope != model.ProtectionScopeGroup || view.Status != model.ProtectionExceeded {
+		t.Fatalf("unexpected inherited protection view: %#v", view)
+	}
+
+	safeGroup := 0.75
+	setRemoteMultiplier(t, stateStore, upstreamID, &safeGroup)
+	if err := manager.reconcileLocalAccountState(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	accounts, _ = local.ListAccounts(context.Background())
+	if !containsGroupID(accounts[0].GroupIDs, 11) {
+		t.Fatal("group default did not rebind at equality")
+	}
+	if _, err := stateStore.GetProtection(11, 7); !errors.Is(err, store.ErrProtectionNotFound) {
+		t.Fatalf("derived protection was not cleared after recovery: %v", err)
+	}
+	views = manager.GroupAccountProtectionViews(accounts)
+	if !views[7]["11"].Inherited || views[7]["11"].Status != model.ProtectionBound {
+		t.Fatalf("inherited protection disappeared after recovery: %#v", views[7]["11"])
+	}
+}
+
+func TestAccountProtectionOverridesGroupDefault(t *testing.T) {
+	manager, stateStore, local, upstreamID := newProtectionManager(t, 1)
+	if _, err := manager.SetGroupProtectionDefault(context.Background(), 11, 0.15); err != nil {
+		t.Fatal(err)
+	}
+	view, err := manager.SetGroupAccountProtection(context.Background(), 11, 7, 0.25)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Inherited || view.Scope != model.ProtectionScopeAccount || view.Status != model.ProtectionBound {
+		t.Fatalf("account-level override did not take precedence: %#v", view)
+	}
+	stored, err := stateStore.GetProtection(11, 7)
+	if err != nil || stored.EffectiveScope() != model.ProtectionScopeAccount || stored.ProtectionMultiplier != 0.25 {
+		t.Fatalf("unexpected account override record: %#v err=%v", stored, err)
+	}
+	accounts, _ := local.ListAccounts(context.Background())
+	if !containsGroupID(accounts[0].GroupIDs, 11) {
+		t.Fatal("account-level safe override did not restore the binding")
+	}
+	higher := 2.0
+	setRemoteMultiplier(t, stateStore, upstreamID, &higher)
+	if err := manager.reconcileLocalAccountState(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	accounts, _ = local.ListAccounts(context.Background())
+	if containsGroupID(accounts[0].GroupIDs, 11) {
+		t.Fatal("group default incorrectly overrode account-level protection")
+	}
+	stored, err = stateStore.GetProtection(11, 7)
+	if err != nil || stored.EffectiveScope() != model.ProtectionScopeAccount || stored.Status != model.ProtectionExceeded {
+		t.Fatalf("account-level exceeded state was lost: %#v err=%v", stored, err)
+	}
+}
+
+func TestGroupDefaultUnavailableMultiplierDoesNotChangeBinding(t *testing.T) {
+	manager, stateStore, local, _ := newProtectionManager(t, 1)
+	setRemoteMultiplier(t, stateStore, model.StableUpstreamID("https://guard.example"), nil)
+	if _, err := manager.SetGroupProtectionDefault(context.Background(), 11, 0.15); err != nil {
+		t.Fatal(err)
+	}
+	accounts, _ := local.ListAccounts(context.Background())
+	if !containsGroupID(accounts[0].GroupIDs, 11) {
+		t.Fatal("unavailable final multiplier changed physical binding")
+	}
+	view := manager.GroupAccountProtectionViews(accounts)[7]["11"]
+	if !view.Inherited || view.Status != model.ProtectionUnavailable || view.FinalMultiplier != nil {
+		t.Fatalf("unexpected unavailable inherited view: %#v", view)
+	}
+}
+
+func TestUpdatingGroupDefaultReconcilesAllInheritedAccounts(t *testing.T) {
+	manager, stateStore, local, _ := newProtectionManager(t, 1)
+	if _, err := manager.SetGroupProtectionDefault(context.Background(), 11, 0.25); err != nil {
+		t.Fatal(err)
+	}
+	accounts, _ := local.ListAccounts(context.Background())
+	if !containsGroupID(accounts[0].GroupIDs, 11) {
+		t.Fatal("safe initial group default unexpectedly unbound the account")
+	}
+	if _, err := stateStore.GetProtection(11, 7); !errors.Is(err, store.ErrProtectionNotFound) {
+		t.Fatalf("safe inherited relationship should not need a derived record: %v", err)
+	}
+	if _, err := manager.SetGroupProtectionDefault(context.Background(), 11, 0.15); err != nil {
+		t.Fatal(err)
+	}
+	accounts, _ = local.ListAccounts(context.Background())
+	if containsGroupID(accounts[0].GroupIDs, 11) {
+		t.Fatal("lower group threshold did not unbind inherited account")
+	}
+	if _, err := manager.SetGroupProtectionDefault(context.Background(), 11, 0.25); err != nil {
+		t.Fatal(err)
+	}
+	accounts, _ = local.ListAccounts(context.Background())
+	if !containsGroupID(accounts[0].GroupIDs, 11) {
+		t.Fatal("raising group threshold did not restore inherited account")
+	}
+}
+
+func TestRemovingGroupDefaultRestoresDerivedRelationship(t *testing.T) {
+	manager, stateStore, local, _ := newProtectionManager(t, 1)
+	if _, err := manager.SetGroupProtectionDefault(context.Background(), 11, 0.15); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.DeleteGroupProtectionDefault(context.Background(), 11); err != nil {
+		t.Fatal(err)
+	}
+	accounts, _ := local.ListAccounts(context.Background())
+	if !containsGroupID(accounts[0].GroupIDs, 11) {
+		t.Fatal("deleting group default did not restore the physical binding")
+	}
+	if _, err := stateStore.GetProtection(11, 7); !errors.Is(err, store.ErrProtectionNotFound) {
+		t.Fatalf("derived relationship survived default deletion: %v", err)
+	}
+}
+
+func TestManualRemoveInheritedRelationshipCannotRebind(t *testing.T) {
+	manager, stateStore, local, upstreamID := newProtectionManager(t, 1)
+	if _, err := manager.SetGroupProtectionDefault(context.Background(), 11, 0.15); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.RemoveGroupAccountBinding(context.Background(), 11, 7); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stateStore.GetProtection(11, 7); !errors.Is(err, store.ErrProtectionNotFound) {
+		t.Fatalf("manual remove kept derived relationship: %v", err)
+	}
+	lower := 0.25
+	setRemoteMultiplier(t, stateStore, upstreamID, &lower)
+	if err := manager.reconcileLocalAccountState(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	accounts, _ := local.ListAccounts(context.Background())
+	if containsGroupID(accounts[0].GroupIDs, 11) {
+		t.Fatal("manual remove was undone by group default")
+	}
+}
+
+func TestInheritedProtectionCannotUseAccountReleaseEndpoint(t *testing.T) {
+	manager, _, local, _ := newProtectionManager(t, 1)
+	if _, err := manager.SetGroupProtectionDefault(context.Background(), 11, 0.15); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.ReleaseGroupAccountProtection(context.Background(), 11, 7); err == nil || !strings.Contains(err.Error(), "分组默认值") {
+		t.Fatalf("inherited protection used account release endpoint: %v", err)
+	}
+	accounts, _ := local.ListAccounts(context.Background())
+	if containsGroupID(accounts[0].GroupIDs, 11) {
+		t.Fatal("rejected inherited release changed physical binding")
 	}
 }

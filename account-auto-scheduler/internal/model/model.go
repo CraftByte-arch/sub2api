@@ -9,16 +9,18 @@ import (
 )
 
 const (
-	StateVersion                           = 4
+	StateVersion                           = 5
 	LegacyStateVersion                     = 1
 	UpstreamStateVersion                   = 2
 	ProtectionStateVersion                 = 3
+	GroupProtectionDefaultStateVersion     = 4
 	HistoryLimit                           = 50
 	MinIntervalSeconds                     = 15
 	MaxIntervalSeconds                     = 86400
 	MinLatencyLimitMS                      = 1000
 	MaxLatencyLimitMS                      = 300000
 	MaxThreshold                           = 20
+	MaxBalanceAlertThreshold               = 1_000_000_000_000
 	FinalCostMultiplierExtraKey            = "final_cost_multiplier"
 	UpstreamBalanceQuotaManagedExtraKey    = "upstream_balance_quota_managed"
 	UpstreamBalanceQuotaRemainingExtraKey  = "upstream_balance_quota_remaining"
@@ -119,6 +121,17 @@ func (p Policy) Normalize() (Policy, error) {
 		return Policy{}, errors.New("检测提示词不能超过 8000 个字符")
 	}
 	return p, nil
+}
+
+func NormalizeBalanceAlertThreshold(value *float64) (*float64, error) {
+	if value == nil {
+		return nil, nil
+	}
+	if math.IsNaN(*value) || math.IsInf(*value, 0) || *value < 0 || *value > MaxBalanceAlertThreshold {
+		return nil, errors.New("余额告警阈值必须是 0 到 1000000000000 之间的有限数值")
+	}
+	copy := *value
+	return &copy, nil
 }
 
 type UpstreamAccount struct {
@@ -437,6 +450,26 @@ const (
 	ProtectionUnbound     GroupAccountProtectionStatus = "rebind_pending"
 )
 
+type GroupAccountProtectionScope string
+
+const (
+	ProtectionScopeAccount GroupAccountProtectionScope = "account"
+	ProtectionScopeGroup   GroupAccountProtectionScope = "group"
+)
+
+// GroupProtectionDefault is the optional threshold inherited by accounts in a
+// group when they do not have an explicit account-level protection record.
+type GroupProtectionDefault struct {
+	GroupID              int64     `json:"group_id"`
+	ProtectionMultiplier float64   `json:"protection_multiplier"`
+	CreatedAt            time.Time `json:"created_at"`
+	UpdatedAt            time.Time `json:"updated_at"`
+}
+
+func (p GroupProtectionDefault) Valid() bool {
+	return p.GroupID > 0 && p.ProtectionMultiplier >= 0 && !math.IsNaN(p.ProtectionMultiplier) && !math.IsInf(p.ProtectionMultiplier, 0)
+}
+
 // GroupAccountProtection is a persisted logical membership record. It stays
 // present when the sidecar removes the physical Sub2API group binding, so the
 // account can still be displayed and automatically rebound later.
@@ -444,6 +477,7 @@ type GroupAccountProtection struct {
 	GroupID              int64                        `json:"group_id"`
 	AccountID            int64                        `json:"account_id"`
 	ProtectionMultiplier float64                      `json:"protection_multiplier"`
+	Scope                GroupAccountProtectionScope  `json:"scope,omitempty"`
 	UpstreamID           string                       `json:"upstream_id,omitempty"`
 	IdentityID           string                       `json:"identity_id,omitempty"`
 	RemoteKeyID          string                       `json:"remote_key_id,omitempty"`
@@ -455,30 +489,38 @@ type GroupAccountProtection struct {
 }
 
 func (p GroupAccountProtection) Valid() bool {
-	return p.GroupID > 0 && p.AccountID > 0 && p.ProtectionMultiplier >= 0 && !math.IsNaN(p.ProtectionMultiplier) && !math.IsInf(p.ProtectionMultiplier, 0)
+	return p.GroupID > 0 && p.AccountID > 0 && p.ProtectionMultiplier >= 0 && !math.IsNaN(p.ProtectionMultiplier) && !math.IsInf(p.ProtectionMultiplier, 0) && (p.Scope == "" || p.Scope == ProtectionScopeAccount || p.Scope == ProtectionScopeGroup)
+}
+
+func (p GroupAccountProtection) EffectiveScope() GroupAccountProtectionScope {
+	if p.Scope == ProtectionScopeGroup {
+		return ProtectionScopeGroup
+	}
+	return ProtectionScopeAccount
 }
 
 type ManagedAccount struct {
-	AccountID            int64              `json:"account_id"`
-	Name                 string             `json:"name"`
-	Platform             string             `json:"platform"`
-	AccountStatus        string             `json:"account_status"`
-	Schedulable          bool               `json:"schedulable"`
-	Policy               Policy             `json:"policy"`
-	ConsecutiveFailures  int                `json:"consecutive_failures"`
-	ConsecutiveSuccesses int                `json:"consecutive_successes"`
-	ManagedSuspended     bool               `json:"managed_suspended"`
-	LastCheckAt          *time.Time         `json:"last_check_at,omitempty"`
-	NextCheckAt          *time.Time         `json:"next_check_at,omitempty"`
-	LastError            string             `json:"last_error,omitempty"`
-	LastFailureKind      CheckFailureKind   `json:"last_failure_kind,omitempty"`
-	History              []CheckResult      `json:"history"`
-	DetectionStats       DetectionStats     `json:"detection_stats,omitempty"`
-	ProbeSource          ProbeSource        `json:"probe_source,omitempty"`
-	DirectProbe          *DirectProbeConfig `json:"direct_probe,omitempty"`
-	CreatedAt            time.Time          `json:"created_at"`
-	UpdatedAt            time.Time          `json:"updated_at"`
-	Running              bool               `json:"running"`
+	AccountID             int64              `json:"account_id"`
+	Name                  string             `json:"name"`
+	Platform              string             `json:"platform"`
+	AccountStatus         string             `json:"account_status"`
+	Schedulable           bool               `json:"schedulable"`
+	Policy                Policy             `json:"policy"`
+	ConsecutiveFailures   int                `json:"consecutive_failures"`
+	ConsecutiveSuccesses  int                `json:"consecutive_successes"`
+	ManagedSuspended      bool               `json:"managed_suspended"`
+	LastCheckAt           *time.Time         `json:"last_check_at,omitempty"`
+	NextCheckAt           *time.Time         `json:"next_check_at,omitempty"`
+	LastError             string             `json:"last_error,omitempty"`
+	LastFailureKind       CheckFailureKind   `json:"last_failure_kind,omitempty"`
+	History               []CheckResult      `json:"history"`
+	DetectionStats        DetectionStats     `json:"detection_stats,omitempty"`
+	BalanceAlertThreshold *float64           `json:"balance_alert_threshold,omitempty"`
+	ProbeSource           ProbeSource        `json:"probe_source,omitempty"`
+	DirectProbe           *DirectProbeConfig `json:"direct_probe,omitempty"`
+	CreatedAt             time.Time          `json:"created_at"`
+	UpdatedAt             time.Time          `json:"updated_at"`
+	Running               bool               `json:"running"`
 }
 
 type DirectProbeProxy struct {
@@ -524,25 +566,26 @@ type DirectProbeView struct {
 }
 
 type ManagedAccountView struct {
-	AccountID            int64            `json:"account_id"`
-	Name                 string           `json:"name"`
-	Platform             string           `json:"platform"`
-	AccountStatus        string           `json:"account_status"`
-	Schedulable          bool             `json:"schedulable"`
-	Policy               Policy           `json:"policy"`
-	ConsecutiveFailures  int              `json:"consecutive_failures"`
-	ConsecutiveSuccesses int              `json:"consecutive_successes"`
-	ManagedSuspended     bool             `json:"managed_suspended"`
-	LastCheckAt          *time.Time       `json:"last_check_at,omitempty"`
-	NextCheckAt          *time.Time       `json:"next_check_at,omitempty"`
-	LastError            string           `json:"last_error,omitempty"`
-	LastFailureKind      CheckFailureKind `json:"last_failure_kind,omitempty"`
-	History              []CheckResult    `json:"history"`
-	DetectionStats       DetectionStats   `json:"detection_stats,omitempty"`
-	Probe                DirectProbeView  `json:"probe"`
-	CreatedAt            time.Time        `json:"created_at"`
-	UpdatedAt            time.Time        `json:"updated_at"`
-	Running              bool             `json:"running"`
+	AccountID             int64            `json:"account_id"`
+	Name                  string           `json:"name"`
+	Platform              string           `json:"platform"`
+	AccountStatus         string           `json:"account_status"`
+	Schedulable           bool             `json:"schedulable"`
+	Policy                Policy           `json:"policy"`
+	ConsecutiveFailures   int              `json:"consecutive_failures"`
+	ConsecutiveSuccesses  int              `json:"consecutive_successes"`
+	ManagedSuspended      bool             `json:"managed_suspended"`
+	LastCheckAt           *time.Time       `json:"last_check_at,omitempty"`
+	NextCheckAt           *time.Time       `json:"next_check_at,omitempty"`
+	LastError             string           `json:"last_error,omitempty"`
+	LastFailureKind       CheckFailureKind `json:"last_failure_kind,omitempty"`
+	History               []CheckResult    `json:"history"`
+	DetectionStats        DetectionStats   `json:"detection_stats,omitempty"`
+	BalanceAlertThreshold *float64         `json:"balance_alert_threshold,omitempty"`
+	Probe                 DirectProbeView  `json:"probe"`
+	CreatedAt             time.Time        `json:"created_at"`
+	UpdatedAt             time.Time        `json:"updated_at"`
+	Running               bool             `json:"running"`
 }
 
 func (m ManagedAccount) EffectiveProbeSource() ProbeSource {
@@ -554,24 +597,25 @@ func (m ManagedAccount) EffectiveProbeSource() ProbeSource {
 
 func (m ManagedAccount) PublicView() ManagedAccountView {
 	view := ManagedAccountView{
-		AccountID:            m.AccountID,
-		Name:                 m.Name,
-		Platform:             m.Platform,
-		AccountStatus:        m.AccountStatus,
-		Schedulable:          m.Schedulable,
-		Policy:               m.Policy,
-		ConsecutiveFailures:  m.ConsecutiveFailures,
-		ConsecutiveSuccesses: m.ConsecutiveSuccesses,
-		ManagedSuspended:     m.ManagedSuspended,
-		LastCheckAt:          cloneTime(m.LastCheckAt),
-		NextCheckAt:          cloneTime(m.NextCheckAt),
-		LastError:            m.LastError,
-		LastFailureKind:      m.LastFailureKind,
-		History:              append([]CheckResult(nil), m.History...),
-		DetectionStats:       cloneDetectionStats(m.DetectionStats),
-		CreatedAt:            m.CreatedAt,
-		UpdatedAt:            m.UpdatedAt,
-		Running:              m.Running,
+		AccountID:             m.AccountID,
+		Name:                  m.Name,
+		Platform:              m.Platform,
+		AccountStatus:         m.AccountStatus,
+		Schedulable:           m.Schedulable,
+		Policy:                m.Policy,
+		ConsecutiveFailures:   m.ConsecutiveFailures,
+		ConsecutiveSuccesses:  m.ConsecutiveSuccesses,
+		ManagedSuspended:      m.ManagedSuspended,
+		LastCheckAt:           cloneTime(m.LastCheckAt),
+		NextCheckAt:           cloneTime(m.NextCheckAt),
+		LastError:             m.LastError,
+		LastFailureKind:       m.LastFailureKind,
+		History:               append([]CheckResult(nil), m.History...),
+		DetectionStats:        cloneDetectionStats(m.DetectionStats),
+		BalanceAlertThreshold: cloneFloat64(m.BalanceAlertThreshold),
+		CreatedAt:             m.CreatedAt,
+		UpdatedAt:             m.UpdatedAt,
+		Running:               m.Running,
 		Probe: DirectProbeView{
 			Source:             m.EffectiveProbeSource(),
 			AuthorizationState: DirectProbeAuthorizationMissing,
@@ -616,10 +660,67 @@ func (m *ManagedAccount) AddHistory(result CheckResult) {
 }
 
 type State struct {
-	Version     int                               `json:"version"`
-	Accounts    map[string]ManagedAccount         `json:"accounts"`
-	Upstreams   map[string]ManagedUpstream        `json:"upstreams,omitempty"`
-	Protections map[string]GroupAccountProtection `json:"group_account_protections,omitempty"`
+	Version                 int                               `json:"version"`
+	Accounts                map[string]ManagedAccount         `json:"accounts"`
+	Upstreams               map[string]ManagedUpstream        `json:"upstreams,omitempty"`
+	Protections             map[string]GroupAccountProtection `json:"group_account_protections,omitempty"`
+	GroupProtectionDefaults map[string]GroupProtectionDefault `json:"group_protection_defaults,omitempty"`
+	Notification            *NotificationSettings             `json:"notification,omitempty"`
+	GroupBalanceThresholds  map[string]float64                `json:"group_balance_thresholds,omitempty"`
+	BalanceAlertStates      map[string]BalanceAlertState      `json:"balance_alert_states,omitempty"`
+	CapacityAlertStates     map[string]CapacityAlertState     `json:"capacity_alert_states,omitempty"`
+	MultiplierAlertStates   map[string]MultiplierAlertState   `json:"multiplier_alert_states,omitempty"`
+}
+
+// NotificationSettings contains only non-secret Bark metadata and an encrypted
+// envelope for the device key, encryption key, and optional Basic Auth secret.
+type NotificationSettings struct {
+	Enabled           bool               `json:"enabled"`
+	BarkEndpoint      string             `json:"bark_endpoint,omitempty"`
+	BarkBasicAuthUser string             `json:"bark_basic_auth_user,omitempty"`
+	BarkCredentials   CredentialEnvelope `json:"bark_credentials,omitempty"`
+	LastDeliveryAt    *time.Time         `json:"last_delivery_at,omitempty"`
+	LastDeliveryError string             `json:"last_delivery_error,omitempty"`
+	UpdatedAt         time.Time          `json:"updated_at"`
+}
+
+type BalanceAlertState struct {
+	Configured        bool      `json:"configured"`
+	Below             bool      `json:"below"`
+	Threshold         float64   `json:"threshold,omitempty"`
+	LastAvailable     *float64  `json:"last_available,omitempty"`
+	LastDeliveryError string    `json:"last_delivery_error,omitempty"`
+	UpdatedAt         time.Time `json:"updated_at"`
+}
+
+type CapacityAlertBand string
+
+const (
+	CapacityBandUnknown CapacityAlertBand = "unknown"
+	CapacityBandZero    CapacityAlertBand = "zero"
+	CapacityBandOne     CapacityAlertBand = "one"
+	CapacityBandMany    CapacityAlertBand = "many"
+)
+
+type CapacityAlertState struct {
+	Band              CapacityAlertBand `json:"band"`
+	LastCount         int               `json:"last_count"`
+	LastDeliveryError string            `json:"last_delivery_error,omitempty"`
+	UpdatedAt         time.Time         `json:"updated_at"`
+}
+
+type MultiplierAlertState struct {
+	Initialized         bool      `json:"initialized"`
+	LastFinalMultiplier *float64  `json:"last_final_multiplier,omitempty"`
+	ProtectionTriggered bool      `json:"protection_triggered"`
+	LastDeliveryError   string    `json:"last_delivery_error,omitempty"`
+	UpdatedAt           time.Time `json:"updated_at"`
+}
+
+type BarkNotificationSecrets struct {
+	DeviceKey         string `json:"device_key"`
+	EncryptionKey     string `json:"encryption_key"`
+	BasicAuthPassword string `json:"basic_auth_password,omitempty"`
 }
 
 func maxInt64(value, minimum int64) int64 {
@@ -627,6 +728,14 @@ func maxInt64(value, minimum int64) int64 {
 		return minimum
 	}
 	return value
+}
+
+func cloneFloat64(value *float64) *float64 {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	return &copy
 }
 
 func cloneDetectionStats(stats DetectionStats) DetectionStats {

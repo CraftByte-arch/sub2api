@@ -146,6 +146,40 @@ func TestCredentialBoxRejectsInvalidKey(t *testing.T) {
 	}
 }
 
+func TestCredentialBoxGenericBytesUseSeparateDomain(t *testing.T) {
+	box, err := NewCredentialBox(testCredentialKey())
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope, err := box.EncryptBytes("bark-notification/v1", []byte(`{"device_key":"secret-device","encryption_key":"1234567890123456"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(envelope.Ciphertext, "secret-device") || envelope.Nonce == "" {
+		t.Fatalf("generic envelope was not encrypted: %#v", envelope)
+	}
+	plaintext, err := box.DecryptBytes("bark-notification/v1", envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(plaintext) != `{"device_key":"secret-device","encryption_key":"1234567890123456"}` {
+		t.Fatalf("plaintext = %q", plaintext)
+	}
+	if _, err := box.DecryptBytes("other-domain", envelope); err == nil {
+		t.Fatal("generic envelope decrypted under another domain")
+	}
+}
+
+func TestCredentialBoxGenericBytesDisabled(t *testing.T) {
+	box, err := NewCredentialBox("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := box.EncryptBytes("bark-notification/v1", []byte("secret")); !errors.Is(err, ErrCredentialsDisabled) {
+		t.Fatalf("EncryptBytes error = %v, want ErrCredentialsDisabled", err)
+	}
+}
+
 func TestFingerprintsAreStableAndConstantTimeComparable(t *testing.T) {
 	box, err := NewCredentialBox(testCredentialKey())
 	if err != nil {

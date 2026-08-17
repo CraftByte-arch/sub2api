@@ -23,6 +23,7 @@ type Config struct {
 	AuthCacheTTL         time.Duration
 	CredentialKey        string
 	UpstreamSyncInterval time.Duration
+	NotificationInterval time.Duration
 	ShutdownTimeout      time.Duration
 }
 
@@ -39,6 +40,7 @@ func Load() (Config, error) {
 		AuthCacheTTL:         time.Duration(envInt("AUTO_SCHEDULER_AUTH_CACHE_SECONDS", 30)) * time.Second,
 		CredentialKey:        strings.TrimSpace(os.Getenv("AUTO_SCHEDULER_CREDENTIAL_KEY")),
 		UpstreamSyncInterval: time.Duration(envInt("AUTO_SCHEDULER_UPSTREAM_SYNC_SECONDS", 600)) * time.Second,
+		NotificationInterval: time.Duration(envInt("AUTO_SCHEDULER_NOTIFICATION_INTERVAL_SECONDS", 30)) * time.Second,
 		ShutdownTimeout:      time.Duration(envInt("AUTO_SCHEDULER_SHUTDOWN_SECONDS", 15)) * time.Second,
 	}
 	cfg.AutoRegisterTab = envBool("AUTO_SCHEDULER_AUTO_REGISTER_TAB", cfg.PublicURL != "")
@@ -70,6 +72,9 @@ func Load() (Config, error) {
 	}
 	if cfg.UpstreamSyncInterval < 0 || (cfg.UpstreamSyncInterval > 0 && cfg.UpstreamSyncInterval < time.Minute) || cfg.UpstreamSyncInterval > 24*time.Hour {
 		return Config{}, fmt.Errorf("AUTO_SCHEDULER_UPSTREAM_SYNC_SECONDS must be 0 or between 60 and 86400")
+	}
+	if cfg.NotificationInterval < 15*time.Second || cfg.NotificationInterval > 24*time.Hour {
+		return Config{}, fmt.Errorf("AUTO_SCHEDULER_NOTIFICATION_INTERVAL_SECONDS must be between 15 and 86400")
 	}
 
 	absDataFile, err := filepath.Abs(cfg.DataFile)

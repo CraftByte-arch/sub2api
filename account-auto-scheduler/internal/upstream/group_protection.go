@@ -24,11 +24,20 @@ type GroupAccountProtectionView struct {
 	GroupID              int64                              `json:"group_id"`
 	AccountID            int64                              `json:"account_id"`
 	ProtectionMultiplier float64                            `json:"protection_multiplier"`
+	Scope                model.GroupAccountProtectionScope  `json:"scope,omitempty"`
+	Inherited            bool                               `json:"inherited,omitempty"`
 	FinalMultiplier      *float64                           `json:"final_multiplier,omitempty"`
 	Status               model.GroupAccountProtectionStatus `json:"status"`
 	PhysicalBound        bool                               `json:"physical_bound"`
 	LastError            string                             `json:"last_error,omitempty"`
 	UpdatedAt            time.Time                          `json:"updated_at"`
+}
+
+type GroupProtectionDefaultView struct {
+	GroupID              int64     `json:"group_id"`
+	ProtectionMultiplier float64   `json:"protection_multiplier"`
+	CreatedAt            time.Time `json:"created_at"`
+	UpdatedAt            time.Time `json:"updated_at"`
 }
 
 type groupAccountSource struct {
@@ -48,6 +57,50 @@ func protectionStateStore(m *Manager) (store.ProtectionStore, error) {
 	return stateStore, nil
 }
 
+func groupProtectionDefaultStore(m *Manager) (store.GroupProtectionDefaultStore, error) {
+	if m == nil || m.store == nil {
+		return nil, errors.New("group protection default store is unavailable")
+	}
+	stateStore, ok := m.store.(store.GroupProtectionDefaultStore)
+	if !ok {
+		return nil, errors.New("group protection default store is not supported")
+	}
+	return stateStore, nil
+}
+
+func (m *Manager) GroupProtectionDefaults() map[int64]GroupProtectionDefaultView {
+	result := make(map[int64]GroupProtectionDefaultView)
+	stateStore, err := groupProtectionDefaultStore(m)
+	if err != nil {
+		return result
+	}
+	for _, setting := range stateStore.ListGroupProtectionDefaults() {
+		result[setting.GroupID] = GroupProtectionDefaultView{
+			GroupID:              setting.GroupID,
+			ProtectionMultiplier: setting.ProtectionMultiplier,
+			CreatedAt:            setting.CreatedAt,
+			UpdatedAt:            setting.UpdatedAt,
+		}
+	}
+	return result
+}
+
+func protectionRecordFor(stateStore store.ProtectionStore, groupID, accountID int64) (model.GroupAccountProtection, bool) {
+	record, err := stateStore.GetProtection(groupID, accountID)
+	if err != nil {
+		return model.GroupAccountProtection{}, false
+	}
+	return record, true
+}
+
+func accountProtectionRecordFor(stateStore store.ProtectionStore, groupID, accountID int64) (model.GroupAccountProtection, bool) {
+	record, ok := protectionRecordFor(stateStore, groupID, accountID)
+	if !ok || record.EffectiveScope() != model.ProtectionScopeAccount {
+		return model.GroupAccountProtection{}, false
+	}
+	return record, true
+}
+
 func (m *Manager) GroupAccountProtectionViews(accounts []model.UpstreamAccount) map[int64]map[string]GroupAccountProtectionView {
 	result := make(map[int64]map[string]GroupAccountProtectionView)
 	stateStore, err := protectionStateStore(m)
@@ -58,12 +111,25 @@ func (m *Manager) GroupAccountProtectionViews(accounts []model.UpstreamAccount) 
 	for _, account := range accounts {
 		accountByID[account.ID] = account
 	}
-	for _, record := range stateStore.ListProtections() {
+	records := stateStore.ListProtections()
+	recordByKey := make(map[string]model.GroupAccountProtection, len(records))
+	for _, record := range records {
+		recordByKey[relationProtectionKey(record.GroupID, record.AccountID)] = record
+		groupDefaultMissing := false
+		if record.EffectiveScope() == model.ProtectionScopeGroup {
+			if setting, ok := findGroupDefault(m, record.GroupID); ok {
+				record.ProtectionMultiplier = setting.ProtectionMultiplier
+			} else {
+				groupDefaultMissing = true
+			}
+		}
 		account, exists := accountByID[record.AccountID]
 		view := GroupAccountProtectionView{
 			GroupID:              record.GroupID,
 			AccountID:            record.AccountID,
 			ProtectionMultiplier: record.ProtectionMultiplier,
+			Scope:                record.EffectiveScope(),
+			Inherited:            record.EffectiveScope() == model.ProtectionScopeGroup,
 			Status:               record.Status,
 			PhysicalBound:        exists && containsGroupID(account.GroupIDs, record.GroupID),
 			LastError:            record.LastError,
@@ -74,6 +140,9 @@ func (m *Manager) GroupAccountProtectionViews(accounts []model.UpstreamAccount) 
 			if view.LastError == "" {
 				view.LastError = "本地账号不存在"
 			}
+		} else if groupDefaultMissing {
+			view.Status = model.ProtectionUnbound
+			view.LastError = firstNonEmpty(view.LastError, "分组保护已清除，等待恢复实际绑定")
 		} else if source, final, sourceStatus := m.resolveProtectionSource(account, record); sourceStatus == "" {
 			view.FinalMultiplier = final
 			if final == nil {
@@ -86,7 +155,7 @@ func (m *Manager) GroupAccountProtectionViews(accounts []model.UpstreamAccount) 
 				view.Status = model.ProtectionUnbound
 			}
 			_ = source
-		} else if view.Status == "" {
+		} else {
 			view.Status = model.ProtectionUnavailable
 			view.LastError = sourceStatus
 		}
@@ -95,7 +164,89 @@ func (m *Manager) GroupAccountProtectionViews(accounts []model.UpstreamAccount) 
 		}
 		result[record.AccountID][groupKey(record.GroupID)] = view
 	}
+	for _, setting := range stateStoreDefaults(m) {
+		for _, account := range accounts {
+			if !account.IsAPIKey() || !containsGroupID(account.GroupIDs, setting.GroupID) {
+				continue
+			}
+			if record, exists := recordByKey[relationProtectionKey(setting.GroupID, account.ID)]; exists && record.EffectiveScope() == model.ProtectionScopeAccount {
+				continue
+			}
+			if _, exists := recordByKey[relationProtectionKey(setting.GroupID, account.ID)]; exists {
+				continue
+			}
+			record := model.GroupAccountProtection{
+				GroupID:              setting.GroupID,
+				AccountID:            account.ID,
+				ProtectionMultiplier: setting.ProtectionMultiplier,
+				Scope:                model.ProtectionScopeGroup,
+				Status:               model.ProtectionBound,
+				PhysicalBound:        true,
+				UpdatedAt:            setting.UpdatedAt,
+			}
+			view := m.protectionViewFromRecord(account, record, true)
+			if result[account.ID] == nil {
+				result[account.ID] = map[string]GroupAccountProtectionView{}
+			}
+			result[account.ID][groupKey(setting.GroupID)] = view
+		}
+	}
 	return result
+}
+
+func findGroupDefault(m *Manager, groupID int64) (model.GroupProtectionDefault, bool) {
+	stateStore, err := groupProtectionDefaultStore(m)
+	if err != nil {
+		return model.GroupProtectionDefault{}, false
+	}
+	setting, err := stateStore.GetGroupProtectionDefault(groupID)
+	if err != nil {
+		return model.GroupProtectionDefault{}, false
+	}
+	return setting, true
+}
+
+func stateStoreDefaults(m *Manager) []model.GroupProtectionDefault {
+	stateStore, err := groupProtectionDefaultStore(m)
+	if err != nil {
+		return nil
+	}
+	return stateStore.ListGroupProtectionDefaults()
+}
+
+func relationProtectionKey(groupID, accountID int64) string {
+	return fmt.Sprintf("%d:%d", groupID, accountID)
+}
+
+func (m *Manager) protectionViewFromRecord(account model.UpstreamAccount, record model.GroupAccountProtection, inherited bool) GroupAccountProtectionView {
+	view := GroupAccountProtectionView{
+		GroupID:              record.GroupID,
+		AccountID:            record.AccountID,
+		ProtectionMultiplier: record.ProtectionMultiplier,
+		Scope:                record.EffectiveScope(),
+		Inherited:            inherited || record.EffectiveScope() == model.ProtectionScopeGroup,
+		Status:               record.Status,
+		PhysicalBound:        containsGroupID(account.GroupIDs, record.GroupID),
+		LastError:            record.LastError,
+		UpdatedAt:            record.UpdatedAt,
+	}
+	if source, final, sourceStatus := m.resolveProtectionSource(account, record); sourceStatus == "" {
+		view.FinalMultiplier = final
+		if final == nil {
+			view.Status = model.ProtectionUnavailable
+		} else if exceedsProtection(*final, record.ProtectionMultiplier) {
+			view.Status = model.ProtectionExceeded
+		} else if view.PhysicalBound {
+			view.Status = model.ProtectionBound
+		} else {
+			view.Status = model.ProtectionUnbound
+		}
+		_ = source
+	} else if view.Status == "" || inherited {
+		view.Status = model.ProtectionUnavailable
+		view.LastError = sourceStatus
+	}
+	return view
 }
 
 // LogicalGroupIDs merges physical Sub2API membership with persisted logical
@@ -122,6 +273,80 @@ func (m *Manager) LogicalGroupIDs(accounts []model.UpstreamAccount) map[int64][]
 		result[account.ID] = ids
 	}
 	return result
+}
+
+func (m *Manager) GetGroupProtectionDefault(groupID int64) (GroupProtectionDefaultView, error) {
+	if groupID <= 0 {
+		return GroupProtectionDefaultView{}, errors.New("group ID must be positive")
+	}
+	stateStore, err := groupProtectionDefaultStore(m)
+	if err != nil {
+		return GroupProtectionDefaultView{}, err
+	}
+	setting, err := stateStore.GetGroupProtectionDefault(groupID)
+	if err != nil {
+		return GroupProtectionDefaultView{}, err
+	}
+	return GroupProtectionDefaultView{
+		GroupID:              setting.GroupID,
+		ProtectionMultiplier: setting.ProtectionMultiplier,
+		CreatedAt:            setting.CreatedAt,
+		UpdatedAt:            setting.UpdatedAt,
+	}, nil
+}
+
+func (m *Manager) SetGroupProtectionDefault(ctx context.Context, groupID int64, multiplier float64) (GroupProtectionDefaultView, error) {
+	if groupID <= 0 {
+		return GroupProtectionDefaultView{}, errors.New("group ID must be positive")
+	}
+	if multiplier < 0 || math.IsNaN(multiplier) || math.IsInf(multiplier, 0) {
+		return GroupProtectionDefaultView{}, errors.New("保护倍率必须是大于等于 0 的有限数值")
+	}
+	stateStore, err := groupProtectionDefaultStore(m)
+	if err != nil {
+		return GroupProtectionDefaultView{}, err
+	}
+	now := time.Now().UTC()
+	setting, getErr := stateStore.GetGroupProtectionDefault(groupID)
+	if errors.Is(getErr, store.ErrGroupProtectionDefaultNotFound) {
+		setting = model.GroupProtectionDefault{GroupID: groupID, CreatedAt: now}
+	} else if getErr != nil {
+		return GroupProtectionDefaultView{}, getErr
+	}
+	setting.ProtectionMultiplier = multiplier
+	setting.UpdatedAt = now
+	if err := stateStore.PutGroupProtectionDefault(setting); err != nil {
+		return GroupProtectionDefaultView{}, err
+	}
+	if err := m.reconcileAfterProtectionMutation(ctx); err != nil {
+		m.logger.Warn("group protection default reconciliation failed", "group_id", groupID, "error", err)
+	}
+	return m.GetGroupProtectionDefault(groupID)
+}
+
+func (m *Manager) DeleteGroupProtectionDefault(ctx context.Context, groupID int64) error {
+	if groupID <= 0 {
+		return errors.New("group ID must be positive")
+	}
+	stateStore, err := groupProtectionDefaultStore(m)
+	if err != nil {
+		return err
+	}
+	if err := stateStore.DeleteGroupProtectionDefault(groupID); err != nil && !errors.Is(err, store.ErrGroupProtectionDefaultNotFound) {
+		return err
+	}
+	if err := m.reconcileAfterProtectionMutation(ctx); err != nil {
+		m.logger.Warn("group protection default cleanup failed", "group_id", groupID, "error", err)
+	}
+	return nil
+}
+
+func (m *Manager) reconcileAfterProtectionMutation(ctx context.Context) error {
+	accounts, err := m.core.ListAccounts(ctx)
+	if err != nil {
+		return err
+	}
+	return m.reconcileProtectedBindings(ctx, accounts)
 }
 
 func (m *Manager) SetGroupAccountProtection(ctx context.Context, groupID, accountID int64, multiplier float64) (GroupAccountProtectionView, error) {
@@ -156,12 +381,13 @@ func (m *Manager) SetGroupAccountProtection(ctx context.Context, groupID, accoun
 		record, getErr := stateStore.GetProtection(groupID, accountID)
 		if errors.Is(getErr, store.ErrProtectionNotFound) {
 			record = model.GroupAccountProtection{
-				GroupID: groupID, AccountID: accountID, Status: model.ProtectionBound, CreatedAt: now,
+				GroupID: groupID, AccountID: accountID, Scope: model.ProtectionScopeAccount, Status: model.ProtectionBound, CreatedAt: now,
 			}
 		} else if getErr != nil {
 			return getErr
 		}
 		record.ProtectionMultiplier = multiplier
+		record.Scope = model.ProtectionScopeAccount
 		record.PhysicalBound = containsGroupID(account.GroupIDs, groupID)
 		record.UpdatedAt = now
 		if source, _, _ := m.resolveProtectionSource(account, record); source != nil {
@@ -190,8 +416,12 @@ func (m *Manager) ReleaseGroupAccountProtection(ctx context.Context, groupID, ac
 	}
 	m.protectionMu.Lock()
 	defer m.protectionMu.Unlock()
-	if _, err := stateStore.GetProtection(groupID, accountID); err != nil {
+	record, err := stateStore.GetProtection(groupID, accountID)
+	if err != nil {
 		return GroupAccountProtectionView{}, err
+	}
+	if record.EffectiveScope() != model.ProtectionScopeAccount {
+		return GroupAccountProtectionView{}, errors.New("当前保护来自分组默认值，请修改分组保护或移除绑定")
 	}
 	writer, ok := m.core.(GroupBindingWriter)
 	if !ok {
@@ -366,25 +596,127 @@ func (m *Manager) reconcileProtectedBindings(ctx context.Context, accounts []mod
 		return nil
 	}
 	writer, writerAvailable := m.core.(GroupBindingWriter)
+	defaultStore, _ := groupProtectionDefaultStore(m)
+	defaults := make(map[int64]model.GroupProtectionDefault)
+	if defaultStore != nil {
+		for _, setting := range defaultStore.ListGroupProtectionDefaults() {
+			defaults[setting.GroupID] = setting
+		}
+	}
 	m.protectionMu.Lock()
 	defer m.protectionMu.Unlock()
 	accountByID := make(map[int64]model.UpstreamAccount, len(accounts))
 	for _, account := range accounts {
 		accountByID[account.ID] = account
 	}
+	records := stateStore.ListProtections()
+	recordByKey := make(map[string]model.GroupAccountProtection, len(records))
+	for _, record := range records {
+		recordByKey[relationProtectionKey(record.GroupID, record.AccountID)] = record
+	}
+	type candidate struct {
+		record     model.GroupAccountProtection
+		persisted  bool
+		inherited  bool
+		groupValue *model.GroupProtectionDefault
+	}
+	candidates := make([]candidate, 0, len(records))
+	for _, record := range records {
+		if record.EffectiveScope() == model.ProtectionScopeGroup {
+			if setting, ok := defaults[record.GroupID]; ok {
+				copy := setting
+				record.ProtectionMultiplier = setting.ProtectionMultiplier
+				candidates = append(candidates, candidate{record: record, persisted: true, inherited: true, groupValue: &copy})
+				continue
+			}
+			candidates = append(candidates, candidate{record: record, persisted: true, inherited: true})
+			continue
+		}
+		candidates = append(candidates, candidate{record: record, persisted: true})
+	}
+	for _, account := range accounts {
+		if !account.IsAPIKey() {
+			continue
+		}
+		for groupID, setting := range defaults {
+			key := relationProtectionKey(groupID, account.ID)
+			if record, exists := recordByKey[key]; exists {
+				if record.EffectiveScope() == model.ProtectionScopeAccount || record.EffectiveScope() == model.ProtectionScopeGroup {
+					continue
+				}
+			}
+			if !containsGroupID(account.GroupIDs, groupID) {
+				continue
+			}
+			copy := setting
+			candidates = append(candidates, candidate{
+				record: model.GroupAccountProtection{
+					GroupID: groupID, AccountID: account.ID, ProtectionMultiplier: setting.ProtectionMultiplier,
+					Scope: model.ProtectionScopeGroup, Status: model.ProtectionBound, PhysicalBound: true,
+					CreatedAt: setting.CreatedAt, UpdatedAt: setting.UpdatedAt,
+				},
+				inherited: true, groupValue: &copy,
+			})
+		}
+	}
 	var firstErr error
-	for _, record := range stateStore.ListProtections() {
+	for _, item := range candidates {
+		record := item.record
+		old := item.record
 		account, exists := accountByID[record.AccountID]
 		physical := exists && containsGroupID(account.GroupIDs, record.GroupID)
-		old := record
 		record.PhysicalBound = physical
 		record.LastError = ""
 		if !exists {
 			record.Status = model.ProtectionUnavailable
 			record.LastError = "本地账号不存在"
-			_ = m.persistProtectionIfChanged(stateStore, old, record)
+			if item.persisted {
+				_ = m.persistProtectionIfChanged(stateStore, item.record, record)
+			}
 			continue
 		}
+
+		if item.inherited {
+			if _, hasAccount := accountProtectionRecordFor(stateStore, record.GroupID, record.AccountID); hasAccount {
+				continue
+			}
+			if item.groupValue == nil {
+				if physical {
+					_ = stateStore.DeleteProtection(record.GroupID, record.AccountID)
+					continue
+				}
+				if !writerAvailable {
+					record.Status = model.ProtectionUnbound
+					record.LastError = "当前 Sub2API 客户端不支持分组绑定"
+				} else if updated, bindErr := writer.SetAccountGroup(ctx, record.AccountID, record.GroupID, true); bindErr != nil {
+					record.Status = model.ProtectionUnbound
+					record.LastError = bindErr.Error()
+					if firstErr == nil {
+						firstErr = bindErr
+					}
+				} else {
+					physical = containsGroupID(updated.GroupIDs, record.GroupID)
+					if physical {
+						_ = stateStore.DeleteProtection(record.GroupID, record.AccountID)
+						continue
+					}
+					record.Status = model.ProtectionUnbound
+					record.LastError = "恢复分组绑定失败: Sub2API 未返回已绑定状态"
+					if firstErr == nil {
+						firstErr = errors.New(record.LastError)
+					}
+				}
+				if item.persisted {
+					record.UpdatedAt = time.Now().UTC()
+					if persistErr := m.persistProtectionIfChanged(stateStore, item.record, record); persistErr != nil && firstErr == nil {
+						firstErr = persistErr
+					}
+				}
+				continue
+			}
+			record.ProtectionMultiplier = item.groupValue.ProtectionMultiplier
+		}
+
 		source, final, sourceStatus := m.resolveProtectionSource(account, record)
 		if source != nil {
 			record.UpstreamID = source.upstream.ID
@@ -394,7 +726,9 @@ func (m *Manager) reconcileProtectedBindings(ctx context.Context, accounts []mod
 		if sourceStatus != "" || final == nil {
 			record.Status = model.ProtectionUnavailable
 			record.LastError = firstNonEmpty(sourceStatus, "最终倍率暂不可用")
-			_ = m.persistProtectionIfChanged(stateStore, old, record)
+			if item.persisted {
+				_ = m.persistProtectionIfChanged(stateStore, old, record)
+			}
 			continue
 		}
 
@@ -411,35 +745,75 @@ func (m *Manager) reconcileProtectedBindings(ctx context.Context, accounts []mod
 				} else {
 					physical = containsGroupID(updated.GroupIDs, record.GroupID)
 					record.PhysicalBound = physical
+					if physical {
+						record.LastError = "移除分组绑定失败: Sub2API 未返回已解绑状态"
+						if firstErr == nil {
+							firstErr = errors.New(record.LastError)
+						}
+					}
 				}
 			}
-		} else {
-			record.Status = model.ProtectionBound
-			if !physical {
-				if !writerAvailable {
-					record.LastError = "当前 Sub2API 客户端不支持分组绑定"
-				} else if updated, bindErr := writer.SetAccountGroup(ctx, record.AccountID, record.GroupID, true); bindErr != nil {
+			if item.persisted || item.inherited {
+				record.UpdatedAt = time.Now().UTC()
+				if persistErr := stateStore.PutProtection(record); persistErr != nil && firstErr == nil {
+					firstErr = persistErr
+				}
+			}
+			continue
+		}
+
+		if !physical {
+			if !writerAvailable {
+				record.Status = model.ProtectionUnbound
+				record.LastError = "当前 Sub2API 客户端不支持分组绑定"
+			} else if updated, bindErr := writer.SetAccountGroup(ctx, record.AccountID, record.GroupID, true); bindErr != nil {
+				record.Status = model.ProtectionUnbound
+				record.LastError = bindErr.Error()
+				if firstErr == nil {
+					firstErr = bindErr
+				}
+			} else {
+				physical = containsGroupID(updated.GroupIDs, record.GroupID)
+				record.PhysicalBound = physical
+				if !physical {
 					record.Status = model.ProtectionUnbound
-					record.LastError = bindErr.Error()
+					record.LastError = "恢复分组绑定失败: Sub2API 未返回已绑定状态"
 					if firstErr == nil {
-						firstErr = bindErr
+						firstErr = errors.New(record.LastError)
 					}
-				} else {
-					physical = containsGroupID(updated.GroupIDs, record.GroupID)
-					record.PhysicalBound = physical
 				}
 			}
 		}
+		if item.inherited {
+			if physical {
+				if deleteErr := stateStore.DeleteProtection(record.GroupID, record.AccountID); deleteErr != nil && !errors.Is(deleteErr, store.ErrProtectionNotFound) && firstErr == nil {
+					firstErr = deleteErr
+				}
+				continue
+			}
+			record.Status = model.ProtectionUnbound
+			record.UpdatedAt = time.Now().UTC()
+			if persistErr := stateStore.PutProtection(record); persistErr != nil && firstErr == nil {
+				firstErr = persistErr
+			}
+			continue
+		}
+		if physical {
+			record.Status = model.ProtectionBound
+		} else {
+			record.Status = model.ProtectionUnbound
+		}
+		record.PhysicalBound = physical
 		record.UpdatedAt = time.Now().UTC()
-		if err := m.persistProtectionIfChanged(stateStore, old, record); err != nil && firstErr == nil {
-			firstErr = err
+		if persistErr := m.persistProtectionIfChanged(stateStore, old, record); persistErr != nil && firstErr == nil {
+			firstErr = persistErr
 		}
 	}
 	return firstErr
 }
 
 func (m *Manager) persistProtectionIfChanged(stateStore store.ProtectionStore, old, next model.GroupAccountProtection) error {
-	if old.ProtectionMultiplier == next.ProtectionMultiplier && old.UpstreamID == next.UpstreamID && old.IdentityID == next.IdentityID && old.RemoteKeyID == next.RemoteKeyID && old.Status == next.Status && old.PhysicalBound == next.PhysicalBound && old.LastError == next.LastError {
+	if old.ProtectionMultiplier == next.ProtectionMultiplier && old.Scope == next.Scope && old.UpstreamID == next.UpstreamID && old.IdentityID == next.IdentityID && old.RemoteKeyID == next.RemoteKeyID && old.Status == next.Status && old.PhysicalBound == next.PhysicalBound && old.LastError == next.LastError {
 		return nil
 	}
 	return stateStore.PutProtection(next)

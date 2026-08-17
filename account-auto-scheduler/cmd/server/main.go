@@ -13,6 +13,7 @@ import (
 	"github.com/Wei-Shaw/sub2api-account-auto-scheduler/internal/config"
 	"github.com/Wei-Shaw/sub2api-account-auto-scheduler/internal/core"
 	"github.com/Wei-Shaw/sub2api-account-auto-scheduler/internal/engine"
+	"github.com/Wei-Shaw/sub2api-account-auto-scheduler/internal/notify"
 	"github.com/Wei-Shaw/sub2api-account-auto-scheduler/internal/store"
 	"github.com/Wei-Shaw/sub2api-account-auto-scheduler/internal/upstream"
 	"github.com/Wei-Shaw/sub2api-account-auto-scheduler/internal/web"
@@ -55,12 +56,22 @@ func main() {
 		engine.WithDirectProbeCredentials(credentialBox),
 	)
 	scheduler.Start(rootCtx)
+	notificationCoordinator := notify.NewCoordinator(
+		stateStore,
+		coreClient,
+		upstreamManager,
+		credentialBox,
+		cfg.NotificationInterval,
+		logger,
+	)
+	notificationCoordinator.Start(rootCtx)
 	webServer := web.NewServer(scheduler, coreClient, web.Options{
 		UIOrigin:          cfg.UIOrigin,
 		PublicURL:         cfg.PublicURL,
 		TrustProxyHeaders: cfg.TrustProxyHeaders,
 		AuthCacheTTL:      cfg.AuthCacheTTL,
 		Upstreams:         upstreamManager,
+		Notifications:     notificationCoordinator,
 	}, logger)
 
 	if cfg.AutoRegisterTab {
@@ -104,5 +115,6 @@ func main() {
 		logger.Error("shutdown http server", "error", err)
 	}
 	scheduler.Stop()
+	notificationCoordinator.Stop()
 	logger.Info("account auto scheduler stopped")
 }

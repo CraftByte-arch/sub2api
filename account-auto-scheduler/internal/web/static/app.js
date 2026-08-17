@@ -10,6 +10,10 @@
     user: null,
     groups: [],
     accounts: [],
+    groupProtectionDefaults: {},
+    groupBalanceThresholds: {},
+    notificationsAvailable: false,
+    notificationSettings: null,
     defaultPolicy: null,
     editingID: null,
     directProbeBusy: false,
@@ -31,6 +35,9 @@
     automationBusy: new Set(),
     protectionBusy: new Set(),
     protectionTarget: null,
+    groupProtectionTarget: null,
+    groupBalanceAlertTarget: null,
+    notificationBusy: false,
     bindingAction: null,
     activeTab: 'groups',
     upstreamWorkspace: null,
@@ -55,8 +62,10 @@
       const session = await api('/api/session')
       state.user = session.user
       state.defaultPolicy = session.default_policy
+      state.notificationsAvailable = Boolean(session.notifications_available)
       state.upstreamWorkspace.setCredentialsEnabled(session.credentials_enabled)
       elements.registerTabButton.hidden = !session.public_url
+      elements.notificationSettingsButton.hidden = !state.notificationsAvailable
       elements.authState.hidden = true
       elements.app.hidden = false
       await loadOverview()
@@ -77,7 +86,7 @@
       'search-input', 'status-filter', 'group-list', 'empty-state', 'no-match-state', 'metric-groups',
       'metric-accounts', 'metric-enabled', 'metric-auto-stopped', 'config-dialog', 'config-form', 'config-title',
       'account-select', 'interval-input', 'model-input', 'latency-input', 'failure-input', 'recovery-input',
-      'enabled-input', 'prompt-input', 'form-error', 'save-button', 'binding-dialog', 'binding-group-name',
+      'enabled-input', 'balance-alert-input', 'prompt-input', 'form-error', 'save-button', 'binding-dialog', 'binding-group-name',
       'direct-probe-control', 'direct-probe-state', 'direct-probe-message', 'direct-probe-authorize-button', 'direct-probe-revoke-button',
       'binding-search-input', 'binding-change-count', 'binding-list', 'binding-error', 'binding-save-button',
       'account-detail-dialog', 'account-detail-title', 'account-detail-group-name', 'account-detail-list',
@@ -87,6 +96,14 @@
       'protection-final-preview', 'protection-error', 'protection-save-button', 'binding-action-dialog',
       'binding-action-title', 'binding-action-account-name', 'binding-action-message', 'binding-action-error',
       'binding-action-confirm-button',
+      'group-protection-dialog', 'group-protection-form', 'group-protection-name', 'group-protection-multiplier-input',
+      'group-protection-error', 'group-protection-save-button', 'group-protection-clear-button',
+      'group-balance-alert-dialog', 'group-balance-alert-form', 'group-balance-alert-name', 'group-balance-alert-input',
+      'group-balance-alert-error', 'group-balance-alert-save-button', 'group-balance-alert-clear-button',
+      'notification-settings-button', 'notification-settings-dialog', 'notification-settings-form', 'notification-settings-status',
+      'notification-enabled-input', 'notification-endpoint-input', 'notification-device-key-input',
+      'notification-encryption-key-input', 'notification-basic-user-input', 'notification-basic-password-input',
+      'notification-settings-error', 'notification-clear-button', 'notification-test-button', 'notification-save-button',
       'groups-tab', 'upstreams-tab', 'groups-panel', 'upstreams-panel', 'groups-header-actions', 'upstreams-header-actions'
     ]
     for (const id of ids) elements[toCamel(id)] = document.getElementById(id)
@@ -110,6 +127,7 @@
     elements.refreshButton.addEventListener('click', () => loadOverview())
     elements.addButton.addEventListener('click', () => openCreateDialog())
     elements.registerTabButton.addEventListener('click', registerTab)
+    elements.notificationSettingsButton.addEventListener('click', openNotificationSettings)
     elements.searchInput.addEventListener('input', (event) => {
       state.search = event.target.value.trim().toLocaleLowerCase()
       render()
@@ -125,6 +143,13 @@
     elements.directProbeRevokeButton.addEventListener('click', revokeDirectProbe)
     elements.confirmDeleteButton.addEventListener('click', deleteConfig)
     elements.protectionForm.addEventListener('submit', saveProtection)
+    elements.groupProtectionForm.addEventListener('submit', saveGroupProtection)
+    elements.groupProtectionClearButton.addEventListener('click', clearGroupProtection)
+    elements.groupBalanceAlertForm.addEventListener('submit', saveGroupBalanceAlert)
+    elements.groupBalanceAlertClearButton.addEventListener('click', clearGroupBalanceAlert)
+    elements.notificationSettingsForm.addEventListener('submit', saveNotificationSettings)
+    elements.notificationTestButton.addEventListener('click', testNotificationSettings)
+    elements.notificationClearButton.addEventListener('click', clearNotificationSettings)
     elements.bindingActionConfirmButton.addEventListener('click', confirmBindingAction)
     elements.bindingSearchInput.addEventListener('input', (event) => {
       state.bindingSearch = event.target.value.trim().toLocaleLowerCase()
@@ -148,6 +173,8 @@
     })
     elements.bindingDialog.addEventListener('close', restoreBindingFocus)
     elements.protectionDialog.addEventListener('close', () => { state.protectionTarget = null })
+    elements.groupProtectionDialog.addEventListener('close', () => { state.groupProtectionTarget = null })
+    elements.groupBalanceAlertDialog.addEventListener('close', () => { state.groupBalanceAlertTarget = null })
     elements.bindingActionDialog.addEventListener('close', () => {
       if (elements.bindingActionDialog.dataset.busy !== 'true') state.bindingAction = null
     })
@@ -199,6 +226,8 @@
       const response = await api('/api/overview')
       state.groups = [...(response.groups || [])].sort((a, b) => (a.sort_order - b.sort_order) || (a.id - b.id))
       state.accounts = response.accounts || []
+      state.groupProtectionDefaults = response.group_protection_defaults || {}
+      state.groupBalanceThresholds = response.group_balance_thresholds || {}
       elements.syncLabel.textContent = `已同步 ${formatDateTime(new Date())}`
       render()
       return true
@@ -289,10 +318,28 @@
     const collapsed = !filterActive && state.collapsedGroups.has(groupKey)
     const toggleTitle = filterActive ? '筛选期间保持展开' : (collapsed ? '展开分组' : '收起分组')
     const groupStatus = view.group.status === 'active' ? '' : '<span class="status-tag inactive">分组停用</span>'
+    const groupProtection = groupProtectionFor(view.group.id)
+    const groupProtectionBadge = groupProtection
+      ? `<span class="group-protection-badge" title="账号未设置账号级保护时继承此分组默认值">分组保护 ${escapeHTML(formatMultiplier(groupProtection.protection_multiplier))}x</span>`
+      : ''
+    const groupBalanceThreshold = groupBalanceThresholdFor(view.group.id)
+    const groupBalanceBadge = Number.isFinite(groupBalanceThreshold)
+      ? `<span class="group-balance-alert-badge" title="账号未设置账号级阈值时继承此分组默认值">余额告警 ${escapeHTML(formatCurrency(groupBalanceThreshold))}</span>`
+      : ''
     const bindButton = view.synthetic ? '' : `
       <button class="summary-button group-manage-button" type="button" data-action="bind-group" data-group-key="${escapeAttr(view.key)}" title="管理当前分组的 API Key 账号">
         <svg class="icon"><use href="#icon-users"/></svg>
         <span>管理账号</span>
+      </button>`
+    const groupProtectionButton = view.synthetic ? '' : `
+      <button class="summary-button group-protection-button" type="button" data-action="edit-group-protection" data-group-key="${escapeAttr(view.key)}" title="设置当前分组默认倍率保护">
+        <svg class="icon"><use href="#icon-shield"/></svg>
+        <span>${groupProtection ? '编辑分组保护' : '设置分组保护'}</span>
+      </button>`
+    const groupBalanceButton = view.synthetic ? '' : `
+      <button class="summary-button group-balance-alert-button" type="button" data-action="edit-group-balance-alert" data-group-key="${escapeAttr(view.key)}" title="设置当前分组默认余额告警阈值">
+        <svg class="icon"><use href="#icon-bell"/></svg>
+        <span>${Number.isFinite(groupBalanceThreshold) ? '编辑余额告警' : '设置余额告警'}</span>
       </button>`
     const detailButtons = [
       oauthAccounts.length ? renderDetailButton(view.key, 'oauth', `OAuth ${formatInteger(oauthAccounts.length)}`) : '',
@@ -309,7 +356,7 @@
               <div class="group-title-line">
                 <h2>${escapeHTML(view.group.name || `分组 ${view.group.id}`)}</h2>
                 <span class="platform-tag">${escapeHTML(view.group.platform || 'all')}</span>
-                ${groupStatus}
+                ${groupStatus}${groupProtectionBadge}${groupBalanceBadge}
               </div>
               <p>${escapeHTML(view.group.description || `#${view.group.id || 'ungrouped'}`)}</p>
             </div>
@@ -319,7 +366,7 @@
             <span>${formatInteger(apiKeys.length)} API Key</span>
             ${limited ? `<span class="text-warning">${formatInteger(limited)} 临时受限</span>` : ''}
           </div>
-          <div class="group-actions">${detailButtons}${bindButton}</div>
+          <div class="group-actions">${detailButtons}${groupBalanceButton}${groupProtectionButton}${bindButton}</div>
         </header>
         <div id="${escapeAttr(contentID)}" class="api-key-table" ${collapsed ? 'hidden' : ''}>
           <div class="api-key-header" aria-hidden="true"><span>账号状态</span><span>用量与管理员额度</span><span>检测规则与最终倍率</span><span>自动调度 / 操作</span></div>
@@ -350,8 +397,8 @@
       <button class="icon-button danger-tool" type="button" data-action="delete" title="删除检测配置" aria-label="删除检测配置" ${config.running ? 'disabled' : ''}><svg class="icon"><use href="#icon-trash"/></svg></button>` : `
       <button class="icon-button" type="button" data-action="create" title="配置状态检测" aria-label="配置状态检测"><svg class="icon"><use href="#icon-plus"/></svg></button>`
     const relationActions = groupID > 0 ? `<div class="binding-row-actions">
-      <button class="button secondary relation-button" type="button" data-action="edit-protection" ${protectionBusy ? 'disabled' : ''}>${protection ? '编辑保护倍率' : '设置保护倍率'}</button>
-      ${protection?.status === 'rate_protected' ? `<button class="button warning relation-button" type="button" data-action="release-protection" ${protectionBusy ? 'disabled' : ''}>解除倍率保护</button>` : ''}
+      <button class="button secondary relation-button" type="button" data-action="edit-protection" ${protectionBusy ? 'disabled' : ''}>${protection && !protection.inherited ? '编辑账号保护倍率' : '设置保护倍率（账号级）'}</button>
+      ${protection?.status === 'rate_protected' && !protection.inherited ? `<button class="button warning relation-button" type="button" data-action="release-protection" ${protectionBusy ? 'disabled' : ''}>解除倍率保护</button>` : ''}
       <button class="button danger relation-button" type="button" data-action="remove-binding" ${protectionBusy ? 'disabled' : ''}>移除绑定</button>
     </div>` : ''
     const latestText = latest ? `${statusLabel(latest.status)} · ${formatMilliseconds(latest.latency_ms)}` : '尚未检测'
@@ -364,7 +411,7 @@
           <div class="account-state ${escapeAttr(scheduling.tone)}"><i class="status-dot"></i><span><strong>${escapeHTML(scheduling.label)}</strong><small title="${escapeAttr(scheduling.reason)}">${escapeHTML(scheduling.reason)}</small></span></div>
         </div>
         <div class="usage-cell">${renderTodayUsage(account)}${renderDetectionStats(config)}${renderQuota(account)}</div>
-        <div class="policy-cell">${policyText}${renderFinalMultiplier(account, protection)}<span class="latest-check">${escapeHTML(latestText)} · ${escapeHTML(nextText)}</span></div>
+        <div class="policy-cell">${policyText}${renderBalanceAlertSummary(account, groupID)}${renderFinalMultiplier(account, protection)}<span class="latest-check">${escapeHTML(latestText)} · ${escapeHTML(nextText)}</span></div>
         <div class="row-actions">
           <div class="automation-control ${automation.busy ? 'busy' : ''}" title="${escapeAttr(automation.reason)}">
             <span class="automation-copy"><strong>自动调度</strong><small>${escapeHTML(automation.label)}</small></span>
@@ -496,8 +543,9 @@
       const label = protection?.last_error || labels[status] || '最终倍率未计算'
       finalBlock = `<div class="multiplier-item final-multiplier unavailable" title="${escapeAttr(label)}"><span class="data-label">最终倍率</span><strong>未计算</strong><span>${escapeHTML(label)}</span></div>`
     }
+    const protectionSource = protection?.inherited ? '分组默认' : '账号级保护'
     const protectionBlock = protection
-      ? `<div class="multiplier-item protection-multiplier ${protection.status === 'rate_protected' ? 'exceeded' : ['multiplier_unavailable', 'rebind_pending'].includes(protection.status) ? 'unavailable' : ''}"><span class="data-label">保护倍率</span><strong>${escapeHTML(formatMultiplier(protection.protection_multiplier))}x</strong><span>${protection.status === 'rate_protected' ? '已触发保护' : protection.status === 'multiplier_unavailable' ? '等待有效倍率' : protection.status === 'rebind_pending' ? '等待自动回绑' : '保护中'}</span></div>`
+      ? `<div class="multiplier-item protection-multiplier ${protection.status === 'rate_protected' ? 'exceeded' : ['multiplier_unavailable', 'rebind_pending'].includes(protection.status) ? 'unavailable' : ''}"><span class="data-label">保护倍率 · ${escapeHTML(protectionSource)}</span><strong>${escapeHTML(formatMultiplier(protection.protection_multiplier))}x</strong><span>${protection.status === 'rate_protected' ? '已触发保护' : protection.status === 'multiplier_unavailable' ? '最终倍率不可用，保护不生效' : protection.status === 'rebind_pending' ? '等待自动回绑' : '保护中'}</span></div>`
       : '<div class="multiplier-item protection-multiplier unset"><span class="data-label">保护倍率</span><strong>未设置</strong><span>沿用原绑定逻辑</span></div>'
     return `<div class="multiplier-pair">${finalBlock}${protectionBlock}</div>`
   }
@@ -596,6 +644,33 @@
     return account.group_protections?.[String(groupID)] || null
   }
 
+  function groupProtectionFor(groupID) {
+    if (!groupID) return null
+    return state.groupProtectionDefaults?.[String(groupID)] || state.groupProtectionDefaults?.[groupID] || null
+  }
+
+  function groupBalanceThresholdFor(groupID) {
+    if (!groupID) return NaN
+    const value = Number(state.groupBalanceThresholds?.[String(groupID)] ?? state.groupBalanceThresholds?.[groupID])
+    return Number.isFinite(value) && value >= 0 ? value : NaN
+  }
+
+  function effectiveBalanceThreshold(account, groupID) {
+    const accountValue = Number(account?.config?.balance_alert_threshold)
+    if (Number.isFinite(accountValue) && accountValue >= 0) return { value: accountValue, source: '账号级' }
+    const groupValue = groupBalanceThresholdFor(groupID)
+    if (Number.isFinite(groupValue)) return { value: groupValue, source: '分组默认' }
+    return null
+  }
+
+  function renderBalanceAlertSummary(account, groupID) {
+    const threshold = effectiveBalanceThreshold(account, groupID)
+    if (!threshold) {
+      return '<div class="balance-alert-summary unset"><span class="data-label">余额告警</span><strong>未设置</strong><span>不会推送余额阈值告警</span></div>'
+    }
+    return `<div class="balance-alert-summary"><span class="data-label">余额告警 · ${escapeHTML(threshold.source)}</span><strong>低于 ${escapeHTML(formatCurrency(threshold.value))}</strong><span>恢复后才会再次触发</span></div>`
+  }
+
   function membershipIDs(account) {
     const source = Array.isArray(account.logical_group_ids) ? account.logical_group_ids : account.group_ids
     return [...new Set((source || []).map(Number).filter((id) => Number.isInteger(id) && id > 0))]
@@ -615,6 +690,14 @@
     }
     if (action === 'bind-group') {
       openBindingDialog(Number(button.dataset.groupKey), button)
+      return
+    }
+    if (action === 'edit-group-protection') {
+      openGroupProtectionDialog(Number(button.dataset.groupKey))
+      return
+    }
+    if (action === 'edit-group-balance-alert') {
+      openGroupBalanceAlertDialog(Number(button.dataset.groupKey))
       return
     }
     if (action === 'open-detail') {
@@ -699,7 +782,7 @@
     if (preselectedID && available.some((account) => account.id === preselectedID)) {
       elements.accountSelect.value = String(preselectedID)
     }
-    fillPolicyForm(state.defaultPolicy)
+    fillPolicyForm(state.defaultPolicy, null)
     elements.formError.hidden = true
     renderDirectProbeControl(null)
     elements.saveButton.disabled = available.length === 0
@@ -714,14 +797,14 @@
     elements.accountSelect.innerHTML = accountOption(account)
     elements.accountSelect.value = String(account.id)
     elements.accountSelect.disabled = true
-    fillPolicyForm(config.policy)
+    fillPolicyForm(config.policy, config.balance_alert_threshold)
     elements.formError.hidden = true
     renderDirectProbeControl(config.probe || null)
     elements.saveButton.disabled = false
     elements.configDialog.showModal()
   }
 
-  function fillPolicyForm(policy) {
+  function fillPolicyForm(policy, balanceThreshold = null) {
     const normalized = policy || state.defaultPolicy
     elements.intervalInput.value = normalized.interval_seconds
     elements.modelInput.value = normalized.model || ''
@@ -729,6 +812,7 @@
     elements.failureInput.value = normalized.failure_threshold
     elements.recoveryInput.value = normalized.recovery_threshold
     elements.enabledInput.checked = Boolean(normalized.enabled)
+    elements.balanceAlertInput.value = Number.isFinite(Number(balanceThreshold)) && balanceThreshold !== null ? String(balanceThreshold) : ''
     elements.promptInput.value = normalized.prompt || ''
   }
 
@@ -829,6 +913,14 @@
         method: state.editingID ? 'PUT' : 'POST',
         body: payload,
       })
+      const thresholdRaw = elements.balanceAlertInput.value.trim()
+      if (thresholdRaw) {
+        const threshold = Number(thresholdRaw)
+        if (!Number.isFinite(threshold) || threshold < 0) throw new Error('余额告警阈值必须是大于等于 0 的有限数值')
+        await api(`/api/configs/${accountID}/balance-alert`, { method: 'PUT', body: { threshold } })
+      } else if (state.editingID && findAccount(accountID)?.config?.balance_alert_threshold !== undefined) {
+        await api(`/api/configs/${accountID}/balance-alert`, { method: 'DELETE' })
+      }
       elements.configDialog.close()
       showToast(state.editingID ? '检测规则已更新' : '状态检测已添加')
       await loadOverview(true)
@@ -894,13 +986,27 @@
     const protection = protectionFor(account, groupID)
     state.protectionTarget = { accountID: account.id, groupID }
     elements.protectionAccountName.textContent = `${account.name || `账号 ${account.id}`} · 分组 #${groupID}`
-    elements.protectionMultiplierInput.value = protection ? String(protection.protection_multiplier) : ''
+    elements.protectionMultiplierInput.value = protection && !protection.inherited ? String(protection.protection_multiplier) : ''
     const finalMultiplier = Number(protection?.final_multiplier ?? account.upstream_final_multiplier?.final_multiplier)
     elements.protectionFinalPreview.textContent = Number.isFinite(finalMultiplier) ? `${formatMultiplier(finalMultiplier)}x` : '暂不可用'
     elements.protectionError.hidden = true
     elements.protectionSaveButton.disabled = false
     elements.protectionDialog.showModal()
     window.requestAnimationFrame(() => elements.protectionMultiplierInput.focus())
+  }
+
+  function openGroupProtectionDialog(groupID) {
+    const group = state.groups.find((item) => item.id === groupID)
+    if (!group || groupID <= 0) return
+    const protection = groupProtectionFor(groupID)
+    state.groupProtectionTarget = { groupID }
+    elements.groupProtectionName.textContent = `${group.name || `分组 ${groupID}`} · ${group.platform || 'all'}`
+    elements.groupProtectionMultiplierInput.value = protection ? String(protection.protection_multiplier) : ''
+    elements.groupProtectionClearButton.hidden = !protection
+    elements.groupProtectionError.hidden = true
+    elements.groupProtectionSaveButton.disabled = false
+    elements.groupProtectionDialog.showModal()
+    window.requestAnimationFrame(() => elements.groupProtectionMultiplierInput.focus())
   }
 
   async function saveProtection(event) {
@@ -941,6 +1047,271 @@
     }
   }
 
+  async function saveGroupProtection(event) {
+    event.preventDefault()
+    if (!elements.groupProtectionForm.reportValidity() || !state.groupProtectionTarget) return
+    const multiplier = Number(elements.groupProtectionMultiplierInput.value)
+    if (!Number.isFinite(multiplier) || multiplier < 0) {
+      elements.groupProtectionError.textContent = '保护倍率必须是大于等于 0 的有限数值'
+      elements.groupProtectionError.hidden = false
+      return
+    }
+    const { groupID } = state.groupProtectionTarget
+    elements.groupProtectionDialog.dataset.busy = 'true'
+    document.querySelectorAll('[data-close-dialog="group-protection-dialog"]').forEach((button) => { button.disabled = true })
+    elements.groupProtectionSaveButton.disabled = true
+    elements.groupProtectionClearButton.disabled = true
+    elements.groupProtectionSaveButton.textContent = '保存中…'
+    elements.groupProtectionError.hidden = true
+    try {
+      await api(`/api/groups/${groupID}/protection-default`, { method: 'PUT', body: { protection_multiplier: multiplier } })
+      elements.groupProtectionDialog.close()
+      showToast('分组默认保护倍率已保存，侧车已立即检查账号绑定状态')
+      await loadOverview(true)
+    } catch (error) {
+      elements.groupProtectionError.textContent = error.message || '分组保护倍率保存失败'
+      elements.groupProtectionError.hidden = false
+    } finally {
+      elements.groupProtectionDialog.dataset.busy = 'false'
+      document.querySelectorAll('[data-close-dialog="group-protection-dialog"]').forEach((button) => { button.disabled = false })
+      elements.groupProtectionSaveButton.disabled = false
+      elements.groupProtectionClearButton.disabled = false
+      elements.groupProtectionSaveButton.textContent = '保存分组保护'
+      render()
+    }
+  }
+
+  async function clearGroupProtection() {
+    if (!state.groupProtectionTarget || elements.groupProtectionDialog.dataset.busy === 'true') return
+    const { groupID } = state.groupProtectionTarget
+    if (!window.confirm('清除分组保护后，继承该规则的账号将不再自动解绑；已被保护解绑的账号会尝试恢复绑定。')) return
+    elements.groupProtectionDialog.dataset.busy = 'true'
+    document.querySelectorAll('[data-close-dialog="group-protection-dialog"]').forEach((button) => { button.disabled = true })
+    elements.groupProtectionSaveButton.disabled = true
+    elements.groupProtectionClearButton.disabled = true
+    elements.groupProtectionError.hidden = true
+    elements.groupProtectionClearButton.textContent = '清除中…'
+    try {
+      await api(`/api/groups/${groupID}/protection-default`, { method: 'DELETE' })
+      elements.groupProtectionDialog.close()
+      showToast('分组保护已清除')
+      await loadOverview(true)
+    } catch (error) {
+      elements.groupProtectionError.textContent = error.message || '分组保护清除失败'
+      elements.groupProtectionError.hidden = false
+    } finally {
+      elements.groupProtectionDialog.dataset.busy = 'false'
+      document.querySelectorAll('[data-close-dialog="group-protection-dialog"]').forEach((button) => { button.disabled = false })
+      elements.groupProtectionSaveButton.disabled = false
+      elements.groupProtectionClearButton.disabled = false
+      elements.groupProtectionClearButton.textContent = '清除分组保护'
+      render()
+    }
+  }
+
+  function openGroupBalanceAlertDialog(groupID) {
+    const group = state.groups.find((item) => item.id === groupID)
+    if (!group || groupID <= 0) return
+    const threshold = groupBalanceThresholdFor(groupID)
+    state.groupBalanceAlertTarget = { groupID }
+    elements.groupBalanceAlertName.textContent = `${group.name || `分组 ${groupID}`} · ${group.platform || 'all'}`
+    elements.groupBalanceAlertInput.value = Number.isFinite(threshold) ? String(threshold) : ''
+    elements.groupBalanceAlertClearButton.hidden = !Number.isFinite(threshold)
+    elements.groupBalanceAlertError.hidden = true
+    elements.groupBalanceAlertDialog.showModal()
+    window.requestAnimationFrame(() => elements.groupBalanceAlertInput.focus())
+  }
+
+  async function saveGroupBalanceAlert(event) {
+    event.preventDefault()
+    if (!elements.groupBalanceAlertForm.reportValidity() || !state.groupBalanceAlertTarget) return
+    const threshold = Number(elements.groupBalanceAlertInput.value)
+    if (!Number.isFinite(threshold) || threshold < 0) {
+      elements.groupBalanceAlertError.textContent = '余额告警阈值必须是大于等于 0 的有限数值'
+      elements.groupBalanceAlertError.hidden = false
+      return
+    }
+    const { groupID } = state.groupBalanceAlertTarget
+    setGroupBalanceAlertBusy(true, '保存中…')
+    try {
+      await api(`/api/groups/${groupID}/balance-alert`, { method: 'PUT', body: { threshold } })
+      elements.groupBalanceAlertDialog.close()
+      showToast('分组余额告警阈值已保存')
+      await loadOverview(true)
+    } catch (error) {
+      elements.groupBalanceAlertError.textContent = error.message || '分组余额告警保存失败'
+      elements.groupBalanceAlertError.hidden = false
+    } finally {
+      setGroupBalanceAlertBusy(false, '保存余额告警')
+    }
+  }
+
+  async function clearGroupBalanceAlert() {
+    if (!state.groupBalanceAlertTarget || elements.groupBalanceAlertDialog.dataset.busy === 'true') return
+    if (!window.confirm('清除后，没有账号级阈值的账号将不再继承此分组余额告警。')) return
+    const { groupID } = state.groupBalanceAlertTarget
+    setGroupBalanceAlertBusy(true, '清除中…')
+    try {
+      await api(`/api/groups/${groupID}/balance-alert`, { method: 'DELETE' })
+      elements.groupBalanceAlertDialog.close()
+      showToast('分组余额告警已清除')
+      await loadOverview(true)
+    } catch (error) {
+      elements.groupBalanceAlertError.textContent = error.message || '清除分组余额告警失败'
+      elements.groupBalanceAlertError.hidden = false
+    } finally {
+      setGroupBalanceAlertBusy(false, '保存余额告警')
+    }
+  }
+
+  function setGroupBalanceAlertBusy(busy, label) {
+    elements.groupBalanceAlertDialog.dataset.busy = busy ? 'true' : 'false'
+    elements.groupBalanceAlertSaveButton.disabled = busy
+    elements.groupBalanceAlertClearButton.disabled = busy
+    elements.groupBalanceAlertInput.disabled = busy
+    document.querySelectorAll('[data-close-dialog="group-balance-alert-dialog"]').forEach((button) => { button.disabled = busy })
+    elements.groupBalanceAlertSaveButton.textContent = label
+  }
+
+  async function openNotificationSettings() {
+    if (!state.notificationsAvailable || state.notificationBusy) return
+    state.notificationBusy = true
+    elements.notificationSettingsDialog.showModal()
+    elements.notificationSettingsError.hidden = true
+    setNotificationBusy(true, '读取中…')
+    try {
+      const response = await api('/api/notifications')
+      state.notificationSettings = response.settings || null
+      fillNotificationSettings(state.notificationSettings)
+    } catch (error) {
+      elements.notificationSettingsError.textContent = error.message || '读取通知配置失败'
+      elements.notificationSettingsError.hidden = false
+    } finally {
+      state.notificationBusy = false
+      setNotificationBusy(false, '保存通知设置')
+    }
+  }
+
+  function fillNotificationSettings(settings) {
+    const configured = Boolean(settings?.configured)
+    elements.notificationEnabledInput.checked = Boolean(settings?.enabled)
+    elements.notificationEndpointInput.value = settings?.bark_endpoint || 'https://bark.aixw.org'
+    elements.notificationBasicUserInput.value = settings?.bark_basic_auth_user || ''
+    elements.notificationDeviceKeyInput.value = ''
+    elements.notificationEncryptionKeyInput.value = ''
+    elements.notificationBasicPasswordInput.value = ''
+    elements.notificationDeviceKeyInput.placeholder = configured ? '已加密保存，留空不修改' : 'Bark 设备 Key'
+    elements.notificationEncryptionKeyInput.placeholder = configured ? '已加密保存，留空不修改' : '16 个 ASCII 字符'
+    elements.notificationBasicPasswordInput.placeholder = configured ? '已加密保存，留空不修改' : '可选'
+    elements.notificationClearButton.hidden = !configured
+    elements.notificationTestButton.disabled = !configured || !settings?.enabled
+    const statusClass = settings?.last_delivery_error ? 'danger' : configured ? 'success' : 'neutral'
+    const statusTitle = settings?.last_delivery_error ? '最近推送失败' : configured ? (settings.enabled ? 'Bark 通知已启用' : 'Bark 配置已保存但未启用') : '尚未配置 Bark'
+    const statusDetail = settings?.last_delivery_error || (settings?.last_delivery_at ? `最近发送：${formatDateTime(settings.last_delivery_at)}` : '保存后可发送加密测试通知')
+    elements.notificationSettingsStatus.className = `notification-status full-width ${statusClass}`
+    elements.notificationSettingsStatus.innerHTML = `<strong>${escapeHTML(statusTitle)}</strong><span>${escapeHTML(statusDetail)}</span>`
+  }
+
+  async function saveNotificationSettings(event) {
+    event.preventDefault()
+    if (!elements.notificationSettingsForm.reportValidity() || state.notificationBusy) return
+    const configured = Boolean(state.notificationSettings?.configured)
+    const deviceKey = elements.notificationDeviceKeyInput.value.trim()
+    const encryptionKey = elements.notificationEncryptionKeyInput.value
+    if (!configured && !deviceKey) {
+      elements.notificationSettingsError.textContent = '首次配置必须填写 Bark 设备 Key'
+      elements.notificationSettingsError.hidden = false
+      elements.notificationDeviceKeyInput.focus()
+      return
+    }
+    if (!configured && !encryptionKey) {
+      elements.notificationSettingsError.textContent = '首次配置必须填写 16 字节推送加密 Key'
+      elements.notificationSettingsError.hidden = false
+      elements.notificationEncryptionKeyInput.focus()
+      return
+    }
+    if (encryptionKey && new TextEncoder().encode(encryptionKey).length !== 16) {
+      elements.notificationSettingsError.textContent = '推送加密 Key 必须正好是 16 字节，建议使用 16 个 ASCII 字符'
+      elements.notificationSettingsError.hidden = false
+      elements.notificationEncryptionKeyInput.focus()
+      return
+    }
+    state.notificationBusy = true
+    setNotificationBusy(true, '保存中…')
+    elements.notificationSettingsError.hidden = true
+    try {
+      const response = await api('/api/notifications', {
+        method: 'PUT',
+        body: {
+          enabled: elements.notificationEnabledInput.checked,
+          bark_endpoint: elements.notificationEndpointInput.value.trim(),
+          bark_basic_auth_user: elements.notificationBasicUserInput.value.trim(),
+          device_key: deviceKey,
+          encryption_key: encryptionKey,
+          basic_auth_password: elements.notificationBasicPasswordInput.value,
+        },
+      })
+      state.notificationSettings = response.settings || null
+      fillNotificationSettings(state.notificationSettings)
+      showToast('Bark 通知设置已保存')
+    } catch (error) {
+      elements.notificationSettingsError.textContent = error.message || '保存 Bark 通知设置失败'
+      elements.notificationSettingsError.hidden = false
+    } finally {
+      state.notificationBusy = false
+      setNotificationBusy(false, '保存通知设置')
+    }
+  }
+
+  async function testNotificationSettings() {
+    if (state.notificationBusy || !state.notificationSettings?.configured) return
+    state.notificationBusy = true
+    setNotificationBusy(true, '测试中…')
+    elements.notificationSettingsError.hidden = true
+    try {
+      await api('/api/notifications/test', { method: 'POST', body: {} })
+      showToast('测试通知已发送，请检查 Bark App')
+      const response = await api('/api/notifications')
+      state.notificationSettings = response.settings || state.notificationSettings
+      fillNotificationSettings(state.notificationSettings)
+    } catch (error) {
+      elements.notificationSettingsError.textContent = error.message || '测试通知发送失败'
+      elements.notificationSettingsError.hidden = false
+    } finally {
+      state.notificationBusy = false
+      setNotificationBusy(false, '保存通知设置')
+    }
+  }
+
+  async function clearNotificationSettings() {
+    if (state.notificationBusy || !state.notificationSettings?.configured) return
+    if (!window.confirm('清除后将删除 Bark 设备 Key、加密 Key 与 Basic Auth 密码；分组和账号阈值会保留。')) return
+    state.notificationBusy = true
+    setNotificationBusy(true, '清除中…')
+    try {
+      await api('/api/notifications', { method: 'DELETE' })
+      state.notificationSettings = null
+      fillNotificationSettings(null)
+      showToast('Bark 通知配置已清除')
+    } catch (error) {
+      elements.notificationSettingsError.textContent = error.message || '清除 Bark 通知设置失败'
+      elements.notificationSettingsError.hidden = false
+    } finally {
+      state.notificationBusy = false
+      setNotificationBusy(false, '保存通知设置')
+    }
+  }
+
+  function setNotificationBusy(busy, label) {
+    elements.notificationSettingsDialog.dataset.busy = busy ? 'true' : 'false'
+    elements.notificationSaveButton.disabled = busy
+    elements.notificationTestButton.disabled = busy || !state.notificationSettings?.configured || !state.notificationSettings?.enabled
+    elements.notificationClearButton.disabled = busy
+    for (const input of elements.notificationSettingsForm.querySelectorAll('input')) input.disabled = busy
+    document.querySelectorAll('[data-close-dialog="notification-settings-dialog"]').forEach((button) => { button.disabled = busy })
+    elements.notificationSaveButton.textContent = label
+  }
+
   function openBindingActionDialog(type, account, groupID) {
     if (!account || !groupID) return
     state.bindingAction = { type, accountID: account.id, groupID }
@@ -948,7 +1319,9 @@
     elements.bindingActionError.hidden = true
     if (type === 'release') {
       elements.bindingActionTitle.textContent = '解除倍率保护'
-      elements.bindingActionMessage.textContent = '确认后会先把账号重新绑定到当前分组，再移除保护倍率。即使当前最终倍率仍然较高，也不会再自动解除该绑定。'
+      elements.bindingActionMessage.textContent = groupProtectionFor(groupID)
+        ? '确认后会先把账号重新绑定到当前分组，再移除账号级保护倍率。该账号随后会继承分组默认保护；若最终倍率仍超过分组阈值，之后可能再次自动解绑。'
+        : '确认后会先把账号重新绑定到当前分组，再移除保护倍率。即使当前最终倍率仍然较高，也不会再自动解除该绑定。'
       elements.bindingActionConfirmButton.textContent = '确认解除保护'
       elements.bindingActionConfirmButton.className = 'button warning'
     } else {
