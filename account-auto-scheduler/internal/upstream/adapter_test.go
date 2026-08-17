@@ -166,6 +166,8 @@ func TestSub2APIAdapterKeepsManagementRequestsOnOneOrigin(t *testing.T) {
 	managementServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls = append(calls, r.URL.Path)
 		switch r.URL.Path {
+		case "/api/v1/auth/credential-key":
+			http.NotFound(w, r)
 		case "/api/v1/auth/login":
 			writeTestJSON(t, w, http.StatusOK, map[string]any{"code": 0, "data": map[string]any{
 				"access_token": "site-access", "user": map[string]any{"id": 7, "email": "operator@example.com"},
@@ -250,7 +252,14 @@ func TestSub2APIAdapterReportsCaptchaAndTwoFactor(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				writeTestJSON(t, w, http.StatusOK, test.response)
+				switch r.URL.Path {
+				case "/api/v1/auth/credential-key":
+					http.NotFound(w, r)
+				case "/api/v1/auth/login":
+					writeTestJSON(t, w, http.StatusOK, test.response)
+				default:
+					http.NotFound(w, r)
+				}
 			}))
 			defer server.Close()
 			_, err := (sub2APIAdapter{}).Connect(context.Background(), server.URL, LoginInput{Mode: "password", Username: "user", Password: "secret"})

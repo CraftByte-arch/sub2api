@@ -588,6 +588,8 @@ func TestManagerConnectPersistsIdentityBalance(t *testing.T) {
 func TestManagerConnectUsesManagementSiteForAllManagementOperations(t *testing.T) {
 	managementServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/api/v1/auth/credential-key":
+			http.NotFound(w, r)
 		case "/api/v1/auth/login":
 			writeTestJSON(t, w, http.StatusOK, map[string]any{"code": 0, "data": map[string]any{
 				"access_token": "site-access", "user": map[string]any{"id": 7, "email": "operator@example.com"},
@@ -690,6 +692,10 @@ func TestManagerFailedLoginDoesNotReplaceSavedManagementSite(t *testing.T) {
 	}))
 	defer apiServer.Close()
 	failingLoginServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/auth/credential-key" {
+			http.NotFound(w, r)
+			return
+		}
 		if r.URL.Path != "/api/v1/auth/login" {
 			t.Fatalf("unexpected login route %s", r.URL.Path)
 		}

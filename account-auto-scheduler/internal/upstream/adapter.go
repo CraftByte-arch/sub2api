@@ -420,6 +420,8 @@ func classifyLoginError(statusCode int, raw []byte) *AdapterError {
 	code, message := safeRemoteMessage(raw)
 	combined := strings.ToLower(code + " " + message)
 	switch {
+	case strings.Contains(combined, "browser credential flow"), strings.Contains(combined, "credential_envelope"), strings.Contains(combined, "credential envelope"), strings.Contains(combined, "加密凭据"):
+		return adapterError("UPSTREAM_CREDENTIAL_FLOW_REQUIRED", "上游要求加密凭据登录，请刷新验证码后重试", model.IdentityStatusSyncError, http.StatusConflict)
 	case strings.Contains(combined, "captcha"), strings.Contains(combined, "turnstile"), strings.Contains(combined, "人机"):
 		return adapterError("CAPTCHA_REQUIRED", "上游要求完成人机验证，请在上游登录后手动粘贴 Token", model.IdentityStatusCaptcha, http.StatusConflict)
 	case strings.Contains(combined, "2fa"), strings.Contains(combined, "totp"), strings.Contains(combined, "two-factor"), strings.Contains(combined, "two factor"):

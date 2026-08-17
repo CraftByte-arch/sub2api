@@ -227,7 +227,7 @@ func sub2APILoginMaterial(ctx context.Context, client *remoteClient, input Login
 		if email == "" || input.Password == "" {
 			return AuthMaterial{}, "", adapterError("INVALID_CREDENTIALS", "请输入上游账号和密码", model.IdentityStatusInvalid, http.StatusBadRequest)
 		}
-		payload := map[string]string{"email": email, "password": input.Password}
+		payload := make(map[string]any)
 		challengeMaterial := AuthMaterial{}
 		if strings.TrimSpace(input.CaptchaID) != "" || strings.TrimSpace(input.CaptchaCode) != "" || strings.TrimSpace(input.ChallengeCookie) != "" {
 			captchaID, err := normalizeCaptchaID(input.CaptchaID)
@@ -246,7 +246,23 @@ func sub2APILoginMaterial(ctx context.Context, client *remoteClient, input Login
 			payload["captcha_code"] = captchaCode
 			challengeMaterial.Cookie = challengeCookie
 		}
-		response, err := client.do(ctx, http.MethodPost, "/api/v1/auth/login", payload, challengeMaterial)
+		flow, secureFlow, err := discoverSub2APICredentialFlow(ctx, client, challengeMaterial, time.Now().UTC())
+		if err != nil {
+			return AuthMaterial{}, "", err
+		}
+		requestMaterial := challengeMaterial
+		if secureFlow {
+			envelope, err := buildSub2APICredentialEnvelope(flow, email, input.Password, time.Now().UTC(), nil)
+			if err != nil {
+				return AuthMaterial{}, "", err
+			}
+			payload["credential_envelope"] = envelope
+			requestMaterial.Cookie = mergeCookieMaterial(requestMaterial.Cookie, flow.Cookie)
+		} else {
+			payload["email"] = email
+			payload["password"] = input.Password
+		}
+		response, err := client.do(ctx, http.MethodPost, "/api/v1/auth/login", payload, requestMaterial)
 		if err != nil {
 			return AuthMaterial{}, "", adapterError("UPSTREAM_NETWORK_ERROR", "无法连接 Sub2API 登录接口", model.IdentityStatusNetworkError, http.StatusBadGateway)
 		}
@@ -263,10 +279,14 @@ func sub2APILoginMaterial(ctx context.Context, client *remoteClient, input Login
 		if login.Requires2FA || login.TempToken != "" {
 			return AuthMaterial{}, "", adapterError("TWO_FACTOR_REQUIRED", "上游要求两步验证，请在上游完成登录后手动粘贴 Token", model.IdentityStatusTwoFactor, http.StatusConflict)
 		}
+		persistentCookie := mergeCookieMaterial(challengeMaterial.Cookie, joinResponseCookies(response.Header))
+		if secureFlow {
+			persistentCookie = removeCookieMaterial(persistentCookie, flow.CookieNames...)
+		}
 		material := AuthMaterial{
 			AccessToken:  strings.TrimSpace(login.AccessToken),
 			RefreshToken: strings.TrimSpace(login.RefreshToken),
-			Cookie:       mergeCookieMaterial(challengeMaterial.Cookie, joinResponseCookies(response.Header)),
+			Cookie:       persistentCookie,
 			UserID:       strconv.FormatInt(login.User.ID, 10),
 		}
 		if material.Empty() {
