@@ -17,4 +17,4 @@
 ## 4. Validation and release
 
 - [x] 4.1 Run formatting, Go unit/race/vet checks, JavaScript syntax checks, diff checks, and strict OpenSpec validation.
-- [ ] 4.2 Commit only this change and deploy the committed sidecar image to HC2 with checksum verification and post-deploy container/route health checks.
+- [x] 4.2 Commit only this change and deploy the committed sidecar image to HC2 with checksum verification and post-deploy container/route health checks.
