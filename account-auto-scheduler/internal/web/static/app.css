@@ -403,6 +403,9 @@ button:disabled, input:disabled, select:disabled { cursor: not-allowed; opacity:
 .band-label { color: var(--text-muted); font-size: 10px; font-weight: 700; }
 .section-count { color: var(--text-secondary); font-size: inherit; font-variant-numeric: tabular-nums; }
 .local-account-list { min-width: 0; display: flex; align-items: center; flex-wrap: wrap; gap: 5px; }
+.local-account-empty { width: 100%; min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.local-account-empty .muted { min-width: 0; overflow-wrap: anywhere; }
+.local-account-empty .button { flex: none; min-height: 34px; }
 .local-account-chip { min-height: 24px; padding: 2px 7px; display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--border); border-radius: 5px; background: var(--surface); color: var(--text-secondary); font-size: 10px; }
 .local-account-chip strong { color: var(--text); font-weight: 600; }
 .identity-section-header { min-height: 52px; padding: 10px 14px; display: flex; align-items: center; justify-content: space-between; gap: 10px; background: var(--surface); }
@@ -610,6 +613,8 @@ button:disabled, input:disabled, select:disabled { cursor: not-allowed; opacity:
   .upstream-row-actions { flex-wrap: wrap; }
   .upstream-row-actions .button { min-height: 44px; }
   .local-account-band { grid-template-columns: minmax(0, 1fr); gap: 5px; padding: 10px; }
+  .local-account-empty { align-items: flex-start; flex-direction: column; }
+  .local-account-empty .button { min-height: 44px; }
   .identity-section-header, .identity-key-heading { padding-right: 10px; padding-left: 10px; }
   .identity-key-heading { align-items: flex-start; flex-direction: column; justify-content: center; gap: 1px; }
   .identity-key-heading > span { text-align: left; }

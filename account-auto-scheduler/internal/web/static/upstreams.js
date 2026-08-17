@@ -45,6 +45,8 @@
       deleteTrigger: null,
       deleteUpstreamID: '',
       deleteIdentityID: '',
+      deleteUpstreamTrigger: null,
+      deleteRecordUpstreamID: '',
     }
 
     const elements = cacheElements()
@@ -84,6 +86,7 @@
         'upstream-binding-count', 'upstream-auto-match-button', 'upstream-step-up-notice', 'upstream-binding-list',
         'upstream-binding-error', 'upstream-binding-save-button', 'upstream-delete-identity-dialog',
         'upstream-delete-identity-name', 'upstream-delete-identity-button', 'upstream-recharge-dialog',
+        'upstream-delete-dialog', 'upstream-delete-name', 'upstream-delete-button',
         'upstream-recharge-form', 'upstream-recharge-name', 'upstream-recharge-prefix', 'upstream-recharge-value',
         'upstream-recharge-suffix', 'upstream-recharge-preview', 'upstream-recharge-formula', 'upstream-recharge-error',
         'upstream-recharge-clear-button', 'upstream-recharge-save-button'
@@ -128,6 +131,7 @@
       elements.upstreamBindingSaveButton.addEventListener('click', saveBindings)
       elements.upstreamAutoMatchButton.addEventListener('click', autoMatch)
       elements.upstreamDeleteIdentityButton.addEventListener('click', deleteIdentity)
+      elements.upstreamDeleteButton.addEventListener('click', deleteUpstream)
       elements.upstreamCreateDialog.addEventListener('close', () => restoreFocus('create'))
       elements.upstreamConnectDialog.addEventListener('close', () => {
         clearConnectChallenge()
@@ -136,7 +140,8 @@
       elements.upstreamRechargeDialog.addEventListener('close', () => restoreFocus('recharge'))
       elements.upstreamBindingDialog.addEventListener('close', () => restoreFocus('binding'))
       elements.upstreamDeleteIdentityDialog.addEventListener('close', () => restoreFocus('delete'))
-      for (const dialog of [elements.upstreamCreateDialog, elements.upstreamConnectDialog, elements.upstreamRechargeDialog, elements.upstreamBindingDialog, elements.upstreamDeleteIdentityDialog]) {
+      elements.upstreamDeleteDialog.addEventListener('close', () => restoreFocus('deleteUpstream'))
+      for (const dialog of [elements.upstreamCreateDialog, elements.upstreamConnectDialog, elements.upstreamRechargeDialog, elements.upstreamBindingDialog, elements.upstreamDeleteIdentityDialog, elements.upstreamDeleteDialog]) {
         dialog.addEventListener('cancel', (event) => {
           if (dialog.dataset.busy === 'true') event.preventDefault()
         })
@@ -216,6 +221,7 @@
       const rowBusy = state.busy.has(`upstream:${upstream.id}`)
       const connectLabel = identities.length ? '添加身份' : '登录'
       const connectTitle = identities.length ? '添加登录身份' : '登录上游'
+      const canDelete = upstream.persisted === true && localAccounts.length === 0
       return `<article class="upstream-row ${expanded ? 'expanded' : ''}" data-upstream-id="${escapeAttr(upstream.id)}">
         <header class="upstream-row-header">
           <div class="upstream-heading">
@@ -246,19 +252,19 @@
           </div>
         </header>
         <div id="${escapeAttr(contentID)}" class="upstream-detail" ${expanded ? '' : 'hidden'}>
-          ${renderLocalAccounts(localAccounts)}
+          ${renderLocalAccounts(upstream, localAccounts, canDelete)}
           <div class="identity-section-header"><div><h3>登录身份 <span class="section-count">${formatInteger(identities.length)}</span></h3><span>${identities.length ? `共 ${formatInteger(keys)} 个上游 Key 快照` : '尚未添加登录身份'}</span></div></div>
           ${identities.length ? identities.map((identity) => renderIdentity(upstream, identity)).join('') : '<div class="identity-empty">点击“登录”添加账号密码、Token 或 Cookie/session 身份</div>'}
         </div>
       </article>`
     }
 
-    function renderLocalAccounts(accounts) {
+    function renderLocalAccounts(upstream, accounts, canDelete) {
       const content = accounts.length ? accounts.map((account) => {
         const active = account.status === 'active' && account.schedulable
         const label = account.status !== 'active' ? '账号停用' : (account.schedulable ? '调度启用' : '调度停止')
         return `<span class="local-account-chip"><i class="status-dot ${active ? 'success' : 'neutral'}"></i><strong>${escapeHTML(account.name || `账号 ${account.id}`)}</strong><span>#${account.id} · ${escapeHTML(label)}</span></span>`
-      }).join('') : '<span class="muted">没有使用该地址的本地 API Key 账号</span>'
+      }).join('') : `<span class="local-account-empty"><span class="muted">没有使用该地址的本地 API Key 账号</span>${canDelete ? `<button class="button danger compact" type="button" data-upstream-action="delete-upstream" title="删除未使用的上游" aria-label="删除上游 ${escapeAttr(upstream.name || upstream.base_url)}"><svg class="icon"><use href="#icon-trash"/></svg><span>删除上游</span></button>` : ''}</span>`
       return `<div class="local-account-band"><span class="band-label">关联本地账号 <b class="section-count">${formatInteger(accounts.length)}</b></span><div class="local-account-list">${content}</div></div>`
     }
 
@@ -323,6 +329,7 @@
         case 'sync-identity': await syncIdentity(upstream.id, identityID); break
         case 'bind': openBindings(upstream, button); break
         case 'delete-identity': openDeleteIdentity(upstream, findIdentity(upstream, identityID), button); break
+        case 'delete-upstream': openDeleteUpstream(upstream, button); break
       }
     }
 
@@ -917,6 +924,38 @@
       }
     }
 
+    function openDeleteUpstream(upstream, trigger) {
+      if (!upstream?.persisted || (upstream.local_accounts || []).length !== 0) return
+      state.deleteUpstreamTrigger = trigger
+      state.deleteRecordUpstreamID = upstream.id
+      elements.upstreamDeleteName.textContent = `${upstream.name || upstream.base_url} · ${upstream.base_url}`
+      elements.upstreamDeleteDialog.showModal()
+      window.requestAnimationFrame(() => elements.upstreamDeleteButton.focus())
+    }
+
+    async function deleteUpstream() {
+      const upstreamID = state.deleteRecordUpstreamID
+      if (!upstreamID || elements.upstreamDeleteDialog.dataset.busy === 'true') return
+      setDialogBusy(elements.upstreamDeleteDialog, elements.upstreamDeleteButton, true, '删除中')
+      try {
+        await api(`/api/upstreams/${encodeURIComponent(upstreamID)}`, { method: 'DELETE' })
+        state.expanded.delete(upstreamID)
+        persistExpanded()
+        await load(true)
+        elements.upstreamDeleteDialog.close()
+        showToast('上游已删除；后续同地址 API Key 账号出现时会自动重新添加')
+      } catch (error) {
+        await load(true)
+        const refreshed = getUpstream(upstreamID)
+        if (error.code === 'UPSTREAM_IN_USE' || !refreshed || (refreshed.local_accounts || []).length > 0) {
+          elements.upstreamDeleteDialog.close()
+        }
+        showToast(error.message || '删除上游失败', true)
+      } finally {
+        setDialogBusy(elements.upstreamDeleteDialog, elements.upstreamDeleteButton, false, '确认删除')
+      }
+    }
+
     function setDialogBusy(dialog, button, busy, label) {
       dialog.dataset.busy = busy ? 'true' : 'false'
       button.disabled = busy
@@ -940,6 +979,10 @@
         else if (kind === 'connect') findActionButton(state.connectUpstreamID, 'connect')?.focus()
         else if (kind === 'recharge') findActionButton(state.rechargeUpstreamID, 'recharge-rate')?.focus()
         else if (kind === 'binding') findActionButton(state.bindingUpstreamID, 'bind')?.focus()
+        else if (kind === 'deleteUpstream') {
+          const fallback = findActionButton(state.deleteRecordUpstreamID, 'delete-upstream') || findActionButton(state.deleteRecordUpstreamID, 'toggle') || elements.upstreamRefreshButton
+          fallback?.focus()
+        }
       })
     }
 

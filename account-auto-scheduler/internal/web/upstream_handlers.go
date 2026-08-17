@@ -95,6 +95,17 @@ func (s *Server) handleCreateUpstream(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{"upstream": result})
 }
 
+func (s *Server) handleDeleteUpstream(w http.ResponseWriter, r *http.Request) {
+	if !s.requireUpstreamConsole(w) {
+		return
+	}
+	if err := s.upstreams.Delete(r.Context(), r.PathValue("upstreamID")); err != nil {
+		writeUpstreamError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) handleDetectUpstream(w http.ResponseWriter, r *http.Request) {
 	if !s.requireUpstreamConsole(w) {
 		return

@@ -501,6 +501,17 @@
     </article>
   </dialog>
 
+  <dialog id="upstream-delete-dialog" class="modal small-modal">
+    <article class="modal-panel">
+      <header class="modal-header"><div><h2>删除上游</h2><p id="upstream-delete-name"></p></div></header>
+      <div class="confirm-body">
+        <p>确认后将永久删除该上游在侧车中保存的登录身份、加密登录材料、充值倍率、余额和 Key 快照。</p>
+        <p>不会删除或修改 Sub2API 账号；后续有本地 API Key 账号使用同一地址时，上游会作为全新候选自动重新出现。</p>
+      </div>
+      <footer class="modal-footer"><button class="button secondary" type="button" data-close-dialog="upstream-delete-dialog">取消</button><button id="upstream-delete-button" class="button danger" type="button"><svg class="icon"><use href="#icon-trash"/></svg><span>确认删除</span></button></footer>
+    </article>
+  </dialog>
+
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 </body>
 </html>

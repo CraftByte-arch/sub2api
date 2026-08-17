@@ -11,23 +11,27 @@ import (
 
 	"github.com/Wei-Shaw/sub2api-account-auto-scheduler/internal/core"
 	"github.com/Wei-Shaw/sub2api-account-auto-scheduler/internal/model"
+	"github.com/Wei-Shaw/sub2api-account-auto-scheduler/internal/store"
 	"github.com/Wei-Shaw/sub2api-account-auto-scheduler/internal/upstream"
 )
 
 type fakeUpstreamConsole struct {
-	credentialsEnabled bool
-	listResponse       upstream.ListResponse
-	listCalls          int
-	syncOutcomes       []upstream.SyncOutcome
-	autoResult         upstream.MatchResult
-	autoErr            error
-	autoJWT            string
-	autoIdentity       core.ForwardedIdentity
-	rechargeRateInput  upstream.RechargeRateInput
-	rechargeRateClear  bool
-	connectInput       upstream.ConnectInput
-	connectCalls       int
-	finalMultipliers   map[int64]upstream.LocalAccountFinalMultiplier
+	credentialsEnabled  bool
+	listResponse        upstream.ListResponse
+	listCalls           int
+	syncOutcomes        []upstream.SyncOutcome
+	autoResult          upstream.MatchResult
+	autoErr             error
+	autoJWT             string
+	autoIdentity        core.ForwardedIdentity
+	rechargeRateInput   upstream.RechargeRateInput
+	rechargeRateClear   bool
+	connectInput        upstream.ConnectInput
+	connectCalls        int
+	deleteUpstreamID    string
+	deleteUpstreamErr   error
+	deleteUpstreamCalls int
+	finalMultipliers    map[int64]upstream.LocalAccountFinalMultiplier
 }
 
 func (f *fakeUpstreamConsole) CredentialsEnabled() bool { return f.credentialsEnabled }
@@ -71,6 +75,12 @@ func (f *fakeUpstreamConsole) Connect(_ context.Context, _ string, input upstrea
 	f.connectInput = input
 	f.connectCalls++
 	return upstream.IdentityView{}, nil
+}
+
+func (f *fakeUpstreamConsole) Delete(_ context.Context, upstreamID string) error {
+	f.deleteUpstreamCalls++
+	f.deleteUpstreamID = upstreamID
+	return f.deleteUpstreamErr
 }
 
 func (f *fakeUpstreamConsole) DeleteIdentity(string, string) error { return nil }
@@ -135,6 +145,48 @@ func TestUpstreamListRequiresAdminBeforeReturningMetadata(t *testing.T) {
 	}
 	if !strings.Contains(body, `"credentials_enabled":false`) || !strings.Contains(body, `"has_credential":true`) || !strings.Contains(body, `"amount":12.5`) || !strings.Contains(body, `"unit":"USD"`) || !strings.Contains(body, `"available_count":1`) {
 		t.Fatalf("missing safe credential state: %s", body)
+	}
+}
+
+func TestUpstreamDeleteRequiresAdminAndPropagatesSafetyErrors(t *testing.T) {
+	console := &fakeUpstreamConsole{}
+	server := NewServer(nil, &fakeAdminCore{user: core.AdminUser{ID: 1, Role: "admin"}}, Options{Upstreams: console}, nil)
+
+	unauthorized := httptest.NewRequest(http.MethodDelete, "/api/upstreams/up_unused", nil)
+	unauthorizedResponse := httptest.NewRecorder()
+	server.Handler().ServeHTTP(unauthorizedResponse, unauthorized)
+	if unauthorizedResponse.Code != http.StatusUnauthorized || console.deleteUpstreamCalls != 0 {
+		t.Fatalf("unauthorized status=%d delete_calls=%d", unauthorizedResponse.Code, console.deleteUpstreamCalls)
+	}
+
+	authorized := httptest.NewRequest(http.MethodDelete, "/api/upstreams/up_unused", nil)
+	authorized.Header.Set("Authorization", "Bearer valid")
+	authorizedResponse := httptest.NewRecorder()
+	server.Handler().ServeHTTP(authorizedResponse, authorized)
+	if authorizedResponse.Code != http.StatusNoContent || console.deleteUpstreamCalls != 1 || console.deleteUpstreamID != "up_unused" {
+		t.Fatalf("authorized status=%d delete_calls=%d upstream_id=%q body=%s", authorizedResponse.Code, console.deleteUpstreamCalls, console.deleteUpstreamID, authorizedResponse.Body.String())
+	}
+
+	conflictConsole := &fakeUpstreamConsole{deleteUpstreamErr: &upstream.AdapterError{
+		Code: "UPSTREAM_IN_USE", Message: "该上游地址仍有本地 API Key 账号，无法删除", Status: model.IdentityStatusInvalid, HTTPCode: http.StatusConflict,
+	}}
+	conflictServer := NewServer(nil, &fakeAdminCore{user: core.AdminUser{ID: 1, Role: "admin"}}, Options{Upstreams: conflictConsole}, nil)
+	conflict := httptest.NewRequest(http.MethodDelete, "/api/upstreams/up_active", nil)
+	conflict.Header.Set("Authorization", "Bearer valid")
+	conflictResponse := httptest.NewRecorder()
+	conflictServer.Handler().ServeHTTP(conflictResponse, conflict)
+	if conflictResponse.Code != http.StatusConflict || !strings.Contains(conflictResponse.Body.String(), `"code":"UPSTREAM_IN_USE"`) {
+		t.Fatalf("conflict status=%d body=%s", conflictResponse.Code, conflictResponse.Body.String())
+	}
+
+	notFoundConsole := &fakeUpstreamConsole{deleteUpstreamErr: store.ErrUpstreamNotFound}
+	notFoundServer := NewServer(nil, &fakeAdminCore{user: core.AdminUser{ID: 1, Role: "admin"}}, Options{Upstreams: notFoundConsole}, nil)
+	notFound := httptest.NewRequest(http.MethodDelete, "/api/upstreams/up_missing", nil)
+	notFound.Header.Set("Authorization", "Bearer valid")
+	notFoundResponse := httptest.NewRecorder()
+	notFoundServer.Handler().ServeHTTP(notFoundResponse, notFound)
+	if notFoundResponse.Code != http.StatusNotFound || !strings.Contains(notFoundResponse.Body.String(), `"code":"UPSTREAM_NOT_FOUND"`) {
+		t.Fatalf("not-found status=%d body=%s", notFoundResponse.Code, notFoundResponse.Body.String())
 	}
 }
 

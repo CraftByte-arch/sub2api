@@ -817,6 +817,26 @@ func (m *Manager) DeleteIdentity(upstreamID, identityID string) error {
 	})
 }
 
+func (m *Manager) Delete(ctx context.Context, upstreamID string) error {
+	record, err := m.store.GetUpstream(strings.TrimSpace(upstreamID))
+	if err != nil {
+		return err
+	}
+	accounts, err := m.accountsForBaseURL(ctx, record.BaseURL)
+	if err != nil {
+		return err
+	}
+	if len(accounts) > 0 {
+		return adapterError(
+			"UPSTREAM_IN_USE",
+			"该上游地址仍有本地 API Key 账号，无法删除",
+			model.IdentityStatusInvalid,
+			http.StatusConflict,
+		)
+	}
+	return m.store.DeleteUpstream(record.ID)
+}
+
 func (m *Manager) SyncIdentity(ctx context.Context, upstreamID, identityID string) error {
 	if err := m.syncIdentity(ctx, upstreamID, identityID); err != nil {
 		return err

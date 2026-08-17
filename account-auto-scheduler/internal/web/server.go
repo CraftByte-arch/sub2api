@@ -73,6 +73,7 @@ type UpstreamConsole interface {
 	SetRechargeRate(ctx context.Context, upstreamID string, input upstream.RechargeRateInput) (upstream.UpstreamView, error)
 	ClearRechargeRate(ctx context.Context, upstreamID string) (upstream.UpstreamView, error)
 	Connect(ctx context.Context, upstreamID string, input upstream.ConnectInput) (upstream.IdentityView, error)
+	Delete(ctx context.Context, upstreamID string) error
 	DeleteIdentity(upstreamID, identityID string) error
 	SyncIdentity(ctx context.Context, upstreamID, identityID string) error
 	SyncUpstream(ctx context.Context, upstreamID string) []upstream.SyncOutcome
@@ -273,6 +274,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/tab/register", s.requireAdmin(http.HandlerFunc(s.handleRegisterTab)))
 	mux.Handle("GET /api/upstreams", s.requireAdmin(http.HandlerFunc(s.handleUpstreams)))
 	mux.Handle("POST /api/upstreams", s.requireAdmin(http.HandlerFunc(s.handleCreateUpstream)))
+	mux.Handle("DELETE /api/upstreams/{upstreamID}", s.requireAdmin(http.HandlerFunc(s.handleDeleteUpstream)))
 	mux.Handle("POST /api/upstreams/sync", s.requireAdmin(http.HandlerFunc(s.handleSyncAllUpstreams)))
 	mux.Handle("POST /api/upstreams/{upstreamID}/detect", s.requireAdmin(http.HandlerFunc(s.handleDetectUpstream)))
 	mux.Handle("PUT /api/upstreams/{upstreamID}/type", s.requireAdmin(http.HandlerFunc(s.handleSetUpstreamType)))
