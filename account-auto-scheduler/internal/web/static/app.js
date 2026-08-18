@@ -1,7 +1,14 @@
 (() => {
   'use strict'
 
-  const TOKEN_KEY = 'sub2api-auto-scheduler-token'
+  const AUTH_TOKEN_KEY = 'auth_token'
+  const AUTH_REFRESH_TOKEN_KEY = 'refresh_token'
+  const AUTH_USER_KEY = 'auth_user'
+  const AUTH_EXPIRES_AT_KEY = 'token_expires_at'
+  const AUTH_REFRESH_LOCK_NAME = 'sub2api-auth-token-refresh'
+  const AUTH_REFRESH_BUFFER_MS = 120000
+  const AUTH_REFRESH_TIMEOUT_MS = 30000
+  const SIDECAR_RETURN_PATH = '/custom/account-auto-scheduler'
   const COLLAPSED_GROUPS_KEY = 'sub2api-auto-scheduler-collapsed-groups'
   const CHANNEL_SLOW_MS = 6000
   const DETAIL_PAGE_SIZE = 10
@@ -46,6 +53,8 @@
   }
 
   const elements = {}
+  let authRefreshPromise = null
+  let authRedirecting = false
 
   document.addEventListener('DOMContentLoaded', init)
 
@@ -54,8 +63,8 @@
     captureEmbedContext()
     state.upstreamWorkspace = window.createUpstreamWorkspace({ api, showToast })
     bindEvents()
-    if (!state.token) {
-      showAuthError('未收到登录凭证，请从 Sub2API 管理后台打开此页面')
+    if (!readStoredAccessToken() && !readStoredRefreshToken()) {
+      redirectToLogin()
       return
     }
     try {
@@ -76,7 +85,7 @@
         }
       }, 10000)
     } catch (error) {
-      showAuthError(error.message || '管理员身份验证失败')
+      if (!authRedirecting) showAuthError(error.message || '管理员身份验证失败')
     }
   }
 
@@ -111,12 +120,16 @@
 
   function captureEmbedContext() {
     const url = new URL(window.location.href)
-    const queryToken = url.searchParams.get('token') || ''
-    if (queryToken) sessionStorage.setItem(TOKEN_KEY, queryToken)
-    state.token = queryToken || sessionStorage.getItem(TOKEN_KEY) || ''
+    state.token = readStoredAccessToken()
+    try {
+      // Remove the legacy sidecar token, if an older page stored one.
+      sessionStorage.removeItem('sub2api-auto-scheduler-token')
+    } catch {
+      // Ignore storage restrictions; authenticated requests will report the real cause.
+    }
     state.collapsedGroups = readCollapsedGroups()
     document.documentElement.dataset.theme = url.searchParams.get('theme') === 'dark' ? 'dark' : 'light'
-    for (const key of ['token', 'user_id', 'src_url']) url.searchParams.delete(key)
+    for (const key of ['token', 'refresh_token', 'user_id', 'src_url']) url.searchParams.delete(key)
     window.history.replaceState(null, '', url.pathname + (url.search ? url.search : ''))
   }
 
@@ -151,6 +164,7 @@
     elements.notificationTestButton.addEventListener('click', testNotificationSettings)
     elements.notificationClearButton.addEventListener('click', clearNotificationSettings)
     elements.bindingActionConfirmButton.addEventListener('click', confirmBindingAction)
+    window.addEventListener('storage', handleAuthStorageChange)
     elements.bindingSearchInput.addEventListener('input', (event) => {
       state.bindingSearch = event.target.value.trim().toLocaleLowerCase()
       renderBindingList()
@@ -187,6 +201,11 @@
       if ((activeDialog === elements.bindingDialog && state.bindingSaving) || activeDialog.dataset.busy === 'true') return
       activeDialog.close()
     })
+  }
+
+  function handleAuthStorageChange(event) {
+    if (![AUTH_TOKEN_KEY, AUTH_REFRESH_TOKEN_KEY, AUTH_EXPIRES_AT_KEY].includes(event.key)) return
+    state.token = readStoredAccessToken()
   }
 
   function setWorkspaceTab(tabName) {
@@ -1712,8 +1731,174 @@
     }
   }
 
-  async function api(path, options = {}) {
-    const headers = { Authorization: `Bearer ${state.token}` }
+  function readStorageValue(key) {
+    try {
+      return String(localStorage.getItem(key) || '').trim()
+    } catch {
+      return ''
+    }
+  }
+
+  function readStoredAccessToken() {
+    return readStorageValue(AUTH_TOKEN_KEY)
+  }
+
+  function readStoredRefreshToken() {
+    return readStorageValue(AUTH_REFRESH_TOKEN_KEY)
+  }
+
+  function readStoredTokenExpiresAt() {
+    const value = Number(readStorageValue(AUTH_EXPIRES_AT_KEY))
+    return Number.isFinite(value) ? value : 0
+  }
+
+  function persistRefreshedTokenPair(tokens) {
+    const accessToken = String(tokens?.access_token || '').trim()
+    const refreshToken = String(tokens?.refresh_token || '').trim()
+    const expiresIn = Number(tokens?.expires_in)
+    if (!accessToken) throw new Error('刷新接口未返回 access token')
+    try {
+      localStorage.setItem(AUTH_TOKEN_KEY, accessToken)
+      if (Number.isFinite(expiresIn) && expiresIn > 0) {
+        localStorage.setItem(AUTH_EXPIRES_AT_KEY, String(Date.now() + expiresIn * 1000))
+      }
+      if (refreshToken) localStorage.setItem(AUTH_REFRESH_TOKEN_KEY, refreshToken)
+    } catch {
+      // Keep the in-memory token usable for this request even if storage is unavailable.
+    }
+    state.token = accessToken
+    return accessToken
+  }
+
+  function clearStoredAuth() {
+    try {
+      for (const key of [AUTH_TOKEN_KEY, AUTH_REFRESH_TOKEN_KEY, AUTH_USER_KEY, AUTH_EXPIRES_AT_KEY]) {
+        localStorage.removeItem(key)
+      }
+    } catch {
+      // Ignore storage restrictions; navigation to login is still the recovery path.
+    }
+    state.token = ''
+  }
+
+  function authError(message, status = 401, code = 'TOKEN_REFRESH_FAILED') {
+    const error = new Error(message)
+    error.status = status
+    error.code = code
+    return error
+  }
+
+  function isTerminalRefreshFailure(error) {
+    const status = Number(error?.status)
+    return error?.code === 'NO_REFRESH_TOKEN' || [400, 401, 403].includes(status)
+  }
+
+  function handleRefreshFailure(error) {
+    if (isTerminalRefreshFailure(error) || !readStoredRefreshToken()) {
+      clearStoredAuth()
+      redirectToLogin()
+    }
+  }
+
+  async function requestAccessTokenRefresh(force = false, failedAccessToken = '') {
+    const refreshToken = readStoredRefreshToken()
+    if (!refreshToken) throw authError('没有可用的管理员续期凭证', 401, 'NO_REFRESH_TOKEN')
+
+    const currentAccessToken = readStoredAccessToken()
+    const expiresAt = readStoredTokenExpiresAt()
+    if (currentAccessToken && failedAccessToken && currentAccessToken !== failedAccessToken) {
+      state.token = currentAccessToken
+      return currentAccessToken
+    }
+    if (!force && currentAccessToken && (!expiresAt || expiresAt > Date.now() + AUTH_REFRESH_BUFFER_MS)) {
+      state.token = currentAccessToken
+      return currentAccessToken
+    }
+
+    const controller = new AbortController()
+    const timeoutID = window.setTimeout(() => controller.abort(), AUTH_REFRESH_TIMEOUT_MS)
+    let response
+    let payload
+    try {
+      response = await fetch(new URL('/api/v1/auth/refresh', window.location.origin), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token: refreshToken }),
+        credentials: 'same-origin',
+        signal: controller.signal,
+      })
+      payload = await response.json().catch(() => ({}))
+    } catch (error) {
+      throw error?.name === 'AbortError' ? authError('管理员会话续期超时', 0, 'TOKEN_REFRESH_TIMEOUT') : error
+    } finally {
+      window.clearTimeout(timeoutID)
+    }
+
+    const data = payload?.data || payload
+    const apiFailure = Object.prototype.hasOwnProperty.call(payload || {}, 'code') && payload.code !== 0
+    if (!response.ok || apiFailure || !data?.access_token) {
+      throw authError(payload?.message || `管理员会话续期失败 (${response.status})`, response.status, payload?.code || 'TOKEN_REFRESH_FAILED')
+    }
+
+    // A different tab may have rotated the one-time refresh token while this request was in flight.
+    if (readStoredRefreshToken() !== refreshToken) {
+      const peerToken = readStoredAccessToken()
+      if (peerToken) {
+        state.token = peerToken
+        return peerToken
+      }
+      throw authError('管理员会话已在其他标签页更新', 401, 'AUTH_SESSION_CHANGED')
+    }
+    return persistRefreshedTokenPair(data)
+  }
+
+  async function refreshAccessToken(force = false, failedAccessToken = '') {
+    if (authRefreshPromise) return authRefreshPromise
+    const pending = (async () => {
+      const refresh = () => requestAccessTokenRefresh(force, failedAccessToken)
+      if (navigator.locks?.request) return navigator.locks.request(AUTH_REFRESH_LOCK_NAME, refresh)
+      return refresh()
+    })()
+    authRefreshPromise = pending
+    try {
+      return await pending
+    } finally {
+      if (authRefreshPromise === pending) authRefreshPromise = null
+    }
+  }
+
+  function isSidecarAuthFailure(response, payload) {
+    if (response.status === 401) return true
+    return response.status === 403 && ['FORBIDDEN', 'UNAUTHORIZED'].includes(String(payload?.code || '').toUpperCase())
+  }
+
+  function redirectToLogin() {
+    if (authRedirecting) return
+    authRedirecting = true
+    const target = `/login?redirect=${encodeURIComponent(SIDECAR_RETURN_PATH)}`
+    try {
+      if (window.top && window.top !== window) {
+        window.top.location.assign(target)
+        return
+      }
+    } catch {
+      // Fall back to navigating the current browsing context.
+    }
+    window.location.assign(target)
+  }
+
+  async function api(path, options = {}, allowAuthRetry = true) {
+    let token = readStoredAccessToken()
+    if (!token) {
+      try {
+        token = await refreshAccessToken()
+      } catch (error) {
+        handleRefreshFailure(error)
+        throw error
+      }
+    }
+    state.token = token
+    const headers = { Authorization: `Bearer ${token}` }
     if (options.body !== undefined) headers['Content-Type'] = 'application/json'
     const requestURL = new URL(String(path).replace(/^\//, ''), document.baseURI)
     const response = await fetch(requestURL, {
@@ -1729,6 +1914,16 @@
       error.code = payload.code
       error.status = response.status
       error.payload = payload
+      if (allowAuthRetry && isSidecarAuthFailure(response, payload)) {
+        try {
+          const refreshedToken = await refreshAccessToken(true, token)
+          state.token = refreshedToken
+          return api(path, options, false)
+        } catch (refreshError) {
+          handleRefreshFailure(refreshError)
+          throw refreshError
+        }
+      }
       throw error
     }
     return payload

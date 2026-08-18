@@ -321,6 +321,36 @@ func TestGroupsAppUsesFinalMultiplierInsteadOfProbeMultiplier(t *testing.T) {
 	}
 }
 
+func TestGroupsAppUsesSameOriginSessionRefreshAndLoginRecovery(t *testing.T) {
+	server := NewServer(nil, &fakeAdminCore{}, Options{}, nil)
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/app.js", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	body := response.Body.String()
+	for _, required := range []string{
+		"AUTH_TOKEN_KEY", "AUTH_REFRESH_TOKEN_KEY", "readStoredAccessToken", "readStorageValue(AUTH_TOKEN_KEY)",
+		"window.addEventListener('storage', handleAuthStorageChange)", "AUTH_REFRESH_LOCK_NAME", "navigator.locks?.request",
+		"/api/v1/auth/refresh", "refresh_token", "refreshAccessToken(true, token)",
+		"SIDECAR_RETURN_PATH", "window.top.location.assign(target)", "/login?redirect=",
+		"sessionStorage.removeItem('sub2api-auto-scheduler-token')",
+	} {
+		if !strings.Contains(body, required) {
+			t.Fatalf("groups app is missing same-origin session behavior %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"sessionStorage.setItem(TOKEN_KEY",
+		"const TOKEN_KEY = 'sub2api-auto-scheduler-token'",
+		"state.token = queryToken",
+	} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("groups app still uses legacy URL/session token behavior %q", forbidden)
+		}
+	}
+}
+
 func TestProjectAdminBalanceUsesManagedMetadataAndConfiguredQuotaDimensions(t *testing.T) {
 	managedRemaining := 100.0
 	managedLimit := 100.0
