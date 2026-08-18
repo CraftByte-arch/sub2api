@@ -1432,6 +1432,8 @@
         <input type="checkbox" data-account-id="${account.id}" ${checked ? 'checked' : ''} ${state.bindingSaving ? 'disabled' : ''}>
         <span class="binding-account"><strong>${escapeHTML(account.name || `账号 ${account.id}`)}</strong><small>${escapeHTML(account.platform || 'unknown')} · API Key · #${account.id}</small></span>
         <span class="binding-state ${escapeAttr(scheduling.tone)}"><i class="status-dot"></i>${escapeHTML(scheduling.label)}</span>
+        ${renderBindingMultiplier(account)}
+        ${renderBindingBalance(account)}
         <span class="binding-memberships ${compatible ? '' : 'incompatible'}"><strong>${escapeHTML(membershipLabel)}</strong><small>${formatInteger(membershipIDs(account).length)} 个分组</small></span>
       </label>`
     }).join('') : `<div class="dialog-empty">${candidates.length ? '没有匹配的 API Key 账号' : '当前分组没有可绑定的 API Key 账号'}</div>`
@@ -1441,6 +1443,57 @@
     elements.bindingChangeCount.textContent = `可绑定 ${formatInteger(eligibleCount)} · 已选 ${formatInteger(state.bindingDraft.size)} · ${pendingLabel}`
     elements.bindingList.setAttribute('aria-busy', state.bindingSaving ? 'true' : 'false')
     elements.bindingSaveButton.disabled = state.bindingSaving || changes.length === 0
+  }
+
+  function renderBindingMultiplier(account) {
+    const projection = account?.upstream_final_multiplier || {}
+    const finalMultiplier = Number(projection.final_multiplier)
+    const available = projection.status === 'available' && Number.isFinite(finalMultiplier)
+    if (available) {
+      const recharge = Number(projection.recharge_rate_cny_per_usd)
+      const group = Number(projection.group_multiplier)
+      const detail = Number.isFinite(recharge) && Number.isFinite(group)
+        ? `充值 ${formatMultiplier(recharge)} × 分组 ${formatMultiplier(group)}`
+        : '来自已绑定上游 Key 的当前快照'
+      const accessible = `最终倍率 ${formatMultiplier(finalMultiplier)}x，${detail}`
+      return `<span class="binding-metric binding-multiplier available" title="${escapeAttr(detail)}" aria-label="${escapeAttr(accessible)}"><span class="binding-metric-label">最终倍率</span><strong>${escapeHTML(formatMultiplier(finalMultiplier))}x</strong><small>${escapeHTML(detail)}</small></span>`
+    }
+    const labels = {
+      unbound: '未绑定上游 Key',
+      stale: '上游 Key 绑定已失效',
+      ambiguous: '存在多个有效上游 Key 绑定',
+      recharge_unset: '请在上游列表设置充值倍率',
+      group_multiplier_unknown: '上游尚未同步分组倍率',
+      invalid_upstream: '本地上游地址无效',
+      unavailable: '上游列表暂不可用',
+    }
+    const reason = labels[String(projection.status || 'unavailable')] || '最终倍率未计算'
+    const accessible = `最终倍率未计算，${reason}`
+    return `<span class="binding-metric binding-multiplier unavailable" title="${escapeAttr(reason)}" aria-label="${escapeAttr(accessible)}"><span class="binding-metric-label">最终倍率</span><strong>未计算</strong><small>${escapeHTML(reason)}</small></span>`
+  }
+
+  function renderBindingBalance(account) {
+    const balance = account?.admin_balance || {}
+    const exhausted = Array.isArray(balance.exhausted_dimensions) ? balance.exhausted_dimensions : []
+    const exhaustedLabels = { daily: '日额度', weekly: '周额度', total: '总额度' }
+    const exhaustedText = exhausted.map((dimension) => exhaustedLabels[dimension]).filter(Boolean).join('、')
+    const remaining = Number(balance.remaining)
+    const zeroManagedBalance = Boolean(balance.managed) && !Boolean(balance.unlimited) && Number.isFinite(remaining) && remaining <= 0
+    if (Boolean(balance.insufficient) || exhausted.length > 0 || zeroManagedBalance) {
+      const reason = exhaustedText ? `${exhaustedText}已耗尽` : '同步余额已耗尽'
+      return `<span class="binding-metric binding-balance insufficient" title="${escapeAttr(reason)}" aria-label="可用余额不足，${escapeAttr(reason)}"><span class="binding-metric-label">可用余额</span><strong>余额不足</strong><small>${escapeHTML(reason)}</small></span>`
+    }
+    if (Boolean(balance.unlimited)) {
+      const detail = balance.managed ? '上游同步为不限额度' : '管理员未配置额度上限'
+      return `<span class="binding-metric binding-balance unlimited" title="${escapeAttr(detail)}" aria-label="可用余额不限额度，${escapeAttr(detail)}"><span class="binding-metric-label">可用余额</span><strong>不限额度</strong><small>${escapeHTML(detail)}</small></span>`
+    }
+    if (Boolean(balance.managed) && Number.isFinite(remaining)) {
+      const detail = '上游余额按当前分组倍率折算后的同步投影'
+      const accessible = `可用余额 ${formatCurrency(remaining)}，${detail}`
+      return `<span class="binding-metric binding-balance available" title="${escapeAttr(detail)}" aria-label="${escapeAttr(accessible)}"><span class="binding-metric-label">可用余额</span><strong>${escapeHTML(formatCurrency(remaining))}</strong><small>${escapeHTML(detail)}</small></span>`
+    }
+    const detail = '尚未取得可用的上游余额投影'
+    return `<span class="binding-metric binding-balance unavailable" title="${escapeAttr(detail)}" aria-label="可用余额暂不可用，${escapeAttr(detail)}"><span class="binding-metric-label">可用余额</span><strong>暂不可用</strong><small>${escapeHTML(detail)}</small></span>`
   }
 
   function handleBindingChange(event) {

@@ -245,6 +245,11 @@ func TestStaticPageIsPublicButFramingIsRestricted(t *testing.T) {
 	if !strings.Contains(response.Body.String(), "账号自动调度") {
 		t.Fatal("static admin page was not served")
 	}
+	if !strings.Contains(response.Body.String(), `class="binding-list-header"`) ||
+		!strings.Contains(response.Body.String(), "最终倍率") ||
+		!strings.Contains(response.Body.String(), "可用余额") {
+		t.Fatal("binding dialog is missing metric column headings")
+	}
 	if !strings.Contains(response.Body.String(), `id="upstream-connect-form" method="dialog" class="modal-panel" autocomplete="off"`) ||
 		!strings.Contains(response.Body.String(), `id="upstream-password-input" type="password" autocomplete="new-password"`) ||
 		!strings.Contains(response.Body.String(), `id="upstream-management-site-input" type="url"`) ||
@@ -288,6 +293,8 @@ func TestGroupsAppUsesFinalMultiplierInsteadOfProbeMultiplier(t *testing.T) {
 		"group_protection_defaults", "设置分组保护", "group-protection-dialog", "分组默认保护倍率",
 		"状态检测消耗（1 倍率）", "binding-action-dialog", "protection-dialog",
 		"admin_balance", "admin-balance-card", "余额不足导致检测失败", "failure_kind === 'balance_insufficient'",
+		"renderBindingMultiplier", "renderBindingBalance", "最终倍率", "可用余额",
+		"上游余额按当前分组倍率折算后的同步投影", "不限额度", "暂不可用",
 		"`/api/groups/${groupID}/accounts/${accountID}/protection`",
 		"`/api/groups/${groupID}/accounts/${accountID}/binding`",
 		"`/api/groups/${groupID}/protection-default`",
@@ -304,6 +311,7 @@ func TestGroupsAppUsesFinalMultiplierInsteadOfProbeMultiplier(t *testing.T) {
 		".multiplier-pair", ".protection-multiplier.exceeded", ".binding-row-actions",
 		".group-protection-badge", ".modal-footer-spacer",
 		".admin-balance-card.insufficient", ".admin-balance-value", ".history-bar.balance-insufficient",
+		".binding-list-header", ".binding-metric", ".binding-metric.insufficient", ".binding-metric-label",
 		"@media (max-width: 620px)", ".multiplier-pair { grid-template-columns: minmax(0, 1fr); }",
 		".quota-list > div { grid-template-columns: 58px minmax(0, 1fr); }",
 	} {
