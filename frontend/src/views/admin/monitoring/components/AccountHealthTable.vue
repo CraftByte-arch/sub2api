@@ -64,7 +64,16 @@ function ttftTimeoutRate(account: PerformanceAccount) {
 }
 
 function platformLabel(platform: PerformanceAccount['platform']) {
-  return ({ anthropic: 'Anthropic', openai: 'OpenAI', gemini: 'Gemini', antigravity: 'Antigravity', grok: 'Grok' })[platform]
+  return ({
+    anthropic: 'Anthropic',
+    openai: 'OpenAI',
+    gemini: 'Gemini',
+    antigravity: 'Antigravity',
+    grok: 'Grok',
+    kimi: 'Kimi',
+    zhipu: 'Zhipu AI',
+    deepseek: 'DeepSeek',
+  })[platform]
 }
 
 function ariaSort(column: string) {

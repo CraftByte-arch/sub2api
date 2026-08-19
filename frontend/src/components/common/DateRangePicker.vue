@@ -556,6 +556,10 @@ onUnmounted(() => {
   @apply grid grid-cols-7 gap-1;
 }
 
+.dark .date-picker-input::-webkit-calendar-picker-indicator {
+  filter: none;
+}
+
 .date-picker-weekdays {
   @apply mb-1 mt-2;
 }

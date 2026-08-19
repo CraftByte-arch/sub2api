@@ -214,6 +214,14 @@ func (firstTokenBillingGatewayCache) ReleaseGrokVideoBilled(context.Context, str
 	return nil
 }
 
+func (firstTokenBillingGatewayCache) SetReasoningContent(context.Context, string, string, time.Duration) error {
+	return nil
+}
+
+func (firstTokenBillingGatewayCache) GetReasoningContent(context.Context, string) (string, error) {
+	return "", service.ErrReasoningContentNotFound
+}
+
 func TestFirstTokenTimeoutBillingFailoverThenSuccessRecordsOnce(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	groupID := int64(9001)
