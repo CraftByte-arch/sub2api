@@ -11,4 +11,4 @@
 ## 3. Verification and release
 
 - [x] 3.1 Add server/static UI tests covering finite, unavailable, unlimited, insufficient, and empty categories.
-- [ ] 3.2 Run sidecar tests, JS syntax checks, strict OpenSpec validation, commit the change, publish only `account-auto-scheduler` to HC2, and verify other containers remain unchanged.
+- [x] 3.2 Run sidecar tests, JS syntax checks, strict OpenSpec validation, commit the change, publish only `account-auto-scheduler` to HC2, and verify other containers remain unchanged.
