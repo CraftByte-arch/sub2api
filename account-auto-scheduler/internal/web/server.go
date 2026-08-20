@@ -221,6 +221,20 @@ type overviewAdminBalance struct {
 	ExhaustedDimensions []string `json:"exhausted_dimensions,omitempty"`
 }
 
+type overviewBalanceBucket struct {
+	AccountCount      int      `json:"account_count"`
+	Remaining         *float64 `json:"remaining,omitempty"`
+	NumericCount      int      `json:"numeric_count"`
+	UnavailableCount  int      `json:"unavailable_count"`
+	UnlimitedCount    int      `json:"unlimited_count"`
+	InsufficientCount int      `json:"insufficient_count"`
+}
+
+type overviewGroupBalanceSummary struct {
+	Enabled  overviewBalanceBucket `json:"enabled"`
+	Disabled overviewBalanceBucket `json:"disabled"`
+}
+
 func NewServer(scheduler *engine.Engine, coreClient AdminCore, options Options, logger *slog.Logger) *Server {
 	if logger == nil {
 		logger = slog.Default()
@@ -399,12 +413,97 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		}
 		overviewAccounts = append(overviewAccounts, item)
 	}
+	groupBalanceSummaries := projectGroupBalanceSummaries(overviewAccounts, logicalGroupIDs, groupProtections, time.Now().UTC())
 	writeJSON(w, http.StatusOK, map[string]any{
 		"groups":                    groups,
 		"accounts":                  overviewAccounts,
 		"group_protection_defaults": groupProtectionDefaults,
 		"group_balance_thresholds":  groupBalanceThresholds,
+		"group_balance_summaries":   groupBalanceSummaries,
 	})
+}
+
+func projectGroupBalanceSummaries(accounts []overviewAccount, logicalGroupIDs map[int64][]int64, protections map[int64]map[string]upstream.GroupAccountProtectionView, now time.Time) map[string]overviewGroupBalanceSummary {
+	result := make(map[string]overviewGroupBalanceSummary)
+	for _, account := range accounts {
+		groupIDs := append([]int64(nil), account.GroupIDs...)
+		if ids := logicalGroupIDs[account.ID]; len(ids) > 0 {
+			groupIDs = append([]int64(nil), ids...)
+		}
+		if len(groupIDs) == 0 {
+			groupIDs = []int64{0}
+		}
+		seen := make(map[int64]struct{}, len(groupIDs))
+		for _, groupID := range groupIDs {
+			if _, exists := seen[groupID]; exists {
+				continue
+			}
+			seen[groupID] = struct{}{}
+			key := strconv.FormatInt(groupID, 10)
+			summary := result[key]
+			bucket := &summary.Disabled
+			if overviewAccountEnabledForGroup(account.UpstreamAccount, groupID, protections[account.ID], now) {
+				bucket = &summary.Enabled
+			}
+			addOverviewBalance(bucket, account.AdminBalance)
+			result[key] = summary
+		}
+	}
+	return result
+}
+
+func overviewAccountEnabledForGroup(account model.UpstreamAccount, groupID int64, protections map[string]upstream.GroupAccountProtectionView, now time.Time) bool {
+	if groupID > 0 {
+		if protection, ok := protections[strconv.FormatInt(groupID, 10)]; ok {
+			switch protection.Status {
+			case model.ProtectionExceeded, model.ProtectionUnavailable, model.ProtectionUnbound:
+				return false
+			}
+		}
+	}
+	if account.Status != "active" || !account.Schedulable {
+		return false
+	}
+	if account.TempUnschedulableUntil != nil && account.TempUnschedulableUntil.After(now) {
+		return false
+	}
+	if account.OverloadUntil != nil && account.OverloadUntil.After(now) {
+		return false
+	}
+	if account.RateLimitResetAt != nil && account.RateLimitResetAt.After(now) {
+		return false
+	}
+	if account.AutoPauseOnExpired && account.ExpiresAt != nil && *account.ExpiresAt > 0 && !time.Unix(*account.ExpiresAt, 0).After(now) {
+		return false
+	}
+	return true
+}
+
+func addOverviewBalance(bucket *overviewBalanceBucket, balance overviewAdminBalance) {
+	bucket.AccountCount++
+	insufficient := balance.Insufficient || len(balance.ExhaustedDimensions) > 0
+	if balance.Remaining != nil && !math.IsNaN(*balance.Remaining) && !math.IsInf(*balance.Remaining, 0) {
+		value := *balance.Remaining
+		if bucket.Remaining == nil {
+			bucket.Remaining = &value
+		} else {
+			*bucket.Remaining += value
+		}
+		bucket.NumericCount++
+		if insufficient {
+			bucket.InsufficientCount++
+		}
+		return
+	}
+	if insufficient {
+		bucket.InsufficientCount++
+		return
+	}
+	if balance.Unlimited {
+		bucket.UnlimitedCount++
+		return
+	}
+	bucket.UnavailableCount++
 }
 
 func (s *Server) handleGetGroupProtectionDefault(w http.ResponseWriter, r *http.Request) {

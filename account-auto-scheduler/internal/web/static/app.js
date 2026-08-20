@@ -17,6 +17,7 @@
     user: null,
     groups: [],
     accounts: [],
+    groupBalanceSummaries: {},
     groupProtectionDefaults: {},
     groupBalanceThresholds: {},
     notificationsAvailable: false,
@@ -245,6 +246,7 @@
       const response = await api('/api/overview')
       state.groups = [...(response.groups || [])].sort((a, b) => (a.sort_order - b.sort_order) || (a.id - b.id))
       state.accounts = response.accounts || []
+      state.groupBalanceSummaries = response.group_balance_summaries || {}
       state.groupProtectionDefaults = response.group_protection_defaults || {}
       state.groupBalanceThresholds = response.group_balance_thresholds || {}
       elements.syncLabel.textContent = `已同步 ${formatDateTime(new Date())}`
@@ -364,6 +366,7 @@
       oauthAccounts.length ? renderDetailButton(view.key, 'oauth', `OAuth ${formatInteger(oauthAccounts.length)}`) : '',
       otherAccounts.length ? renderDetailButton(view.key, 'other', `其他 ${formatInteger(otherAccounts.length)}`) : '',
     ].join('')
+    const balanceSummary = renderGroupBalanceSummary(view)
     return `
       <article class="group-section ${collapsed ? 'collapsed' : ''}" data-group-key="${escapeAttr(view.key)}">
         <header class="group-header">
@@ -384,6 +387,7 @@
             <span><strong class="text-success">${formatInteger(enabled)}</strong> / ${formatInteger(total)} 可用</span>
             <span>${formatInteger(apiKeys.length)} API Key</span>
             ${limited ? `<span class="text-warning">${formatInteger(limited)} 临时受限</span>` : ''}
+            ${balanceSummary}
           </div>
           <div class="group-actions">${detailButtons}${groupBalanceButton}${groupProtectionButton}${bindButton}</div>
         </header>
@@ -392,6 +396,48 @@
           ${apiKeys.length ? apiKeys.map((account) => renderAPIKeyAccount(account, view.group.id)).join('') : '<div class="group-empty">暂无 API Key 账号</div>'}
         </div>
       </article>`
+  }
+
+  function renderGroupBalanceSummary(view) {
+    const summary = state.groupBalanceSummaries?.[String(view.group.id)]
+    if (!summary) return ''
+    const enabled = renderGroupBalanceBucket('启用余额', summary.enabled, 'enabled')
+    const disabled = renderGroupBalanceBucket('未启用余额', summary.disabled, 'disabled')
+    const groupName = view.group.name || `分组 ${view.group.id}`
+    return `<span class="group-balance-summary" aria-label="${escapeAttr(`${groupName}启用与未启用账号余额汇总`)}">${enabled}${disabled}</span>`
+  }
+
+  function renderGroupBalanceBucket(label, bucket = {}, tone) {
+    const accountCount = Math.max(0, Number(bucket.account_count) || 0)
+    const numericCount = Math.max(0, Number(bucket.numeric_count) || 0)
+    const unavailableCount = Math.max(0, Number(bucket.unavailable_count) || 0)
+    const unlimitedCount = Math.max(0, Number(bucket.unlimited_count) || 0)
+    const insufficientCount = Math.max(0, Number(bucket.insufficient_count) || 0)
+    const remaining = Number(bucket.remaining)
+    let value = '—'
+    if (accountCount === 0) {
+      value = '—'
+    } else if (numericCount > 0 && Number.isFinite(remaining)) {
+      value = formatCurrency(remaining)
+    } else if (unlimitedCount === accountCount) {
+      value = '不限额度'
+    } else if (insufficientCount === accountCount) {
+      value = '余额不足'
+    } else {
+      value = '暂不可用'
+    }
+    const notes = []
+    if (accountCount === 0) notes.push('无账号')
+    else notes.push(`${formatInteger(accountCount)} 个账号`)
+    if (unavailableCount) notes.push(`${formatInteger(unavailableCount)} 个暂不可用`)
+    if (unlimitedCount) notes.push(`${formatInteger(unlimitedCount)} 个不限额度`)
+    if (insufficientCount) notes.push(`${formatInteger(insufficientCount)} 个余额不足`)
+    const titleParts = [`${label}：${value}`]
+    if (numericCount > 0 && Number.isFinite(remaining)) titleParts.push(`已汇总 ${formatInteger(numericCount)} 个有数值余额的账号`)
+    if (unavailableCount) titleParts.push(`${formatInteger(unavailableCount)} 个账号没有可用余额投影，未按 0 计入`)
+    if (unlimitedCount) titleParts.push(`${formatInteger(unlimitedCount)} 个不限额度账号未计入金额`)
+    if (insufficientCount) titleParts.push(`${formatInteger(insufficientCount)} 个账号余额不足`)
+    return `<span class="group-balance-item ${tone}" title="${escapeAttr(titleParts.join('；'))}"><span>${escapeHTML(label)}</span><strong>${escapeHTML(value)}</strong><small>${escapeHTML(notes.join(' · '))}</small></span>`
   }
 
   function renderDetailButton(groupKey, kind, label) {

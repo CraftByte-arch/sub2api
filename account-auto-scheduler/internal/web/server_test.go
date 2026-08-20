@@ -295,6 +295,7 @@ func TestGroupsAppUsesFinalMultiplierInsteadOfProbeMultiplier(t *testing.T) {
 		"admin_balance", "admin-balance-card", "余额不足导致检测失败", "failure_kind === 'balance_insufficient'",
 		"renderBindingMultiplier", "renderBindingBalance", "最终倍率", "可用余额",
 		"上游余额按当前分组倍率折算后的同步投影", "不限额度", "暂不可用",
+		"groupBalanceSummaries", "group_balance_summaries", "renderGroupBalanceSummary", "启用余额", "未启用余额",
 		"`/api/groups/${groupID}/accounts/${accountID}/protection`",
 		"`/api/groups/${groupID}/accounts/${accountID}/binding`",
 		"`/api/groups/${groupID}/protection-default`",
@@ -312,6 +313,7 @@ func TestGroupsAppUsesFinalMultiplierInsteadOfProbeMultiplier(t *testing.T) {
 		".group-protection-badge", ".modal-footer-spacer",
 		".admin-balance-card.insufficient", ".admin-balance-value", ".history-bar.balance-insufficient",
 		".binding-list-header", ".binding-metric", ".binding-metric.insufficient", ".binding-metric-label",
+		".group-balance-summary", ".group-balance-item.enabled", ".group-balance-item.disabled",
 		"@media (max-width: 620px)", ".multiplier-pair { grid-template-columns: minmax(0, 1fr); }",
 		".quota-list > div { grid-template-columns: 58px minmax(0, 1fr); }",
 	} {
@@ -392,6 +394,49 @@ func TestProjectAdminBalanceUsesManagedMetadataAndConfiguredQuotaDimensions(t *t
 	unconfigured := projectAdminBalance(model.UpstreamAccount{})
 	if unconfigured.Configured || unconfigured.Managed || unconfigured.Unlimited || unconfigured.Insufficient || unconfigured.Remaining != nil || len(unconfigured.ExhaustedDimensions) != 0 {
 		t.Fatalf("unconfigured quota was misclassified: %#v", unconfigured)
+	}
+}
+
+func TestProjectGroupBalanceSummariesSeparatesEnabledAndDisabledAccounts(t *testing.T) {
+	enabledLimit, enabledUsed := 10.0, 2.0
+	disabledLimit, disabledUsed := 5.0, 1.0
+	dailyLimit, dailyUsed := 1.0, 1.0
+	enabledUnlimited := model.UpstreamAccount{
+		ID: 2, Status: "active", Schedulable: true, GroupIDs: []int64{7},
+		Extra: map[string]any{
+			model.UpstreamBalanceQuotaManagedExtraKey:   true,
+			model.UpstreamBalanceQuotaUnlimitedExtraKey: true,
+		},
+	}
+	accounts := []overviewAccount{
+		{
+			UpstreamAccount: model.UpstreamAccount{ID: 1, Status: "active", Schedulable: true, GroupIDs: []int64{7}, QuotaLimit: &enabledLimit, QuotaUsed: &enabledUsed},
+			AdminBalance:    projectAdminBalance(model.UpstreamAccount{QuotaLimit: &enabledLimit, QuotaUsed: &enabledUsed}),
+		},
+		{UpstreamAccount: enabledUnlimited, AdminBalance: projectAdminBalance(enabledUnlimited)},
+		{
+			UpstreamAccount: model.UpstreamAccount{ID: 3, Status: "active", Schedulable: true, GroupIDs: []int64{7}},
+			AdminBalance:    projectAdminBalance(model.UpstreamAccount{}),
+		},
+		{
+			UpstreamAccount: model.UpstreamAccount{ID: 4, Status: "active", Schedulable: false, GroupIDs: []int64{7}, QuotaLimit: &disabledLimit, QuotaUsed: &disabledUsed},
+			AdminBalance:    projectAdminBalance(model.UpstreamAccount{QuotaLimit: &disabledLimit, QuotaUsed: &disabledUsed}),
+		},
+		{
+			UpstreamAccount: model.UpstreamAccount{ID: 5, Status: "active", Schedulable: false, GroupIDs: []int64{7}, QuotaDailyLimit: &dailyLimit, QuotaDailyUsed: &dailyUsed},
+			AdminBalance:    projectAdminBalance(model.UpstreamAccount{QuotaDailyLimit: &dailyLimit, QuotaDailyUsed: &dailyUsed}),
+		},
+	}
+	summaries := projectGroupBalanceSummaries(accounts, nil, nil, time.Now().UTC())
+	summary, ok := summaries["7"]
+	if !ok {
+		t.Fatalf("group balance summary missing: %#v", summaries)
+	}
+	if summary.Enabled.AccountCount != 3 || summary.Enabled.NumericCount != 1 || summary.Enabled.Remaining == nil || *summary.Enabled.Remaining != 8 || summary.Enabled.UnlimitedCount != 1 || summary.Enabled.UnavailableCount != 1 {
+		t.Fatalf("enabled summary = %#v, want one numeric balance, one unlimited and one unavailable account", summary.Enabled)
+	}
+	if summary.Disabled.AccountCount != 2 || summary.Disabled.NumericCount != 1 || summary.Disabled.Remaining == nil || *summary.Disabled.Remaining != 4 || summary.Disabled.InsufficientCount != 1 {
+		t.Fatalf("disabled summary = %#v, want one numeric and one insufficient account", summary.Disabled)
 	}
 }
 
@@ -483,6 +528,7 @@ func TestOverviewJoinsGroupsAccountsUsageAndConfig(t *testing.T) {
 			UpstreamFinalMultiplier *upstream.LocalAccountFinalMultiplier `json:"upstream_final_multiplier"`
 			DetectedRate            *model.DetectedRate                   `json:"detected_rate"`
 		} `json:"accounts"`
+		GroupBalanceSummaries map[string]overviewGroupBalanceSummary `json:"group_balance_summaries"`
 	}
 	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
 		t.Fatal(err)
@@ -495,6 +541,9 @@ func TestOverviewJoinsGroupsAccountsUsageAndConfig(t *testing.T) {
 	}
 	if payload.Accounts[0].DetectedRate != nil || payload.Accounts[0].UpstreamFinalMultiplier == nil || payload.Accounts[0].UpstreamFinalMultiplier.FinalMultiplier == nil || *payload.Accounts[0].UpstreamFinalMultiplier.FinalMultiplier != 0.16 {
 		t.Fatalf("overview multiplier projection is incorrect: %#v", payload.Accounts[0])
+	}
+	if summary := payload.GroupBalanceSummaries["7"]; summary.Disabled.AccountCount != 1 || summary.Disabled.UnavailableCount != 1 {
+		t.Fatalf("overview group balance summary is incorrect: %#v", payload.GroupBalanceSummaries)
 	}
 }
 
