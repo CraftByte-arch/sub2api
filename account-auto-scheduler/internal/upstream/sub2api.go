@@ -288,7 +288,7 @@ func sub2APILoginMaterial(ctx context.Context, client *remoteClient, input Login
 			RefreshToken: strings.TrimSpace(login.RefreshToken),
 			Cookie:       persistentCookie,
 			UserID:       strconv.FormatInt(login.User.ID, 10),
-		}
+		}.withPasswordLogin(input)
 		if material.Empty() {
 			return AuthMaterial{}, "", adapterError("UPSTREAM_LOGIN_CONTRACT", "Sub2API 登录响应未包含可用会话", model.IdentityStatusInvalid, http.StatusBadGateway)
 		}
@@ -327,17 +327,20 @@ func verifySub2API(ctx context.Context, client *remoteClient, material AuthMater
 		return sub2APIUser{}, material, verifyErr
 	}
 	if strings.TrimSpace(material.RefreshToken) == "" {
-		return sub2APIUser{}, material, verifyErr
+		return reloginSub2API(ctx, client, material, verifyErr)
 	}
 	refreshed, refreshErr := refreshSub2API(ctx, client, material)
 	if refreshErr != nil {
-		return sub2APIUser{}, material, refreshErr
+		return reloginSub2API(ctx, client, material, refreshErr)
 	}
 	response, err = client.do(ctx, http.MethodGet, "/api/v1/auth/me", nil, refreshed)
 	if err != nil {
 		return sub2APIUser{}, material, adapterError("UPSTREAM_NETWORK_ERROR", "无法验证 Sub2API 登录状态", model.IdentityStatusNetworkError, http.StatusBadGateway)
 	}
 	if retryErr := decodeSub2APIResponse(response, &user); retryErr != nil {
+		if AsAdapterError(retryErr).Code == "UPSTREAM_SESSION_EXPIRED" {
+			return reloginSub2API(ctx, client, material, retryErr)
+		}
 		return sub2APIUser{}, material, retryErr
 	}
 	return user, refreshed, nil

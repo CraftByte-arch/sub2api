@@ -27,6 +27,10 @@ type AuthMaterial struct {
 	RefreshToken string `json:"refresh_token,omitempty"`
 	Cookie       string `json:"cookie,omitempty"`
 	UserID       string `json:"user_id,omitempty"`
+	// LoginUsername and LoginPassword must only be serialized inside the
+	// encrypted credential envelope. Public identity views never include them.
+	LoginUsername string `json:"login_username,omitempty"`
+	LoginPassword string `json:"login_password,omitempty"`
 }
 
 // EncryptDirectProbe keeps account probe credentials in a separate AEAD domain

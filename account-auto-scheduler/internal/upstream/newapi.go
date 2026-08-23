@@ -202,7 +202,7 @@ func newAPILoginMaterial(ctx context.Context, client *remoteClient, input LoginI
 			AccessToken: strings.TrimSpace(login.AccessToken),
 			Cookie:      joinResponseCookies(response.Header),
 			UserID:      positiveNewAPIUserID(user.ID),
-		}
+		}.withPasswordLogin(input)
 		if material.Empty() {
 			return AuthMaterial{}, "", adapterError("UPSTREAM_LOGIN_CONTRACT", "NewAPI 登录响应未包含可用会话", model.IdentityStatusInvalid, http.StatusBadGateway)
 		}
@@ -248,17 +248,21 @@ func verifyNewAPI(ctx context.Context, client *remoteClient, material AuthMateri
 		}
 		return user, material, nil
 	}
-	if strings.TrimSpace(material.Cookie) == "" {
-		if material.UserID == "" && response.StatusCode == http.StatusUnauthorized {
-			return newAPIUser{}, material, newAPIUserIDRequiredError()
-		}
-		return newAPIUser{}, material, verifyErr
-	}
 	if AsAdapterError(verifyErr).Code != "UPSTREAM_SESSION_EXPIRED" {
 		return newAPIUser{}, material, verifyErr
 	}
+	if strings.TrimSpace(material.Cookie) == "" {
+		fallback := verifyErr
+		if material.UserID == "" && response.StatusCode == http.StatusUnauthorized {
+			fallback = newAPIUserIDRequiredError()
+		}
+		return reloginNewAPI(ctx, client, material, fallback)
+	}
 	refreshed, refreshErr := refreshNewAPI(ctx, client, material)
 	if refreshErr != nil {
+		if _, ok := material.passwordLoginInput(); ok {
+			return reloginNewAPI(ctx, client, material, refreshErr)
+		}
 		if material.UserID == "" {
 			return newAPIUser{}, material, newAPIUserIDRequiredError()
 		}
@@ -269,6 +273,9 @@ func verifyNewAPI(ctx context.Context, client *remoteClient, material AuthMateri
 		return newAPIUser{}, material, adapterError("UPSTREAM_NETWORK_ERROR", "无法验证 NewAPI 登录状态", model.IdentityStatusNetworkError, http.StatusBadGateway)
 	}
 	if retryErr := decodeNewAPIResponse(response, &user); retryErr != nil {
+		if AsAdapterError(retryErr).Code == "UPSTREAM_SESSION_EXPIRED" {
+			return reloginNewAPI(ctx, client, material, retryErr)
+		}
 		if refreshed.UserID == "" {
 			return newAPIUser{}, material, newAPIUserIDRequiredError()
 		}
