@@ -17,5 +17,5 @@
 
 ## 4. Release
 
-- [ ] 4.1 Commit only this change's sidecar code, tests, and OpenSpec artifacts
-- [ ] 4.2 Back up HC2 sidecar state, deploy only the `account-auto-scheduler` container, and verify health plus unaffected Sub2API containers
+- [x] 4.1 Commit only this change's sidecar code, tests, and OpenSpec artifacts
+- [x] 4.2 Back up HC2 sidecar state, deploy only the `account-auto-scheduler` container, and verify health plus unaffected Sub2API containers
