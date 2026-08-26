@@ -393,6 +393,15 @@
     </form>
   </dialog>
 
+  <dialog id="scheduling-action-dialog" class="modal small-modal">
+    <article class="modal-panel">
+      <header class="modal-header"><div><h2 id="scheduling-action-title">确认调度操作</h2><p id="scheduling-action-account-name"></p></div></header>
+      <div class="confirm-body"><p id="scheduling-action-message"></p></div>
+      <p id="scheduling-action-error" class="dialog-error" role="alert" hidden></p>
+      <footer class="modal-footer"><button class="button secondary" type="button" data-close-dialog="scheduling-action-dialog">取消</button><button id="scheduling-action-confirm-button" class="button danger" type="button">确认</button></footer>
+    </article>
+  </dialog>
+
   <dialog id="binding-action-dialog" class="modal small-modal">
     <article class="modal-panel">
       <header class="modal-header"><div><h2 id="binding-action-title">确认操作</h2><p id="binding-action-account-name"></p></div></header>

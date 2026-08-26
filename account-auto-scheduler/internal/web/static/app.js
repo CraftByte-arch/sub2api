@@ -41,12 +41,14 @@
     usageCache: new Map(),
     collapsedGroups: new Set(),
     automationBusy: new Set(),
+    schedulableBusy: new Set(),
     protectionBusy: new Set(),
     protectionTarget: null,
     groupProtectionTarget: null,
     groupBalanceAlertTarget: null,
     notificationBusy: false,
     bindingAction: null,
+    schedulingAction: null,
     activeTab: 'groups',
     upstreamWorkspace: null,
     pollTimer: null,
@@ -106,6 +108,8 @@
       'protection-final-preview', 'protection-error', 'protection-save-button', 'binding-action-dialog',
       'binding-action-title', 'binding-action-account-name', 'binding-action-message', 'binding-action-error',
       'binding-action-confirm-button',
+      'scheduling-action-dialog', 'scheduling-action-title', 'scheduling-action-account-name',
+      'scheduling-action-message', 'scheduling-action-error', 'scheduling-action-confirm-button',
       'group-protection-dialog', 'group-protection-form', 'group-protection-name', 'group-protection-multiplier-input',
       'group-protection-error', 'group-protection-save-button', 'group-protection-clear-button',
       'group-balance-alert-dialog', 'group-balance-alert-form', 'group-balance-alert-name', 'group-balance-alert-input',
@@ -165,6 +169,7 @@
     elements.notificationTestButton.addEventListener('click', testNotificationSettings)
     elements.notificationClearButton.addEventListener('click', clearNotificationSettings)
     elements.bindingActionConfirmButton.addEventListener('click', confirmBindingAction)
+    elements.schedulingActionConfirmButton.addEventListener('click', confirmSchedulingAction)
     window.addEventListener('storage', handleAuthStorageChange)
     elements.bindingSearchInput.addEventListener('input', (event) => {
       state.bindingSearch = event.target.value.trim().toLocaleLowerCase()
@@ -192,6 +197,9 @@
     elements.groupBalanceAlertDialog.addEventListener('close', () => { state.groupBalanceAlertTarget = null })
     elements.bindingActionDialog.addEventListener('close', () => {
       if (elements.bindingActionDialog.dataset.busy !== 'true') state.bindingAction = null
+    })
+    elements.schedulingActionDialog.addEventListener('close', () => {
+      if (elements.schedulingActionDialog.dataset.busy !== 'true') state.schedulingAction = null
     })
     document.addEventListener('keydown', (event) => {
       if (event.key !== 'Escape') return
@@ -392,7 +400,7 @@
           <div class="group-actions">${detailButtons}${groupBalanceButton}${groupProtectionButton}${bindButton}</div>
         </header>
         <div id="${escapeAttr(contentID)}" class="api-key-table" ${collapsed ? 'hidden' : ''}>
-          <div class="api-key-header" aria-hidden="true"><span>账号状态</span><span>用量与管理员额度</span><span>检测规则与最终倍率</span><span>自动调度 / 操作</span></div>
+          <div class="api-key-header" aria-hidden="true"><span>账号状态</span><span>用量与管理员额度</span><span>检测规则与最终倍率</span><span>全局调度 / 自动检测 / 操作</span></div>
           ${apiKeys.length ? apiKeys.map((account) => renderAPIKeyAccount(account, view.group.id)).join('') : '<div class="group-empty">暂无 API Key 账号</div>'}
         </div>
       </article>`
@@ -451,6 +459,7 @@
     const policy = config?.policy
     const latest = config?.history?.[0]
     const automation = automationState(account)
+    const schedulable = schedulableState(account)
     const protectionKey = relationKey(groupID, account.id)
     const protectionBusy = state.protectionBusy.has(protectionKey)
     const policyText = policy
@@ -478,6 +487,14 @@
         <div class="usage-cell">${renderTodayUsage(account)}${renderDetectionStats(config)}${renderQuota(account)}</div>
         <div class="policy-cell">${policyText}${renderBalanceAlertSummary(account, groupID)}${renderFinalMultiplier(account, protection)}<span class="latest-check">${escapeHTML(latestText)} · ${escapeHTML(nextText)}</span></div>
         <div class="row-actions">
+          <div class="schedulable-control ${schedulable.busy ? 'busy' : ''}" title="${escapeAttr(schedulable.reason)}">
+            <span class="automation-copy"><strong>账号调度（全局）</strong><small>${escapeHTML(schedulable.label)}</small></span>
+            <label class="mini-switch">
+              <span class="sr-only">${escapeHTML(account.name || `账号 ${account.id}`)}全局调度</span>
+              <input type="checkbox" role="switch" data-action="schedulable-toggle" ${schedulable.enabled ? 'checked' : ''} ${schedulable.disabled ? 'disabled' : ''} aria-label="${escapeAttr(`${account.name || `账号 ${account.id}`}全局调度`)}">
+              <i aria-hidden="true"></i>
+            </label>
+          </div>
           <div class="automation-control ${automation.busy ? 'busy' : ''}" title="${escapeAttr(automation.reason)}">
             <span class="automation-copy"><strong>自动调度</strong><small>${escapeHTML(automation.label)}</small></span>
             <label class="mini-switch">
@@ -618,6 +635,9 @@
   function automationState(account) {
     const config = account.config || null
     const busy = state.automationBusy.has(account.id)
+    if (state.schedulableBusy.has(account.id)) {
+      return { enabled: Boolean(config?.policy?.enabled && (account.schedulable || config.managed_suspended)), disabled: true, busy: false, label: '调度状态保存中', reason: '全局调度状态更新完成后可修改自动调度' }
+    }
     if (account.status !== 'active') {
       return { enabled: false, disabled: true, busy, label: account.status === 'error' ? '账号异常' : '账号未启用', reason: '仅 active 账号可以启用自动调度' }
     }
@@ -632,6 +652,31 @@
       return { enabled: false, disabled: false, busy: false, label: '管理员停止', reason: '开启后将恢复账号调度并交给健康检测管理' }
     }
     return { enabled: false, disabled: false, busy: false, label: config ? '自动规则停用' : '未配置', reason: '开启后由健康检测自动管理调度状态' }
+  }
+
+  function schedulableState(account) {
+    const enabled = Boolean(account.schedulable)
+    const busy = state.schedulableBusy.has(account.id)
+    if (busy) return { enabled, disabled: true, busy: true, label: '保存中', reason: '正在更新账号的全局调度状态' }
+    if (state.automationBusy.has(account.id)) {
+      return { enabled, disabled: true, busy: false, label: '自动调度保存中', reason: '自动调度状态更新完成后可修改全局调度' }
+    }
+    if (account.config?.running) {
+      return { enabled, disabled: true, busy: false, label: '检测进行中', reason: '检测结束后可修改全局调度状态' }
+    }
+    if (!enabled && account.status !== 'active') {
+      return { enabled: false, disabled: true, busy: false, label: account.status === 'error' ? '账号异常' : '账号未启用', reason: '仅 active 账号可以启用全局调度' }
+    }
+    if (!enabled && account.config?.managed_suspended) {
+      return { enabled: false, disabled: false, busy: false, label: '检测自动停止', reason: '可手动恢复；自动检测规则仍可能在后续异常时再次暂停' }
+    }
+    if (!enabled) {
+      return { enabled: false, disabled: false, busy: false, label: '管理员停止', reason: '账号当前不参与任何分组的调度' }
+    }
+    if (account.status !== 'active') {
+      return { enabled: true, disabled: false, busy: false, label: '异常但仍启用', reason: '账号不是 active，仍可手动停止全局调度' }
+    }
+    return { enabled: true, disabled: false, busy: false, label: '当前启用', reason: '账号当前可在所有已绑定分组中参与调度' }
   }
 
   function renderHistory(account) {
@@ -787,11 +832,26 @@
   }
 
   async function handleGroupChange(event) {
-    if (event.target.dataset.action !== 'automation-toggle') return
+    const action = event.target.dataset.action
+    if (action !== 'automation-toggle' && action !== 'schedulable-toggle') return
     const row = event.target.closest('[data-account-id]')
     const account = findAccount(Number(row?.dataset.accountId))
     if (!account) return
     const enabled = event.target.checked
+    if (action === 'schedulable-toggle') {
+      event.target.checked = Boolean(account.schedulable)
+      if (!enabled || account.config?.managed_suspended) {
+        openSchedulingActionDialog(account, enabled)
+        return
+      }
+      try {
+        await setAccountSchedulable(account.id, enabled)
+        showToast('账号全局调度已启用')
+      } catch (error) {
+        showToast(error.message || '更新账号调度失败', true)
+      }
+      return
+    }
     state.automationBusy.add(account.id)
     render()
     try {
@@ -807,6 +867,18 @@
       showToast(error.message || '更新失败', true)
     } finally {
       state.automationBusy.delete(account.id)
+      render()
+    }
+  }
+
+  async function setAccountSchedulable(accountID, schedulable) {
+    state.schedulableBusy.add(accountID)
+    render()
+    try {
+      await api(`/api/accounts/${accountID}/schedulable`, { method: 'PUT', body: { schedulable } })
+      await loadOverview(true)
+    } finally {
+      state.schedulableBusy.delete(accountID)
       render()
     }
   }
@@ -1375,6 +1447,59 @@
     for (const input of elements.notificationSettingsForm.querySelectorAll('input')) input.disabled = busy
     document.querySelectorAll('[data-close-dialog="notification-settings-dialog"]').forEach((button) => { button.disabled = busy })
     elements.notificationSaveButton.textContent = label
+  }
+
+  function openSchedulingActionDialog(account, schedulable) {
+    if (!account) return
+    const automaticRecovery = Boolean(schedulable && account.config?.managed_suspended)
+    state.schedulingAction = { accountID: account.id, schedulable, automaticRecovery }
+    elements.schedulingActionDialog.dataset.busy = 'false'
+    elements.schedulingActionAccountName.textContent = `${account.name || `账号 ${account.id}`} · 影响该账号所在的所有分组`
+    elements.schedulingActionError.hidden = true
+    elements.schedulingActionConfirmButton.disabled = false
+    if (schedulable) {
+      elements.schedulingActionTitle.textContent = '恢复账号全局调度'
+      elements.schedulingActionMessage.textContent = automaticRecovery
+        ? '该账号当前由状态检测自动暂停。确认后会解除本次自动暂停并立即恢复调度；自动检测规则仍保持启用，后续再次连续异常时仍可能自动暂停。'
+        : '确认后该账号会重新参与所有已绑定分组的调度。'
+      elements.schedulingActionConfirmButton.textContent = '确认启用'
+      elements.schedulingActionConfirmButton.className = 'button primary'
+    } else {
+      elements.schedulingActionTitle.textContent = '停止账号全局调度'
+      elements.schedulingActionMessage.textContent = account.config?.policy?.enabled
+        ? '确认后该账号会立即退出所有已绑定分组的调度。状态检测仍会继续，但健康结果不会自动恢复该账号，直到你再次手动启用或重新开启自动调度接管。'
+        : '确认后该账号会立即退出所有已绑定分组的调度。当前未启用状态检测，之后需要你手动恢复调度。'
+      elements.schedulingActionConfirmButton.textContent = '确认停止'
+      elements.schedulingActionConfirmButton.className = 'button danger'
+    }
+    document.querySelectorAll('[data-close-dialog="scheduling-action-dialog"]').forEach((button) => { button.disabled = false })
+    elements.schedulingActionDialog.showModal()
+    window.requestAnimationFrame(() => elements.schedulingActionConfirmButton.focus())
+  }
+
+  async function confirmSchedulingAction() {
+    if (!state.schedulingAction || elements.schedulingActionDialog.dataset.busy === 'true') return
+    const { accountID, schedulable } = state.schedulingAction
+    elements.schedulingActionDialog.dataset.busy = 'true'
+    elements.schedulingActionConfirmButton.disabled = true
+    elements.schedulingActionError.hidden = true
+    document.querySelectorAll('[data-close-dialog="scheduling-action-dialog"]').forEach((button) => { button.disabled = true })
+    const originalText = elements.schedulingActionConfirmButton.textContent
+    elements.schedulingActionConfirmButton.textContent = '处理中…'
+    try {
+      await setAccountSchedulable(accountID, schedulable)
+      elements.schedulingActionDialog.close()
+      state.schedulingAction = null
+      showToast(schedulable ? '账号全局调度已启用' : '账号全局调度已停止')
+    } catch (error) {
+      elements.schedulingActionError.textContent = error.message || '更新账号调度失败'
+      elements.schedulingActionError.hidden = false
+    } finally {
+      elements.schedulingActionDialog.dataset.busy = 'false'
+      elements.schedulingActionConfirmButton.disabled = false
+      elements.schedulingActionConfirmButton.textContent = originalText
+      document.querySelectorAll('[data-close-dialog="scheduling-action-dialog"]').forEach((button) => { button.disabled = false })
+    }
   }
 
   function openBindingActionDialog(type, account, groupID) {

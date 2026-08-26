@@ -15,7 +15,11 @@ import (
 	"github.com/Wei-Shaw/sub2api-account-auto-scheduler/internal/store"
 )
 
-var ErrAlreadyRunning = errors.New("account check is already running")
+var (
+	ErrAlreadyRunning        = errors.New("account check is already running")
+	ErrUnsupportedAccount    = errors.New("only API Key accounts are supported")
+	ErrAccountStatusInactive = errors.New("account status is not active")
+)
 
 type CoreClient interface {
 	ListAPIKeyAccounts(ctx context.Context) ([]model.UpstreamAccount, error)
@@ -321,6 +325,51 @@ func (e *Engine) Upsert(ctx context.Context, accountID int64, policy model.Polic
 	return e.store.Get(accountID)
 }
 
+// SetManualSchedulable applies an administrator-owned scheduling decision.
+// It intentionally keeps any detection policy and history, while relinquishing
+// automatic-suspension ownership so a healthy check cannot undo a manual stop.
+func (e *Engine) SetManualSchedulable(ctx context.Context, accountID int64, schedulable bool) (model.UpstreamAccount, error) {
+	e.mu.Lock()
+	if err := e.claimAccountOperationLocked(accountID); err != nil {
+		e.mu.Unlock()
+		return model.UpstreamAccount{}, err
+	}
+	e.mu.Unlock()
+	defer e.clearRunning(accountID)
+
+	account, err := e.core.GetAccount(ctx, accountID)
+	if err != nil {
+		return model.UpstreamAccount{}, fmt.Errorf("读取账号失败: %w", err)
+	}
+	if !account.IsAPIKey() {
+		return model.UpstreamAccount{}, ErrUnsupportedAccount
+	}
+	if schedulable && account.Status != "active" {
+		return model.UpstreamAccount{}, ErrAccountStatusInactive
+	}
+
+	updated := account
+	if account.Schedulable != schedulable {
+		updated, err = e.core.SetSchedulable(ctx, accountID, schedulable)
+		if err != nil {
+			return model.UpstreamAccount{}, fmt.Errorf("更新账号调度失败: %w", err)
+		}
+	}
+
+	now := e.now().UTC()
+	if err := e.store.Update(accountID, func(current *model.ManagedAccount) error {
+		current.ApplySnapshot(updated)
+		current.ManagedSuspended = false
+		current.ConsecutiveFailures = 0
+		current.ConsecutiveSuccesses = 0
+		current.UpdatedAt = now
+		return nil
+	}); err != nil && !errors.Is(err, store.ErrNotFound) {
+		return model.UpstreamAccount{}, fmt.Errorf("保存账号调度状态失败: %w", err)
+	}
+	return updated, nil
+}
+
 func (e *Engine) Delete(ctx context.Context, accountID int64) error {
 	managed, err := e.store.Get(accountID)
 	if err != nil {
@@ -347,15 +396,15 @@ func (e *Engine) Trigger(accountID int64) error {
 	}
 
 	e.mu.Lock()
-	if _, exists := e.running[accountID]; exists {
+	if err := e.claimAccountOperationLocked(accountID); err != nil {
 		e.mu.Unlock()
-		return ErrAlreadyRunning
+		return err
 	}
 	if e.ctx == nil || e.ctx.Err() != nil {
+		delete(e.running, accountID)
 		e.mu.Unlock()
 		return errors.New("scheduler is not running")
 	}
-	e.running[accountID] = struct{}{}
 	ctx := e.ctx
 	e.wg.Add(1)
 	e.mu.Unlock()
@@ -727,6 +776,16 @@ func (e *Engine) isRunning(accountID int64) bool {
 	defer e.mu.Unlock()
 	_, exists := e.running[accountID]
 	return exists
+}
+
+// claimAccountOperationLocked reserves one account for either a detection run
+// or a manual scheduling update. The caller must hold e.mu.
+func (e *Engine) claimAccountOperationLocked(accountID int64) error {
+	if _, exists := e.running[accountID]; exists {
+		return ErrAlreadyRunning
+	}
+	e.running[accountID] = struct{}{}
+	return nil
 }
 
 func (e *Engine) clearRunning(accountID int64) {

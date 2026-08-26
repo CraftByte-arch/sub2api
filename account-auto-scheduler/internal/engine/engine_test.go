@@ -27,6 +27,8 @@ type fakeCore struct {
 	directCalls    int
 	setErr         error
 	setCalls       []bool
+	setStarted     chan struct{}
+	setRelease     chan struct{}
 	exported       core.DirectProbeExport
 	exportErr      error
 	exportCalls    int
@@ -96,6 +98,12 @@ func (f *fakeCore) SetSchedulable(_ context.Context, _ int64, enabled bool) (mod
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.setCalls = append(f.setCalls, enabled)
+	if f.setStarted != nil {
+		f.setStarted <- struct{}{}
+	}
+	if f.setRelease != nil {
+		<-f.setRelease
+	}
 	if f.setErr != nil {
 		return model.UpstreamAccount{}, f.setErr
 	}
@@ -214,6 +222,202 @@ func TestEnabledUpsertReturnsRestoreFailureWithoutPersisting(t *testing.T) {
 	}
 	if len(scheduler.List()) != 0 || len(fake.setCalls) != 1 || !fake.setCalls[0] {
 		t.Fatalf("restore failure state: configs=%#v calls=%#v", scheduler.List(), fake.setCalls)
+	}
+}
+
+func TestManualSchedulingStopsManagedAccountAndHealthyChecksDoNotRestoreIt(t *testing.T) {
+	fake := healthyAPIKeyAccount()
+	fake.outcomes = []core.ProbeOutcome{healthyOutcome()}
+	scheduler := newTestEngine(t, fake)
+	policy := model.DefaultPolicy()
+	policy.RecoveryThreshold = 1
+	managed, err := scheduler.Upsert(context.Background(), fake.account.ID, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if managed.NextCheckAt == nil {
+		t.Fatal("enabled detection was not scheduled")
+	}
+
+	updated, err := scheduler.SetManualSchedulable(context.Background(), fake.account.ID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Schedulable {
+		t.Fatalf("manual stop returned schedulable account: %#v", updated)
+	}
+	stored := scheduler.List()[0]
+	if stored.Schedulable || stored.ManagedSuspended || !stored.Policy.Enabled || stored.NextCheckAt == nil || stored.ConsecutiveFailures != 0 || stored.ConsecutiveSuccesses != 0 {
+		t.Fatalf("manual stop changed detection policy or retained automatic ownership: %#v", stored)
+	}
+
+	scheduler.runOne(context.Background(), fake.account.ID)
+	stored = scheduler.List()[0]
+	if stored.Schedulable || stored.ManagedSuspended || len(fake.setCalls) != 1 || fake.setCalls[0] {
+		t.Fatalf("healthy check restored an administrator stop: managed=%#v calls=%#v", stored, fake.setCalls)
+	}
+}
+
+func TestManualSchedulingRestoresOwnedSuspensionAndKeepsDetectionHistory(t *testing.T) {
+	fake := healthyAPIKeyAccount()
+	fake.outcomes = []core.ProbeOutcome{failedOutcome()}
+	scheduler := newTestEngine(t, fake)
+	policy := model.DefaultPolicy()
+	policy.FailureThreshold = 1
+	if _, err := scheduler.Upsert(context.Background(), fake.account.ID, policy); err != nil {
+		t.Fatal(err)
+	}
+	scheduler.runOne(context.Background(), fake.account.ID)
+	before := scheduler.List()[0]
+	if !before.ManagedSuspended || before.Schedulable || len(before.History) != 1 {
+		t.Fatalf("test precondition failed: %#v", before)
+	}
+
+	updated, err := scheduler.SetManualSchedulable(context.Background(), fake.account.ID, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !updated.Schedulable {
+		t.Fatalf("manual restore returned stopped account: %#v", updated)
+	}
+	stored := scheduler.List()[0]
+	if stored.ManagedSuspended || !stored.Schedulable || stored.ConsecutiveFailures != 0 || stored.ConsecutiveSuccesses != 0 || !stored.Policy.Enabled || len(stored.History) != 1 || stored.LastError != before.LastError {
+		t.Fatalf("manual restore did not preserve detection configuration and history: %#v", stored)
+	}
+	if len(fake.setCalls) != 2 || fake.setCalls[0] || !fake.setCalls[1] {
+		t.Fatalf("unexpected scheduling calls: %#v", fake.setCalls)
+	}
+}
+
+func TestManualSchedulingWorksWithoutDetectionConfiguration(t *testing.T) {
+	fake := healthyAPIKeyAccount()
+	scheduler := newTestEngine(t, fake)
+
+	updated, err := scheduler.SetManualSchedulable(context.Background(), fake.account.ID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Schedulable || len(scheduler.List()) != 0 || len(fake.setCalls) != 1 || fake.setCalls[0] {
+		t.Fatalf("manual stop created a detection config or returned the wrong state: updated=%#v configs=%#v calls=%#v", updated, scheduler.List(), fake.setCalls)
+	}
+}
+
+func TestManualSchedulingRejectsUnsupportedOrInactiveEnable(t *testing.T) {
+	tests := []struct {
+		name    string
+		prepare func(*fakeCore)
+		wantErr error
+	}{
+		{
+			name: "OAuth account",
+			prepare: func(fake *fakeCore) {
+				fake.account.Type = "oauth"
+			},
+			wantErr: ErrUnsupportedAccount,
+		},
+		{
+			name: "inactive API Key account",
+			prepare: func(fake *fakeCore) {
+				fake.account.Status = "inactive"
+				fake.account.Schedulable = false
+			},
+			wantErr: ErrAccountStatusInactive,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fake := healthyAPIKeyAccount()
+			test.prepare(fake)
+			scheduler := newTestEngine(t, fake)
+
+			if _, err := scheduler.SetManualSchedulable(context.Background(), fake.account.ID, true); !errors.Is(err, test.wantErr) {
+				t.Fatalf("error = %v, want %v", err, test.wantErr)
+			}
+			if len(fake.setCalls) != 0 || len(scheduler.List()) != 0 {
+				t.Fatalf("rejected account was mutated: calls=%#v configs=%#v", fake.setCalls, scheduler.List())
+			}
+		})
+	}
+}
+
+func TestManualSchedulingAllowsStoppingInactiveAPIKeyAccount(t *testing.T) {
+	fake := healthyAPIKeyAccount()
+	fake.account.Status = "inactive"
+	scheduler := newTestEngine(t, fake)
+
+	updated, err := scheduler.SetManualSchedulable(context.Background(), fake.account.ID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Schedulable || len(fake.setCalls) != 1 || fake.setCalls[0] {
+		t.Fatalf("inactive account could not be stopped: updated=%#v calls=%#v", updated, fake.setCalls)
+	}
+}
+
+func TestManualSchedulingFailureDoesNotMutateStoredSnapshot(t *testing.T) {
+	fake := healthyAPIKeyAccount()
+	scheduler := newTestEngine(t, fake)
+	if _, err := scheduler.Upsert(context.Background(), fake.account.ID, model.DefaultPolicy()); err != nil {
+		t.Fatal(err)
+	}
+	if err := scheduler.store.Update(fake.account.ID, func(current *model.ManagedAccount) error {
+		current.ManagedSuspended = true
+		current.ConsecutiveFailures = 3
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	fake.setErr = errors.New("upstream unavailable")
+
+	if _, err := scheduler.SetManualSchedulable(context.Background(), fake.account.ID, false); err == nil || !strings.Contains(err.Error(), "更新账号调度失败") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	stored := scheduler.List()[0]
+	if !stored.Schedulable || !stored.ManagedSuspended || stored.ConsecutiveFailures != 3 || len(fake.setCalls) != 1 || fake.setCalls[0] {
+		t.Fatalf("failed manual update changed stored snapshot: managed=%#v calls=%#v", stored, fake.setCalls)
+	}
+}
+
+func TestManualSchedulingConflictsWithAccountCheck(t *testing.T) {
+	fake := healthyAPIKeyAccount()
+	scheduler := newTestEngine(t, fake)
+	if _, err := scheduler.Upsert(context.Background(), fake.account.ID, model.DefaultPolicy()); err != nil {
+		t.Fatal(err)
+	}
+
+	scheduler.mu.Lock()
+	scheduler.running[fake.account.ID] = struct{}{}
+	scheduler.mu.Unlock()
+	if _, err := scheduler.SetManualSchedulable(context.Background(), fake.account.ID, false); !errors.Is(err, ErrAlreadyRunning) {
+		t.Fatalf("error = %v, want ErrAlreadyRunning", err)
+	}
+	scheduler.clearRunning(fake.account.ID)
+	if len(fake.setCalls) != 0 {
+		t.Fatalf("conflicting update reached core: %#v", fake.setCalls)
+	}
+}
+
+func TestManualSchedulingBlocksConcurrentDetectionTrigger(t *testing.T) {
+	fake := healthyAPIKeyAccount()
+	scheduler := newTestEngine(t, fake)
+	if _, err := scheduler.Upsert(context.Background(), fake.account.ID, model.DefaultPolicy()); err != nil {
+		t.Fatal(err)
+	}
+	fake.setStarted = make(chan struct{})
+	fake.setRelease = make(chan struct{})
+	result := make(chan error, 1)
+	go func() {
+		_, err := scheduler.SetManualSchedulable(context.Background(), fake.account.ID, false)
+		result <- err
+	}()
+	<-fake.setStarted
+
+	if err := scheduler.Trigger(fake.account.ID); !errors.Is(err, ErrAlreadyRunning) {
+		t.Fatalf("Trigger error = %v, want ErrAlreadyRunning", err)
+	}
+	close(fake.setRelease)
+	if err := <-result; err != nil {
+		t.Fatal(err)
 	}
 }
 
