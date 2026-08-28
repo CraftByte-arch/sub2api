@@ -325,6 +325,15 @@ func TestConsoleDataMethodsNormalizeEnvelopes(t *testing.T) {
 			writeEnvelope(t, w, map[string]any{"stats": map[string]any{
 				"1": map[string]any{"requests": 4, "tokens": 1200, "cost": 0.75},
 			}})
+		case "GET /api/v1/admin/accounts/1/stats":
+			if r.URL.Query().Get("days") != "1" {
+				t.Fatalf("unexpected account stats range: %s", r.URL.RawQuery)
+			}
+			writeEnvelope(t, w, map[string]any{"models": []map[string]any{
+				{"input_tokens": 300, "cache_creation_tokens": 100, "cache_read_tokens": 600},
+			}})
+		case "GET /api/v1/admin/accounts/2/stats":
+			writeEnvelope(t, w, map[string]any{"models": []map[string]any{}})
 		case "GET /api/v1/admin/accounts/1/usage":
 			if r.URL.Query().Get("source") != "passive" {
 				t.Fatalf("unexpected usage source: %s", r.URL.RawQuery)
@@ -345,7 +354,7 @@ func TestConsoleDataMethodsNormalizeEnvelopes(t *testing.T) {
 		t.Fatalf("unexpected groups: %#v err=%v", groups, err)
 	}
 	stats, err := client.GetTodayStatsBatch(context.Background(), []int64{2, 1, 2, 0})
-	if err != nil || stats["1"].Tokens != 1200 {
+	if err != nil || stats["1"].Tokens != 1200 || stats["1"].Cache == nil || stats["1"].Cache.HitRate != 60 {
 		t.Fatalf("unexpected stats: %#v err=%v", stats, err)
 	}
 	usage, err := client.GetPassiveUsage(context.Background(), 1)

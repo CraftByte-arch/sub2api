@@ -531,7 +531,19 @@
 
   function renderTodayUsage(account) {
     const usage = account.today_usage || {}
-    return `<strong>${formatInteger(usage.requests || 0)} 请求 · ${formatCompact(usage.tokens || 0)} tokens</strong><span>${formatCurrency(usage.cost || 0)} 今日成本</span>`
+    const cache = usage.cache
+    let cacheLabel = '缓存命中 —'
+    let cacheDetail = '缓存统计暂不可用；今日请求、总 tokens 和成本仍使用批量统计结果'
+    if (cache && typeof cache === 'object' && Number.isFinite(Number(cache.hit_rate))) {
+      const hitRate = Math.max(0, Math.min(Number(cache.hit_rate), 100))
+      const inputTokens = Math.max(Number(cache.input_tokens) || 0, 0)
+      const cacheCreationTokens = Math.max(Number(cache.cache_creation_tokens) || 0, 0)
+      const cacheReadTokens = Math.max(Number(cache.cache_read_tokens) || 0, 0)
+      const promptTokens = Math.max(Number(cache.prompt_tokens) || 0, 0)
+      cacheLabel = `缓存命中 ${hitRate.toFixed(1)}%`
+      cacheDetail = `缓存读取 ${formatCompact(cacheReadTokens)} / 提示词 ${formatCompact(promptTokens)} tokens；普通输入 ${formatCompact(inputTokens)}；缓存写入 ${formatCompact(cacheCreationTokens)}`
+    }
+    return `<strong>${formatInteger(usage.requests || 0)} 请求 · ${formatCompact(usage.tokens || 0)} tokens</strong><span title="${escapeAttr(cacheDetail)}">${formatCurrency(usage.cost || 0)} 今日成本 · ${escapeHTML(cacheLabel)}</span>`
   }
 
   function renderDetectionStats(config) {

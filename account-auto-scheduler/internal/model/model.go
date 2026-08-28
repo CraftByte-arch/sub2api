@@ -345,11 +345,24 @@ type UpstreamGroup struct {
 }
 
 type WindowStats struct {
-	Requests     int64   `json:"requests"`
-	Tokens       int64   `json:"tokens"`
-	Cost         float64 `json:"cost"`
-	StandardCost float64 `json:"standard_cost,omitempty"`
-	UserCost     float64 `json:"user_cost,omitempty"`
+	Requests     int64              `json:"requests"`
+	Tokens       int64              `json:"tokens"`
+	Cost         float64            `json:"cost"`
+	StandardCost float64            `json:"standard_cost,omitempty"`
+	UserCost     float64            `json:"user_cost,omitempty"`
+	Cache        *AccountCacheStats `json:"cache,omitempty"`
+}
+
+// AccountCacheStats is the optional, sidecar-only daily prompt-cache
+// projection. A nil projection means the existing Sub2API account statistics
+// endpoint could not be read; a non-nil projection with PromptTokens == 0 is a
+// known zero-percent result.
+type AccountCacheStats struct {
+	InputTokens         int64   `json:"input_tokens"`
+	CacheCreationTokens int64   `json:"cache_creation_tokens"`
+	CacheReadTokens     int64   `json:"cache_read_tokens"`
+	PromptTokens        int64   `json:"prompt_tokens"`
+	HitRate             float64 `json:"hit_rate"`
 }
 
 type UsageProgress struct {
