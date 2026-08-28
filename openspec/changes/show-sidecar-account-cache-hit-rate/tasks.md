@@ -12,5 +12,5 @@
 ## 3. Verification and release
 
 - [x] 3.1 Add focused client, overview-contract, and static-UI tests
-- [ ] 3.2 Run formatting, sidecar tests, static checks, and responsive browser validation
-- [ ] 3.3 Build and deploy only the sidecar service to HC2, then verify health and the live overview payload
+- [x] 3.2 Run formatting, sidecar tests, static checks, and responsive browser validation
+- [x] 3.3 Build and deploy only the sidecar service to HC2, then verify health and the live overview payload
