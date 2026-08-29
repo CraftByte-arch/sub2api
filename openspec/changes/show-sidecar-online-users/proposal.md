@@ -5,6 +5,7 @@
 ## What Changes
 
 - 在侧车总览中增加在线使用人数指标，在线窗口固定为最近 10 分钟。
+- 在每个分组标题中显示该分组最近 10 分钟的去重在线人数，同时保留顶部全站在线人数。
 - 点击在线人数后打开管理员弹窗，列出窗口内活跃用户、最后调用时间和今日消耗。
 - 通过现有 Sub2API 管理员 HTTP 接口读取用量数据并在侧车聚合，不修改 Sub2API 主服务或数据库结构。
 - 今日消耗同时保留金额和 token 数，用户名称优先显示用户名，否则显示邮箱；无法识别身份的记录不展示为用户。
@@ -22,8 +23,8 @@
 
 ## Impact
 
-- `account-auto-scheduler/internal/core/client.go`：增加读取近期管理员用量记录和批量用户今日统计的方法。
+- `account-auto-scheduler/internal/core/online_users.go`：读取近期请求的 `group_id`，按“用户 + 分组”去重汇总，并保留未分组与部分数据状态。
 - `account-auto-scheduler/internal/model/online_users.go`：增加在线用户及今日消耗的数据模型。
 - `account-auto-scheduler/internal/web/server.go`：在受管理员鉴权保护的总览响应和在线用户详情接口中暴露数据。
-- `account-auto-scheduler/internal/web/static/index.html`、`app.js`、`app.css`：增加指标卡、弹窗、加载/错误/空状态和响应式样式。
+- `account-auto-scheduler/internal/web/static/index.html`、`app.js`、`app.css`：增加指标卡、分组在线人数徽标、弹窗、加载/错误/空状态和响应式样式。
 - 仅调用现有 `/api/v1/admin/usage`、`/api/v1/admin/dashboard/users-usage` 等管理员接口；不改变 Sub2API 生产代码、数据表或其他容器。

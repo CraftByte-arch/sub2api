@@ -52,6 +52,35 @@ The sidecar SHALL keep existing group/account overview behavior available when o
 - **WHEN** the Ops request-details endpoint is unavailable or disabled
 - **THEN** the sidecar falls back to the current-day administrator usage endpoint and filters records locally by the ten-minute window
 
+### Requirement: Administrator can see the online count for each group
+
+The sidecar SHALL expose a distinct online-user count for every group using the request-time `group_id` recorded during the same ten-minute online window, while retaining the existing site-wide count.
+
+#### Scenario: Repeated calls in one group count once
+
+- **WHEN** one user makes multiple requests through the same group during the ten-minute window
+- **THEN** that group displays the user once
+
+#### Scenario: One user can be online in multiple groups
+
+- **WHEN** one user makes requests through two different groups during the ten-minute window
+- **THEN** each group counts that user once, while the site-wide count still counts the user once
+
+#### Scenario: A group has no recent users
+
+- **WHEN** grouping data is available and no request in the ten-minute window used a group
+- **THEN** that group explicitly displays an online count of zero
+
+#### Scenario: An ungrouped request is recorded
+
+- **WHEN** a recent request has no group assignment under the current Sub2API request-details contract
+- **THEN** the user is counted under the sidecar's synthetic ungrouped group
+
+#### Scenario: Grouping data is partial or unavailable
+
+- **WHEN** the fallback source, pagination limit, or an incompatible response prevents a complete per-group count
+- **THEN** the sidecar marks the group counts partial or unavailable instead of presenting an uncertain value as a complete zero
+
 ### Requirement: Administrators can inspect the user list in a dialog
 
 The sidecar UI SHALL render the online count as an accessible control and open a dialog containing the current online-user rows.

@@ -5,14 +5,17 @@ import "time"
 // OnlineUsersSnapshot is the sidecar's short-lived administrator view of
 // users who made a request during the configured online window.
 type OnlineUsersSnapshot struct {
-	Count         int          `json:"count"`
-	WindowMinutes int          `json:"window_minutes"`
-	QueriedAt     time.Time    `json:"queried_at"`
-	Source        string       `json:"source"`
-	Partial       bool         `json:"partial"`
-	Truncated     bool         `json:"truncated"`
-	Notice        string       `json:"notice,omitempty"`
-	Users         []OnlineUser `json:"users"`
+	Count                int           `json:"count"`
+	WindowMinutes        int           `json:"window_minutes"`
+	QueriedAt            time.Time     `json:"queried_at"`
+	Source               string        `json:"source"`
+	Partial              bool          `json:"partial"`
+	Truncated            bool          `json:"truncated"`
+	Notice               string        `json:"notice,omitempty"`
+	GroupCounts          map[int64]int `json:"group_counts"`
+	GroupCountsAvailable bool          `json:"group_counts_available"`
+	GroupCountsPartial   bool          `json:"group_counts_partial"`
+	Users                []OnlineUser  `json:"users"`
 }
 
 // OnlineUser is a non-sensitive administrator display row. A nil TodayCost

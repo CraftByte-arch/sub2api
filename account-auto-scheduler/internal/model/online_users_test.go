@@ -12,10 +12,12 @@ func TestOnlineUsersSnapshotJSONContract(t *testing.T) {
 	tokens := int64(2048)
 	requests := int64(3)
 	snapshot := OnlineUsersSnapshot{
-		Count:         1,
-		WindowMinutes: 10,
-		QueriedAt:     time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC),
-		Source:        "ops",
+		Count:                1,
+		WindowMinutes:        10,
+		QueriedAt:            time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC),
+		Source:               "ops",
+		GroupCounts:          map[int64]int{42: 1},
+		GroupCountsAvailable: true,
 		Users: []OnlineUser{{
 			ID:            7,
 			DisplayName:   "alice",
@@ -32,7 +34,7 @@ func TestOnlineUsersSnapshotJSONContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(raw)
-	for _, field := range []string{`"count":1`, `"window_minutes":10`, `"display_name":"alice"`, `"today_cost":0.125`, `"today_tokens":2048`, `"today_requests":3`} {
+	for _, field := range []string{`"count":1`, `"window_minutes":10`, `"group_counts":{"42":1}`, `"group_counts_available":true`, `"display_name":"alice"`, `"today_cost":0.125`, `"today_tokens":2048`, `"today_requests":3`} {
 		if !strings.Contains(text, field) {
 			t.Fatalf("JSON is missing %s: %s", field, text)
 		}
@@ -42,7 +44,7 @@ func TestOnlineUsersSnapshotJSONContract(t *testing.T) {
 	if err := json.Unmarshal(raw, &decoded); err != nil {
 		t.Fatal(err)
 	}
-	if decoded.Count != 1 || len(decoded.Users) != 1 || decoded.Users[0].TodayCost == nil || *decoded.Users[0].TodayCost != cost {
+	if decoded.Count != 1 || decoded.GroupCounts[42] != 1 || !decoded.GroupCountsAvailable || len(decoded.Users) != 1 || decoded.Users[0].TodayCost == nil || *decoded.Users[0].TodayCost != cost {
 		t.Fatalf("decoded snapshot does not preserve the contract: %#v", decoded)
 	}
 }

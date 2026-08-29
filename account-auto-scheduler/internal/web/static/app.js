@@ -364,6 +364,74 @@
     elements.onlineUsersMetric.title = state.onlineUsersError && !snapshot
       ? `${state.onlineUsersError}；点击重试`
       : '查看最近十分钟有调用的用户'
+    renderGroupOnlineCounts()
+  }
+
+  function onlineUsersGroupProjection(groupID) {
+    const snapshot = state.onlineUsers
+    if (state.onlineUsersLoading && !snapshot) {
+      return {
+        label: '…',
+        available: false,
+        partial: false,
+        title: '正在读取最近 10 分钟分组在线人数',
+        ariaLabel: '正在读取分组在线人数',
+      }
+    }
+    if (!snapshot || snapshot.group_counts_available !== true) {
+      return {
+        label: '—',
+        available: false,
+        partial: false,
+        title: state.onlineUsersError || '最近 10 分钟分组在线人数暂不可用',
+        ariaLabel: '分组在线人数暂不可用',
+      }
+    }
+    const groupKey = String(Number(groupID))
+    const rawCount = Object.prototype.hasOwnProperty.call(snapshot.group_counts || {}, groupKey)
+      ? snapshot.group_counts[groupKey]
+      : 0
+    const count = Number(rawCount)
+    if (!Number.isFinite(count) || count < 0) {
+      return {
+        label: '—',
+        available: false,
+        partial: Boolean(snapshot.group_counts_partial),
+        title: '最近 10 分钟分组在线人数暂不可用',
+        ariaLabel: '分组在线人数暂不可用',
+      }
+    }
+    const formatted = formatInteger(count)
+    const partial = Boolean(snapshot.group_counts_partial)
+    return {
+      label: formatted,
+      available: true,
+      partial,
+      title: partial
+        ? `最近 10 分钟内有调用的用户：${formatted} 人；部分请求缺少分组信息，可能低估`
+        : `最近 10 分钟内有调用的用户：${formatted} 人`,
+      ariaLabel: partial
+        ? `最近 10 分钟分组在线人数 ${formatted} 人，部分请求缺少分组信息`
+        : `最近 10 分钟分组在线人数 ${formatted} 人`,
+    }
+  }
+
+  function renderGroupOnlineCounts() {
+    const badges = document.querySelectorAll('[data-group-online-count]')
+    for (const badge of badges) {
+      const projection = onlineUsersGroupProjection(badge.dataset.groupOnlineCount)
+      const label = badge.querySelector('[data-group-online-label]')
+      if (label) label.textContent = `在线 ${projection.label}`
+      badge.title = projection.title
+      badge.setAttribute('aria-label', projection.ariaLabel)
+      badge.classList.toggle('unavailable', !projection.available)
+      badge.classList.toggle('partial', projection.partial)
+    }
+  }
+
+  function renderGroupOnlineBadge(groupID) {
+    const projection = onlineUsersGroupProjection(groupID)
+    return `<span class="group-online-users${projection.available ? '' : ' unavailable'}${projection.partial ? ' partial' : ''}" data-group-online-count="${escapeAttr(groupID)}" title="${escapeAttr(projection.title)}" aria-label="${escapeAttr(projection.ariaLabel)}"><span class="group-online-dot" aria-hidden="true"></span><span data-group-online-label>在线 ${escapeHTML(projection.label)}</span></span>`
   }
 
   function renderOnlineUsers() {
@@ -594,6 +662,7 @@
     const groupBalanceBadge = Number.isFinite(groupBalanceThreshold)
       ? `<span class="group-balance-alert-badge" title="账号未设置账号级阈值时继承此分组默认值">余额告警 ${escapeHTML(formatCurrency(groupBalanceThreshold))}</span>`
       : ''
+    const groupOnlineBadge = renderGroupOnlineBadge(view.group.id)
     const bindButton = view.synthetic ? '' : `
       <button class="summary-button group-manage-button" type="button" data-action="bind-group" data-group-key="${escapeAttr(view.key)}" title="管理当前分组的 API Key 账号">
         <svg class="icon"><use href="#icon-users"/></svg>
@@ -635,7 +704,8 @@
               <p>${escapeHTML(view.group.description || `#${view.group.id || 'ungrouped'}`)}</p>
             </div>
           </div>
-          <div class="group-stats" aria-label="分组账号状态">
+          <div class="group-stats" aria-label="分组账号状态与在线人数">
+            ${groupOnlineBadge}
             <span><strong class="text-success">${formatInteger(enabled)}</strong> / ${formatInteger(total)} 可用</span>
             <span>${formatInteger(apiKeys.length)} API Key</span>
             ${limited ? `<span class="text-warning">${formatInteger(limited)} 临时受限</span>` : ''}

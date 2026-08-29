@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -27,19 +28,44 @@ const (
 )
 
 type onlineUserCandidate struct {
-	id         int64
-	lastCallAt time.Time
-	email      string
-	username   string
+	id               int64
+	lastCallAt       time.Time
+	email            string
+	username         string
+	groupIDs         map[int64]struct{}
+	groupInfoSeen    bool
+	groupInfoMissing bool
+}
+
+type optionalGroupID struct {
+	ID      int64
+	Present bool
+	Valid   bool
+}
+
+func (g *optionalGroupID) UnmarshalJSON(raw []byte) error {
+	g.Present = true
+	if strings.TrimSpace(string(raw)) == "null" {
+		g.ID = 0
+		g.Valid = false
+		return nil
+	}
+	if err := json.Unmarshal(raw, &g.ID); err != nil {
+		return err
+	}
+	g.Valid = true
+	return nil
 }
 
 type opsRequestDetail struct {
-	CreatedAt time.Time `json:"created_at"`
-	UserID    *int64    `json:"user_id"`
+	CreatedAt time.Time       `json:"created_at"`
+	UserID    *int64          `json:"user_id"`
+	GroupID   optionalGroupID `json:"group_id"`
 }
 
 type adminUsageLog struct {
 	UserID              int64           `json:"user_id"`
+	GroupID             optionalGroupID `json:"group_id"`
 	CreatedAt           time.Time       `json:"created_at"`
 	InputTokens         int64           `json:"input_tokens"`
 	OutputTokens        int64           `json:"output_tokens"`
@@ -109,6 +135,8 @@ func (c *Client) getOnlineUsersAt(ctx context.Context, now time.Time) (model.Onl
 		}
 		source = "usage_fallback"
 	}
+	groupCounts, groupCountsAvailable, groupInfoPartial := onlineUserGroupCounts(candidates)
+	groupCountsPartial := groupInfoPartial || source != "ops" || truncated
 
 	ids := make([]int64, 0, len(candidates))
 	for id := range candidates {
@@ -148,6 +176,13 @@ func (c *Client) getOnlineUsersAt(ctx context.Context, now time.Time) (model.Onl
 		partial = true
 		notices = append(notices, "部分用户身份暂不可用")
 	}
+	if !groupCountsAvailable && len(candidates) > 0 {
+		partial = true
+		notices = append(notices, "近期请求未返回分组信息，分组在线人数暂不可用")
+	} else if groupInfoPartial {
+		partial = true
+		notices = append(notices, "部分近期请求缺少分组信息，分组在线人数可能低估")
+	}
 
 	users := make([]model.OnlineUser, 0, len(candidates))
 	for _, candidate := range candidates {
@@ -182,14 +217,17 @@ func (c *Client) getOnlineUsersAt(ctx context.Context, now time.Time) (model.Onl
 	})
 
 	return model.OnlineUsersSnapshot{
-		Count:         len(users),
-		WindowMinutes: int(onlineUserWindow / time.Minute),
-		QueriedAt:     now,
-		Source:        source,
-		Partial:       partial,
-		Truncated:     truncated,
-		Notice:        strings.Join(notices, "；"),
-		Users:         users,
+		Count:                len(users),
+		WindowMinutes:        int(onlineUserWindow / time.Minute),
+		QueriedAt:            now,
+		Source:               source,
+		Partial:              partial,
+		Truncated:            truncated,
+		Notice:               strings.Join(notices, "；"),
+		GroupCounts:          groupCounts,
+		GroupCountsAvailable: groupCountsAvailable,
+		GroupCountsPartial:   groupCountsPartial,
+		Users:                users,
 	}, nil
 }
 
@@ -223,9 +261,16 @@ func (c *Client) collectOnlineUsersFromOps(ctx context.Context, start, end time.
 			}
 			id := *item.UserID
 			candidate, exists := result[id]
-			if !exists || createdAt.After(candidate.lastCallAt) {
-				result[id] = onlineUserCandidate{id: id, lastCallAt: createdAt}
+			if !exists {
+				candidate = onlineUserCandidate{id: id, groupIDs: make(map[int64]struct{})}
 			}
+			if !exists || createdAt.After(candidate.lastCallAt) {
+				candidate.lastCallAt = createdAt
+			}
+			// The current Ops contract omits group_id for an ungrouped request
+			// because the field is tagged omitempty in Sub2API.
+			addOnlineUserGroup(&candidate, item.GroupID, true)
+			result[id] = candidate
 		}
 		if oldest.Before(start) || !hasMoreOnlineUserPages(page, response, onlineUserPageSize) {
 			break
@@ -270,6 +315,10 @@ func (c *Client) collectOnlineUsersFromUsage(ctx context.Context, start, end tim
 				candidate.id = item.UserID
 				candidate.lastCallAt = createdAt
 			}
+			// Admin usage records serialize group_id explicitly, including null
+			// for an ungrouped request. An omitted field therefore means an older
+			// incompatible response and must remain distinguishable.
+			addOnlineUserGroup(&candidate, item.GroupID, false)
 			if item.User != nil {
 				if candidate.email == "" {
 					candidate.email = strings.TrimSpace(item.User.Email)
@@ -288,6 +337,47 @@ func (c *Client) collectOnlineUsersFromUsage(ctx context.Context, start, end tim
 		}
 	}
 	return result, truncated, nil
+}
+
+// onlineUserGroupCounts counts each recently active user at most once per
+// group, even when that user made multiple requests in the same window.
+// Availability and partial flags keep missing grouping data from being shown
+// as a misleading zero.
+func onlineUserGroupCounts(candidates map[int64]onlineUserCandidate) (map[int64]int, bool, bool) {
+	counts := make(map[int64]int)
+	available := len(candidates) == 0
+	partial := false
+	for _, candidate := range candidates {
+		if !candidate.groupInfoSeen {
+			partial = true
+			continue
+		}
+		available = true
+		partial = partial || candidate.groupInfoMissing
+		for groupID := range candidate.groupIDs {
+			counts[groupID]++
+		}
+	}
+	return counts, available, partial
+}
+
+func addOnlineUserGroup(candidate *onlineUserCandidate, groupID optionalGroupID, missingMeansUngrouped bool) {
+	if candidate == nil {
+		return
+	}
+	if (!groupID.Present && !missingMeansUngrouped) || (groupID.Valid && groupID.ID < 0) {
+		candidate.groupInfoMissing = true
+		return
+	}
+	candidate.groupInfoSeen = true
+	if candidate.groupIDs == nil {
+		candidate.groupIDs = make(map[int64]struct{})
+	}
+	resolvedID := int64(0)
+	if groupID.Valid {
+		resolvedID = groupID.ID
+	}
+	candidate.groupIDs[resolvedID] = struct{}{}
 }
 
 func (c *Client) getTodayOnlineUserUsage(ctx context.Context, userIDs []int64, now time.Time) (map[int64]todayUserUsage, error) {

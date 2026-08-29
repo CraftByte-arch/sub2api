@@ -28,11 +28,12 @@ func TestGetOnlineUsersAggregatesOpsAndTodayUsage(t *testing.T) {
 			}
 			writeEnvelope(t, w, map[string]any{
 				"items": []any{
-					map[string]any{"created_at": "2026-08-29T11:59:00Z", "user_id": 1},
-					map[string]any{"created_at": "2026-08-29T11:55:00Z", "user_id": 1},
-					map[string]any{"created_at": "2026-08-29T11:53:00Z", "user_id": 2},
+					map[string]any{"created_at": "2026-08-29T11:59:00Z", "user_id": 1, "group_id": 10},
+					map[string]any{"created_at": "2026-08-29T11:55:00Z", "user_id": 1, "group_id": 10},
+					map[string]any{"created_at": "2026-08-29T11:53:00Z", "user_id": 2, "group_id": 10},
+					map[string]any{"created_at": "2026-08-29T11:52:00Z", "user_id": 2, "group_id": 20},
 				},
-				"total": 3, "page": 1, "page_size": 100, "pages": 1,
+				"total": 4, "page": 1, "page_size": 100, "pages": 1,
 			})
 		case "/api/v1/admin/dashboard/user-breakdown":
 			if r.URL.Query().Get("start_date") != "2026-08-29" || r.URL.Query().Get("end_date") != "2026-08-29" {
@@ -69,7 +70,7 @@ func TestGetOnlineUsersAggregatesOpsAndTodayUsage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snapshot.Source != "ops" || snapshot.Partial || snapshot.Count != 2 || snapshot.WindowMinutes != 10 {
+	if snapshot.Source != "ops" || snapshot.Partial || snapshot.Count != 2 || snapshot.WindowMinutes != 10 || !snapshot.GroupCountsAvailable || snapshot.GroupCountsPartial || snapshot.GroupCounts[10] != 2 || snapshot.GroupCounts[20] != 1 {
 		t.Fatalf("unexpected snapshot: %#v", snapshot)
 	}
 	if len(snapshot.Users) != 2 || snapshot.Users[0].ID != 1 || snapshot.Users[1].ID != 2 {
@@ -96,7 +97,7 @@ func TestGetOnlineUsersFallsBackToUsageLogs(t *testing.T) {
 		case "/api/v1/admin/usage":
 			writeEnvelope(t, w, map[string]any{
 				"items": []any{
-					map[string]any{"user_id": 7, "created_at": "2026-08-29T11:59:00Z", "user": map[string]any{"id": 7, "email": "fallback@example.com", "username": "fallback"}},
+					map[string]any{"user_id": 7, "group_id": 30, "created_at": "2026-08-29T11:59:00Z", "user": map[string]any{"id": 7, "email": "fallback@example.com", "username": "fallback"}},
 					map[string]any{"user_id": 9, "created_at": "2026-08-29T11:40:00Z", "user": map[string]any{"id": 9, "email": "old@example.com"}},
 				},
 				"total": 2, "page": 1, "page_size": 1000, "pages": 1,
@@ -120,6 +121,48 @@ func TestGetOnlineUsersFallsBackToUsageLogs(t *testing.T) {
 	}
 	if snapshot.Users[0].DisplayName != "fallback" || snapshot.Users[0].TodayCost == nil {
 		t.Fatalf("fallback identity/usage missing: %#v", snapshot.Users[0])
+	}
+	if !snapshot.GroupCountsAvailable || !snapshot.GroupCountsPartial || snapshot.GroupCounts[30] != 1 {
+		t.Fatalf("unexpected fallback group counts: %#v", snapshot)
+	}
+}
+
+func TestAddOnlineUserGroupTreatsMissingOpsGroupAsUngrouped(t *testing.T) {
+	candidate := onlineUserCandidate{}
+	addOnlineUserGroup(&candidate, optionalGroupID{}, true)
+	counts, available, partial := onlineUserGroupCounts(map[int64]onlineUserCandidate{1: candidate})
+	if !available || partial || counts[0] != 1 {
+		t.Fatalf("ungrouped Ops request was not counted: %#v available=%v partial=%v", counts, available, partial)
+	}
+}
+
+func TestAddOnlineUserGroupKeepsMissingFallbackFieldUnavailable(t *testing.T) {
+	candidate := onlineUserCandidate{}
+	addOnlineUserGroup(&candidate, optionalGroupID{}, false)
+	counts, available, partial := onlineUserGroupCounts(map[int64]onlineUserCandidate{1: candidate})
+	if available || !partial || len(counts) != 0 {
+		t.Fatalf("missing fallback group field should stay unavailable: %#v available=%v partial=%v", counts, available, partial)
+	}
+}
+
+func TestOnlineUserGroupCountsDeduplicateUsersAndReportMissingGroups(t *testing.T) {
+	counts, available, partial := onlineUserGroupCounts(map[int64]onlineUserCandidate{
+		1: {groupIDs: map[int64]struct{}{10: {}, 20: {}}, groupInfoSeen: true},
+		2: {groupIDs: map[int64]struct{}{10: {}}, groupInfoSeen: true},
+		3: {},
+	})
+	if !available || !partial {
+		t.Fatalf("availability flags = available:%v partial:%v", available, partial)
+	}
+	if counts[10] != 2 || counts[20] != 1 || len(counts) != 2 {
+		t.Fatalf("unexpected per-group counts: %#v", counts)
+	}
+}
+
+func TestOnlineUserGroupCountsAreAvailableWhenNoUsers(t *testing.T) {
+	counts, available, partial := onlineUserGroupCounts(nil)
+	if !available || partial || len(counts) != 0 {
+		t.Fatalf("empty group counts should be an available empty result: %#v available=%v partial=%v", counts, available, partial)
 	}
 }
 
@@ -158,7 +201,7 @@ func TestGetOnlineUsersKeepsAvailableCostWhenOneUsageSummaryFails(t *testing.T) 
 		switch r.URL.Path {
 		case "/api/v1/admin/ops/requests":
 			writeEnvelope(t, w, map[string]any{
-				"items": []any{map[string]any{"created_at": "2026-08-29T11:59:00Z", "user_id": 5}},
+				"items": []any{map[string]any{"created_at": "2026-08-29T11:59:00Z", "user_id": 5, "group_id": 50}},
 				"total": 1, "page": 1, "page_size": 100, "pages": 1,
 			})
 		case "/api/v1/admin/dashboard/user-breakdown":
@@ -185,6 +228,32 @@ func TestGetOnlineUsersKeepsAvailableCostWhenOneUsageSummaryFails(t *testing.T) 
 	}
 	if snapshot.Users[0].DisplayName != "five" {
 		t.Fatalf("identity enrichment missing: %#v", snapshot.Users[0])
+	}
+}
+
+func TestOptionalGroupIDDistinguishesUngroupedFromMissingField(t *testing.T) {
+	var grouped opsRequestDetail
+	if err := json.Unmarshal([]byte(`{"group_id":42}`), &grouped); err != nil {
+		t.Fatal(err)
+	}
+	if !grouped.GroupID.Present || !grouped.GroupID.Valid || grouped.GroupID.ID != 42 {
+		t.Fatalf("grouped value not preserved: %#v", grouped.GroupID)
+	}
+
+	var ungrouped opsRequestDetail
+	if err := json.Unmarshal([]byte(`{"group_id":null}`), &ungrouped); err != nil {
+		t.Fatal(err)
+	}
+	if !ungrouped.GroupID.Present || ungrouped.GroupID.Valid {
+		t.Fatalf("null group should be a known ungrouped request: %#v", ungrouped.GroupID)
+	}
+
+	var legacy opsRequestDetail
+	if err := json.Unmarshal([]byte(`{}`), &legacy); err != nil {
+		t.Fatal(err)
+	}
+	if legacy.GroupID.Present {
+		t.Fatalf("omitted group field must remain distinguishable: %#v", legacy.GroupID)
 	}
 }
 

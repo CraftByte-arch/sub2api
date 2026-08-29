@@ -16,10 +16,12 @@ func TestOnlineUsersEndpointRequiresAdminAndReturnsSnapshot(t *testing.T) {
 	backend := &fakeConsoleCore{
 		fakeAdminCore: fakeAdminCore{user: core.AdminUser{ID: 1, Role: "admin"}},
 		onlineUsers: model.OnlineUsersSnapshot{
-			Count:         1,
-			WindowMinutes: 10,
-			QueriedAt:     time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC),
-			Source:        "ops",
+			Count:                1,
+			WindowMinutes:        10,
+			QueriedAt:            time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC),
+			Source:               "ops",
+			GroupCounts:          map[int64]int{42: 1},
+			GroupCountsAvailable: true,
 			Users: []model.OnlineUser{{
 				ID:          7,
 				DisplayName: "alice",
@@ -46,7 +48,7 @@ func TestOnlineUsersEndpointRequiresAdminAndReturnsSnapshot(t *testing.T) {
 	if err := json.NewDecoder(response.Body).Decode(&got); err != nil {
 		t.Fatal(err)
 	}
-	if got.Count != 1 || len(got.Users) != 1 || got.Users[0].DisplayName != "alice" || backend.onlineCalls != 1 {
+	if got.Count != 1 || got.GroupCounts[42] != 1 || !got.GroupCountsAvailable || len(got.Users) != 1 || got.Users[0].DisplayName != "alice" || backend.onlineCalls != 1 {
 		t.Fatalf("unexpected online response: %#v calls=%d", got, backend.onlineCalls)
 	}
 }

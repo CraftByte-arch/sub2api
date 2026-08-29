@@ -145,6 +145,12 @@ button:disabled, input:disabled, select:disabled { cursor: not-allowed; opacity:
 .status-tag.inactive { background: var(--neutral-soft); color: var(--text-secondary); }
 .group-stats { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 7px 13px; color: var(--text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; }
 .group-stats strong { font-size: 14px; }
+.group-online-users { display: inline-flex; align-items: center; gap: 5px; min-height: 24px; padding: 3px 7px; border: 1px solid color-mix(in srgb, var(--success) 34%, var(--border)); border-radius: 6px; background: color-mix(in srgb, var(--success-soft) 70%, var(--surface)); color: var(--success); font-size: 11px; font-weight: 700; white-space: nowrap; }
+.group-online-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--success); box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 16%, transparent); flex: none; }
+.group-online-users.unavailable { border-color: var(--border); background: var(--surface-subtle); color: var(--text-muted); }
+.group-online-users.unavailable .group-online-dot { background: var(--text-muted); box-shadow: none; }
+.group-online-users.partial { border-color: color-mix(in srgb, var(--warning) 42%, var(--border)); background: var(--warning-soft); color: var(--warning); }
+.group-online-users.partial .group-online-dot { background: var(--warning); box-shadow: 0 0 0 3px color-mix(in srgb, var(--warning) 16%, transparent); }
 .group-balance-summary { display: inline-flex; align-items: stretch; flex-wrap: wrap; gap: 5px; min-width: 0; }
 .group-balance-item { display: grid; grid-template-columns: auto auto; column-gap: 6px; min-width: 118px; padding: 4px 7px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-subtle); text-align: left; line-height: 1.2; }
 .group-balance-item > span { color: var(--text-muted); font-size: 10px; font-weight: 700; white-space: nowrap; }
