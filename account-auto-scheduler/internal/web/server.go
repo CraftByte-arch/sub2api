@@ -41,6 +41,7 @@ type ConsoleCore interface {
 	ListGroups(ctx context.Context) ([]model.UpstreamGroup, error)
 	GetTodayStatsBatch(ctx context.Context, accountIDs []int64) (map[string]model.WindowStats, error)
 	GetOnlineUsers(ctx context.Context) (model.OnlineUsersSnapshot, error)
+	GetGroupUserConsumption(ctx context.Context, groupID int64) (model.GroupUserConsumptionSnapshot, error)
 	GetPassiveUsage(ctx context.Context, accountID int64) (model.AccountUsageInfo, error)
 	SetAccountGroup(ctx context.Context, accountID, groupID int64, bound bool) (model.UpstreamAccount, error)
 }
@@ -264,6 +265,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/session", s.requireAdmin(http.HandlerFunc(s.handleSession)))
 	mux.Handle("GET /api/overview", s.requireAdmin(http.HandlerFunc(s.handleOverview)))
 	mux.Handle("GET /api/online-users", s.requireAdmin(http.HandlerFunc(s.handleOnlineUsers)))
+	mux.Handle("GET /api/groups/{groupID}/user-consumption", s.requireAdmin(http.HandlerFunc(s.handleGroupUserConsumption)))
 	mux.Handle("GET /api/accounts", s.requireAdmin(http.HandlerFunc(s.handleAccounts)))
 	mux.Handle("GET /api/accounts/{accountID}/usage", s.requireAdmin(http.HandlerFunc(s.handleAccountUsage)))
 	mux.Handle("PUT /api/accounts/{accountID}/schedulable", s.requireAdmin(http.HandlerFunc(s.handleSetAccountSchedulable)))
@@ -354,6 +356,38 @@ func (s *Server) handleOnlineUsers(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "ONLINE_USERS_UNAVAILABLE", err.Error())
 		return
 	}
+	writeJSON(w, http.StatusOK, snapshot)
+}
+
+func (s *Server) handleGroupUserConsumption(w http.ResponseWriter, r *http.Request) {
+	if s.console == nil {
+		writeError(w, http.StatusServiceUnavailable, "CONSOLE_UNAVAILABLE", "分组用户消耗数据暂不可用")
+		return
+	}
+	groupID, err := pathPositiveID(r, "groupID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_GROUP", err.Error())
+		return
+	}
+
+	groups, err := s.console.ListGroups(r.Context())
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "GROUPS_UNAVAILABLE", err.Error())
+		return
+	}
+	group, found := findGroup(groups, groupID)
+	if !found {
+		writeError(w, http.StatusNotFound, "GROUP_NOT_FOUND", "分组不存在")
+		return
+	}
+
+	snapshot, err := s.console.GetGroupUserConsumption(r.Context(), groupID)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "GROUP_USER_CONSUMPTION_UNAVAILABLE", err.Error())
+		return
+	}
+	snapshot.GroupID = groupID
+	snapshot.GroupName = group.Name
 	writeJSON(w, http.StatusOK, snapshot)
 }
 

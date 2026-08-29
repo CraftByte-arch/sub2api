@@ -35,34 +35,37 @@ func (f *fakeAdminCore) RegisterAdminMenu(context.Context, string) error { retur
 
 type fakeConsoleCore struct {
 	fakeAdminCore
-	accounts        []model.UpstreamAccount
-	groups          []model.UpstreamGroup
-	today           map[string]model.WindowStats
-	onlineUsers     model.OnlineUsersSnapshot
-	usage           model.AccountUsageInfo
-	consoleErr      error
-	onlineUsersErr  error
-	usageErr        error
-	bindingErr      error
-	bindingErrByID  map[int64]error
-	accountErr      error
-	setErr          error
-	overviewCalls   int
-	groupCalls      int
-	getAccountCalls int
-	setCalls        []bool
-	onlineCalls     int
-	boundAccountID  int64
-	boundGroupID    int64
-	bound           bool
-	bindingCalls    []groupBindingCall
-	exportErr       error
-	exportErrByID   map[int64]error
-	exportCalls     []int64
-	exportToken     string
-	exportIdentity  core.ForwardedIdentity
-	testStarted     chan struct{}
-	testRelease     chan struct{}
+	accounts              []model.UpstreamAccount
+	groups                []model.UpstreamGroup
+	today                 map[string]model.WindowStats
+	onlineUsers           model.OnlineUsersSnapshot
+	groupConsumption      model.GroupUserConsumptionSnapshot
+	groupConsumptionErr   error
+	usage                 model.AccountUsageInfo
+	consoleErr            error
+	onlineUsersErr        error
+	usageErr              error
+	bindingErr            error
+	bindingErrByID        map[int64]error
+	accountErr            error
+	setErr                error
+	overviewCalls         int
+	groupCalls            int
+	getAccountCalls       int
+	setCalls              []bool
+	onlineCalls           int
+	groupConsumptionCalls int
+	boundAccountID        int64
+	boundGroupID          int64
+	bound                 bool
+	bindingCalls          []groupBindingCall
+	exportErr             error
+	exportErrByID         map[int64]error
+	exportCalls           []int64
+	exportToken           string
+	exportIdentity        core.ForwardedIdentity
+	testStarted           chan struct{}
+	testRelease           chan struct{}
 }
 
 type groupBindingCall struct {
@@ -88,6 +91,11 @@ func (f *fakeConsoleCore) GetTodayStatsBatch(context.Context, []int64) (map[stri
 func (f *fakeConsoleCore) GetOnlineUsers(context.Context) (model.OnlineUsersSnapshot, error) {
 	f.onlineCalls++
 	return f.onlineUsers, f.onlineUsersErr
+}
+
+func (f *fakeConsoleCore) GetGroupUserConsumption(_ context.Context, _ int64) (model.GroupUserConsumptionSnapshot, error) {
+	f.groupConsumptionCalls++
+	return f.groupConsumption, f.groupConsumptionErr
 }
 
 func (f *fakeConsoleCore) GetPassiveUsage(context.Context, int64) (model.AccountUsageInfo, error) {

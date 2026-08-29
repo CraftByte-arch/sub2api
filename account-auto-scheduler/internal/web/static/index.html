@@ -311,6 +311,27 @@
     </article>
   </dialog>
 
+  <dialog id="group-user-consumption-dialog" class="modal wide-modal" aria-labelledby="group-user-consumption-title" aria-describedby="group-user-consumption-date">
+    <article class="modal-panel">
+      <header class="modal-header">
+        <div><h2 id="group-user-consumption-title">今日用户消耗 Top 20</h2><p id="group-user-consumption-date">当前分组 · 正在读取当天统计</p></div>
+        <button class="icon-button ghost" type="button" data-close-dialog="group-user-consumption-dialog" title="关闭" aria-label="关闭">
+          <svg class="icon"><use href="#icon-x"/></svg>
+        </button>
+      </header>
+      <div id="group-user-consumption-summary" class="group-consumption-summary" aria-live="polite"></div>
+      <div class="group-consumption-table-header" aria-hidden="true">
+        <span>用户</span><span>今日消耗</span><span>请求 / Token</span>
+      </div>
+      <div id="group-user-consumption-list" class="group-consumption-list" aria-live="polite"></div>
+      <footer class="modal-footer">
+        <button id="group-user-consumption-retry-button" class="button secondary" type="button">刷新统计</button>
+        <span class="modal-footer-spacer"></span>
+        <button class="button secondary" type="button" data-close-dialog="group-user-consumption-dialog">关闭</button>
+      </footer>
+    </article>
+  </dialog>
+
   <dialog id="delete-dialog" class="modal small-modal">
     <form method="dialog" class="modal-panel">
       <header class="modal-header"><div><h2>删除检测配置</h2><p id="delete-account-name"></p></div></header>

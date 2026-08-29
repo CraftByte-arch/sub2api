@@ -43,6 +43,12 @@
     onlineUsersLoading: false,
     onlineUsersError: '',
     onlineUsersTrigger: null,
+    groupConsumption: null,
+    groupConsumptionGroupKey: null,
+    groupConsumptionLoading: false,
+    groupConsumptionError: '',
+    groupConsumptionTrigger: null,
+    groupConsumptionRequestID: 0,
     collapsedGroups: new Set(),
     automationBusy: new Set(),
     schedulableBusy: new Set(),
@@ -111,6 +117,8 @@
       'account-detail-dialog', 'account-detail-title', 'account-detail-group-name', 'account-detail-list',
       'account-detail-page-label', 'account-detail-prev', 'account-detail-next', 'delete-dialog',
       'online-users-dialog', 'online-users-window-label', 'online-users-summary', 'online-users-list', 'online-users-retry-button',
+      'group-user-consumption-dialog', 'group-user-consumption-title', 'group-user-consumption-date',
+      'group-user-consumption-summary', 'group-user-consumption-list', 'group-user-consumption-retry-button',
       'delete-account-name', 'confirm-delete-button', 'result-dialog', 'result-account-name', 'result-details', 'toast',
       'protection-dialog', 'protection-form', 'protection-account-name', 'protection-multiplier-input',
       'protection-final-preview', 'protection-error', 'protection-save-button', 'binding-action-dialog',
@@ -156,6 +164,7 @@
     })
     elements.onlineUsersMetric.addEventListener('click', (event) => openOnlineUsersDialog(event.currentTarget))
     elements.onlineUsersRetryButton.addEventListener('click', () => loadOnlineUsers())
+    elements.groupUserConsumptionRetryButton.addEventListener('click', () => loadGroupUserConsumption())
     elements.addButton.addEventListener('click', () => openCreateDialog())
     elements.registerTabButton.addEventListener('click', registerTab)
     elements.notificationSettingsButton.addEventListener('click', openNotificationSettings)
@@ -217,6 +226,16 @@
     elements.onlineUsersDialog.addEventListener('close', () => {
       const trigger = state.onlineUsersTrigger
       state.onlineUsersTrigger = null
+      window.requestAnimationFrame(() => trigger?.isConnected && trigger.focus())
+    })
+    elements.groupUserConsumptionDialog.addEventListener('close', () => {
+      const trigger = state.groupConsumptionTrigger
+      state.groupConsumptionTrigger = null
+      state.groupConsumptionGroupKey = null
+      state.groupConsumption = null
+      state.groupConsumptionError = ''
+      state.groupConsumptionLoading = false
+      state.groupConsumptionRequestID += 1
       window.requestAnimationFrame(() => trigger?.isConnected && trigger.focus())
     })
     document.addEventListener('keydown', (event) => {
@@ -411,6 +430,102 @@
     await loadOnlineUsers()
   }
 
+  async function openGroupUserConsumptionDialog(groupKey, trigger = null) {
+    const view = buildGroupViews().find((item) => item.key === String(groupKey))
+    if (!view || view.synthetic || Number(view.group.id) <= 0) return
+    state.groupConsumptionGroupKey = view.key
+    state.groupConsumptionTrigger = trigger
+    state.groupConsumptionRequestID += 1
+    state.groupConsumption = null
+    state.groupConsumptionError = ''
+    state.groupConsumptionLoading = false
+    elements.groupUserConsumptionTitle.textContent = '今日用户消耗 Top 20'
+    elements.groupUserConsumptionDate.textContent = `${view.group.name || `分组 ${view.group.id}`} · 正在读取当天统计`
+    if (!elements.groupUserConsumptionDialog.open) elements.groupUserConsumptionDialog.showModal()
+    renderGroupUserConsumption()
+    await loadGroupUserConsumption()
+  }
+
+  async function loadGroupUserConsumption() {
+    const groupKey = state.groupConsumptionGroupKey
+    const requestID = state.groupConsumptionRequestID
+    const view = buildGroupViews().find((item) => item.key === String(groupKey))
+    const groupID = Number(view?.group?.id)
+    if (!groupKey || !Number.isInteger(groupID) || groupID <= 0 || state.groupConsumptionLoading) return false
+    state.groupConsumptionLoading = true
+    state.groupConsumptionError = ''
+    renderGroupUserConsumption()
+    try {
+      const response = await api(`/api/groups/${groupID}/user-consumption`)
+      if (state.groupConsumptionGroupKey !== groupKey || state.groupConsumptionRequestID !== requestID) return false
+      state.groupConsumption = response || null
+      state.groupConsumptionError = ''
+      renderGroupUserConsumption()
+      return true
+    } catch (error) {
+      if (state.groupConsumptionGroupKey !== groupKey || state.groupConsumptionRequestID !== requestID) return false
+      state.groupConsumption = null
+      state.groupConsumptionError = error.message || '分组用户消耗暂不可用'
+      renderGroupUserConsumption()
+      return false
+    } finally {
+      if (state.groupConsumptionRequestID === requestID) {
+        state.groupConsumptionLoading = false
+        if (state.groupConsumptionGroupKey === groupKey) renderGroupUserConsumption()
+      }
+    }
+  }
+
+  function renderGroupUserConsumption() {
+    if (!elements.groupUserConsumptionDialog?.open) return
+    const snapshot = state.groupConsumption
+    const currentView = buildGroupViews().find((item) => item.key === String(state.groupConsumptionGroupKey))
+    const groupName = snapshot?.group_name || currentView?.group?.name || '当前分组'
+    const date = snapshot?.date || '当天'
+    elements.groupUserConsumptionDate.textContent = `${groupName} · ${date}`
+    elements.groupUserConsumptionRetryButton.disabled = state.groupConsumptionLoading
+
+    if (state.groupConsumptionLoading && !snapshot) {
+      elements.groupUserConsumptionSummary.innerHTML = '<span class="group-consumption-loading">正在读取当天用户消耗…</span>'
+      elements.groupUserConsumptionList.innerHTML = '<div class="group-consumption-skeleton" aria-hidden="true"><i></i><i></i><i></i></div>'
+      return
+    }
+    if (state.groupConsumptionError && !snapshot) {
+      elements.groupUserConsumptionSummary.innerHTML = `<span class="group-consumption-error">${escapeHTML(state.groupConsumptionError)}</span>`
+      elements.groupUserConsumptionList.innerHTML = '<div class="dialog-empty">统计暂时无法读取，请点击“刷新统计”重试。</div>'
+      return
+    }
+
+    const users = Array.isArray(snapshot?.users) ? snapshot.users : []
+    const limit = Number(snapshot?.limit) || 20
+    const notices = snapshot?.notice ? `<span class="group-consumption-notice">${escapeHTML(snapshot.notice)}</span>` : ''
+    const queriedAt = snapshot?.queried_at ? `更新于 ${escapeHTML(formatDateTime(snapshot.queried_at))}` : '刚刚更新'
+    const partial = snapshot?.partial ? '<span class="group-consumption-partial">部分字段暂不可用</span>' : ''
+    elements.groupUserConsumptionSummary.innerHTML = `<strong>前 ${formatInteger(limit)} 位</strong><span>${escapeHTML(date)} · ${queriedAt}</span>${partial}${notices}`
+    elements.groupUserConsumptionList.innerHTML = users.length
+      ? users.map((user, index) => renderGroupUserConsumptionRow(user, index + 1)).join('')
+      : '<div class="dialog-empty">当天暂无用户消耗记录。</div>'
+  }
+
+  function renderGroupUserConsumptionRow(user, rank) {
+    const id = Number(user?.user_id)
+    const displayName = user?.display_name || `用户 #${Number.isFinite(id) ? id : '—'}`
+    const email = user?.email || ''
+    const cost = user?.actual_cost
+    const requests = user?.requests
+    const tokens = user?.total_tokens
+    const costValue = cost === null || cost === undefined
+      ? '<strong class="muted">金额暂不可用</strong>'
+      : `<strong>${escapeHTML(formatCurrency(cost))}</strong>`
+    const requestValue = requests === null || requests === undefined ? '请求数暂不可用' : `${formatInteger(requests)} 次调用`
+    const tokenValue = tokens === null || tokens === undefined ? 'Token 数暂不可用' : `${formatCompact(tokens)} tokens`
+    return `<div class="group-consumption-row">
+      <div class="group-consumption-identity"><span class="mobile-field-label">用户</span><strong><span class="consumption-rank">${formatInteger(rank)}</span>${escapeHTML(displayName)}</strong><span>${email && email !== displayName ? `${escapeHTML(email)} · ` : ''}#${escapeHTML(id)}</span></div>
+      <div class="group-consumption-cost"><span class="mobile-field-label">今日消耗</span>${costValue}</div>
+      <div class="group-consumption-metrics"><span class="mobile-field-label">请求 / Token</span><strong>${escapeHTML(requestValue)}</strong><span>${escapeHTML(tokenValue)}</span></div>
+    </div>`
+  }
+
   function buildGroupViews() {
     const validGroupIDs = new Set(state.groups.map((group) => group.id))
     const views = state.groups.map((group) => ({
@@ -494,6 +609,11 @@
         <svg class="icon"><use href="#icon-bell"/></svg>
         <span>${Number.isFinite(groupBalanceThreshold) ? '编辑余额告警' : '设置余额告警'}</span>
       </button>`
+    const groupConsumptionButton = view.synthetic ? '' : `
+      <button class="summary-button group-consumption-button" type="button" data-action="open-group-consumption" data-group-key="${escapeAttr(view.key)}" aria-haspopup="dialog" aria-controls="group-user-consumption-dialog" title="查看当前分组今日用户消耗前 20 位">
+        <svg class="icon"><use href="#icon-activity"/></svg>
+        <span>今日用户 Top 20</span>
+      </button>`
     const detailButtons = [
       oauthAccounts.length ? renderDetailButton(view.key, 'oauth', `OAuth ${formatInteger(oauthAccounts.length)}`) : '',
       otherAccounts.length ? renderDetailButton(view.key, 'other', `其他 ${formatInteger(otherAccounts.length)}`) : '',
@@ -521,7 +641,7 @@
             ${limited ? `<span class="text-warning">${formatInteger(limited)} 临时受限</span>` : ''}
             ${balanceSummary}
           </div>
-          <div class="group-actions">${detailButtons}${groupBalanceButton}${groupProtectionButton}${bindButton}</div>
+          <div class="group-actions">${detailButtons}${groupConsumptionButton}${groupBalanceButton}${groupProtectionButton}${bindButton}</div>
         </header>
         <div id="${escapeAttr(contentID)}" class="api-key-table" ${collapsed ? 'hidden' : ''}>
           <div class="api-key-header" aria-hidden="true"><span>账号状态</span><span>用量与管理员额度</span><span>检测规则与最终倍率</span><span>全局调度 / 自动检测 / 操作</span></div>
@@ -944,6 +1064,10 @@
     }
     if (action === 'edit-group-balance-alert') {
       openGroupBalanceAlertDialog(Number(button.dataset.groupKey))
+      return
+    }
+    if (action === 'open-group-consumption') {
+      await openGroupUserConsumptionDialog(button.dataset.groupKey, button)
       return
     }
     if (action === 'open-detail') {
