@@ -39,6 +39,10 @@
     detailKind: 'oauth',
     detailPage: 1,
     usageCache: new Map(),
+    onlineUsers: null,
+    onlineUsersLoading: false,
+    onlineUsersError: '',
+    onlineUsersTrigger: null,
     collapsedGroups: new Set(),
     automationBusy: new Set(),
     schedulableBusy: new Set(),
@@ -81,9 +85,11 @@
       elements.authState.hidden = true
       elements.app.hidden = false
       await loadOverview()
+      await loadOnlineUsers(true)
       state.pollTimer = window.setInterval(() => {
         if (document.visibilityState === 'visible' && !document.querySelector('dialog[open]')) {
           void loadOverview(true)
+          void loadOnlineUsers(true)
           if (state.activeTab === 'upstreams') void state.upstreamWorkspace.refresh(true)
         }
       }, 10000)
@@ -96,13 +102,15 @@
     const ids = [
       'auth-state', 'auth-message', 'app', 'sync-label', 'register-tab-button', 'refresh-button', 'add-button',
       'search-input', 'status-filter', 'group-list', 'empty-state', 'no-match-state', 'metric-groups',
-      'metric-accounts', 'metric-enabled', 'metric-auto-stopped', 'config-dialog', 'config-form', 'config-title',
+      'metric-accounts', 'metric-enabled', 'metric-auto-stopped', 'online-users-metric', 'metric-online-window', 'metric-online-users',
+      'config-dialog', 'config-form', 'config-title',
       'account-select', 'interval-input', 'model-input', 'latency-input', 'failure-input', 'recovery-input',
       'enabled-input', 'balance-alert-input', 'prompt-input', 'form-error', 'save-button', 'binding-dialog', 'binding-group-name',
       'direct-probe-control', 'direct-probe-state', 'direct-probe-message', 'direct-probe-authorize-button', 'direct-probe-revoke-button',
       'binding-search-input', 'binding-change-count', 'binding-list', 'binding-error', 'binding-save-button',
       'account-detail-dialog', 'account-detail-title', 'account-detail-group-name', 'account-detail-list',
       'account-detail-page-label', 'account-detail-prev', 'account-detail-next', 'delete-dialog',
+      'online-users-dialog', 'online-users-window-label', 'online-users-summary', 'online-users-list', 'online-users-retry-button',
       'delete-account-name', 'confirm-delete-button', 'result-dialog', 'result-account-name', 'result-details', 'toast',
       'protection-dialog', 'protection-form', 'protection-account-name', 'protection-multiplier-input',
       'protection-final-preview', 'protection-error', 'protection-save-button', 'binding-action-dialog',
@@ -142,7 +150,12 @@
     elements.groupsTab.addEventListener('click', () => setWorkspaceTab('groups'))
     elements.upstreamsTab.addEventListener('click', () => setWorkspaceTab('upstreams'))
     for (const tab of [elements.groupsTab, elements.upstreamsTab]) tab.addEventListener('keydown', handleWorkspaceTabKeydown)
-    elements.refreshButton.addEventListener('click', () => loadOverview())
+    elements.refreshButton.addEventListener('click', () => {
+      void loadOverview()
+      void loadOnlineUsers()
+    })
+    elements.onlineUsersMetric.addEventListener('click', (event) => openOnlineUsersDialog(event.currentTarget))
+    elements.onlineUsersRetryButton.addEventListener('click', () => loadOnlineUsers())
     elements.addButton.addEventListener('click', () => openCreateDialog())
     elements.registerTabButton.addEventListener('click', registerTab)
     elements.notificationSettingsButton.addEventListener('click', openNotificationSettings)
@@ -200,6 +213,11 @@
     })
     elements.schedulingActionDialog.addEventListener('close', () => {
       if (elements.schedulingActionDialog.dataset.busy !== 'true') state.schedulingAction = null
+    })
+    elements.onlineUsersDialog.addEventListener('close', () => {
+      const trigger = state.onlineUsersTrigger
+      state.onlineUsersTrigger = null
+      window.requestAnimationFrame(() => trigger?.isConnected && trigger.focus())
     })
     document.addEventListener('keydown', (event) => {
       if (event.key !== 'Escape') return
@@ -269,6 +287,28 @@
     }
   }
 
+  async function loadOnlineUsers(silent = false) {
+    if (state.onlineUsersLoading) return false
+    state.onlineUsersLoading = true
+    renderOnlineUsers()
+    try {
+      const response = await api('/api/online-users')
+      state.onlineUsers = response || null
+      state.onlineUsersError = ''
+      renderOnlineUsers()
+      return true
+    } catch (error) {
+      state.onlineUsersError = error.message || '在线用户数据暂不可用'
+      state.onlineUsers = null
+      renderOnlineUsers()
+      if (!silent && !elements.onlineUsersDialog.open) showToast(state.onlineUsersError, true)
+      return false
+    } finally {
+      state.onlineUsersLoading = false
+      renderOnlineUsers()
+    }
+  }
+
   function render() {
     renderMetrics()
     const views = buildGroupViews()
@@ -285,6 +325,90 @@
     elements.metricAccounts.textContent = formatInteger(state.accounts.length)
     elements.metricEnabled.textContent = formatInteger(state.accounts.filter((account) => accountState(account).key === 'enabled').length)
     elements.metricAutoStopped.textContent = formatInteger(state.accounts.filter((account) => account.config?.managed_suspended && !account.schedulable).length)
+    renderOnlineUsersMetric()
+  }
+
+  function renderOnlineUsersMetric() {
+    const snapshot = state.onlineUsers
+    const count = Number(snapshot?.count)
+    elements.metricOnlineUsers.textContent = state.onlineUsersLoading && !snapshot
+      ? '…'
+      : Number.isFinite(count) ? formatInteger(count) : state.onlineUsersError ? '不可用' : '—'
+    elements.metricOnlineWindow.textContent = snapshot?.window_minutes
+      ? `最近 ${formatInteger(snapshot.window_minutes)} 分钟`
+      : '最近 10 分钟'
+    elements.onlineUsersWindowLabel.textContent = snapshot?.window_minutes
+      ? `最近 ${formatInteger(snapshot.window_minutes)} 分钟内有调用的用户`
+      : '最近 10 分钟内有调用的用户'
+    elements.onlineUsersMetric.classList.toggle('metric-error', Boolean(state.onlineUsersError && !snapshot))
+    elements.onlineUsersMetric.classList.toggle('metric-loading', state.onlineUsersLoading)
+    elements.onlineUsersMetric.title = state.onlineUsersError && !snapshot
+      ? `${state.onlineUsersError}；点击重试`
+      : '查看最近十分钟有调用的用户'
+  }
+
+  function renderOnlineUsers() {
+    renderOnlineUsersMetric()
+    if (!elements.onlineUsersDialog?.open) return
+    const snapshot = state.onlineUsers
+    if (state.onlineUsersLoading && !snapshot) {
+      elements.onlineUsersSummary.innerHTML = '<span class="online-users-loading">正在读取最近 10 分钟的调用记录…</span>'
+      elements.onlineUsersList.innerHTML = '<div class="online-users-skeleton" aria-hidden="true"><i></i><i></i><i></i></div>'
+      elements.onlineUsersRetryButton.disabled = true
+      return
+    }
+    elements.onlineUsersRetryButton.disabled = state.onlineUsersLoading
+    if (state.onlineUsersError && !snapshot) {
+      elements.onlineUsersSummary.innerHTML = `<span class="online-users-error">${escapeHTML(state.onlineUsersError)}</span>`
+      elements.onlineUsersList.innerHTML = '<div class="dialog-empty">在线用户暂时无法读取，请点击“刷新列表”重试。</div>'
+      return
+    }
+    const count = Number(snapshot?.count) || 0
+    const notices = snapshot?.notice ? `<span class="online-users-notice">${escapeHTML(snapshot.notice)}</span>` : ''
+    const queriedAt = snapshot?.queried_at ? `更新于 ${escapeHTML(formatDateTime(snapshot.queried_at))}` : '刚刚更新'
+    elements.onlineUsersSummary.innerHTML = `<strong>${formatInteger(count)} 人在线</strong><span>${queriedAt}</span>${notices}`
+    const users = Array.isArray(snapshot?.users) ? snapshot.users : []
+    elements.onlineUsersList.innerHTML = users.length ? users.map(renderOnlineUser).join('') : '<div class="dialog-empty">最近 10 分钟暂无用户调用。</div>'
+  }
+
+  function renderOnlineUser(user) {
+    const id = Number(user?.id)
+    const displayName = user?.display_name || `用户 #${Number.isFinite(id) ? id : '—'}`
+    const email = user?.email || ''
+    const cost = user?.today_cost
+    const tokens = user?.today_tokens
+    const requests = user?.today_requests
+    const costLabel = cost === null || cost === undefined
+      ? '<strong class="muted">金额暂不可用</strong>'
+      : `<strong>${escapeHTML(formatCurrency(cost))}</strong>`
+    const usageDetails = []
+    if (requests !== null && requests !== undefined) usageDetails.push(`${formatInteger(requests)} 次调用`)
+    if (tokens !== null && tokens !== undefined) usageDetails.push(`${formatCompact(tokens)} tokens`)
+    if (!usageDetails.length) usageDetails.push('今日统计暂不可用')
+    const consumption = `${costLabel}<span>${escapeHTML(usageDetails.join(' · '))}</span>`
+    const lastCall = user?.last_call_at ? formatDateTime(user.last_call_at) : '—'
+    return `<div class="online-user-row">
+      <div class="online-user-identity"><span class="mobile-field-label">用户</span><strong>${escapeHTML(displayName)}</strong><span>${email ? `${escapeHTML(email)} · ` : ''}#${escapeHTML(id)}</span></div>
+      <div class="online-user-last-call"><span class="mobile-field-label">最后调用</span><strong>${escapeHTML(lastCall)}</strong><span>${escapeHTML(formatOnlineAge(user?.last_call_at))}</span></div>
+      <div class="online-user-consumption"><span class="mobile-field-label">今日消耗</span>${consumption}</div>
+    </div>`
+  }
+
+  function formatOnlineAge(value) {
+    const timestamp = new Date(value).getTime()
+    if (!Number.isFinite(timestamp)) return '时间未知'
+    const seconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000))
+    if (seconds < 60) return `${seconds} 秒前`
+    const minutes = Math.floor(seconds / 60)
+    if (minutes < 60) return `${minutes} 分钟前`
+    return `${Math.floor(minutes / 60)} 小时前`
+  }
+
+  async function openOnlineUsersDialog(trigger = null) {
+    state.onlineUsersTrigger = trigger
+    if (!elements.onlineUsersDialog.open) elements.onlineUsersDialog.showModal()
+    renderOnlineUsers()
+    await loadOnlineUsers()
   }
 
   function buildGroupViews() {

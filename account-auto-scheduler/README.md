@@ -5,6 +5,7 @@
 - `GET /api/v1/admin/accounts?type=apikey`：同步可配置账号和当前调度状态
 - `GET /api/v1/admin/accounts`、`GET /api/v1/admin/groups/all`：生成分组账号总览
 - `POST /api/v1/admin/accounts/today-stats/batch`：读取账号今日请求、Token 和成本
+- `GET /api/v1/admin/ops/requests`、`GET /api/v1/admin/dashboard/user-breakdown`、`POST /api/v1/admin/dashboard/users-usage`：汇总最近 10 分钟在线用户及今日实际消耗
 - `GET /api/v1/admin/accounts/:id/usage?source=passive`：按需读取 OAuth 账号额度快照
 - `PUT /api/v1/admin/accounts/:id`：保留其他分组关系，只增删当前分组绑定
 - `GET /api/v1/admin/channels/model-pricing?model=:model`：读取现有模型单 Token 定价，仅用于按 1 倍率估算状态检测消耗
@@ -18,6 +19,7 @@
 ## 管理页面
 
 - 首次默认展开全部分组，并直接列出每组的 API Key 账号、实时可用数、调度状态及原因；管理员可以展开或收起分组，浏览器会保留折叠偏好。
+- 总览顶部显示最近 10 分钟内有调用的在线用户数；点击后弹窗列出用户、最后调用时间、今日实际消耗、请求数和 Token。在线统计失败不会阻断分组与账号总览，并提供重试入口。
 - OAuth 和 Setup Token 账号按组折叠为数量入口，弹窗每页显示 10 个账号及今日用量、被动额度快照。
 - 每组内当前可用账号优先排列，其余账号再按名称和 ID 稳定排序。
 - API Key 账号显示今日用量、管理员配置的日/周/总额度、上游列表中已显式绑定 Key 的最终倍率、检测规则和最近 50 次结果。最终倍率只在充值倍率和上游分组倍率均已同步时显示；未绑定、绑定失效、存在歧义或缺少配置时会显示原因，不会回退显示 Sub2API 探测倍率。

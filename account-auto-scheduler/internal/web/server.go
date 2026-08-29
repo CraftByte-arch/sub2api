@@ -40,6 +40,7 @@ type ConsoleCore interface {
 	ListAccounts(ctx context.Context) ([]model.UpstreamAccount, error)
 	ListGroups(ctx context.Context) ([]model.UpstreamGroup, error)
 	GetTodayStatsBatch(ctx context.Context, accountIDs []int64) (map[string]model.WindowStats, error)
+	GetOnlineUsers(ctx context.Context) (model.OnlineUsersSnapshot, error)
 	GetPassiveUsage(ctx context.Context, accountID int64) (model.AccountUsageInfo, error)
 	SetAccountGroup(ctx context.Context, accountID, groupID int64, bound bool) (model.UpstreamAccount, error)
 }
@@ -262,6 +263,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /healthz", s.handleHealth)
 	mux.Handle("GET /api/session", s.requireAdmin(http.HandlerFunc(s.handleSession)))
 	mux.Handle("GET /api/overview", s.requireAdmin(http.HandlerFunc(s.handleOverview)))
+	mux.Handle("GET /api/online-users", s.requireAdmin(http.HandlerFunc(s.handleOnlineUsers)))
 	mux.Handle("GET /api/accounts", s.requireAdmin(http.HandlerFunc(s.handleAccounts)))
 	mux.Handle("GET /api/accounts/{accountID}/usage", s.requireAdmin(http.HandlerFunc(s.handleAccountUsage)))
 	mux.Handle("PUT /api/accounts/{accountID}/schedulable", s.requireAdmin(http.HandlerFunc(s.handleSetAccountSchedulable)))
@@ -340,6 +342,19 @@ func (s *Server) handleAccounts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"accounts": accounts})
+}
+
+func (s *Server) handleOnlineUsers(w http.ResponseWriter, r *http.Request) {
+	if s.console == nil {
+		writeError(w, http.StatusServiceUnavailable, "CONSOLE_UNAVAILABLE", "在线用户数据暂不可用")
+		return
+	}
+	snapshot, err := s.console.GetOnlineUsers(r.Context())
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "ONLINE_USERS_UNAVAILABLE", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, snapshot)
 }
 
 func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {

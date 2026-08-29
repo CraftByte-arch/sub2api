@@ -40,6 +40,9 @@ type Client struct {
 
 	todayCacheMu    sync.Mutex
 	todayCacheStats map[int64]cachedAccountCacheStats
+
+	onlineIdentityMu    sync.Mutex
+	onlineIdentityCache map[int64]cachedOnlineUserIdentity
 }
 
 type cachedAccountCacheStats struct {

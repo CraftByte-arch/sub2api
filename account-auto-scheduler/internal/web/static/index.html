@@ -89,6 +89,10 @@
         <div class="metric"><span>全部账号</span><strong id="metric-accounts">0</strong></div>
         <div class="metric"><span>当前可用</span><strong id="metric-enabled" class="text-success">0</strong></div>
         <div class="metric"><span>检测自动暂停</span><strong id="metric-auto-stopped" class="text-warning">0</strong></div>
+        <button id="online-users-metric" class="metric metric-button" type="button" aria-haspopup="dialog" aria-controls="online-users-dialog" title="查看最近十分钟有调用的用户">
+          <span>在线使用 <small id="metric-online-window">最近 10 分钟</small></span>
+          <strong id="metric-online-users">—</strong>
+        </button>
       </section>
 
       <section class="filter-bar" aria-label="筛选账号">
@@ -282,6 +286,27 @@
           <button id="account-detail-prev" class="icon-button" type="button" title="上一页" aria-label="上一页"><svg class="icon"><use href="#icon-chevron-left"/></svg></button>
           <button id="account-detail-next" class="icon-button" type="button" title="下一页" aria-label="下一页"><svg class="icon"><use href="#icon-chevron-right"/></svg></button>
         </div>
+      </footer>
+    </article>
+  </dialog>
+
+  <dialog id="online-users-dialog" class="modal wide-modal" aria-labelledby="online-users-title" aria-describedby="online-users-window-label">
+    <article class="modal-panel">
+      <header class="modal-header">
+        <div><h2 id="online-users-title">在线使用人数</h2><p id="online-users-window-label">最近 10 分钟内有调用的用户</p></div>
+        <button class="icon-button ghost" type="button" data-close-dialog="online-users-dialog" title="关闭" aria-label="关闭">
+          <svg class="icon"><use href="#icon-x"/></svg>
+        </button>
+      </header>
+      <div id="online-users-summary" class="online-users-summary" aria-live="polite"></div>
+      <div class="online-user-table-header" aria-hidden="true">
+        <span>用户</span><span>最后调用</span><span>今日消耗</span>
+      </div>
+      <div id="online-users-list" class="online-users-list" aria-live="polite"></div>
+      <footer class="modal-footer">
+        <button id="online-users-retry-button" class="button secondary" type="button">刷新列表</button>
+        <span class="modal-footer-spacer"></span>
+        <button class="button secondary" type="button" data-close-dialog="online-users-dialog">关闭</button>
       </footer>
     </article>
   </dialog>

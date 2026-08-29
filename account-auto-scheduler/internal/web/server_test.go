@@ -38,8 +38,10 @@ type fakeConsoleCore struct {
 	accounts        []model.UpstreamAccount
 	groups          []model.UpstreamGroup
 	today           map[string]model.WindowStats
+	onlineUsers     model.OnlineUsersSnapshot
 	usage           model.AccountUsageInfo
 	consoleErr      error
+	onlineUsersErr  error
 	usageErr        error
 	bindingErr      error
 	bindingErrByID  map[int64]error
@@ -49,6 +51,7 @@ type fakeConsoleCore struct {
 	groupCalls      int
 	getAccountCalls int
 	setCalls        []bool
+	onlineCalls     int
 	boundAccountID  int64
 	boundGroupID    int64
 	bound           bool
@@ -80,6 +83,11 @@ func (f *fakeConsoleCore) ListGroups(context.Context) ([]model.UpstreamGroup, er
 
 func (f *fakeConsoleCore) GetTodayStatsBatch(context.Context, []int64) (map[string]model.WindowStats, error) {
 	return f.today, f.consoleErr
+}
+
+func (f *fakeConsoleCore) GetOnlineUsers(context.Context) (model.OnlineUsersSnapshot, error) {
+	f.onlineCalls++
+	return f.onlineUsers, f.onlineUsersErr
 }
 
 func (f *fakeConsoleCore) GetPassiveUsage(context.Context, int64) (model.AccountUsageInfo, error) {
@@ -256,6 +264,9 @@ func TestStaticPageIsPublicButFramingIsRestricted(t *testing.T) {
 	if !strings.Contains(response.Body.String(), `class="binding-list-header"`) ||
 		!strings.Contains(response.Body.String(), "最终倍率") ||
 		!strings.Contains(response.Body.String(), "可用余额") ||
+		!strings.Contains(response.Body.String(), `id="online-users-metric"`) ||
+		!strings.Contains(response.Body.String(), `id="online-users-dialog"`) ||
+		!strings.Contains(response.Body.String(), "最近 10 分钟内有调用的用户") ||
 		!strings.Contains(response.Body.String(), `id="scheduling-action-dialog"`) ||
 		!strings.Contains(response.Body.String(), `id="scheduling-action-confirm-button"`) {
 		t.Fatal("binding dialog is missing metric column headings")
