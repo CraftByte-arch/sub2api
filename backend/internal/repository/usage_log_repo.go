@@ -158,7 +158,7 @@ func NewUsageLogRepository(client *dbent.Client, sqlDB *sql.DB) service.UsageLog
 	repo.apiKeyUsageDaily.StartAutomaticBackfill()
 	repo.accountUsageStats.StartAutomaticBackfill()
 	repo.userDashboardStats.StartAutomaticBackfill()
-	return repo
+	return newUserUsageAnalyticsRepository(repo, sqlDB)
 }
 
 func newUsageLogRepositoryWithSQL(client *dbent.Client, sqlq sqlExecutor) *usageLogRepository {
