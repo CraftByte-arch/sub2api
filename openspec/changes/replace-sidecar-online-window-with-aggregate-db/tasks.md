@@ -22,5 +22,5 @@
 
 - [x] 4.1 Run formatting, dependency cleanup, unit tests, race tests, vet, builds, JavaScript syntax checks, and strict OpenSpec validation.
 - [x] 4.2 Commit the complete sidecar-only implementation and confirm the committed tree contains no sliding-window background worker or raw online request-detail calls.
-- [ ] 4.3 Create the HC2 dedicated PostgreSQL read-only role with exact grants, back up sidecar state/configuration, and deploy only the committed `account-auto-scheduler` image.
-- [ ] 4.4 Verify aggregate summary/detail behavior, administrator authorization, freshness handling, absence of raw online API calls, and unchanged identities/restart counts for every other HC2 container.
+- [x] 4.3 Create the HC2 dedicated PostgreSQL read-only role with exact grants, back up sidecar state/configuration, and deploy only the committed `account-auto-scheduler` image.
+- [x] 4.4 Verify aggregate summary/detail behavior, administrator authorization, freshness handling, absence of raw online API calls, and unchanged identities/restart counts for every other HC2 container.
