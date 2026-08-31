@@ -26,8 +26,8 @@
 
 ## 4. Account write-path cutover gate
 
-- [ ] 4.1 Deploy the stage-one compatibility version to HC2 and verify Account raw-versus-hybrid parity plus database CPU, WAL, write latency, and aggregate-table update counts.
-- [ ] 4.2 After stage-one verification, add a separate forward migration that removes only the Account synchronous delta triggers/function and installs historical-change dirty-day triggers.
+- [x] 4.1 Deploy the stage-one compatibility version to HC2 and verify Account raw-versus-hybrid parity plus database CPU, WAL, write latency, and aggregate-table update counts.
+- [x] 4.2 After stage-one verification, add a separate forward migration that removes only the Account synchronous delta triggers/function and installs historical-change dirty-day triggers.
 - [ ] 4.3 Deploy the Account cutover to HC2 and verify normal current usage no longer updates `account_usage_stats_daily`, historical mutations remain exact, and the old compatible slot is the rollback target.
 
 ## 5. Sequential rollout of remaining custom statistics
@@ -36,3 +36,11 @@
 - [ ] 5.2 Apply the same closed-day lifecycle to `user_dashboard_route_daily` after recent-usage production observation passes.
 - [ ] 5.3 Apply the same closed-day lifecycle to `api_key_usage_daily` and remove its usage-log INSERT CTE only after the previous rollouts pass.
 - [ ] 5.4 Run final parity and resource verification for all four statistics and record the safe rollback chain.
+
+### HC2 stage-one verification (2026-08-31)
+
+- Deployed `sub2api:hc2-20260831232219-22dc8945e15c-amd64` to `sub2api-canary:18081` with a graceful Nginx switch from `18082`; both slots and both public hosts remained healthy throughout.
+- Migration `234_account_usage_stats_hybrid_read.sql` applied at `2026-08-31 23:25:13 +08:00`; both Account synchronous triggers remain installed, `closed_before` advanced online to `2026-08-31`, and no historical rebuild or aggregate-table lock ran.
+- A two-day closed-history plus open-tail comparison for Account `6703` returned 8 legacy rows, 8 hybrid rows, and 0 mismatches across requests, tokens, costs, durations, models, and endpoints.
+- Startup-to-post-cutover counters showed no aggregate rebuild inserts; normal usage continued to produce about four `account_usage_stats_daily` updates per new usage row, confirming the synchronous Account trigger remains the dominant write amplification to remove in stage two.
+- PostgreSQL has neither `pg_stat_statements` nor `track_io_timing` enabled. A 118-second post-cutover sample used `pg_stat_database.active_time` as the bounded workload proxy (about 10.8% of one-core wall time), observed about 52.9 KB/s WAL, zero lock waiters, and no usage-record timeout/drop or database/Redis/migration errors.

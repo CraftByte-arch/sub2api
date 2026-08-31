@@ -15,7 +15,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
-func TestAccountUsageStatsAggregateTriggerMatchesLegacyAndHandlesDelete(t *testing.T) {
+func TestAccountUsageStatsHybridReadMatchesLegacyAndHandlesDirtyDelete(t *testing.T) {
 	ctx := context.Background()
 	tx := testEntTx(t)
 	client := tx.Client()
@@ -71,6 +71,14 @@ func TestAccountUsageStatsAggregateTriggerMatchesLegacyAndHandlesDelete(t *testi
 	require.NoError(t, err)
 	require.True(t, inserted)
 
+	// Stage two records the historical day as dirty instead of updating the
+	// aggregate in the usage write transaction. Simulate the bounded maintainer
+	// closing that day before exercising the compact-history path.
+	require.NoError(t, decorated.accountUsageStats.rebuildDay(ctx, tx, base, base.AddDate(0, 0, 1)))
+	require.NoError(t, decorated.accountUsageStats.verifyDay(ctx, tx, base, base.AddDate(0, 0, 1)))
+	_, err = tx.ExecContext(ctx, `DELETE FROM account_usage_stats_dirty_days WHERE bucket_date = $1::DATE`, base)
+	require.NoError(t, err)
+
 	retry := *second
 	retry.ID = 0
 	inserted, err = repo.Create(ctx, &retry)
@@ -93,8 +101,10 @@ func TestAccountUsageStatsAggregateTriggerMatchesLegacyAndHandlesDelete(t *testi
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO account_usage_stats_dirty_days (bucket_date)
 		VALUES ($1::DATE)
-		ON CONFLICT (bucket_date) DO NOTHING;
-
+		ON CONFLICT (bucket_date) DO NOTHING
+	`, base)
+	require.NoError(t, err)
+	_, err = tx.ExecContext(ctx, `
 		UPDATE account_usage_stats_daily
 		SET requests = requests + 1000
 		WHERE account_id = $2 AND bucket_date = $1::DATE
