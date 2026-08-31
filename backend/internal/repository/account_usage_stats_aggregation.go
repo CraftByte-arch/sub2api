@@ -644,6 +644,29 @@ func (s *accountUsageStatsStore) backfillStep(ctx context.Context) (complete boo
 		return false, tx.Commit()
 	}
 
+	legacyTriggersInstalled, err := accountUsageStatsSynchronousTriggersInstalled(ctx, tx)
+	if err != nil {
+		return false, err
+	}
+	if legacyTriggersInstalled {
+		// Stage one keeps the legacy INSERT/DELETE triggers, which already maintain
+		// every aggregate bucket synchronously. Advance the closed watermark without
+		// rescanning usage_logs or taking the aggregate-table rebuild lock. Once the
+		// stage-two migration removes those triggers, normal closed-day maintenance
+		// resumes from this watermark.
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE account_usage_stats_daily_state
+			SET cursor = $1::DATE,
+				closed_before = $1::DATE,
+				updated_at = NOW()
+			WHERE id = 1
+				AND (cursor IS DISTINCT FROM $1::DATE OR closed_before IS DISTINCT FROM $1::DATE)
+		`, today); err != nil {
+			return false, err
+		}
+		return true, tx.Commit()
+	}
+
 	if _, err := tx.ExecContext(ctx, `
 		DELETE FROM account_usage_stats_dirty_days
 		WHERE bucket_date < $1::DATE
@@ -710,6 +733,21 @@ func (s *accountUsageStatsStore) backfillStep(ctx context.Context) (complete boo
 		return false, err
 	}
 	return !nextDay.Before(today), tx.Commit()
+}
+
+func accountUsageStatsSynchronousTriggersInstalled(ctx context.Context, sqlq sqlExecutor) (bool, error) {
+	var installed bool
+	err := scanSingleRow(ctx, sqlq, `
+		SELECT COUNT(*) = 2
+		FROM pg_trigger
+		WHERE tgrelid = 'usage_logs'::regclass
+			AND NOT tgisinternal
+			AND tgname IN (
+				'trg_account_usage_stats_daily_insert',
+				'trg_account_usage_stats_daily_delete'
+			)
+	`, nil, &installed)
+	return installed, err
 }
 
 func parseAccountUsageStatsDate(value sql.NullString) (time.Time, bool, error) {

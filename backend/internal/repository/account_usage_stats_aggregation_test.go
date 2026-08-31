@@ -172,6 +172,8 @@ func TestAccountUsageStatsMaintenanceClosesOnlyOneDayWithoutParallelWorkers(t *t
 	mock.ExpectQuery("SELECT ready, coverage_start::TEXT, cursor::TEXT, closed_before::TEXT").
 		WillReturnRows(sqlmock.NewRows([]string{"ready", "coverage_start", "cursor", "closed_before"}).
 			AddRow(true, coverageStart.Format("2006-01-02"), closedDay.Format("2006-01-02"), closedDay.Format("2006-01-02")))
+	mock.ExpectQuery("SELECT COUNT\\(\\*\\) = 2").
+		WillReturnRows(sqlmock.NewRows([]string{"installed"}).AddRow(false))
 	mock.ExpectExec("DELETE FROM account_usage_stats_dirty_days").
 		WithArgs(coverageStart).
 		WillReturnResult(sqlmock.NewResult(0, 0))
@@ -191,6 +193,41 @@ func TestAccountUsageStatsMaintenanceClosesOnlyOneDayWithoutParallelWorkers(t *t
 		WillReturnRows(sqlmock.NewRows([]string{"mismatch"}).AddRow(false))
 	mock.ExpectExec(`(?s)DELETE FROM account_usage_stats_dirty_days.*UPDATE account_usage_stats_daily_state`).
 		WithArgs(closedDay, today).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	complete, err := newAccountUsageStatsStore(db).backfillStep(context.Background())
+
+	require.NoError(t, err)
+	require.True(t, complete)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestAccountUsageStatsMaintenanceSkipsRebuildWhileSynchronousTriggersInstalled(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	today := timezone.Today()
+	coverageStart := today.AddDate(0, 0, -89)
+	staleWatermark := today.AddDate(0, 0, -22)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT pg_try_advisory_xact_lock").
+		WithArgs(usageAggregationMaintenanceLockID).
+		WillReturnRows(sqlmock.NewRows([]string{"locked"}).AddRow(true))
+	mock.ExpectQuery("SELECT pg_try_advisory_xact_lock").
+		WithArgs(accountUsageStatsBackfillLockID).
+		WillReturnRows(sqlmock.NewRows([]string{"locked"}).AddRow(true))
+	mock.ExpectExec("SET LOCAL max_parallel_workers_per_gather = 0").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("SET LOCAL statement_timeout = '20s'").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery("SELECT ready, coverage_start::TEXT, cursor::TEXT, closed_before::TEXT").
+		WillReturnRows(sqlmock.NewRows([]string{"ready", "coverage_start", "cursor", "closed_before"}).
+			AddRow(true, coverageStart.Format("2006-01-02"), staleWatermark.Format("2006-01-02"), staleWatermark.Format("2006-01-02")))
+	mock.ExpectQuery("SELECT COUNT\\(\\*\\) = 2").
+		WillReturnRows(sqlmock.NewRows([]string{"installed"}).AddRow(true))
+	mock.ExpectExec("UPDATE account_usage_stats_daily_state").
+		WithArgs(today).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 

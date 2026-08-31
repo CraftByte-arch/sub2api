@@ -73,6 +73,8 @@ Account 第一阶段读取按请求区间拆分：
 
 阶段一 migration 只增加状态水位和 dirty 元数据，保留现有同步维护。代码先部署混合读取能力；此时即使新读取出现问题，也能把状态切回未就绪并使用旧 SQL。
 
+阶段一检测到 Account 同步 INSERT/DELETE trigger 仍完整安装时，不再重复扫描或重建历史日桶。旧 trigger 已经持续维护聚合表，因此维护器只把 `closed_before`/`cursor` 在线推进到当天，当前开放日仍由原始日志读取；这样兼容发布不会因旧 cursor 落后而产生启动补算、聚合表锁或写入等待。阶段二删除这两个 trigger 后，同一维护器才恢复按关闭日逐桶重建。
+
 阶段二在 HC2 验证后，以新的 migration 删除 Account 同步聚合 trigger/function，安装轻量 dirty trigger，并启用持续关闭日维护。后续三个 Store 各自使用独立 forward migration 切换，不能把四个写路径一次性同时改变。
 
 两个阶段不得放进同一个首次部署。阶段二之后允许回滚到阶段一兼容版本，但不能直接回滚到当前只读整段聚合表、依赖同步 trigger 的版本。
