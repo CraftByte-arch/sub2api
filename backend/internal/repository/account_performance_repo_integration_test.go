@@ -58,6 +58,20 @@ WHERE bucket_start = $1 AND model = $2`, bucket.Truncate(time.Hour), model).Scan
 	require.EqualValues(t, 1, durationLE2500)
 	require.EqualValues(t, 1, durationLE30000)
 	require.EqualValues(t, 1, durationGT30000)
+
+	// A late update to an already rolled-up hour must mark that hour dirty and
+	// replace the hourly aggregate on the next run.
+	require.NoError(t, repo.UpsertMinuteBatch(ctx, []service.AccountPerformanceDelta{
+		{BucketStart: bucket.Add(2 * time.Minute), AccountID: 901, Platform: "openai", GroupID: 1, Model: model, Protocol: "responses", Outcome: service.AccountPerformanceOutcomeRateLimit, AttemptCount: 1},
+	}))
+	require.NoError(t, repo.RollupClosedHours(ctx, before))
+	require.NoError(t, repo.RollupClosedHours(ctx, before))
+	var updatedAttempts int64
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `
+SELECT COALESCE(SUM(attempt_count), 0)
+FROM account_performance_hourly
+WHERE bucket_start = $1 AND model = $2`, bucket.Truncate(time.Hour), model).Scan(&updatedAttempts))
+	require.EqualValues(t, 6, updatedAttempts)
 }
 
 func TestAccountPerformanceAvailabilityExcludesClientCancellations(t *testing.T) {

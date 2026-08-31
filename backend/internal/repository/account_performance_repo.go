@@ -11,9 +11,14 @@ import (
 	"unicode/utf8"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/lib/pq"
 )
 
-const maxAccountPerformanceUpsertKeys = 1000
+const (
+	maxAccountPerformanceUpsertKeys        = 1000
+	accountPerformanceRollupMaxHours       = 2
+	accountPerformanceRollupAdvisoryLockID = int64(586201280232326001)
+)
 
 var accountPerformanceNow = time.Now
 
@@ -250,13 +255,6 @@ func (r *accountPerformanceRepository) RollupClosedHours(ctx context.Context, be
 	if closedBefore.IsZero() {
 		return nil
 	}
-	var hasClosedRows bool
-	if err := r.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM account_performance_minute WHERE bucket_start < $1)`, closedBefore).Scan(&hasClosedRows); err != nil {
-		return fmt.Errorf("check closed account performance minutes: %w", err)
-	}
-	if !hasClosedRows {
-		return nil
-	}
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin account performance rollup: %w", err)
@@ -267,29 +265,93 @@ func (r *accountPerformanceRepository) RollupClosedHours(ctx context.Context, be
 			_ = tx.Rollback()
 		}
 	}()
-	const deleteSQL = `
+	var lockAcquired bool
+	if err := tx.QueryRowContext(ctx, `SELECT pg_try_advisory_xact_lock($1)`, accountPerformanceRollupAdvisoryLockID).Scan(&lockAcquired); err != nil {
+		return fmt.Errorf("acquire account performance rollup lock: %w", err)
+	}
+	if !lockAcquired {
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit skipped account performance rollup: %w", err)
+		}
+		committed = true
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, `SET LOCAL max_parallel_workers_per_gather = 0`); err != nil {
+		return fmt.Errorf("disable parallel account performance rollup: %w", err)
+	}
+
+	rows, err := tx.QueryContext(ctx, `
+SELECT bucket_start
+FROM account_performance_rollup_dirty_hours AS dirty
+WHERE dirty.bucket_start < $1
+  AND EXISTS (
+      SELECT 1
+      FROM account_performance_minute AS minute
+      WHERE minute.bucket_start >= dirty.bucket_start
+        AND minute.bucket_start < dirty.bucket_start + INTERVAL '1 hour'
+  )
+ORDER BY bucket_start DESC
+LIMIT $2
+FOR UPDATE SKIP LOCKED
+`, closedBefore, accountPerformanceRollupMaxHours)
+	if err != nil {
+		return fmt.Errorf("claim dirty account performance hours: %w", err)
+	}
+	targetHours := make([]time.Time, 0, accountPerformanceRollupMaxHours)
+	for rows.Next() {
+		var bucketStart time.Time
+		if err := rows.Scan(&bucketStart); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan dirty account performance hour: %w", err)
+		}
+		targetHours = append(targetHours, bucketStart.UTC())
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("iterate dirty account performance hours: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close dirty account performance hours: %w", err)
+	}
+	if len(targetHours) == 0 {
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit empty account performance rollup: %w", err)
+		}
+		committed = true
+		return nil
+	}
+
+	targetHourArray := pq.Array(targetHours)
+	if _, err := tx.ExecContext(ctx, `
 DELETE FROM account_performance_hourly
-WHERE bucket_start IN (
-    SELECT DISTINCT date_trunc('hour', bucket_start)
-    FROM account_performance_minute
-    WHERE bucket_start < $1
-)`
-	if _, err := tx.ExecContext(ctx, deleteSQL, closedBefore); err != nil {
-		return fmt.Errorf("clear closed account performance hours: %w", err)
+WHERE bucket_start = ANY($1::timestamptz[])
+`, targetHourArray); err != nil {
+		return fmt.Errorf("clear dirty account performance hours: %w", err)
 	}
 	columns := append([]string{"bucket_start", "account_id", "platform", "group_id", "model", "protocol", "outcome"}, accountPerformanceMetricColumns...)
 	selectMetrics := make([]string, len(accountPerformanceMetricColumns))
 	for i, column := range accountPerformanceMetricColumns {
-		selectMetrics[i] = "SUM(" + column + ") AS " + column
+		selectMetrics[i] = "SUM(minute." + column + ") AS " + column
 	}
-	insertSQL := `INSERT INTO account_performance_hourly (` + strings.Join(columns, ", ") + `)
-SELECT date_trunc('hour', bucket_start), account_id, platform, group_id, model, protocol, outcome, ` + strings.Join(selectMetrics, ", ") + `
-FROM account_performance_minute
-WHERE bucket_start < $1
-GROUP BY date_trunc('hour', bucket_start), account_id, platform, group_id, model, protocol, outcome
+	insertSQL := `WITH target_hours AS (
+    SELECT unnest($1::timestamptz[]) AS bucket_start
+)
+INSERT INTO account_performance_hourly (` + strings.Join(columns, ", ") + `)
+SELECT target.bucket_start, minute.account_id, minute.platform, minute.group_id, minute.model, minute.protocol, minute.outcome, ` + strings.Join(selectMetrics, ", ") + `
+FROM target_hours AS target
+JOIN account_performance_minute AS minute
+  ON minute.bucket_start >= target.bucket_start
+ AND minute.bucket_start < target.bucket_start + INTERVAL '1 hour'
+GROUP BY target.bucket_start, minute.account_id, minute.platform, minute.group_id, minute.model, minute.protocol, minute.outcome
 ON CONFLICT (bucket_start, account_id, platform, group_id, model, protocol, outcome) DO UPDATE SET ` + accountPerformanceReplaceMetricsSQL() + `, updated_at = NOW()`
-	if _, err := tx.ExecContext(ctx, insertSQL, closedBefore); err != nil {
-		return fmt.Errorf("recompute closed account performance hours: %w", err)
+	if _, err := tx.ExecContext(ctx, insertSQL, targetHourArray); err != nil {
+		return fmt.Errorf("recompute dirty account performance hours: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+DELETE FROM account_performance_rollup_dirty_hours
+WHERE bucket_start = ANY($1::timestamptz[])
+`, targetHourArray); err != nil {
+		return fmt.Errorf("acknowledge dirty account performance hours: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit account performance rollup: %w", err)

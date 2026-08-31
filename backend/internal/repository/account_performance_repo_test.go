@@ -288,10 +288,20 @@ func TestAccountPerformanceRollupClosedHoursReplacesHourlyRowsInTransaction(t *t
 	t.Cleanup(func() { accountPerformanceNow = previousNow })
 	before := time.Date(2026, 7, 17, 10, 45, 0, 0, time.UTC)
 	closed := time.Date(2026, 7, 17, 10, 0, 0, 0, time.UTC)
-	mock.ExpectQuery("SELECT EXISTS\\(SELECT 1 FROM account_performance_minute WHERE bucket_start < \\$1\\)").WithArgs(closed).WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+	target := closed.Add(-time.Hour)
 	mock.ExpectBegin()
-	mock.ExpectExec("DELETE FROM account_performance_hourly").WithArgs(closed).WillReturnResult(sqlmock.NewResult(0, 2))
-	mock.ExpectExec("INSERT INTO account_performance_hourly").WithArgs(closed).WillReturnResult(sqlmock.NewResult(0, 2))
+	mock.ExpectQuery("SELECT pg_try_advisory_xact_lock").WithArgs(accountPerformanceRollupAdvisoryLockID).
+		WillReturnRows(sqlmock.NewRows([]string{"locked"}).AddRow(true))
+	mock.ExpectExec("SET LOCAL max_parallel_workers_per_gather = 0").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery("(?s)SELECT bucket_start.*account_performance_rollup_dirty_hours.*ORDER BY bucket_start DESC.*LIMIT \\$2.*FOR UPDATE SKIP LOCKED").
+		WithArgs(closed, accountPerformanceRollupMaxHours).
+		WillReturnRows(sqlmock.NewRows([]string{"bucket_start"}).AddRow(target))
+	mock.ExpectExec("(?s)DELETE FROM account_performance_hourly.*ANY\\(\\$1::timestamptz\\[\\]\\)").
+		WithArgs(sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 2))
+	mock.ExpectExec("(?s)WITH target_hours.*JOIN account_performance_minute AS minute.*ON CONFLICT").
+		WithArgs(sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 2))
+	mock.ExpectExec("(?s)DELETE FROM account_performance_rollup_dirty_hours.*ANY\\(\\$1::timestamptz\\[\\]\\)").
+		WithArgs(sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
 	err = NewAccountPerformanceRepository(db).RollupClosedHours(context.Background(), before)
@@ -307,10 +317,17 @@ func TestAccountPerformanceRollupClosedHoursCapsFutureCutoffBeforeWriting(t *tes
 	accountPerformanceNow = func() time.Time { return time.Date(2026, 7, 17, 10, 37, 0, 0, time.UTC) }
 	t.Cleanup(func() { accountPerformanceNow = previousNow })
 	cutoff := time.Date(2026, 7, 17, 10, 0, 0, 0, time.UTC)
-	mock.ExpectQuery("SELECT EXISTS\\(SELECT 1 FROM account_performance_minute WHERE bucket_start < \\$1\\)").WithArgs(cutoff).WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+	target := cutoff.Add(-time.Hour)
 	mock.ExpectBegin()
-	mock.ExpectExec("DELETE FROM account_performance_hourly").WithArgs(cutoff).WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec("INSERT INTO account_performance_hourly").WithArgs(cutoff).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery("SELECT pg_try_advisory_xact_lock").WithArgs(accountPerformanceRollupAdvisoryLockID).
+		WillReturnRows(sqlmock.NewRows([]string{"locked"}).AddRow(true))
+	mock.ExpectExec("SET LOCAL max_parallel_workers_per_gather = 0").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery("(?s)SELECT bucket_start.*account_performance_rollup_dirty_hours.*FOR UPDATE SKIP LOCKED").
+		WithArgs(cutoff, accountPerformanceRollupMaxHours).
+		WillReturnRows(sqlmock.NewRows([]string{"bucket_start"}).AddRow(target))
+	mock.ExpectExec("(?s)DELETE FROM account_performance_hourly.*ANY").WithArgs(sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("(?s)WITH target_hours.*INSERT INTO account_performance_hourly").WithArgs(sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("(?s)DELETE FROM account_performance_rollup_dirty_hours.*ANY").WithArgs(sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
 	require.NoError(t, NewAccountPerformanceRepository(db).RollupClosedHours(context.Background(), time.Date(2026, 7, 20, 1, 0, 0, 0, time.UTC)))
@@ -325,9 +342,33 @@ func TestAccountPerformanceRollupClosedHoursSkipsEmptyClosedWindow(t *testing.T)
 	accountPerformanceNow = func() time.Time { return time.Date(2026, 7, 17, 10, 37, 0, 0, time.UTC) }
 	t.Cleanup(func() { accountPerformanceNow = previousNow })
 	cutoff := time.Date(2026, 7, 17, 10, 0, 0, 0, time.UTC)
-	mock.ExpectQuery("SELECT EXISTS\\(SELECT 1 FROM account_performance_minute WHERE bucket_start < \\$1\\)").WithArgs(cutoff).WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT pg_try_advisory_xact_lock").WithArgs(accountPerformanceRollupAdvisoryLockID).
+		WillReturnRows(sqlmock.NewRows([]string{"locked"}).AddRow(true))
+	mock.ExpectExec("SET LOCAL max_parallel_workers_per_gather = 0").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery("(?s)SELECT bucket_start.*account_performance_rollup_dirty_hours.*FOR UPDATE SKIP LOCKED").
+		WithArgs(cutoff, accountPerformanceRollupMaxHours).
+		WillReturnRows(sqlmock.NewRows([]string{"bucket_start"}))
+	mock.ExpectCommit()
 
 	require.NoError(t, NewAccountPerformanceRepository(db).RollupClosedHours(context.Background(), time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestAccountPerformanceRollupClosedHoursSkipsWhenAnotherWorkerOwnsLock(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+	previousNow := accountPerformanceNow
+	accountPerformanceNow = func() time.Time { return time.Date(2026, 7, 17, 10, 37, 0, 0, time.UTC) }
+	t.Cleanup(func() { accountPerformanceNow = previousNow })
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT pg_try_advisory_xact_lock").WithArgs(accountPerformanceRollupAdvisoryLockID).
+		WillReturnRows(sqlmock.NewRows([]string{"locked"}).AddRow(false))
+	mock.ExpectCommit()
+
+	require.NoError(t, NewAccountPerformanceRepository(db).RollupClosedHours(context.Background(), time.Date(2026, 7, 17, 10, 0, 0, 0, time.UTC)))
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
