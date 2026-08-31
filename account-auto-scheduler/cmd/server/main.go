@@ -14,6 +14,7 @@ import (
 	"github.com/Wei-Shaw/sub2api-account-auto-scheduler/internal/core"
 	"github.com/Wei-Shaw/sub2api-account-auto-scheduler/internal/engine"
 	"github.com/Wei-Shaw/sub2api-account-auto-scheduler/internal/notify"
+	"github.com/Wei-Shaw/sub2api-account-auto-scheduler/internal/onlineusers"
 	"github.com/Wei-Shaw/sub2api-account-auto-scheduler/internal/store"
 	"github.com/Wei-Shaw/sub2api-account-auto-scheduler/internal/upstream"
 	"github.com/Wei-Shaw/sub2api-account-auto-scheduler/internal/web"
@@ -37,6 +38,16 @@ func main() {
 		logger.Error("create Sub2API client", "error", err)
 		os.Exit(1)
 	}
+	onlineUsers, onlineUsersErr := onlineusers.Open(cfg.OnlineDatabaseURL, logger)
+	if onlineUsersErr != nil {
+		logger.Warn("online aggregate database disabled", "error", onlineUsersErr)
+		onlineUsers, _ = onlineusers.Open("", logger)
+	}
+	defer func() {
+		if err := onlineUsers.Close(); err != nil {
+			logger.Warn("close online aggregate database", "error", err)
+		}
+	}()
 
 	rootCtx, stopSignals := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stopSignals()
@@ -72,6 +83,7 @@ func main() {
 		AuthCacheTTL:      cfg.AuthCacheTTL,
 		Upstreams:         upstreamManager,
 		Notifications:     notificationCoordinator,
+		OnlineUsers:       onlineUsers,
 	}, logger)
 
 	if cfg.AutoRegisterTab {
@@ -96,7 +108,7 @@ func main() {
 
 	serverErr := make(chan error, 1)
 	go func() {
-		logger.Info("account auto scheduler started", "listen_addr", cfg.ListenAddr, "sub2api_base_url", cfg.Sub2APIBaseURL)
+		logger.Info("account auto scheduler started", "listen_addr", cfg.ListenAddr, "sub2api_base_url", cfg.Sub2APIBaseURL, "online_database_configured", onlineUsers.Configured())
 		serverErr <- httpServer.ListenAndServe()
 	}()
 

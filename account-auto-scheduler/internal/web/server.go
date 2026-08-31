@@ -40,10 +40,14 @@ type ConsoleCore interface {
 	ListAccounts(ctx context.Context) ([]model.UpstreamAccount, error)
 	ListGroups(ctx context.Context) ([]model.UpstreamGroup, error)
 	GetTodayStatsBatch(ctx context.Context, accountIDs []int64) (map[string]model.WindowStats, error)
-	GetOnlineUsers(ctx context.Context) (model.OnlineUsersSnapshot, error)
 	GetGroupUserConsumption(ctx context.Context, groupID int64) (model.GroupUserConsumptionSnapshot, error)
 	GetPassiveUsage(ctx context.Context, accountID int64) (model.AccountUsageInfo, error)
 	SetAccountGroup(ctx context.Context, accountID, groupID int64, bound bool) (model.UpstreamAccount, error)
+}
+
+type OnlineUsersConsole interface {
+	GetOnlineUsersSummary(ctx context.Context) (model.OnlineUsersSummary, error)
+	GetOnlineUsers(ctx context.Context) (model.OnlineUsersSnapshot, error)
 }
 
 type Options struct {
@@ -53,6 +57,7 @@ type Options struct {
 	AuthCacheTTL      time.Duration
 	Upstreams         UpstreamConsole
 	Notifications     NotificationConsole
+	OnlineUsers       OnlineUsersConsole
 }
 
 type NotificationConsole interface {
@@ -123,6 +128,7 @@ type Server struct {
 	logger          *slog.Logger
 	upstreams       UpstreamConsole
 	notifications   NotificationConsole
+	onlineUsers     OnlineUsersConsole
 	loginChallenges *loginChallengeStore
 
 	cacheMu   sync.Mutex
@@ -252,6 +258,7 @@ func NewServer(scheduler *engine.Engine, coreClient AdminCore, options Options, 
 		logger:          logger,
 		upstreams:       options.Upstreams,
 		notifications:   options.Notifications,
+		onlineUsers:     options.OnlineUsers,
 		loginChallenges: newLoginChallengeStore(defaultLoginChallengeTTL),
 		authCache:       map[string]cachedSession{},
 	}
@@ -264,6 +271,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /healthz", s.handleHealth)
 	mux.Handle("GET /api/session", s.requireAdmin(http.HandlerFunc(s.handleSession)))
 	mux.Handle("GET /api/overview", s.requireAdmin(http.HandlerFunc(s.handleOverview)))
+	mux.Handle("GET /api/online-users/summary", s.requireAdmin(http.HandlerFunc(s.handleOnlineUsersSummary)))
 	mux.Handle("GET /api/online-users", s.requireAdmin(http.HandlerFunc(s.handleOnlineUsers)))
 	mux.Handle("GET /api/groups/{groupID}/user-consumption", s.requireAdmin(http.HandlerFunc(s.handleGroupUserConsumption)))
 	mux.Handle("GET /api/accounts", s.requireAdmin(http.HandlerFunc(s.handleAccounts)))
@@ -347,16 +355,29 @@ func (s *Server) handleAccounts(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleOnlineUsers(w http.ResponseWriter, r *http.Request) {
-	if s.console == nil {
+	if s.onlineUsers == nil {
 		writeError(w, http.StatusServiceUnavailable, "CONSOLE_UNAVAILABLE", "在线用户数据暂不可用")
 		return
 	}
-	snapshot, err := s.console.GetOnlineUsers(r.Context())
+	snapshot, err := s.onlineUsers.GetOnlineUsers(r.Context())
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "ONLINE_USERS_UNAVAILABLE", err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, snapshot)
+}
+
+func (s *Server) handleOnlineUsersSummary(w http.ResponseWriter, r *http.Request) {
+	if s.onlineUsers == nil {
+		writeError(w, http.StatusServiceUnavailable, "CONSOLE_UNAVAILABLE", "在线用户数据暂不可用")
+		return
+	}
+	summary, err := s.onlineUsers.GetOnlineUsersSummary(r.Context())
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "ONLINE_USERS_UNAVAILABLE", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, summary)
 }
 
 func (s *Server) handleGroupUserConsumption(w http.ResponseWriter, r *http.Request) {

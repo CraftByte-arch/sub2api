@@ -38,12 +38,14 @@ type fakeConsoleCore struct {
 	accounts              []model.UpstreamAccount
 	groups                []model.UpstreamGroup
 	today                 map[string]model.WindowStats
+	onlineUsersSummary    model.OnlineUsersSummary
 	onlineUsers           model.OnlineUsersSnapshot
 	groupConsumption      model.GroupUserConsumptionSnapshot
 	groupConsumptionErr   error
 	usage                 model.AccountUsageInfo
 	consoleErr            error
 	onlineUsersErr        error
+	onlineUsersSummaryErr error
 	usageErr              error
 	bindingErr            error
 	bindingErrByID        map[int64]error
@@ -54,6 +56,7 @@ type fakeConsoleCore struct {
 	getAccountCalls       int
 	setCalls              []bool
 	onlineCalls           int
+	onlineSummaryCalls    int
 	groupConsumptionCalls int
 	boundAccountID        int64
 	boundGroupID          int64
@@ -91,6 +94,11 @@ func (f *fakeConsoleCore) GetTodayStatsBatch(context.Context, []int64) (map[stri
 func (f *fakeConsoleCore) GetOnlineUsers(context.Context) (model.OnlineUsersSnapshot, error) {
 	f.onlineCalls++
 	return f.onlineUsers, f.onlineUsersErr
+}
+
+func (f *fakeConsoleCore) GetOnlineUsersSummary(context.Context) (model.OnlineUsersSummary, error) {
+	f.onlineSummaryCalls++
+	return f.onlineUsersSummary, f.onlineUsersSummaryErr
 }
 
 func (f *fakeConsoleCore) GetGroupUserConsumption(_ context.Context, _ int64) (model.GroupUserConsumptionSnapshot, error) {

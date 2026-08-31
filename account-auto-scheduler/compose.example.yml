@@ -5,6 +5,8 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      AUTO_SCHEDULER_ONLINE_DATABASE_URL: ${AUTO_SCHEDULER_ONLINE_DATABASE_URL:-}
     ports:
       - "127.0.0.1:8091:8091"
     volumes:
@@ -22,4 +24,3 @@ services:
 
 volumes:
   account-auto-scheduler-data:
-

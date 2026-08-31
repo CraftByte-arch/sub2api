@@ -1,11 +1,12 @@
 # Sub2API 账号自动调度
 
-这是一个独立旁路服务。它不读取 Sub2API 数据库，也不导入 Sub2API 后端代码。自动检测和调度只作用于 `type=apikey` 的账号；管理页面通过现有 HTTP 接口汇总所有分组和账号：
+这是一个独立旁路服务。它不导入 Sub2API 后端代码。自动检测和调度只作用于 `type=apikey` 的账号；除在线用户聚合视图外，管理页面继续通过现有 HTTP 接口汇总所有分组和账号。在线视图可选使用专用只读 PostgreSQL 账号直接读取现有聚合表，未配置时不影响其他功能：
 
 - `GET /api/v1/admin/accounts?type=apikey`：同步可配置账号和当前调度状态
 - `GET /api/v1/admin/accounts`、`GET /api/v1/admin/groups/all`：生成分组账号总览
 - `POST /api/v1/admin/accounts/today-stats/batch`：读取账号今日请求、Token 和成本
-- `GET /api/v1/admin/ops/requests`、`GET /api/v1/admin/dashboard/user-breakdown`、`POST /api/v1/admin/dashboard/users-usage`：汇总最近 10 分钟全站及各分组在线用户、今日实际消耗
+- `channel_monitor_v2_user_metrics_1m`、`channel_monitor_v2_watermarks`：按需汇总截至聚合水位的最近 10 分钟全站及各分组在线用户
+- `user_dashboard_route_daily`、`user_dashboard_route_daily_state`：在线用户弹窗按需读取今日实际消耗
 - `GET /api/v1/admin/dashboard/user-breakdown?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD&group_id=:id&limit=20&sort_by=actual_cost`：按需读取指定分组今日用户消耗 Top 20
 - `GET /api/v1/admin/accounts/:id/usage?source=passive`：按需读取 OAuth 账号额度快照
 - `PUT /api/v1/admin/accounts/:id`：保留其他分组关系，只增删当前分组绑定
@@ -20,7 +21,7 @@
 ## 管理页面
 
 - 首次默认展开全部分组，并直接列出每组的 API Key 账号、实时可用数、调度状态及原因；管理员可以展开或收起分组，浏览器会保留折叠偏好。
-- 总览顶部显示最近 10 分钟内有调用的全站在线用户数；每个分组标题同时显示该分组内去重后的在线人数，同一用户在同一分组多次调用只计 1 人。点击顶部总数后弹窗列出用户、最后调用时间、今日实际消耗、请求数和 Token。在线统计失败不会阻断分组与账号总览，并提供重试入口。
+- 总览顶部显示聚合水位之前最近 10 分钟内有调用的全站在线用户数；每个分组标题同时显示该分组内去重后的在线人数，同一用户在同一分组多次调用只计 1 人。页面打开且可见时每 60 秒按需读取一次紧凑汇总，服务端缓存 60 秒；页面关闭后没有常驻查询任务，也没有用户级滑动窗口。点击顶部总数后才读取用户、分钟级最后调用时间、今日实际消耗、请求数和 Token。在线统计失败不会阻断分组与账号总览，并会显示聚合延迟或不可用原因。
 - 每个真实分组提供“今日用户 Top 20”按钮；点击后弹窗按当天实际扣费降序显示用户、今日消耗、请求数和 Token。统计失败、空结果或部分字段缺失只影响当前弹窗，并提供刷新入口；未分组的合成分组不显示该按钮。
 - OAuth 和 Setup Token 账号按组折叠为数量入口，弹窗每页显示 10 个账号及今日用量、被动额度快照。
 - 每组内当前可用账号优先排列，其余账号再按名称和 ID 稳定排序。
@@ -149,6 +150,34 @@ location /account-auto-scheduler/ {
     proxy_set_header X-Forwarded-Proto $scheme;
 }
 ```
+
+### 在线人数聚合数据库最小权限
+
+在线人数功能使用独立 PostgreSQL 账号，不复用 Sub2API 的写账号。下面的 SQL 由数据库管理员执行一次；密码应随机生成并仅写入侧车服务器的 `.env`，不要提交到仓库：
+
+```sql
+CREATE ROLE sidecar_reader
+    LOGIN
+    PASSWORD '<随机强密码>'
+    CONNECTION LIMIT 2;
+
+ALTER ROLE sidecar_reader SET default_transaction_read_only = on;
+ALTER ROLE sidecar_reader SET statement_timeout = '3s';
+ALTER ROLE sidecar_reader SET idle_in_transaction_session_timeout = '5s';
+ALTER ROLE sidecar_reader SET timezone = 'Asia/Shanghai';
+
+GRANT CONNECT ON DATABASE sub2api TO sidecar_reader;
+GRANT USAGE ON SCHEMA public TO sidecar_reader;
+GRANT SELECT ON TABLE
+    channel_monitor_v2_user_metrics_1m,
+    channel_monitor_v2_watermarks,
+    user_dashboard_route_daily,
+    user_dashboard_route_daily_state
+TO sidecar_reader;
+GRANT SELECT (id, email, username) ON TABLE users TO sidecar_reader;
+```
+
+连接串示例为 `postgres://sidecar_reader:<URL 编码后的密码>@数据库地址:5432/sub2api?sslmode=require&application_name=account-auto-scheduler`。数据库未提供 TLS 时应仅在受信内网中按实际能力选择 `sslmode`。侧车连接池最多打开 2 个连接，查询还有 3 秒应用级超时；未配置、连接失败或聚合水位过旧时只把在线人数显示为不可用，不会回退扫描 `usage_logs`、Ops 请求明细或任何原始调用接口。
 
 启动时服务会通过现有设置接口添加一个 `visibility=admin` 的“账号自动调度”菜单项。注册是幂等的，不会删除或覆盖其他自定义菜单。若关闭 `AUTO_SCHEDULER_AUTO_REGISTER_TAB`，可以在页面右上角手动注册，或在系统设置的自定义菜单中添加 URL。
 

@@ -39,6 +39,9 @@
     detailKind: 'oauth',
     detailPage: 1,
     usageCache: new Map(),
+    onlineUsersSummary: null,
+    onlineUsersSummaryLoading: false,
+    onlineUsersSummaryError: '',
     onlineUsers: null,
     onlineUsersLoading: false,
     onlineUsersError: '',
@@ -62,6 +65,7 @@
     activeTab: 'groups',
     upstreamWorkspace: null,
     pollTimer: null,
+    onlinePollTimer: null,
     toastTimer: null,
   }
 
@@ -91,14 +95,18 @@
       elements.authState.hidden = true
       elements.app.hidden = false
       await loadOverview()
-      await loadOnlineUsers(true)
+      await loadOnlineUsersSummary(true)
       state.pollTimer = window.setInterval(() => {
         if (document.visibilityState === 'visible' && !document.querySelector('dialog[open]')) {
           void loadOverview(true)
-          void loadOnlineUsers(true)
           if (state.activeTab === 'upstreams') void state.upstreamWorkspace.refresh(true)
         }
       }, 10000)
+      state.onlinePollTimer = window.setInterval(() => {
+        if (document.visibilityState === 'visible' && !document.querySelector('dialog[open]')) {
+          void loadOnlineUsersSummary(true)
+        }
+      }, 60000)
     } catch (error) {
       if (!authRedirecting) showAuthError(error.message || '管理员身份验证失败')
     }
@@ -160,7 +168,7 @@
     for (const tab of [elements.groupsTab, elements.upstreamsTab]) tab.addEventListener('keydown', handleWorkspaceTabKeydown)
     elements.refreshButton.addEventListener('click', () => {
       void loadOverview()
-      void loadOnlineUsers()
+      void loadOnlineUsersSummary()
     })
     elements.onlineUsersMetric.addEventListener('click', (event) => openOnlineUsersDialog(event.currentTarget))
     elements.onlineUsersRetryButton.addEventListener('click', () => loadOnlineUsers())
@@ -314,6 +322,7 @@
       const response = await api('/api/online-users')
       state.onlineUsers = response || null
       state.onlineUsersError = ''
+      adoptOnlineUsersSummary(response)
       renderOnlineUsers()
       return true
     } catch (error) {
@@ -325,6 +334,37 @@
     } finally {
       state.onlineUsersLoading = false
       renderOnlineUsers()
+    }
+  }
+
+  async function loadOnlineUsersSummary(silent = false) {
+    if (state.onlineUsersSummaryLoading) return false
+    state.onlineUsersSummaryLoading = true
+    renderOnlineUsersMetric()
+    try {
+      const response = await api('/api/online-users/summary')
+      state.onlineUsersSummary = response || null
+      state.onlineUsersSummaryError = ''
+      renderOnlineUsersMetric()
+      return true
+    } catch (error) {
+      state.onlineUsersSummaryError = error.message || '在线用户数据暂不可用'
+      renderOnlineUsersMetric()
+      if (!silent) showToast(state.onlineUsersSummaryError, true)
+      return false
+    } finally {
+      state.onlineUsersSummaryLoading = false
+      renderOnlineUsersMetric()
+    }
+  }
+
+  function adoptOnlineUsersSummary(snapshot) {
+    if (!snapshot) return
+    const incoming = new Date(snapshot.queried_at || 0).getTime()
+    const current = new Date(state.onlineUsersSummary?.queried_at || 0).getTime()
+    if (!state.onlineUsersSummary || !Number.isFinite(current) || incoming >= current) {
+      state.onlineUsersSummary = snapshot
+      state.onlineUsersSummaryError = ''
     }
   }
 
@@ -348,28 +388,29 @@
   }
 
   function renderOnlineUsersMetric() {
-    const snapshot = state.onlineUsers
+    const snapshot = state.onlineUsersSummary
     const count = Number(snapshot?.count)
-    elements.metricOnlineUsers.textContent = state.onlineUsersLoading && !snapshot
+    const ready = snapshot?.ready === true
+    elements.metricOnlineUsers.textContent = state.onlineUsersSummaryLoading && !snapshot
       ? '…'
-      : Number.isFinite(count) ? formatInteger(count) : state.onlineUsersError ? '不可用' : '—'
+      : ready && Number.isFinite(count) ? formatInteger(count) : snapshot || state.onlineUsersSummaryError ? '不可用' : '—'
     elements.metricOnlineWindow.textContent = snapshot?.window_minutes
       ? `最近 ${formatInteger(snapshot.window_minutes)} 分钟`
       : '最近 10 分钟'
     elements.onlineUsersWindowLabel.textContent = snapshot?.window_minutes
       ? `最近 ${formatInteger(snapshot.window_minutes)} 分钟内有调用的用户`
       : '最近 10 分钟内有调用的用户'
-    elements.onlineUsersMetric.classList.toggle('metric-error', Boolean(state.onlineUsersError && !snapshot))
-    elements.onlineUsersMetric.classList.toggle('metric-loading', state.onlineUsersLoading)
-    elements.onlineUsersMetric.title = state.onlineUsersError && !snapshot
-      ? `${state.onlineUsersError}；点击重试`
-      : '查看最近十分钟有调用的用户'
+    elements.onlineUsersMetric.classList.toggle('metric-error', Boolean((state.onlineUsersSummaryError || snapshot?.ready === false) && !ready))
+    elements.onlineUsersMetric.classList.toggle('metric-loading', state.onlineUsersSummaryLoading)
+    elements.onlineUsersMetric.title = state.onlineUsersSummaryError && !ready
+      ? `${state.onlineUsersSummaryError}；点击查看或重试`
+      : snapshot?.notice || onlineAggregateFreshnessLabel(snapshot) || '查看最近十分钟有调用的用户'
     renderGroupOnlineCounts()
   }
 
   function onlineUsersGroupProjection(groupID) {
-    const snapshot = state.onlineUsers
-    if (state.onlineUsersLoading && !snapshot) {
+    const snapshot = state.onlineUsersSummary
+    if (state.onlineUsersSummaryLoading && !snapshot) {
       return {
         label: '…',
         available: false,
@@ -378,12 +419,12 @@
         ariaLabel: '正在读取分组在线人数',
       }
     }
-    if (!snapshot || snapshot.group_counts_available !== true) {
+    if (!snapshot || snapshot.ready !== true || snapshot.group_counts_available !== true) {
       return {
         label: '—',
         available: false,
         partial: false,
-        title: state.onlineUsersError || '最近 10 分钟分组在线人数暂不可用',
+        title: state.onlineUsersSummaryError || snapshot?.notice || '最近 10 分钟分组在线人数暂不可用',
         ariaLabel: '分组在线人数暂不可用',
       }
     }
@@ -402,16 +443,16 @@
       }
     }
     const formatted = formatInteger(count)
-    const partial = Boolean(snapshot.group_counts_partial)
+    const partial = Boolean(snapshot.group_counts_partial || snapshot.stale)
     return {
       label: formatted,
       available: true,
       partial,
       title: partial
-        ? `最近 10 分钟内有调用的用户：${formatted} 人；部分请求缺少分组信息，可能低估`
+        ? `最近 10 分钟内有调用的用户：${formatted} 人；${snapshot.notice || '聚合数据可能延迟'}`
         : `最近 10 分钟内有调用的用户：${formatted} 人`,
       ariaLabel: partial
-        ? `最近 10 分钟分组在线人数 ${formatted} 人，部分请求缺少分组信息`
+        ? `最近 10 分钟分组在线人数 ${formatted} 人，聚合数据可能延迟`
         : `最近 10 分钟分组在线人数 ${formatted} 人`,
     }
   }
@@ -439,7 +480,7 @@
     if (!elements.onlineUsersDialog?.open) return
     const snapshot = state.onlineUsers
     if (state.onlineUsersLoading && !snapshot) {
-      elements.onlineUsersSummary.innerHTML = '<span class="online-users-loading">正在读取最近 10 分钟的调用记录…</span>'
+      elements.onlineUsersSummary.innerHTML = '<span class="online-users-loading">正在读取最近 10 分钟的聚合数据…</span>'
       elements.onlineUsersList.innerHTML = '<div class="online-users-skeleton" aria-hidden="true"><i></i><i></i><i></i></div>'
       elements.onlineUsersRetryButton.disabled = true
       return
@@ -450,10 +491,16 @@
       elements.onlineUsersList.innerHTML = '<div class="dialog-empty">在线用户暂时无法读取，请点击“刷新列表”重试。</div>'
       return
     }
+    if (snapshot && snapshot.ready !== true) {
+      elements.onlineUsersSummary.innerHTML = `<span class="online-users-error">${escapeHTML(snapshot.notice || '在线人数聚合数据暂不可用')}</span>`
+      elements.onlineUsersList.innerHTML = '<div class="dialog-empty">当前没有足够新的聚合数据，请稍后刷新。</div>'
+      return
+    }
     const count = Number(snapshot?.count) || 0
     const notices = snapshot?.notice ? `<span class="online-users-notice">${escapeHTML(snapshot.notice)}</span>` : ''
-    const queriedAt = snapshot?.queried_at ? `更新于 ${escapeHTML(formatDateTime(snapshot.queried_at))}` : '刚刚更新'
-    elements.onlineUsersSummary.innerHTML = `<strong>${formatInteger(count)} 人在线</strong><span>${queriedAt}</span>${notices}`
+    const freshness = onlineAggregateFreshnessLabel(snapshot)
+    const queriedAt = snapshot?.queried_at ? `查询于 ${escapeHTML(formatDateTime(snapshot.queried_at))}` : '刚刚查询'
+    elements.onlineUsersSummary.innerHTML = `<strong>${formatInteger(count)} 人在线</strong><span>${escapeHTML(freshness || queriedAt)}</span>${notices}`
     const users = Array.isArray(snapshot?.users) ? snapshot.users : []
     elements.onlineUsersList.innerHTML = users.length ? users.map(renderOnlineUser).join('') : '<div class="dialog-empty">最近 10 分钟暂无用户调用。</div>'
   }
@@ -489,6 +536,17 @@
     const minutes = Math.floor(seconds / 60)
     if (minutes < 60) return `${minutes} 分钟前`
     return `${Math.floor(minutes / 60)} 小时前`
+  }
+
+  function onlineAggregateFreshnessLabel(snapshot) {
+    if (!snapshot) return ''
+    const parts = []
+    if (snapshot.data_through) parts.push(`数据截至 ${formatDateTime(snapshot.data_through)}`)
+    const lag = Number(snapshot.aggregation_lag_seconds)
+    if (Number.isFinite(lag) && lag >= 0) {
+      parts.push(lag < 60 ? `延迟 ${formatInteger(lag)} 秒` : `延迟 ${formatInteger(Math.ceil(lag / 60))} 分钟`)
+    }
+    return parts.join(' · ')
   }
 
   async function openOnlineUsersDialog(trigger = null) {

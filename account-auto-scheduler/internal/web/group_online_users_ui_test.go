@@ -16,7 +16,12 @@ func TestGroupOnlineUsersUIContract(t *testing.T) {
 		t.Fatalf("app.js status=%d", app.Code)
 	}
 	for _, required := range []string{
+		"/api/online-users/summary",
+		"await loadOnlineUsersSummary(true)",
+		"}, 60000)",
 		"group_counts_available",
+		"aggregation_lag_seconds",
+		"onlineAggregateFreshnessLabel",
 		"data-group-online-count",
 		"renderGroupOnlineCounts",
 		"renderGroupOnlineBadge",
