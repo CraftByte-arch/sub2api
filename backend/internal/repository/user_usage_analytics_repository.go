@@ -12,26 +12,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
-// userUsageAnalyticsRepository decorates the concrete legacy repository so
-// all unmodified and optional methods remain promoted automatically. Only the
-// ordinary-user usage-page methods below can take the aggregate fast path.
-type userUsageAnalyticsRepository struct {
-	*usageLogRepository
-	analytics *userUsageAnalyticsStore
-}
-
-var _ service.UsageLogRepository = (*userUsageAnalyticsRepository)(nil)
-
-func newUserUsageAnalyticsRepository(repo *usageLogRepository, sqlq sqlExecutor) *userUsageAnalyticsRepository {
-	analytics := newUserUsageAnalyticsStore(sqlq)
-	analytics.StartAutomaticBackfill()
-	return &userUsageAnalyticsRepository{
-		usageLogRepository: repo,
-		analytics:          analytics,
-	}
-}
-
-func (r *userUsageAnalyticsRepository) ListWithFilters(
+func (r *usageAggregationRepository) ListWithFilters(
 	ctx context.Context,
 	params pagination.PaginationParams,
 	filters UsageLogFilters,
@@ -75,7 +56,7 @@ func (r *userUsageAnalyticsRepository) ListWithFilters(
 	return logs, paginationResultFromTotal(total, params), nil
 }
 
-func (r *userUsageAnalyticsRepository) GetStatsWithFilters(ctx context.Context, filters UsageLogFilters) (*usagestats.UsageStats, error) {
+func (r *usageAggregationRepository) GetStatsWithFilters(ctx context.Context, filters UsageLogFilters) (*usagestats.UsageStats, error) {
 	if r == nil || r.usageLogRepository == nil {
 		return nil, fmt.Errorf("user usage analytics repository is not configured")
 	}
@@ -95,7 +76,7 @@ func (r *userUsageAnalyticsRepository) GetStatsWithFilters(ctx context.Context, 
 	return r.usageLogRepository.GetStatsWithFilters(ctx, filters)
 }
 
-func (r *userUsageAnalyticsRepository) GetUsageTrendWithUsageFilters(
+func (r *usageAggregationRepository) GetUsageTrendWithUsageFilters(
 	ctx context.Context,
 	startTime time.Time,
 	endTime time.Time,
@@ -121,7 +102,7 @@ func (r *userUsageAnalyticsRepository) GetUsageTrendWithUsageFilters(
 	return r.usageLogRepository.GetUsageTrendWithUsageFilters(ctx, startTime, endTime, granularity, filters)
 }
 
-func (r *userUsageAnalyticsRepository) GetModelStatsWithUsageFiltersBySource(
+func (r *usageAggregationRepository) GetModelStatsWithUsageFiltersBySource(
 	ctx context.Context,
 	startTime time.Time,
 	endTime time.Time,
@@ -147,7 +128,7 @@ func (r *userUsageAnalyticsRepository) GetModelStatsWithUsageFiltersBySource(
 	return r.usageLogRepository.GetModelStatsWithUsageFiltersBySource(ctx, startTime, endTime, filters, source)
 }
 
-func (r *userUsageAnalyticsRepository) GetGroupStatsWithUsageFilters(
+func (r *usageAggregationRepository) GetGroupStatsWithUsageFilters(
 	ctx context.Context,
 	startTime time.Time,
 	endTime time.Time,

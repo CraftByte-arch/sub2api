@@ -149,6 +149,9 @@ WHERE ns.nspname = 'public'
 	requireColumn(t, tx, "account_usage_stats_daily_state", "ready", "boolean", 0, false)
 	requireColumn(t, tx, "account_usage_stats_daily_state", "coverage_start", "date", 0, true)
 	requireColumn(t, tx, "account_usage_stats_daily_state", "cursor", "date", 0, true)
+	requireColumn(t, tx, "account_usage_stats_daily_state", "closed_before", "date", 0, true)
+	requireColumn(t, tx, "account_usage_stats_dirty_days", "bucket_date", "date", 0, false)
+	requireIndex(t, tx, "account_usage_stats_dirty_days", "account_usage_stats_dirty_days_pkey")
 
 	// usage_billing_dedup: billing idempotency narrow table
 	var usageBillingDedupRegclass sql.NullString

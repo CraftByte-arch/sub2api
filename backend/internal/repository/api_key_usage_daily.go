@@ -263,14 +263,14 @@ func (s *apiKeyUsageDailyStore) backfillStep(ctx context.Context) (complete bool
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	var locked bool
-	if err := scanSingleRow(ctx, tx, `SELECT pg_try_advisory_xact_lock($1)`, []any{apiKeyUsageDailyBackfillLockID}, &locked); err != nil {
+	locked, err := tryUsageAggregationMaintenanceLocks(ctx, tx, apiKeyUsageDailyBackfillLockID)
+	if err != nil {
 		return false, err
 	}
 	if !locked {
 		return false, nil
 	}
-	if _, err := tx.ExecContext(ctx, `SET LOCAL statement_timeout = '20s'`); err != nil {
+	if err := configureUsageAggregationMaintenance(ctx, tx); err != nil {
 		return false, err
 	}
 

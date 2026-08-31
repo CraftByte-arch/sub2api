@@ -379,19 +379,6 @@ type PlatformDashboardStats = usagestats.PlatformDashboardStats
 
 // GetUserDashboardStats 获取用户专属的仪表盘统计
 func (r *usageLogRepository) GetUserDashboardStats(ctx context.Context, userID int64) (*UserDashboardStats, error) {
-	if r.userDashboardStats != nil {
-		stats, handled, err := r.userDashboardStats.Get(ctx, userID)
-		if err != nil {
-			return nil, err
-		}
-		if handled {
-			return stats, nil
-		}
-	}
-	return r.getUserDashboardStatsLegacy(ctx, userID)
-}
-
-func (r *usageLogRepository) getUserDashboardStatsLegacy(ctx context.Context, userID int64) (*UserDashboardStats, error) {
 	stats := &UserDashboardStats{}
 	today := timezone.Today()
 

@@ -20,12 +20,12 @@ const (
 	accountUsageStatsDimensionInboundEndpoint  int16 = 2
 	accountUsageStatsDimensionUpstreamEndpoint int16 = 3
 
-	accountUsageStatsBackfillLockID int64 = 616394753208471925
-	accountUsageStatsBackfillDays         = 90
-	accountUsageStatsBackfillPause        = 250 * time.Millisecond
-	accountUsageStatsBackfillRetry        = time.Minute
-	accountUsageStatsBackfillSettle       = 2 * time.Minute
-	accountUsageStatsStatementLimit       = 20 * time.Second
+	accountUsageStatsBackfillLockID      int64 = 616394753208471925
+	accountUsageStatsBackfillDays              = 90
+	accountUsageStatsBackfillPause             = 250 * time.Millisecond
+	accountUsageStatsBackfillRetry             = time.Minute
+	accountUsageStatsMaintenanceInterval       = 5 * time.Minute
+	accountUsageStatsStatementLimit            = 20 * time.Second
 )
 
 type accountUsageStatsStore struct {
@@ -65,8 +65,8 @@ func newAccountUsageStatsStore(sqlq sqlExecutor) *accountUsageStatsStore {
 	return store
 }
 
-// StartAutomaticBackfill builds a verified 90-day aggregate before reads cut
-// over. The database triggers already record live INSERT and DELETE statements.
+// StartAutomaticBackfill builds missing closed days and then keeps the closed
+// watermark current. It never rebuilds the open application-timezone day.
 func (s *accountUsageStatsStore) StartAutomaticBackfill() {
 	if s == nil || s.db == nil {
 		return
@@ -82,30 +82,16 @@ func (s *accountUsageStatsStore) runBackfill() {
 		complete, err := s.backfillStep(ctx)
 		cancel()
 		if err != nil {
-			slog.Error("account usage stats backfill failed; will retry", "error", err)
+			slog.Error("account usage stats maintenance failed; will retry", "error", err)
 			time.Sleep(accountUsageStatsBackfillRetry)
 			continue
 		}
 		if complete {
-			return
+			time.Sleep(accountUsageStatsMaintenanceInterval)
+			continue
 		}
 		time.Sleep(accountUsageStatsBackfillPause)
 	}
-}
-
-// GetAccountUsageStatsAggregated has the same inputs and response contract as
-// the legacy raw-log query. It transparently falls back until verified coverage
-// includes the requested range.
-func (r *usageLogRepository) GetAccountUsageStatsAggregated(
-	ctx context.Context,
-	accountID int64,
-	startTime, endTime time.Time,
-) (*usagestats.AccountUsageStatsResponse, error) {
-	store := r.accountUsageStats
-	if store == nil {
-		store = newAccountUsageStatsStore(r.sql)
-	}
-	return store.Get(ctx, accountID, startTime, endTime, r.GetAccountUsageStats)
 }
 
 func (s *accountUsageStatsStore) Get(
@@ -127,14 +113,23 @@ func (s *accountUsageStatsStore) Get(
 
 	startDate := timezone.StartOfDay(startTime)
 	endDate := timezone.StartOfDay(endTime)
-	ready, err := s.isReadyFor(ctx, startDate)
+	closedBefore, ready, err := s.closedBeforeFor(ctx, startDate)
 	if err != nil {
-		return nil, err
+		if ctx == nil || ctx.Err() != nil {
+			return nil, err
+		}
+		slog.Warn("account usage aggregate state unavailable; falling back to legacy SQL", "error", err)
+		return legacy(ctx, accountID, startTime, endTime)
 	}
 	if !ready {
 		return legacy(ctx, accountID, startTime, endTime)
 	}
-	return s.getAggregated(ctx, accountID, startDate, endDate)
+	response, err := s.getHybrid(ctx, accountID, startDate, endDate, closedBefore)
+	if err == nil || ctx == nil || ctx.Err() != nil {
+		return response, err
+	}
+	slog.Warn("account usage hybrid query failed; falling back to legacy SQL", "error", err)
+	return legacy(ctx, accountID, startTime, endTime)
 }
 
 func accountUsageStatsWholeDayRange(startTime, endTime time.Time) bool {
@@ -143,32 +138,160 @@ func accountUsageStatsWholeDayRange(startTime, endTime time.Time) bool {
 		endTime.Equal(timezone.StartOfDay(endTime))
 }
 
-func (s *accountUsageStatsStore) isReadyFor(ctx context.Context, startDate time.Time) (bool, error) {
+func (s *accountUsageStatsStore) closedBeforeFor(ctx context.Context, startDate time.Time) (time.Time, bool, error) {
 	var ready bool
+	var coverageStartText sql.NullString
+	var closedBeforeText sql.NullString
 	err := scanSingleRow(ctx, s.sql, `
-		SELECT ready AND coverage_start IS NOT NULL AND coverage_start <= $1::date
+		SELECT ready, coverage_start::TEXT, closed_before::TEXT
 		FROM account_usage_stats_daily_state
 		WHERE id = 1
-	`, []any{startDate}, &ready)
+	`, nil, &ready, &coverageStartText, &closedBeforeText)
 	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
+		return time.Time{}, false, nil
 	}
-	return ready, err
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	coverageStart, hasCoverageStart, err := parseAccountUsageStatsDate(coverageStartText)
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	closedBefore, hasClosedBefore, err := parseAccountUsageStatsDate(closedBeforeText)
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	if !ready || !hasCoverageStart || !hasClosedBefore || coverageStart.After(startDate) || closedBefore.Before(coverageStart) {
+		return time.Time{}, false, nil
+	}
+	if closedBefore.After(timezone.StartOfDay(timezone.Today())) {
+		return time.Time{}, false, nil
+	}
+	return closedBefore, true, nil
 }
 
-func (s *accountUsageStatsStore) getAggregated(
+func lockAccountUsageStatsAggregateTable(ctx context.Context, tx sqlExecutor) error {
+	// Stage one still has the legacy synchronous usage-log triggers installed.
+	// Serialize a bucket replacement with those trigger upserts so a concurrent
+	// historical write cannot be overwritten by the rebuild snapshot. Once the
+	// write triggers are removed in stage two, this lock only protects the
+	// aggregate table and does not block usage-log writes.
+	_, err := tx.ExecContext(ctx, `LOCK TABLE account_usage_stats_daily IN SHARE ROW EXCLUSIVE MODE`)
+	return err
+}
+
+func (s *accountUsageStatsStore) getHybrid(
 	ctx context.Context,
 	accountID int64,
-	startTime, endTime time.Time,
+	startTime, endTime, closedBefore time.Time,
 ) (*usagestats.AccountUsageStatsResponse, error) {
 	rows, err := s.sql.QueryContext(ctx, `
+		WITH raw_usage AS (
+			SELECT
+				ul.created_at,
+				ul.requested_model,
+				ul.model,
+				ul.inbound_endpoint,
+				ul.upstream_endpoint,
+				ul.input_tokens,
+				ul.output_tokens,
+				ul.cache_creation_tokens,
+				ul.cache_read_tokens,
+				ul.total_cost,
+				ul.account_stats_cost,
+				ul.account_rate_multiplier,
+				ul.actual_cost,
+				ul.duration_ms
+			FROM usage_logs ul
+			WHERE ul.account_id = $1
+				AND ul.created_at >= GREATEST($2::TIMESTAMPTZ, $4::TIMESTAMPTZ)
+				AND ul.created_at < $3
+
+			UNION ALL
+
+			SELECT
+				ul.created_at,
+				ul.requested_model,
+				ul.model,
+				ul.inbound_endpoint,
+				ul.upstream_endpoint,
+				ul.input_tokens,
+				ul.output_tokens,
+				ul.cache_creation_tokens,
+				ul.cache_read_tokens,
+				ul.total_cost,
+				ul.account_stats_cost,
+				ul.account_rate_multiplier,
+				ul.actual_cost,
+				ul.duration_ms
+			FROM account_usage_stats_dirty_days dirty
+			JOIN usage_logs ul
+				ON ul.account_id = $1
+				AND ul.created_at >= dirty.bucket_date::TIMESTAMPTZ
+				AND ul.created_at < (dirty.bucket_date + 1)::TIMESTAMPTZ
+			WHERE dirty.bucket_date >= $2::DATE
+				AND dirty.bucket_date < LEAST($3::DATE, $4::DATE)
+		), combined AS (
+			SELECT
+				daily.dimension_type,
+				daily.dimension_value,
+				CASE
+					WHEN daily.dimension_type = 0 THEN daily.bucket_date::TEXT
+					ELSE ''
+				END AS date,
+				daily.requests,
+				daily.input_tokens,
+				daily.output_tokens,
+				daily.cache_creation_tokens,
+				daily.cache_read_tokens,
+				daily.standard_cost,
+				daily.account_cost,
+				daily.user_cost,
+				daily.duration_sum_ms,
+				daily.duration_count
+			FROM account_usage_stats_daily daily
+			WHERE daily.account_id = $1
+				AND daily.bucket_date >= $2::date
+				AND daily.bucket_date < LEAST($3::date, $4::date)
+				AND daily.requests <> 0
+				AND NOT EXISTS (
+					SELECT 1
+					FROM account_usage_stats_dirty_days dirty
+					WHERE dirty.bucket_date = daily.bucket_date
+				)
+
+			UNION ALL
+
+			SELECT
+				dimensions.dimension_type,
+				dimensions.dimension_value,
+				CASE
+					WHEN dimensions.dimension_type = 0 THEN ul.created_at::DATE::TEXT
+					ELSE ''
+				END AS date,
+				1::BIGINT AS requests,
+				ul.input_tokens::BIGINT,
+				ul.output_tokens::BIGINT,
+				ul.cache_creation_tokens::BIGINT,
+				ul.cache_read_tokens::BIGINT,
+				ul.total_cost AS standard_cost,
+				COALESCE(ul.account_stats_cost, ul.total_cost) * COALESCE(ul.account_rate_multiplier, 1) AS account_cost,
+				ul.actual_cost AS user_cost,
+				COALESCE(ul.duration_ms, 0)::BIGINT AS duration_sum_ms,
+				CASE WHEN ul.duration_ms IS NULL THEN 0 ELSE 1 END::BIGINT AS duration_count
+			FROM raw_usage ul
+			CROSS JOIN LATERAL (
+				VALUES
+					(0::SMALLINT, ''::TEXT),
+					(1::SMALLINT, COALESCE(NULLIF(TRIM(ul.requested_model), ''), ul.model)),
+					(2::SMALLINT, COALESCE(NULLIF(TRIM(ul.inbound_endpoint), ''), 'unknown')),
+					(3::SMALLINT, COALESCE(NULLIF(TRIM(ul.upstream_endpoint), ''), 'unknown'))
+			) AS dimensions(dimension_type, dimension_value)
+		)
 		SELECT
 			dimension_type,
 			dimension_value,
-			CASE
-				WHEN dimension_type = 0 THEN bucket_date::TEXT
-				ELSE ''
-			END AS date,
+			date,
 			SUM(requests)::BIGINT,
 			SUM(input_tokens)::BIGINT,
 			SUM(output_tokens)::BIGINT,
@@ -179,19 +302,10 @@ func (s *accountUsageStatsStore) getAggregated(
 			SUM(user_cost),
 			SUM(duration_sum_ms)::BIGINT,
 			SUM(duration_count)::BIGINT
-		FROM account_usage_stats_daily
-		WHERE account_id = $1
-			AND bucket_date >= $2::date
-			AND bucket_date < $3::date
-			AND requests <> 0
-		GROUP BY
-			dimension_type,
-			dimension_value,
-			CASE
-				WHEN dimension_type = 0 THEN bucket_date::TEXT
-				ELSE ''
-			END
-	`, accountID, startTime, endTime)
+		FROM combined
+		GROUP BY dimension_type, dimension_value, date
+		HAVING SUM(requests) <> 0
+	`, accountID, startTime, endTime, closedBefore)
 	if err != nil {
 		return nil, err
 	}
@@ -378,31 +492,28 @@ func (s *accountUsageStatsStore) backfillStep(ctx context.Context) (complete boo
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	var locked bool
-	if err := scanSingleRow(ctx, tx, `SELECT pg_try_advisory_xact_lock($1)`, []any{accountUsageStatsBackfillLockID}, &locked); err != nil {
+	locked, err := tryUsageAggregationMaintenanceLocks(ctx, tx, accountUsageStatsBackfillLockID)
+	if err != nil {
 		return false, err
 	}
 	if !locked {
 		return false, nil
 	}
-	if _, err := tx.ExecContext(ctx, `SET LOCAL statement_timeout = '20s'`); err != nil {
+	if err := configureUsageAggregationMaintenance(ctx, tx); err != nil {
 		return false, err
 	}
 
 	var ready bool
 	var coverageStartText sql.NullString
 	var cursorText sql.NullString
-	var updatedAt time.Time
+	var closedBeforeText sql.NullString
 	if err := scanSingleRow(ctx, tx, `
-		SELECT ready, coverage_start::TEXT, cursor::TEXT, updated_at
+		SELECT ready, coverage_start::TEXT, cursor::TEXT, closed_before::TEXT
 		FROM account_usage_stats_daily_state
 		WHERE id = 1
 		FOR UPDATE
-	`, nil, &ready, &coverageStartText, &cursorText, &updatedAt); err != nil {
+	`, nil, &ready, &coverageStartText, &cursorText, &closedBeforeText); err != nil {
 		return false, err
-	}
-	if ready {
-		return true, tx.Commit()
 	}
 
 	coverageStart, hasCoverageStart, err := parseAccountUsageStatsDate(coverageStartText)
@@ -413,19 +524,86 @@ func (s *accountUsageStatsStore) backfillStep(ctx context.Context) (complete boo
 	if err != nil {
 		return false, err
 	}
+	closedBefore, hasClosedBefore, err := parseAccountUsageStatsDate(closedBeforeText)
+	if err != nil {
+		return false, err
+	}
 
 	today := timezone.Today()
 	wantedStart := today.AddDate(0, 0, -(accountUsageStatsBackfillDays - 1))
-	if !hasCoverageStart || coverageStart.After(wantedStart) {
-		coverageStart = wantedStart
-		cursor = wantedStart
-		hasCursor = true
-	}
-	if !hasCursor || cursor.Before(wantedStart) {
-		cursor = wantedStart
+	if !ready {
+		if !hasCoverageStart || coverageStart.After(wantedStart) {
+			coverageStart = wantedStart
+			cursor = wantedStart
+			hasCursor = true
+			if _, err := tx.ExecContext(ctx, `
+				UPDATE account_usage_stats_daily_state
+				SET ready = FALSE,
+					coverage_start = $1::DATE,
+					cursor = $1::DATE,
+					closed_before = NULL,
+					updated_at = NOW()
+				WHERE id = 1
+			`, wantedStart); err != nil {
+				return false, err
+			}
+			return false, tx.Commit()
+		}
+		if !hasCursor || cursor.Before(wantedStart) {
+			cursor = wantedStart
+			hasCursor = true
+		}
+		if !hasCursor {
+			cursor = coverageStart
+		}
+
+		cursorDay := timezone.StartOfDay(cursor)
+		if cursorDay.Before(today) {
+			if err := lockAccountUsageStatsAggregateTable(ctx, tx); err != nil {
+				return false, err
+			}
+			nextDay := cursorDay.AddDate(0, 0, 1)
+			if err := s.rebuildDay(ctx, tx, cursorDay, nextDay); err != nil {
+				return false, err
+			}
+			if err := s.verifyDay(ctx, tx, cursorDay, nextDay); err != nil {
+				return false, err
+			}
+			if _, err := tx.ExecContext(ctx, `
+				UPDATE account_usage_stats_daily_state
+				SET coverage_start = $1::DATE,
+					cursor = $2::DATE,
+					closed_before = NULL,
+					updated_at = NOW()
+				WHERE id = 1
+			`, coverageStart, nextDay); err != nil {
+				return false, err
+			}
+			return false, tx.Commit()
+		}
+
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE account_usage_stats_daily_state
-			SET coverage_start = $1::date, cursor = $1::date, updated_at = NOW()
+			SET ready = TRUE,
+				coverage_start = $1::DATE,
+				cursor = $2::DATE,
+				closed_before = $2::DATE,
+				updated_at = NOW()
+			WHERE id = 1
+		`, coverageStart, today); err != nil {
+			return false, err
+		}
+		return true, tx.Commit()
+	}
+
+	if !hasCoverageStart {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE account_usage_stats_daily_state
+			SET ready = FALSE,
+				coverage_start = $1::DATE,
+				cursor = $1::DATE,
+				closed_before = NULL,
+				updated_at = NOW()
 			WHERE id = 1
 		`, wantedStart); err != nil {
 			return false, err
@@ -433,49 +611,105 @@ func (s *accountUsageStatsStore) backfillStep(ctx context.Context) (complete boo
 		return false, tx.Commit()
 	}
 
-	cursorDay := timezone.StartOfDay(cursor)
-	if cursorDay.Before(today) {
-		nextDay := cursorDay.AddDate(0, 0, 1)
-		if err := s.rebuildDay(ctx, tx, cursorDay, nextDay); err != nil {
-			return false, err
+	if !hasClosedBefore {
+		closedBefore = today
+		if hasCursor && cursor.Before(closedBefore) {
+			closedBefore = timezone.StartOfDay(cursor)
 		}
-		if err := s.verifyDay(ctx, tx, cursorDay, nextDay); err != nil {
-			return false, err
+		if closedBefore.Before(coverageStart) {
+			closedBefore = coverageStart
 		}
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE account_usage_stats_daily_state
-			SET coverage_start = $1::date, cursor = $2::date, updated_at = NOW()
+			SET cursor = $1::DATE, closed_before = $1::DATE, updated_at = NOW()
 			WHERE id = 1
-		`, coverageStart, nextDay); err != nil {
+		`, closedBefore); err != nil {
 			return false, err
 		}
 		return false, tx.Commit()
 	}
 
-	if time.Since(updatedAt) < accountUsageStatsBackfillSettle {
+	if closedBefore.Before(coverageStart) {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE account_usage_stats_daily_state
+			SET ready = FALSE,
+				coverage_start = $1::DATE,
+				cursor = $1::DATE,
+				closed_before = NULL,
+				updated_at = NOW()
+			WHERE id = 1
+		`, wantedStart); err != nil {
+			return false, err
+		}
 		return false, tx.Commit()
 	}
 
-	// Block trigger upserts during the final current-day replacement. Usage-log
-	// transactions then resume and add any increments that were not yet visible.
-	if _, err := tx.ExecContext(ctx, `LOCK TABLE account_usage_stats_daily IN SHARE ROW EXCLUSIVE MODE`); err != nil {
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM account_usage_stats_dirty_days
+		WHERE bucket_date < $1::DATE
+	`, coverageStart); err != nil {
 		return false, err
 	}
-	nextDay := today.AddDate(0, 0, 1)
-	if err := s.rebuildDay(ctx, tx, today, nextDay); err != nil {
+
+	var dirtyDayText string
+	err = scanSingleRow(ctx, tx, `
+		SELECT bucket_date::TEXT
+		FROM account_usage_stats_dirty_days
+		WHERE bucket_date >= $1::DATE
+			AND bucket_date < $2::DATE
+		ORDER BY bucket_date
+		LIMIT 1
+	`, []any{coverageStart, closedBefore}, &dirtyDayText)
+	if err == nil {
+		dirtyDay, err := time.ParseInLocation("2006-01-02", dirtyDayText, timezone.Location())
+		if err != nil {
+			return false, fmt.Errorf("parse dirty account usage stats date %q: %w", dirtyDayText, err)
+		}
+		nextDay := dirtyDay.AddDate(0, 0, 1)
+		if err := lockAccountUsageStatsAggregateTable(ctx, tx); err != nil {
+			return false, err
+		}
+		if err := s.rebuildDay(ctx, tx, dirtyDay, nextDay); err != nil {
+			return false, err
+		}
+		if err := s.verifyDay(ctx, tx, dirtyDay, nextDay); err != nil {
+			return false, err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM account_usage_stats_dirty_days WHERE bucket_date = $1::DATE
+		`, dirtyDay); err != nil {
+			return false, err
+		}
+		return false, tx.Commit()
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
 		return false, err
 	}
-	if err := s.verifyDay(ctx, tx, today, nextDay); err != nil {
+
+	closedDay := timezone.StartOfDay(closedBefore)
+	if !closedDay.Before(today) {
+		return true, tx.Commit()
+	}
+	nextDay := closedDay.AddDate(0, 0, 1)
+	if err := lockAccountUsageStatsAggregateTable(ctx, tx); err != nil {
+		return false, err
+	}
+	if err := s.rebuildDay(ctx, tx, closedDay, nextDay); err != nil {
+		return false, err
+	}
+	if err := s.verifyDay(ctx, tx, closedDay, nextDay); err != nil {
 		return false, err
 	}
 	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM account_usage_stats_dirty_days WHERE bucket_date = $1::DATE;
+
 		UPDATE account_usage_stats_daily_state
-		SET ready = TRUE, coverage_start = $1::date, cursor = $2::date, updated_at = NOW()
+		SET cursor = $2::DATE, closed_before = $2::DATE, updated_at = NOW()
 		WHERE id = 1
-	`, coverageStart, nextDay); err != nil {
+	`, closedDay, nextDay); err != nil {
 		return false, err
 	}
-	return true, tx.Commit()
+	return !nextDay.Before(today), tx.Commit()
 }
 
 func parseAccountUsageStatsDate(value sql.NullString) (time.Time, bool, error) {

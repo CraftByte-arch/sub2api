@@ -22,7 +22,7 @@ func TestUserUsageAnalyticsMatchesLegacyAcrossUserFilters(t *testing.T) {
 	client := tx.Client()
 	legacy := newUsageLogRepositoryWithSQL(client, tx)
 	store := newUserUsageAnalyticsStore(tx)
-	decorated := &userUsageAnalyticsRepository{usageLogRepository: legacy, analytics: store}
+	decorated := &usageAggregationRepository{usageLogRepository: legacy, analytics: store}
 
 	user := mustCreateUser(t, client, &service.User{Email: "usage-analytics-" + uuid.NewString() + "@example.com"})
 	groupA := mustCreateGroup(t, client, &service.Group{Name: "usage-analytics-a-" + uuid.NewString(), Platform: service.PlatformOpenAI})

@@ -17,6 +17,7 @@ func TestUserDashboardRouteDailyTriggerAndAggregateRead(t *testing.T) {
 	tx := testEntTx(t)
 	client := tx.Client()
 	repo := newUsageLogRepositoryWithSQL(client, tx)
+	store := newUserDashboardStatsStore(tx)
 
 	user := mustCreateUser(t, client, &service.User{Email: "user-dashboard-route-daily@test.com"})
 	group := mustCreateGroup(t, client, &service.Group{Name: "user-dashboard-route-daily", Platform: service.PlatformOpenAI})
@@ -43,8 +44,8 @@ func TestUserDashboardRouteDailyTriggerAndAggregateRead(t *testing.T) {
 	_, err := repo.Create(ctx, usage)
 	require.NoError(t, err)
 	today := timezone.Today()
-	require.NoError(t, repo.userDashboardStats.rebuildDay(ctx, tx, today, today.AddDate(0, 0, 1)))
-	require.NoError(t, repo.userDashboardStats.verifyDay(ctx, tx, today, today.AddDate(0, 0, 1)))
+	require.NoError(t, store.rebuildDay(ctx, tx, today, today.AddDate(0, 0, 1)))
+	require.NoError(t, store.verifyDay(ctx, tx, today, today.AddDate(0, 0, 1)))
 
 	_, err = tx.ExecContext(ctx, `
 		UPDATE user_dashboard_route_daily_state
@@ -53,7 +54,7 @@ func TestUserDashboardRouteDailyTriggerAndAggregateRead(t *testing.T) {
 	`)
 	require.NoError(t, err)
 
-	stats, handled, err := repo.userDashboardStats.Get(ctx, user.ID)
+	stats, handled, err := store.Get(ctx, user.ID)
 	require.NoError(t, err)
 	require.True(t, handled)
 	require.Equal(t, int64(1), stats.TotalRequests)
@@ -69,7 +70,7 @@ func TestUserDashboardRouteDailyTriggerAndAggregateRead(t *testing.T) {
 	`, usage.ID)
 	require.NoError(t, err)
 
-	stats, handled, err = repo.userDashboardStats.Get(ctx, user.ID)
+	stats, handled, err = store.Get(ctx, user.ID)
 	require.NoError(t, err)
 	require.True(t, handled)
 	require.Equal(t, int64(1), stats.TotalRequests)
@@ -77,7 +78,7 @@ func TestUserDashboardRouteDailyTriggerAndAggregateRead(t *testing.T) {
 	require.Empty(t, stats.ByPlatform)
 
 	require.NoError(t, repo.Delete(ctx, usage.ID))
-	stats, handled, err = repo.userDashboardStats.Get(ctx, user.ID)
+	stats, handled, err = store.Get(ctx, user.ID)
 	require.NoError(t, err)
 	require.True(t, handled)
 	require.Zero(t, stats.TotalRequests)

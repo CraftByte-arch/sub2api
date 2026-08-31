@@ -165,7 +165,7 @@ func timePointer(value time.Time) *time.Time {
 }
 
 func TestUserUsageAnalyticsRepositoryPreservesOptionalMethodSet(t *testing.T) {
-	decorated := newUserUsageAnalyticsRepository(&usageLogRepository{}, sqlExecutor((*sql.DB)(nil)))
+	decorated := newUsageAggregationRepository(&usageLogRepository{}, sqlExecutor((*sql.DB)(nil)))
 
 	_, ok := any(decorated).(interface {
 		GetUsageTrendWithUsageFilters(context.Context, time.Time, time.Time, string, UsageLogFilters) ([]usagestats.TrendDataPoint, error)
@@ -187,8 +187,13 @@ func TestUserUsageAnalyticsBackfillResumesFromStoredCursorAndMarksReady(t *testi
 	// is the state left behind if the process stops immediately afterwards.
 	mock.ExpectBegin()
 	mock.ExpectQuery("SELECT pg_try_advisory_xact_lock").
+		WithArgs(usageAggregationMaintenanceLockID).
+		WillReturnRows(sqlmock.NewRows([]string{"locked"}).AddRow(true))
+	mock.ExpectQuery("SELECT pg_try_advisory_xact_lock").
 		WithArgs(userUsageAnalyticsBackfillLockID).
 		WillReturnRows(sqlmock.NewRows([]string{"locked"}).AddRow(true))
+	mock.ExpectExec("SET LOCAL max_parallel_workers_per_gather = 0").
+		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("SET LOCAL statement_timeout").
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery("FROM user_usage_analytics_hourly_state").
@@ -210,8 +215,13 @@ func TestUserUsageAnalyticsBackfillResumesFromStoredCursorAndMarksReady(t *testi
 	// and atomically enables aggregate reads.
 	mock.ExpectBegin()
 	mock.ExpectQuery("SELECT pg_try_advisory_xact_lock").
+		WithArgs(usageAggregationMaintenanceLockID).
+		WillReturnRows(sqlmock.NewRows([]string{"locked"}).AddRow(true))
+	mock.ExpectQuery("SELECT pg_try_advisory_xact_lock").
 		WithArgs(userUsageAnalyticsBackfillLockID).
 		WillReturnRows(sqlmock.NewRows([]string{"locked"}).AddRow(true))
+	mock.ExpectExec("SET LOCAL max_parallel_workers_per_gather = 0").
+		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("SET LOCAL statement_timeout").
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery("FROM user_usage_analytics_hourly_state").

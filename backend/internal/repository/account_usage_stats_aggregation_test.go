@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -88,11 +89,12 @@ func TestAccountUsageStatsGetUsesDailyTableForWholeDays(t *testing.T) {
 
 	start := timezone.Today().AddDate(0, 0, -1)
 	end := timezone.Today().AddDate(0, 0, 1)
+	closedBefore := timezone.Today()
 	mock.ExpectQuery("FROM account_usage_stats_daily_state").
-		WithArgs(start).
-		WillReturnRows(sqlmock.NewRows([]string{"ready"}).AddRow(true))
-	mock.ExpectQuery("FROM account_usage_stats_daily").
-		WithArgs(int64(42), start, end).
+		WillReturnRows(sqlmock.NewRows([]string{"ready", "coverage_start", "closed_before"}).
+			AddRow(true, start.Format("2006-01-02"), closedBefore.Format("2006-01-02")))
+	mock.ExpectQuery(`(?s)WITH raw_usage AS .*FROM usage_logs ul.*FROM account_usage_stats_dirty_days dirty.*FROM account_usage_stats_daily daily`).
+		WithArgs(int64(42), start, end, closedBefore).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"dimension_type", "dimension_value", "date", "requests",
 			"input_tokens", "output_tokens", "cache_creation_tokens", "cache_read_tokens",
@@ -119,6 +121,83 @@ func TestAccountUsageStatsGetUsesDailyTableForWholeDays(t *testing.T) {
 	require.False(t, legacyCalled)
 	require.Equal(t, int64(2), response.Summary.TotalRequests)
 	require.InDelta(t, 300, response.Summary.AvgDurationMs, 1e-9)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestAccountUsageStatsGetFallsBackWhenHybridStateQueryFails(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	start := timezone.Today().AddDate(0, 0, -1)
+	end := timezone.Today().AddDate(0, 0, 1)
+	mock.ExpectQuery("FROM account_usage_stats_daily_state").WillReturnError(errors.New("state unavailable"))
+	want := &usagestats.AccountUsageStatsResponse{}
+	legacyCalled := false
+	response, err := newAccountUsageStatsStore(db).Get(
+		context.Background(),
+		42,
+		start,
+		end,
+		func(context.Context, int64, time.Time, time.Time) (*usagestats.AccountUsageStatsResponse, error) {
+			legacyCalled = true
+			return want, nil
+		},
+	)
+
+	require.NoError(t, err)
+	require.True(t, legacyCalled)
+	require.Same(t, want, response)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestAccountUsageStatsMaintenanceClosesOnlyOneDayWithoutParallelWorkers(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	today := timezone.Today()
+	coverageStart := today.AddDate(0, 0, -2)
+	closedDay := today.AddDate(0, 0, -1)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT pg_try_advisory_xact_lock").
+		WithArgs(usageAggregationMaintenanceLockID).
+		WillReturnRows(sqlmock.NewRows([]string{"locked"}).AddRow(true))
+	mock.ExpectQuery("SELECT pg_try_advisory_xact_lock").
+		WithArgs(accountUsageStatsBackfillLockID).
+		WillReturnRows(sqlmock.NewRows([]string{"locked"}).AddRow(true))
+	mock.ExpectExec("SET LOCAL max_parallel_workers_per_gather = 0").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("SET LOCAL statement_timeout = '20s'").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery("SELECT ready, coverage_start::TEXT, cursor::TEXT, closed_before::TEXT").
+		WillReturnRows(sqlmock.NewRows([]string{"ready", "coverage_start", "cursor", "closed_before"}).
+			AddRow(true, coverageStart.Format("2006-01-02"), closedDay.Format("2006-01-02"), closedDay.Format("2006-01-02")))
+	mock.ExpectExec("DELETE FROM account_usage_stats_dirty_days").
+		WithArgs(coverageStart).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery("SELECT bucket_date::TEXT").
+		WithArgs(coverageStart, closedDay).
+		WillReturnRows(sqlmock.NewRows([]string{"bucket_date"}))
+	mock.ExpectExec("LOCK TABLE account_usage_stats_daily IN SHARE ROW EXCLUSIVE MODE").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("DELETE FROM account_usage_stats_daily WHERE bucket_date").
+		WithArgs(closedDay).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("INSERT INTO account_usage_stats_daily").
+		WithArgs(closedDay, today).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery("WITH raw AS").
+		WithArgs(closedDay, today).
+		WillReturnRows(sqlmock.NewRows([]string{"mismatch"}).AddRow(false))
+	mock.ExpectExec(`(?s)DELETE FROM account_usage_stats_dirty_days.*UPDATE account_usage_stats_daily_state`).
+		WithArgs(closedDay, today).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	complete, err := newAccountUsageStatsStore(db).backfillStep(context.Background())
+
+	require.NoError(t, err)
+	require.True(t, complete)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

@@ -65,14 +65,14 @@ func (s *userUsageAnalyticsStore) backfillStep(ctx context.Context) (complete bo
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	var locked bool
-	if err := scanSingleRow(ctx, tx, `SELECT pg_try_advisory_xact_lock($1)`, []any{userUsageAnalyticsBackfillLockID}, &locked); err != nil {
+	locked, err := tryUsageAggregationMaintenanceLocks(ctx, tx, userUsageAnalyticsBackfillLockID)
+	if err != nil {
 		return false, err
 	}
 	if !locked {
 		return false, nil
 	}
-	if _, err := tx.ExecContext(ctx, `SET LOCAL statement_timeout = '20s'`); err != nil {
+	if err := configureUsageAggregationMaintenance(ctx, tx); err != nil {
 		return false, err
 	}
 
@@ -396,14 +396,14 @@ func (s *userUsageAnalyticsStore) reconcileRetention(ctx context.Context) error 
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	var locked bool
-	if err := scanSingleRow(ctx, tx, `SELECT pg_try_advisory_xact_lock($1)`, []any{userUsageAnalyticsBackfillLockID}, &locked); err != nil {
+	locked, err := tryUsageAggregationMaintenanceLocks(ctx, tx, userUsageAnalyticsBackfillLockID)
+	if err != nil {
 		return err
 	}
 	if !locked {
 		return nil
 	}
-	if _, err := tx.ExecContext(ctx, `SET LOCAL statement_timeout = '20s'`); err != nil {
+	if err := configureUsageAggregationMaintenance(ctx, tx); err != nil {
 		return err
 	}
 

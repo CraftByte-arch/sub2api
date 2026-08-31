@@ -139,12 +139,9 @@ func appendUsageLogModelQueryFilter(query string, args []any, model string, sour
 }
 
 type usageLogRepository struct {
-	client             *dbent.Client
-	sql                sqlExecutor
-	db                 *sql.DB
-	apiKeyUsageDaily   *apiKeyUsageDailyStore
-	accountUsageStats  *accountUsageStatsStore
-	userDashboardStats *userDashboardStatsStore
+	client *dbent.Client
+	sql    sqlExecutor
+	db     *sql.DB
 
 	createBatchOnce     sync.Once
 	createBatchCh       chan usageLogCreateRequest
@@ -154,11 +151,7 @@ type usageLogRepository struct {
 }
 
 func NewUsageLogRepository(client *dbent.Client, sqlDB *sql.DB) service.UsageLogRepository {
-	repo := newUsageLogRepositoryWithSQL(client, sqlDB)
-	repo.apiKeyUsageDaily.StartAutomaticBackfill()
-	repo.accountUsageStats.StartAutomaticBackfill()
-	repo.userDashboardStats.StartAutomaticBackfill()
-	return newUserUsageAnalyticsRepository(repo, sqlDB)
+	return newUsageAggregationRepository(newUsageLogRepositoryWithSQL(client, sqlDB), sqlDB)
 }
 
 func newUsageLogRepositoryWithSQL(client *dbent.Client, sqlq sqlExecutor) *usageLogRepository {
@@ -167,9 +160,6 @@ func newUsageLogRepositoryWithSQL(client *dbent.Client, sqlq sqlExecutor) *usage
 	if db, ok := sqlq.(*sql.DB); ok {
 		repo.db = db
 	}
-	repo.apiKeyUsageDaily = newAPIKeyUsageDailyStore(sqlq)
-	repo.accountUsageStats = newAccountUsageStatsStore(sqlq)
-	repo.userDashboardStats = newUserDashboardStatsStore(sqlq)
 	repo.bestEffortRecent = gocache.New(usageLogBestEffortRecentTTL, time.Minute)
 	return repo
 }

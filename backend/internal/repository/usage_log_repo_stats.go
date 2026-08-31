@@ -548,13 +548,63 @@ func (r *usageLogRepository) GetBatchUserUsageStats(ctx context.Context, userIDs
 // BatchAPIKeyUsageStats represents usage stats for a single API key
 type BatchAPIKeyUsageStats = usagestats.BatchAPIKeyUsageStats
 
-// GetBatchAPIKeyUsageStats gets today and total actual_cost for multiple API keys.
+// GetBatchAPIKeyUsageStats gets today and total actual_cost for multiple API keys within a time range.
+// If startTime is zero, defaults to 30 days ago.
 func (r *usageLogRepository) GetBatchAPIKeyUsageStats(ctx context.Context, apiKeyIDs []int64, startTime, endTime time.Time) (map[int64]*BatchAPIKeyUsageStats, error) {
-	store := r.apiKeyUsageDaily
-	if store == nil {
-		store = newAPIKeyUsageDailyStore(r.sql)
+	result := make(map[int64]*BatchAPIKeyUsageStats)
+	normalizedAPIKeyIDs := normalizePositiveInt64IDs(apiKeyIDs)
+	if len(normalizedAPIKeyIDs) == 0 {
+		return result, nil
 	}
-	return store.GetBatch(ctx, apiKeyIDs, startTime, endTime)
+
+	// 默认最近 30 天
+	if startTime.IsZero() {
+		startTime = time.Now().AddDate(0, 0, -30)
+	}
+	if endTime.IsZero() {
+		endTime = time.Now()
+	}
+
+	for _, id := range normalizedAPIKeyIDs {
+		result[id] = &BatchAPIKeyUsageStats{APIKeyID: id}
+	}
+
+	query := `
+		SELECT
+			api_key_id,
+			COALESCE(SUM(actual_cost) FILTER (WHERE created_at >= $2 AND created_at < $3), 0) as total_cost,
+			COALESCE(SUM(actual_cost) FILTER (WHERE created_at >= $4), 0) as today_cost
+		FROM usage_logs
+		WHERE api_key_id = ANY($1)
+		  AND created_at >= LEAST($2, $4)
+		GROUP BY api_key_id
+	`
+	today := timezone.Today()
+	rows, err := r.sql.QueryContext(ctx, query, pq.Array(normalizedAPIKeyIDs), startTime, endTime, today)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var apiKeyID int64
+		var total float64
+		var todayTotal float64
+		if err := rows.Scan(&apiKeyID, &total, &todayTotal); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		if stats, ok := result[apiKeyID]; ok {
+			stats.TotalActualCost = total
+			stats.TodayActualCost = todayTotal
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return result, nil
 }
 
 // resolveEndpointColumn maps endpoint type to the corresponding DB column name.

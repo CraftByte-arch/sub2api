@@ -20,14 +20,22 @@ func TestAccountUsageStatsAggregateTriggerMatchesLegacyAndHandlesDelete(t *testi
 	tx := testEntTx(t)
 	client := tx.Client()
 	repo := newUsageLogRepositoryWithSQL(client, tx)
+	decorated := &usageAggregationRepository{
+		usageLogRepository: repo,
+		accountUsageStats:  newAccountUsageStatsStore(tx),
+	}
 
 	base := timezone.Today().AddDate(0, 0, -1)
 	end := timezone.Today().AddDate(0, 0, 1)
 	_, err := tx.ExecContext(ctx, `
 		UPDATE account_usage_stats_daily_state
-		SET ready = TRUE, coverage_start = $1::date, cursor = $2::date, updated_at = NOW()
+		SET ready = TRUE,
+			coverage_start = $1::date,
+			cursor = CURRENT_DATE,
+			closed_before = CURRENT_DATE,
+			updated_at = NOW()
 		WHERE id = 1
-	`, base.AddDate(0, 0, -1), end)
+	`, base.AddDate(0, 0, -1))
 	require.NoError(t, err)
 
 	user := mustCreateUser(t, client, &service.User{Email: "account-stats-" + uuid.NewString() + "@example.com"})
@@ -72,15 +80,34 @@ func TestAccountUsageStatsAggregateTriggerMatchesLegacyAndHandlesDelete(t *testi
 	start := base
 	legacy, err := repo.GetAccountUsageStats(ctx, account.ID, start, end)
 	require.NoError(t, err)
-	aggregated, err := repo.GetAccountUsageStatsAggregated(ctx, account.ID, start, end)
+	aggregated, err := decorated.GetAccountUsageStats(ctx, account.ID, start, end)
 	require.NoError(t, err)
 	requireAccountUsageStatsEquivalent(t, legacy, aggregated)
 	require.InDelta(t, 250, aggregated.Summary.AvgDurationMs, 1e-9)
+	require.Len(t, aggregated.History, 2)
+	require.Equal(t, timezone.Today().Format("2006-01-02"), aggregated.History[1].Date)
+
+	// A dirty closed day must be read from usage_logs even if its compact row is
+	// stale. This is the exactness path used by the stage-two historical-change
+	// trigger while the background repair is pending.
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO account_usage_stats_dirty_days (bucket_date)
+		VALUES ($1::DATE)
+		ON CONFLICT (bucket_date) DO NOTHING;
+
+		UPDATE account_usage_stats_daily
+		SET requests = requests + 1000
+		WHERE account_id = $2 AND bucket_date = $1::DATE
+	`, base, account.ID)
+	require.NoError(t, err)
+	aggregated, err = decorated.GetAccountUsageStats(ctx, account.ID, start, end)
+	require.NoError(t, err)
+	requireAccountUsageStatsEquivalent(t, legacy, aggregated)
 
 	require.NoError(t, repo.Delete(ctx, first.ID))
 	legacy, err = repo.GetAccountUsageStats(ctx, account.ID, start, end)
 	require.NoError(t, err)
-	aggregated, err = repo.GetAccountUsageStatsAggregated(ctx, account.ID, start, end)
+	aggregated, err = decorated.GetAccountUsageStats(ctx, account.ID, start, end)
 	require.NoError(t, err)
 	requireAccountUsageStatsEquivalent(t, legacy, aggregated)
 }
