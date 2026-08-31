@@ -28,7 +28,7 @@
 
 - [x] 4.1 Deploy the stage-one compatibility version to HC2 and verify Account raw-versus-hybrid parity plus database CPU, WAL, write latency, and aggregate-table update counts.
 - [x] 4.2 After stage-one verification, add a separate forward migration that removes only the Account synchronous delta triggers/function and installs historical-change dirty-day triggers.
-- [ ] 4.3 Deploy the Account cutover to HC2 and verify normal current usage no longer updates `account_usage_stats_daily`, historical mutations remain exact, and the old compatible slot is the rollback target.
+- [x] 4.3 Deploy the Account cutover to HC2 and verify normal current usage no longer updates `account_usage_stats_daily`, historical mutations remain exact, and the old compatible slot is the rollback target.
 
 ## 5. Sequential rollout of remaining custom statistics
 
@@ -44,3 +44,11 @@
 - A two-day closed-history plus open-tail comparison for Account `6703` returned 8 legacy rows, 8 hybrid rows, and 0 mismatches across requests, tokens, costs, durations, models, and endpoints.
 - Startup-to-post-cutover counters showed no aggregate rebuild inserts; normal usage continued to produce about four `account_usage_stats_daily` updates per new usage row, confirming the synchronous Account trigger remains the dominant write amplification to remove in stage two.
 - PostgreSQL has neither `pg_stat_statements` nor `track_io_timing` enabled. A 118-second post-cutover sample used `pg_stat_database.active_time` as the bounded workload proxy (about 10.8% of one-core wall time), observed about 52.9 KB/s WAL, zero lock waiters, and no usage-record timeout/drop or database/Redis/migration errors.
+
+### HC2 Account write-path cutover verification
+
+- Deployed `sub2api:hc2-20260901000808-8c33d9d6a951-amd64` to `sub2api-next:18082` while the stage-one-compatible `sub2api-canary:18081` continued serving, then switched Nginx with a successful configuration test and graceful reload.
+- Migration `235_account_usage_stats_write_path_cutover.sql` applied at HC2 server time `2026-09-01 00:11:43 +08:00`. The two synchronous Account delta triggers and `apply_account_usage_stats_daily_delta()` are absent; exactly three Account dirty-day triggers are installed.
+- During a real-traffic window from `00:16:15` to `00:21:43`, `usage_logs.n_tup_ins` increased by 85 while Account aggregate inserts, updates, and deletes did not change. A preceding 60-second window similarly added 38 usage rows with zero Account aggregate updates; separate aggregate insert/delete activity was attributable only to bounded repair of two retention-dirty historical dates.
+- A production transaction probe against usage log `5491403` marked `2026-08-31` dirty after both UPDATE and DELETE; `ROLLBACK` restored dirty rows to zero and preserved the source row, confirming exact historical-change fallback without persistent test data.
+- Both public hosts and both slots remained healthy, AIXW homepage configuration remained correct, lock waiters stayed at zero, and no migration/database/Redis/maintenance or usage-record-drop errors appeared. The preserved `18081` stage-one image is the direct rollback target.
