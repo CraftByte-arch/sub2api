@@ -20,6 +20,42 @@
           <span>/</span>
           <span>{{ t('usage.out') }}: {{ formatTokens(stats?.total_output_tokens || 0) }}</span>
           <span>/</span>
+          <span class="group relative inline-flex cursor-help items-center gap-0.5" tabindex="0">
+            <span>{{ cacheLabel() }}: {{ formatTokens(stats?.total_cache_tokens || 0) }}</span>
+            <svg
+              class="h-3.5 w-3.5 text-gray-400"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+              />
+            </svg>
+            <span
+              class="pointer-events-none absolute left-1/2 top-full z-30 mt-2 hidden w-56 -translate-x-1/2 rounded-lg border border-gray-200 bg-white p-3 text-left text-xs text-gray-700 shadow-lg group-hover:block group-focus:block dark:border-dark-600 dark:bg-dark-800 dark:text-dark-200"
+            >
+              <span class="mb-2 block font-medium text-gray-900 dark:text-white">
+                {{ cacheDetailLabel() }}
+              </span>
+              <span class="flex items-center justify-between gap-3">
+                <span>{{ t('usage.cacheCreationTokensLabel') }}</span>
+                <span class="tabular-nums">
+                  {{ formatTokens(stats?.total_cache_creation_tokens || 0) }}
+                </span>
+              </span>
+              <span class="mt-1 flex items-center justify-between gap-3">
+                <span>{{ t('usage.cacheReadTokensLabel') }}</span>
+                <span class="tabular-nums">
+                  {{ formatTokens(stats?.total_cache_read_tokens || 0) }}
+                </span>
+              </span>
+            </span>
+          </span>
+          <span>·</span>
           <span class="font-medium text-sky-500 dark:text-sky-400">
             {{ t('usage.cacheHit') }} {{ formatTokens(cacheReadTokens) }}
           </span>
@@ -108,4 +144,7 @@ const formatTokens = (value: number) => {
   if (value >= 1e3) return (value / 1e3).toFixed(2) + 'K'
   return value.toLocaleString()
 }
+
+const cacheLabel = () => t('usage.cacheTotal')
+const cacheDetailLabel = () => t('usage.cacheBreakdown')
 </script>

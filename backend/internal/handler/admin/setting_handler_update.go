@@ -264,6 +264,7 @@ type UpdateSettingsRequest struct {
 	ImageGenerationToolDeclarationPolicy *string  `json:"image_generation_tool_declaration_policy"`
 
 	// Gateway forwarding behavior
+	OpenAITTFTMode                         *string `json:"openai_ttft_mode"`
 	EnableFingerprintUnification           *bool   `json:"enable_fingerprint_unification"`
 	EnableMetadataPassthrough              *bool   `json:"enable_metadata_passthrough"`
 	EnableCCHSigning                       *bool   `json:"enable_cch_signing"`
@@ -1828,6 +1829,12 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 				return *req.EnableFingerprintUnification
 			}
 			return previousSettings.EnableFingerprintUnification
+		}(),
+		OpenAITTFTMode: func() string {
+			if req.OpenAITTFTMode != nil {
+				return *req.OpenAITTFTMode
+			}
+			return previousSettings.OpenAITTFTMode
 		}(),
 		EnableMetadataPassthrough: func() bool {
 			if req.EnableMetadataPassthrough != nil {

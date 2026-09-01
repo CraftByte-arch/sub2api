@@ -318,7 +318,7 @@ func TestCanonicalOpenAIAccountSchedulingModelMatchesForwardSemantics(t *testing
 		},
 		{
 			name:    "Grok OAuth does not inherit OpenAI Codex aliases",
-			account: &Account{Platform: PlatformGrok, Type: AccountTypeOAuth},
+			account: &Account{Platform: PlatformGrok, Type: AccountTypeOAuth, Credentials: map[string]any{"model_mapping": map[string]any{"grok": "grok-4.6"}}},
 			model:   "gpt-5.6",
 			want:    "gpt-5.6",
 		},

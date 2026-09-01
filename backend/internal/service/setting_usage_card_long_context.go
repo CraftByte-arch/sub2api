@@ -17,15 +17,19 @@ type cachedOpenAILongContextBillingSettings struct {
 }
 
 const (
-	defaultOpenAILongContextBillingThreshold  = openAIGPT54LongContextInputThreshold
-	defaultOpenAILongContextBillingMultiplier = openAIGPT54LongContextInputMultiplier
-	defaultOpenAILongContextOutputMultiplier  = openAIGPT54LongContextOutputMultiplier
+	defaultOpenAILongContextBillingThreshold  = 272000
+	defaultOpenAILongContextBillingMultiplier = 2.0
+	defaultOpenAILongContextOutputMultiplier  = 1.5
 
 	openAILongContextBillingCacheTTL  = 60 * time.Second
 	openAILongContextBillingErrorTTL  = 5 * time.Second
 	openAILongContextBillingDBTimeout = 5 * time.Second
 	openAILongContextBillingCacheKey  = "openai_long_context_billing"
 )
+
+func usesOpenAILegacyLongContextPricing(normalized string) bool {
+	return normalized == "gpt-5.4" || normalized == "gpt-5.5" || normalized == "gpt-5.5-pro"
+}
 
 type OpenAILongContextBillingRuntime struct {
 	Enabled          bool

@@ -316,6 +316,7 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		ImageStudioInputRetentionHours:                         settings.ImageStudioInputRetentionHours,
 		ImageStudioAvailableGroupIDs:                           settings.ImageStudioAvailableGroupIDs,
 		ImageGenerationToolDeclarationPolicy:                   settings.ImageGenerationToolDeclarationPolicy,
+		OpenAITTFTMode:                                         settings.OpenAITTFTMode,
 		EnableFingerprintUnification:                           settings.EnableFingerprintUnification,
 		EnableMetadataPassthrough:                              settings.EnableMetadataPassthrough,
 		EnableCCHSigning:                                       settings.EnableCCHSigning,
