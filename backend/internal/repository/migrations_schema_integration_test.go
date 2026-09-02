@@ -56,7 +56,7 @@ func TestMigrationsRunner_IsIdempotent_AndSchemaIsUpToDate(t *testing.T) {
 	requireColumn(t, tx, "accounts", "session_window_status", "character varying", 20, true)
 	requireIndex(t, tx, "accounts", "idx_accounts_autopause_expiry_due")
 
-	// groups: OpenAI Live 默认关闭，管理员显式开启后才可访问。
+	// groups: OpenAI Live 与 Fast 强制策略都默认关闭，管理员显式开启后才生效。
 	requireColumn(t, tx, "groups", "allow_live", "boolean", 0, false)
 	// image_studio_jobs: server-managed edit input metadata (migration 175)
 	requireColumn(t, tx, "image_studio_jobs", "input_image_paths", "jsonb", 0, false)
@@ -65,6 +65,8 @@ func TestMigrationsRunner_IsIdempotent_AndSchemaIsUpToDate(t *testing.T) {
 	requireColumn(t, tx, "image_studio_jobs", "input_expires_at", "timestamp with time zone", 0, true)
 	requireColumn(t, tx, "image_studio_jobs", "input_deleted_at", "timestamp with time zone", 0, true)
 	requireIndex(t, tx, "image_studio_jobs", "idx_image_studio_jobs_input_cleanup")
+	requireColumn(t, tx, "groups", "force_openai_fast", "boolean", 0, false)
+	requireColumn(t, tx, "groups", "free_openai_fast", "boolean", 0, false)
 
 	// api_keys: key length should be 128
 	requireColumn(t, tx, "api_keys", "key", "character varying", 128, false)
