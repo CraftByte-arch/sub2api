@@ -724,12 +724,16 @@ func (s *accountUsageStatsStore) backfillStep(ctx context.Context) (complete boo
 		return false, err
 	}
 	if _, err := tx.ExecContext(ctx, `
-		DELETE FROM account_usage_stats_dirty_days WHERE bucket_date = $1::DATE;
-
+		DELETE FROM account_usage_stats_dirty_days
+		WHERE bucket_date = $1::DATE
+	`, closedDay); err != nil {
+		return false, err
+	}
+	if _, err := tx.ExecContext(ctx, `
 		UPDATE account_usage_stats_daily_state
-		SET cursor = $2::DATE, closed_before = $2::DATE, updated_at = NOW()
+		SET cursor = $1::DATE, closed_before = $1::DATE, updated_at = NOW()
 		WHERE id = 1
-	`, closedDay, nextDay); err != nil {
+	`, nextDay); err != nil {
 		return false, err
 	}
 	return !nextDay.Before(today), tx.Commit()

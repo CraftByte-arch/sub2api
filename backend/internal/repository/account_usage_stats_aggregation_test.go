@@ -191,8 +191,11 @@ func TestAccountUsageStatsMaintenanceClosesOnlyOneDayWithoutParallelWorkers(t *t
 	mock.ExpectQuery("WITH raw AS").
 		WithArgs(closedDay, today).
 		WillReturnRows(sqlmock.NewRows([]string{"mismatch"}).AddRow(false))
-	mock.ExpectExec(`(?s)DELETE FROM account_usage_stats_dirty_days.*UPDATE account_usage_stats_daily_state`).
-		WithArgs(closedDay, today).
+	mock.ExpectExec("DELETE FROM account_usage_stats_dirty_days").
+		WithArgs(closedDay).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("UPDATE account_usage_stats_daily_state").
+		WithArgs(today).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
