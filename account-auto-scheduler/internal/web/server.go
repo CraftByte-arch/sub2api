@@ -54,6 +54,14 @@ type AccountSuccessConsole interface {
 	GetAccountSuccessRates(ctx context.Context) (model.AccountSuccessSnapshot, error)
 }
 
+type AccountCacheStatsConsole interface {
+	GetTodayAccountCacheStats(ctx context.Context, accountIDs []int64) (model.AccountCacheStatsSnapshot, error)
+}
+
+type accountCacheStatsFallbackConsole interface {
+	EnrichTodayAccountCacheStats(ctx context.Context, accountIDs []int64, stats map[string]model.WindowStats)
+}
+
 type accountPerformanceHealthConsole interface {
 	GetAccountPerformanceHealth(ctx context.Context) (model.AccountPerformanceCollectionHealth, error)
 }
@@ -67,6 +75,7 @@ type Options struct {
 	Notifications     NotificationConsole
 	OnlineUsers       OnlineUsersConsole
 	AccountSuccess    AccountSuccessConsole
+	AccountCacheStats AccountCacheStatsConsole
 }
 
 type NotificationConsole interface {
@@ -130,16 +139,17 @@ type groupProtectionDefaultConsole interface {
 }
 
 type Server struct {
-	engine          *engine.Engine
-	core            AdminCore
-	console         ConsoleCore
-	options         Options
-	logger          *slog.Logger
-	upstreams       UpstreamConsole
-	notifications   NotificationConsole
-	onlineUsers     OnlineUsersConsole
-	accountSuccess  AccountSuccessConsole
-	loginChallenges *loginChallengeStore
+	engine            *engine.Engine
+	core              AdminCore
+	console           ConsoleCore
+	options           Options
+	logger            *slog.Logger
+	upstreams         UpstreamConsole
+	notifications     NotificationConsole
+	onlineUsers       OnlineUsersConsole
+	accountSuccess    AccountSuccessConsole
+	accountCacheStats AccountCacheStatsConsole
+	loginChallenges   *loginChallengeStore
 
 	cacheMu   sync.Mutex
 	authCache map[string]cachedSession
@@ -262,16 +272,17 @@ func NewServer(scheduler *engine.Engine, coreClient AdminCore, options Options, 
 		logger = slog.Default()
 	}
 	server := &Server{
-		engine:          scheduler,
-		core:            coreClient,
-		options:         options,
-		logger:          logger,
-		upstreams:       options.Upstreams,
-		notifications:   options.Notifications,
-		onlineUsers:     options.OnlineUsers,
-		accountSuccess:  options.AccountSuccess,
-		loginChallenges: newLoginChallengeStore(defaultLoginChallengeTTL),
-		authCache:       map[string]cachedSession{},
+		engine:            scheduler,
+		core:              coreClient,
+		options:           options,
+		logger:            logger,
+		upstreams:         options.Upstreams,
+		notifications:     options.Notifications,
+		onlineUsers:       options.OnlineUsers,
+		accountSuccess:    options.AccountSuccess,
+		accountCacheStats: options.AccountCacheStats,
+		loginChallenges:   newLoginChallengeStore(defaultLoginChallengeTTL),
+		authCache:         map[string]cachedSession{},
 	}
 	server.console, _ = coreClient.(ConsoleCore)
 	return server
@@ -447,6 +458,7 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "USAGE_UNAVAILABLE", err.Error())
 		return
 	}
+	s.attachTodayAccountCacheStats(r.Context(), accountIDs, todayStats)
 	actualSuccess := model.AccountSuccessSnapshot{
 		QueriedAt: time.Now().UTC(),
 		Source:    "account_performance_aggregate",
@@ -531,6 +543,39 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		"group_balance_summaries":   groupBalanceSummaries,
 		"actual_success":            actualSuccess,
 	})
+}
+
+func (s *Server) attachTodayAccountCacheStats(ctx context.Context, accountIDs []int64, todayStats map[string]model.WindowStats) {
+	if len(accountIDs) == 0 || todayStats == nil {
+		return
+	}
+	if s.accountCacheStats != nil {
+		snapshot, err := s.accountCacheStats.GetTodayAccountCacheStats(ctx, accountIDs)
+		if err != nil {
+			s.logger.Warn("load bulk account cache statistics", "error", err)
+			return
+		}
+		if snapshot.Configured {
+			if snapshot.Ready {
+				for accountID, cacheStats := range snapshot.Stats {
+					key := strconv.FormatInt(accountID, 10)
+					// The batch today-usage endpoint may omit accounts with no
+					// activity. Preserve the known-zero cache projection for those
+					// accounts by materializing its otherwise-zero usage window.
+					usage := todayStats[key]
+					cacheCopy := cacheStats
+					usage.Cache = &cacheCopy
+					todayStats[key] = usage
+				}
+			}
+			// A configured database failure deliberately remains unavailable rather
+			// than recreating the N+1 load against the main service.
+			return
+		}
+	}
+	if fallback, ok := s.console.(accountCacheStatsFallbackConsole); ok {
+		fallback.EnrichTodayAccountCacheStats(ctx, accountIDs, todayStats)
+	}
 }
 
 func appendOverviewNotice(existing, message string) string {

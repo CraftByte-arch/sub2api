@@ -89,6 +89,7 @@ func main() {
 		Notifications:     notificationCoordinator,
 		OnlineUsers:       onlineUsers,
 		AccountSuccess:    onlineUsers,
+		AccountCacheStats: onlineUsers,
 	}, logger)
 
 	if cfg.AutoRegisterTab {

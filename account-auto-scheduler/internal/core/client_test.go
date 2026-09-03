@@ -354,8 +354,12 @@ func TestConsoleDataMethodsNormalizeEnvelopes(t *testing.T) {
 		t.Fatalf("unexpected groups: %#v err=%v", groups, err)
 	}
 	stats, err := client.GetTodayStatsBatch(context.Background(), []int64{2, 1, 2, 0})
-	if err != nil || stats["1"].Tokens != 1200 || stats["1"].Cache == nil || stats["1"].Cache.HitRate != 60 {
+	if err != nil || stats["1"].Tokens != 1200 || stats["1"].Cache != nil {
 		t.Fatalf("unexpected stats: %#v err=%v", stats, err)
+	}
+	client.EnrichTodayAccountCacheStats(context.Background(), []int64{1, 2}, stats)
+	if stats["1"].Cache == nil || stats["1"].Cache.HitRate != 60 {
+		t.Fatalf("unexpected fallback cache stats: %#v", stats)
 	}
 	usage, err := client.GetPassiveUsage(context.Background(), 1)
 	if err != nil || usage.FiveHour == nil || usage.FiveHour.Utilization != 42.5 {

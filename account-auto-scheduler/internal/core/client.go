@@ -235,7 +235,6 @@ func (c *Client) GetTodayStatsBatch(ctx context.Context, accountIDs []int64) (ma
 			stats[accountID] = value
 		}
 	}
-	c.enrichTodayAccountCacheStats(ctx, ids, stats)
 	return stats, nil
 }
 
@@ -247,7 +246,10 @@ func (c *Client) GetAccountPerformanceHealth(ctx context.Context) (model.Account
 	return health, nil
 }
 
-func (c *Client) enrichTodayAccountCacheStats(ctx context.Context, accountIDs []int64, stats map[string]model.WindowStats) {
+// EnrichTodayAccountCacheStats is retained only for sidecar deployments that
+// do not configure the optional read-only aggregate database. HC2 uses the
+// bulk database path, so normal overview requests never call this N+1 fallback.
+func (c *Client) EnrichTodayAccountCacheStats(ctx context.Context, accountIDs []int64, stats map[string]model.WindowStats) {
 	if len(accountIDs) == 0 || stats == nil {
 		return
 	}

@@ -365,6 +365,18 @@ type AccountCacheStats struct {
 	HitRate             float64 `json:"hit_rate"`
 }
 
+// AccountCacheStatsSnapshot is the sidecar's private bulk cache-stat result.
+// It remains separate from WindowStats so a failed database read never alters
+// the existing overview response contract.
+type AccountCacheStatsSnapshot struct {
+	Configured bool
+	Ready      bool
+	Stale      bool
+	QueriedAt  time.Time
+	Notice     string
+	Stats      map[int64]AccountCacheStats
+}
+
 type UsageProgress struct {
 	Utilization      float64      `json:"utilization"`
 	ResetsAt         *string      `json:"resets_at"`

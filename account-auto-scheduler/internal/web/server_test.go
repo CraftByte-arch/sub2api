@@ -47,6 +47,8 @@ type fakeConsoleCore struct {
 	onlineUsersErr        error
 	onlineUsersSummaryErr error
 	usageErr              error
+	cacheFallback         func(context.Context, []int64, map[string]model.WindowStats)
+	cacheFallbackCalls    int
 	bindingErr            error
 	bindingErrByID        map[int64]error
 	accountErr            error
@@ -89,6 +91,13 @@ func (f *fakeConsoleCore) ListGroups(context.Context) ([]model.UpstreamGroup, er
 
 func (f *fakeConsoleCore) GetTodayStatsBatch(context.Context, []int64) (map[string]model.WindowStats, error) {
 	return f.today, f.consoleErr
+}
+
+func (f *fakeConsoleCore) EnrichTodayAccountCacheStats(ctx context.Context, accountIDs []int64, stats map[string]model.WindowStats) {
+	f.cacheFallbackCalls++
+	if f.cacheFallback != nil {
+		f.cacheFallback(ctx, accountIDs, stats)
+	}
 }
 
 func (f *fakeConsoleCore) GetOnlineUsers(context.Context) (model.OnlineUsersSnapshot, error) {
