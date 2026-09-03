@@ -131,8 +131,10 @@ func TestBalanceThresholdEndpoints(t *testing.T) {
 	backend := &fakeConsoleCore{
 		fakeAdminCore: fakeAdminCore{user: core.AdminUser{ID: 1, Role: "admin"}},
 		groups:        []model.UpstreamGroup{{ID: 10, Name: "OpenAI", Status: "active"}},
+		accounts:      []model.UpstreamAccount{{ID: 99, Name: "key", Platform: "openai", Type: "apikey", Status: "active", Schedulable: true}},
 	}
-	server := NewServer(nil, backend, Options{Notifications: notifications}, nil)
+	server := newConsoleTestServer(t, backend, nil)
+	server.notifications = notifications
 
 	groupSet := httptest.NewRecorder()
 	server.Handler().ServeHTTP(groupSet, authenticatedRequest(http.MethodPut, "/api/groups/10/balance-alert", `{"threshold":50}`))
@@ -150,6 +152,9 @@ func TestBalanceThresholdEndpoints(t *testing.T) {
 	server.Handler().ServeHTTP(accountSet, authenticatedRequest(http.MethodPut, "/api/configs/99/balance-alert", `{"threshold":10}`))
 	if accountSet.Code != http.StatusOK || len(notifications.accountThresholdCalls) != 1 || notifications.accountThresholdCalls[0].id != 99 || *notifications.accountThresholdCalls[0].threshold != 10 {
 		t.Fatalf("account set status=%d calls=%#v body=%s", accountSet.Code, notifications.accountThresholdCalls, accountSet.Body.String())
+	}
+	if configs := server.engine.List(); len(configs) != 1 || configs[0].AccountID != 99 || configs[0].Policy.Enabled || configs[0].NextCheckAt != nil {
+		t.Fatalf("balance alert did not create a dormant passive record: %#v", configs)
 	}
 }
 

@@ -130,6 +130,63 @@ func (e *Engine) Stop() {
 	e.wg.Wait()
 }
 
+// EnterPassiveMode permanently disables the legacy active-probe runtime while
+// preserving the serialized account records used by balance alerts and manual
+// scheduling. Only suspensions explicitly owned by the probe state machine are
+// restored; administrator-owned stops never carry ManagedSuspended and remain
+// unchanged. The transition is idempotent and best effort per account.
+func (e *Engine) EnterPassiveMode(ctx context.Context) error {
+	if e == nil || e.store == nil {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	var failures []error
+	for _, managed := range e.store.List() {
+		var snapshot *model.UpstreamAccount
+		if managed.ManagedSuspended {
+			if e.core == nil {
+				failures = append(failures, fmt.Errorf("restore probe-owned suspension for account %d: core client unavailable", managed.AccountID))
+			} else {
+				account, err := e.core.GetAccount(ctx, managed.AccountID)
+				if err != nil {
+					failures = append(failures, fmt.Errorf("restore probe-owned suspension for account %d: %w", managed.AccountID, err))
+				} else {
+					snapshot = &account
+					if !account.Schedulable {
+						if account.Status != "active" {
+							failures = append(failures, fmt.Errorf("restore probe-owned suspension for account %d: account status is %s", managed.AccountID, account.Status))
+						} else if restored, restoreErr := e.core.SetSchedulable(ctx, managed.AccountID, true); restoreErr != nil {
+							failures = append(failures, fmt.Errorf("restore probe-owned suspension for account %d: %w", managed.AccountID, restoreErr))
+						} else {
+							snapshot = &restored
+						}
+					}
+				}
+			}
+		}
+
+		if err := e.store.Update(managed.AccountID, func(current *model.ManagedAccount) error {
+			if snapshot != nil {
+				current.ApplySnapshot(*snapshot)
+			}
+			current.Policy.Enabled = false
+			current.NextCheckAt = nil
+			current.Running = false
+			current.ManagedSuspended = false
+			current.ConsecutiveFailures = 0
+			current.ConsecutiveSuccesses = 0
+			current.UpdatedAt = e.now().UTC()
+			return nil
+		}); err != nil {
+			failures = append(failures, fmt.Errorf("disable active probing for account %d: %w", managed.AccountID, err))
+		}
+	}
+	return errors.Join(failures...)
+}
+
 func (e *Engine) List() []model.ManagedAccount {
 	items := e.store.List()
 	for index := range items {
@@ -258,6 +315,35 @@ func (e *Engine) AvailableAccounts(ctx context.Context) ([]model.UpstreamAccount
 	}
 	e.syncSnapshots(accounts)
 	return accounts, nil
+}
+
+// EnsurePassiveAccount creates the compatibility record required by account-
+// level alerts without enabling any probe policy or scheduling a check.
+func (e *Engine) EnsurePassiveAccount(ctx context.Context, accountID int64) (model.ManagedAccount, error) {
+	if existing, err := e.store.Get(accountID); err == nil {
+		return existing, nil
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return model.ManagedAccount{}, err
+	}
+	if e.core == nil {
+		return model.ManagedAccount{}, errors.New("core client unavailable")
+	}
+	account, err := e.core.GetAccount(ctx, accountID)
+	if err != nil {
+		return model.ManagedAccount{}, err
+	}
+	if !account.IsAPIKey() {
+		return model.ManagedAccount{}, ErrUnsupportedAccount
+	}
+	now := e.now().UTC()
+	policy := model.DefaultPolicy()
+	policy.Enabled = false
+	managed := model.ManagedAccount{AccountID: accountID, Policy: policy, History: []model.CheckResult{}, CreatedAt: now, UpdatedAt: now}
+	managed.ApplySnapshot(account)
+	if err := e.store.Put(managed); err != nil {
+		return model.ManagedAccount{}, err
+	}
+	return e.store.Get(accountID)
 }
 
 func (e *Engine) Upsert(ctx context.Context, accountID int64, policy model.Policy) (model.ManagedAccount, error) {

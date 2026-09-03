@@ -671,6 +671,110 @@ func TestStoreFailureDoesNotHideMissingConfiguration(t *testing.T) {
 	}
 }
 
+func TestEnterPassiveModeRestoresOnlyProbeOwnedSuspensionAndIsIdempotent(t *testing.T) {
+	fake := healthyAPIKeyAccount()
+	fake.account.Schedulable = false
+	scheduler := newTestEngine(t, fake)
+	now := time.Now().UTC()
+	next := now.Add(time.Minute)
+	managed := model.ManagedAccount{
+		AccountID:            fake.account.ID,
+		Name:                 fake.account.Name,
+		Platform:             fake.account.Platform,
+		AccountStatus:        fake.account.Status,
+		Schedulable:          false,
+		ManagedSuspended:     true,
+		ConsecutiveFailures:  4,
+		ConsecutiveSuccesses: 2,
+		Running:              true,
+		Policy:               model.DefaultPolicy(),
+		NextCheckAt:          &next,
+		History:              []model.CheckResult{{ID: "kept-history", Status: "failed"}},
+		DetectionStats:       model.DetectionStats{Requests: 7, InputTokens: 12},
+		CreatedAt:            now,
+		UpdatedAt:            now,
+	}
+	managed.Policy.Enabled = true
+	if err := scheduler.store.Put(managed); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := scheduler.EnterPassiveMode(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	stored := scheduler.List()[0]
+	if !stored.Schedulable || stored.ManagedSuspended || stored.Policy.Enabled || stored.NextCheckAt != nil || stored.Running || stored.ConsecutiveFailures != 0 || stored.ConsecutiveSuccesses != 0 {
+		t.Fatalf("passive transition did not clear active state: %#v", stored)
+	}
+	if len(stored.History) != 1 || stored.History[0].ID != "kept-history" || stored.DetectionStats.Requests != 7 {
+		t.Fatalf("passive transition removed rollback compatibility data: %#v", stored)
+	}
+	if len(fake.setCalls) != 1 || !fake.setCalls[0] {
+		t.Fatalf("probe-owned suspension was not restored exactly once: %#v", fake.setCalls)
+	}
+
+	if err := scheduler.EnterPassiveMode(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.setCalls) != 1 {
+		t.Fatalf("idempotent passive transition repeated scheduling mutation: %#v", fake.setCalls)
+	}
+}
+
+func TestEnterPassiveModePreservesAdministratorStop(t *testing.T) {
+	fake := healthyAPIKeyAccount()
+	fake.account.Schedulable = false
+	scheduler := newTestEngine(t, fake)
+	now := time.Now().UTC()
+	next := now.Add(time.Minute)
+	policy := model.DefaultPolicy()
+	policy.Enabled = true
+	if err := scheduler.store.Put(model.ManagedAccount{
+		AccountID: fake.account.ID, Name: fake.account.Name, Platform: fake.account.Platform,
+		AccountStatus: fake.account.Status, Schedulable: false, Policy: policy, NextCheckAt: &next,
+		History: []model.CheckResult{}, CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := scheduler.EnterPassiveMode(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	stored := scheduler.List()[0]
+	if stored.Schedulable || stored.Policy.Enabled || stored.NextCheckAt != nil || len(fake.setCalls) != 0 {
+		t.Fatalf("administrator stop was changed by passive transition: stored=%#v calls=%#v", stored, fake.setCalls)
+	}
+}
+
+func TestEnterPassiveModeDisablesPolicyWhenOwnedRestorationFails(t *testing.T) {
+	fake := healthyAPIKeyAccount()
+	fake.account.Schedulable = false
+	fake.setErr = errors.New("sub2api unavailable")
+	scheduler := newTestEngine(t, fake)
+	now := time.Now().UTC()
+	policy := model.DefaultPolicy()
+	policy.Enabled = true
+	if err := scheduler.store.Put(model.ManagedAccount{
+		AccountID: fake.account.ID, Name: fake.account.Name, Platform: fake.account.Platform,
+		AccountStatus: fake.account.Status, Schedulable: false, ManagedSuspended: true, Policy: policy,
+		Running: true, ConsecutiveFailures: 3, History: []model.CheckResult{}, CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	err := scheduler.EnterPassiveMode(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "sub2api unavailable") {
+		t.Fatalf("restore failure not reported: %v", err)
+	}
+	stored := scheduler.List()[0]
+	if stored.Policy.Enabled || stored.NextCheckAt != nil || stored.Running || stored.ManagedSuspended || stored.ConsecutiveFailures != 0 {
+		t.Fatalf("failed restoration left active probe state: %#v", stored)
+	}
+	if stored.Schedulable || len(fake.setCalls) != 1 || !fake.setCalls[0] {
+		t.Fatalf("failed restoration was represented incorrectly: stored=%#v calls=%#v", stored, fake.setCalls)
+	}
+}
+
 func newTestEngine(t *testing.T, fake *fakeCore) *Engine {
 	t.Helper()
 	stateStore, err := store.Open(filepath.Join(t.TempDir(), "state.json"))

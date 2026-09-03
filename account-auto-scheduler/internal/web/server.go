@@ -50,6 +50,14 @@ type OnlineUsersConsole interface {
 	GetOnlineUsers(ctx context.Context) (model.OnlineUsersSnapshot, error)
 }
 
+type AccountSuccessConsole interface {
+	GetAccountSuccessRates(ctx context.Context) (model.AccountSuccessSnapshot, error)
+}
+
+type accountPerformanceHealthConsole interface {
+	GetAccountPerformanceHealth(ctx context.Context) (model.AccountPerformanceCollectionHealth, error)
+}
+
 type Options struct {
 	UIOrigin          string
 	PublicURL         string
@@ -58,6 +66,7 @@ type Options struct {
 	Upstreams         UpstreamConsole
 	Notifications     NotificationConsole
 	OnlineUsers       OnlineUsersConsole
+	AccountSuccess    AccountSuccessConsole
 }
 
 type NotificationConsole interface {
@@ -129,6 +138,7 @@ type Server struct {
 	upstreams       UpstreamConsole
 	notifications   NotificationConsole
 	onlineUsers     OnlineUsersConsole
+	accountSuccess  AccountSuccessConsole
 	loginChallenges *loginChallengeStore
 
 	cacheMu   sync.Mutex
@@ -259,6 +269,7 @@ func NewServer(scheduler *engine.Engine, coreClient AdminCore, options Options, 
 		upstreams:       options.Upstreams,
 		notifications:   options.Notifications,
 		onlineUsers:     options.OnlineUsers,
+		accountSuccess:  options.AccountSuccess,
 		loginChallenges: newLoginChallengeStore(defaultLoginChallengeTTL),
 		authCache:       map[string]cachedSession{},
 	}
@@ -294,14 +305,14 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("PUT /api/groups/{groupID}/protection-default", s.requireAdmin(http.HandlerFunc(s.handleSetGroupProtectionDefault)))
 	mux.Handle("DELETE /api/groups/{groupID}/protection-default", s.requireAdmin(http.HandlerFunc(s.handleDeleteGroupProtectionDefault)))
 	mux.Handle("GET /api/configs", s.requireAdmin(http.HandlerFunc(s.handleListConfigs)))
-	mux.Handle("POST /api/configs", s.requireAdmin(http.HandlerFunc(s.handleCreateConfig)))
-	mux.Handle("PUT /api/configs/{accountID}", s.requireAdmin(http.HandlerFunc(s.handleUpdateConfig)))
-	mux.Handle("DELETE /api/configs/{accountID}", s.requireAdmin(http.HandlerFunc(s.handleDeleteConfig)))
-	mux.Handle("POST /api/configs/{accountID}/run", s.requireAdmin(http.HandlerFunc(s.handleRunNow)))
-	mux.Handle("GET /api/configs/{accountID}/direct-probe", s.requireAdmin(http.HandlerFunc(s.handleDirectProbeStatus)))
-	mux.Handle("POST /api/configs/{accountID}/direct-probe", s.requireAdmin(http.HandlerFunc(s.handleAuthorizeDirectProbe)))
-	mux.Handle("DELETE /api/configs/{accountID}/direct-probe", s.requireAdmin(http.HandlerFunc(s.handleRevokeDirectProbe)))
-	mux.Handle("POST /api/direct-probes/authorize", s.requireAdmin(http.HandlerFunc(s.handleBatchAuthorizeDirectProbes)))
+	mux.Handle("POST /api/configs", s.requireAdmin(http.HandlerFunc(s.handleActiveProbingRemoved)))
+	mux.Handle("PUT /api/configs/{accountID}", s.requireAdmin(http.HandlerFunc(s.handleActiveProbingRemoved)))
+	mux.Handle("DELETE /api/configs/{accountID}", s.requireAdmin(http.HandlerFunc(s.handleActiveProbingRemoved)))
+	mux.Handle("POST /api/configs/{accountID}/run", s.requireAdmin(http.HandlerFunc(s.handleActiveProbingRemoved)))
+	mux.Handle("GET /api/configs/{accountID}/direct-probe", s.requireAdmin(http.HandlerFunc(s.handleActiveProbingRemoved)))
+	mux.Handle("POST /api/configs/{accountID}/direct-probe", s.requireAdmin(http.HandlerFunc(s.handleActiveProbingRemoved)))
+	mux.Handle("DELETE /api/configs/{accountID}/direct-probe", s.requireAdmin(http.HandlerFunc(s.handleActiveProbingRemoved)))
+	mux.Handle("POST /api/direct-probes/authorize", s.requireAdmin(http.HandlerFunc(s.handleActiveProbingRemoved)))
 	mux.Handle("POST /api/tab/register", s.requireAdmin(http.HandlerFunc(s.handleRegisterTab)))
 	mux.Handle("GET /api/upstreams", s.requireAdmin(http.HandlerFunc(s.handleUpstreams)))
 	mux.Handle("POST /api/upstreams", s.requireAdmin(http.HandlerFunc(s.handleCreateUpstream)))
@@ -436,6 +447,29 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "USAGE_UNAVAILABLE", err.Error())
 		return
 	}
+	actualSuccess := model.AccountSuccessSnapshot{
+		QueriedAt: time.Now().UTC(),
+		Source:    "account_performance_aggregate",
+		Notice:    "实际成功率聚合读取未配置",
+		Items:     []model.GroupAccountSuccessRate{},
+	}
+	if s.accountSuccess != nil {
+		if snapshot, successErr := s.accountSuccess.GetAccountSuccessRates(r.Context()); successErr != nil {
+			s.logger.Warn("load account actual success rates", "error", successErr)
+			actualSuccess.Notice = "实际成功率暂不可用"
+		} else {
+			actualSuccess = snapshot
+		}
+	}
+	if healthConsole, ok := s.console.(accountPerformanceHealthConsole); ok {
+		if health, healthErr := healthConsole.GetAccountPerformanceHealth(r.Context()); healthErr == nil {
+			actualSuccess.CollectionHealth = &health
+			if health.Status != "" && health.Status != "complete" {
+				actualSuccess.Partial = true
+				actualSuccess.Notice = appendOverviewNotice(actualSuccess.Notice, "主服务实际成功率采集已降级")
+			}
+		}
+	}
 	configs := s.engine.List()
 	configByID := make(map[int64]model.ManagedAccount, len(configs))
 	for _, config := range configs {
@@ -495,7 +529,20 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		"group_protection_defaults": groupProtectionDefaults,
 		"group_balance_thresholds":  groupBalanceThresholds,
 		"group_balance_summaries":   groupBalanceSummaries,
+		"actual_success":            actualSuccess,
 	})
+}
+
+func appendOverviewNotice(existing, message string) string {
+	existing = strings.TrimSpace(existing)
+	message = strings.TrimSpace(message)
+	if existing == "" {
+		return message
+	}
+	if message == "" || strings.Contains(existing, message) {
+		return existing
+	}
+	return existing + "；" + message
 }
 
 func projectGroupBalanceSummaries(accounts []overviewAccount, logicalGroupIDs map[int64][]int64, protections map[int64]map[string]upstream.GroupAccountProtectionView, now time.Time) map[string]overviewGroupBalanceSummary {
@@ -1075,6 +1122,10 @@ func accountDisplayName(account model.UpstreamAccount) string {
 
 func (s *Server) handleListConfigs(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"configs": s.engine.ListViews()})
+}
+
+func (s *Server) handleActiveProbingRemoved(w http.ResponseWriter, _ *http.Request) {
+	writeError(w, http.StatusGone, "ACTIVE_PROBING_REMOVED", "主动账号探测已移除，请使用真实请求成功率判断账号表现")
 }
 
 func (s *Server) handleCreateConfig(w http.ResponseWriter, r *http.Request) {

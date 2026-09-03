@@ -10,7 +10,6 @@
   const AUTH_REFRESH_TIMEOUT_MS = 30000
   const SIDECAR_RETURN_PATH = '/custom/account-auto-scheduler'
   const COLLAPSED_GROUPS_KEY = 'sub2api-auto-scheduler-collapsed-groups'
-  const CHANNEL_SLOW_MS = 6000
   const DETAIL_PAGE_SIZE = 10
   const state = {
     token: '',
@@ -20,12 +19,11 @@
     groupBalanceSummaries: {},
     groupProtectionDefaults: {},
     groupBalanceThresholds: {},
+    actualSuccess: null,
+    actualSuccessByKey: new Map(),
     notificationsAvailable: false,
     notificationSettings: null,
-    defaultPolicy: null,
     editingID: null,
-    directProbeBusy: false,
-    deletingID: null,
     search: '',
     status: 'all',
     loading: false,
@@ -53,7 +51,6 @@
     groupConsumptionTrigger: null,
     groupConsumptionRequestID: 0,
     collapsedGroups: new Set(),
-    automationBusy: new Set(),
     schedulableBusy: new Set(),
     protectionBusy: new Set(),
     protectionTarget: null,
@@ -87,7 +84,6 @@
     try {
       const session = await api('/api/session')
       state.user = session.user
-      state.defaultPolicy = session.default_policy
       state.notificationsAvailable = Boolean(session.notifications_available)
       state.upstreamWorkspace.setCredentialsEnabled(session.credentials_enabled)
       elements.registerTabButton.hidden = !session.public_url
@@ -114,20 +110,18 @@
 
   function cacheElements() {
     const ids = [
-      'auth-state', 'auth-message', 'app', 'sync-label', 'register-tab-button', 'refresh-button', 'add-button',
+      'auth-state', 'auth-message', 'app', 'sync-label', 'register-tab-button', 'refresh-button',
       'search-input', 'status-filter', 'group-list', 'empty-state', 'no-match-state', 'metric-groups',
-      'metric-accounts', 'metric-enabled', 'metric-auto-stopped', 'online-users-metric', 'metric-online-window', 'metric-online-users',
+      'metric-accounts', 'metric-enabled', 'metric-active-traffic', 'online-users-metric', 'metric-online-window', 'metric-online-users',
       'config-dialog', 'config-form', 'config-title',
-      'account-select', 'interval-input', 'model-input', 'latency-input', 'failure-input', 'recovery-input',
-      'enabled-input', 'balance-alert-input', 'prompt-input', 'form-error', 'save-button', 'binding-dialog', 'binding-group-name',
-      'direct-probe-control', 'direct-probe-state', 'direct-probe-message', 'direct-probe-authorize-button', 'direct-probe-revoke-button',
+      'account-select', 'balance-alert-input', 'form-error', 'save-button', 'binding-dialog', 'binding-group-name',
       'binding-search-input', 'binding-change-count', 'binding-list', 'binding-error', 'binding-save-button',
       'account-detail-dialog', 'account-detail-title', 'account-detail-group-name', 'account-detail-list',
-      'account-detail-page-label', 'account-detail-prev', 'account-detail-next', 'delete-dialog',
+      'account-detail-page-label', 'account-detail-prev', 'account-detail-next',
       'online-users-dialog', 'online-users-window-label', 'online-users-summary', 'online-users-list', 'online-users-retry-button',
       'group-user-consumption-dialog', 'group-user-consumption-title', 'group-user-consumption-date',
       'group-user-consumption-summary', 'group-user-consumption-list', 'group-user-consumption-retry-button',
-      'delete-account-name', 'confirm-delete-button', 'result-dialog', 'result-account-name', 'result-details', 'toast',
+      'toast',
       'protection-dialog', 'protection-form', 'protection-account-name', 'protection-multiplier-input',
       'protection-final-preview', 'protection-error', 'protection-save-button', 'binding-action-dialog',
       'binding-action-title', 'binding-action-account-name', 'binding-action-message', 'binding-action-error',
@@ -173,7 +167,6 @@
     elements.onlineUsersMetric.addEventListener('click', (event) => openOnlineUsersDialog(event.currentTarget))
     elements.onlineUsersRetryButton.addEventListener('click', () => loadOnlineUsers())
     elements.groupUserConsumptionRetryButton.addEventListener('click', () => loadGroupUserConsumption())
-    elements.addButton.addEventListener('click', () => openCreateDialog())
     elements.registerTabButton.addEventListener('click', registerTab)
     elements.notificationSettingsButton.addEventListener('click', openNotificationSettings)
     elements.searchInput.addEventListener('input', (event) => {
@@ -187,9 +180,6 @@
     elements.groupList.addEventListener('click', handleGroupClick)
     elements.groupList.addEventListener('change', handleGroupChange)
     elements.configForm.addEventListener('submit', saveConfig)
-    elements.directProbeAuthorizeButton.addEventListener('click', authorizeDirectProbe)
-    elements.directProbeRevokeButton.addEventListener('click', revokeDirectProbe)
-    elements.confirmDeleteButton.addEventListener('click', deleteConfig)
     elements.protectionForm.addEventListener('submit', saveProtection)
     elements.groupProtectionForm.addEventListener('submit', saveGroupProtection)
     elements.groupProtectionClearButton.addEventListener('click', clearGroupProtection)
@@ -302,6 +292,8 @@
       state.groupBalanceSummaries = response.group_balance_summaries || {}
       state.groupProtectionDefaults = response.group_protection_defaults || {}
       state.groupBalanceThresholds = response.group_balance_thresholds || {}
+      state.actualSuccess = response.actual_success || null
+      state.actualSuccessByKey = new Map((state.actualSuccess?.items || []).map((item) => [relationKey(item.group_id, item.account_id), item]))
       elements.syncLabel.textContent = `已同步 ${formatDateTime(new Date())}`
       render()
       return true
@@ -383,7 +375,9 @@
     elements.metricGroups.textContent = formatInteger(state.groups.length)
     elements.metricAccounts.textContent = formatInteger(state.accounts.length)
     elements.metricEnabled.textContent = formatInteger(state.accounts.filter((account) => accountState(account).key === 'enabled').length)
-    elements.metricAutoStopped.textContent = formatInteger(state.accounts.filter((account) => account.config?.managed_suspended && !account.schedulable).length)
+    const activeTraffic = Number(state.actualSuccess?.active_account_count)
+    elements.metricActiveTraffic.textContent = state.actualSuccess?.ready && Number.isFinite(activeTraffic) ? formatInteger(activeTraffic) : '—'
+    elements.metricActiveTraffic.title = state.actualSuccess?.notice || '最近一小时内有真实上游尝试的账号数量'
     renderOnlineUsersMetric()
   }
 
@@ -772,7 +766,7 @@
           <div class="group-actions">${detailButtons}${groupConsumptionButton}${groupBalanceButton}${groupProtectionButton}${bindButton}</div>
         </header>
         <div id="${escapeAttr(contentID)}" class="api-key-table" ${collapsed ? 'hidden' : ''}>
-          <div class="api-key-header" aria-hidden="true"><span>账号状态</span><span>用量与管理员额度</span><span>检测规则与最终倍率</span><span>全局调度 / 自动检测 / 操作</span></div>
+          <div class="api-key-header" aria-hidden="true"><span>账号状态</span><span>用量与管理员额度</span><span>实际成功率与最终倍率</span><span>全局调度 / 操作</span></div>
           ${apiKeys.length ? apiKeys.map((account) => renderAPIKeyAccount(account, view.group.id)).join('') : '<div class="group-empty">暂无 API Key 账号</div>'}
         </div>
       </article>`
@@ -825,30 +819,17 @@
   }
 
   function renderAPIKeyAccount(account, groupID) {
-    const config = account.config || null
     const protection = protectionFor(account, groupID)
     const scheduling = groupAccountState(account, groupID)
-    const policy = config?.policy
-    const latest = config?.history?.[0]
-    const automation = automationState(account)
     const schedulable = schedulableState(account)
     const protectionKey = relationKey(groupID, account.id)
     const protectionBusy = state.protectionBusy.has(protectionKey)
-    const policyText = policy
-      ? `<strong>${escapeHTML(policy.model || '平台默认模型')}</strong><span>每 ${formatInterval(policy.interval_seconds)} · 上限 ${formatSeconds(policy.latency_limit_ms)}</span><span>${policy.enabled ? '自动规则启用' : '自动规则停用'} · ${policy.failure_threshold} 次暂停 / ${policy.recovery_threshold} 次恢复</span>${renderProbeSummary(config.probe)}`
-      : '<strong>未配置自动调度</strong><span>开启开关后使用默认检测规则</span>'
-    const actions = config ? `
-      <button class="icon-button ${config.running ? 'spin' : ''}" type="button" data-action="run" title="立即检测" aria-label="立即检测" ${config.running ? 'disabled' : ''}><svg class="icon"><use href="${config.running ? '#icon-refresh' : '#icon-play'}"/></svg></button>
-      <button class="icon-button" type="button" data-action="edit" title="编辑检测规则" aria-label="编辑检测规则"><svg class="icon"><use href="#icon-edit"/></svg></button>
-      <button class="icon-button danger-tool" type="button" data-action="delete" title="删除检测配置" aria-label="删除检测配置" ${config.running ? 'disabled' : ''}><svg class="icon"><use href="#icon-trash"/></svg></button>` : `
-      <button class="icon-button" type="button" data-action="create" title="配置状态检测" aria-label="配置状态检测"><svg class="icon"><use href="#icon-plus"/></svg></button>`
+    const actions = `<button class="icon-button" type="button" data-action="edit" title="账号设置" aria-label="设置 ${escapeAttr(account.name || `账号 ${account.id}`)} 的余额告警"><svg class="icon"><use href="#icon-edit"/></svg></button>`
     const relationActions = groupID > 0 ? `<div class="binding-row-actions">
       <button class="button secondary relation-button" type="button" data-action="edit-protection" ${protectionBusy ? 'disabled' : ''}>${protection && !protection.inherited ? '编辑账号保护倍率' : '设置保护倍率（账号级）'}</button>
       ${protection?.status === 'rate_protected' && !protection.inherited ? `<button class="button warning relation-button" type="button" data-action="release-protection" ${protectionBusy ? 'disabled' : ''}>解除倍率保护</button>` : ''}
       <button class="button danger relation-button" type="button" data-action="remove-binding" ${protectionBusy ? 'disabled' : ''}>移除绑定</button>
     </div>` : ''
-    const latestText = latest ? `${statusLabel(latest.status)} · ${formatMilliseconds(latest.latency_ms)}` : '尚未检测'
-    const nextText = policy?.enabled && config.next_check_at ? `下次 ${formatRelative(config.next_check_at)}` : '—'
     return `
       <section class="api-key-row" data-account-id="${account.id}" data-group-id="${groupID}">
         <div class="account-cell">
@@ -856,8 +837,8 @@
           <div class="account-meta"><span class="platform-tag">${escapeHTML(account.platform || 'unknown')}</span><span>API Key</span></div>
           <div class="account-state ${escapeAttr(scheduling.tone)}"><i class="status-dot"></i><span><strong>${escapeHTML(scheduling.label)}</strong><small title="${escapeAttr(scheduling.reason)}">${escapeHTML(scheduling.reason)}</small></span></div>
         </div>
-        <div class="usage-cell">${renderTodayUsage(account)}${renderDetectionStats(config)}${renderQuota(account)}</div>
-        <div class="policy-cell">${policyText}${renderBalanceAlertSummary(account, groupID)}${renderFinalMultiplier(account, protection)}<span class="latest-check">${escapeHTML(latestText)} · ${escapeHTML(nextText)}</span></div>
+        <div class="usage-cell">${renderTodayUsage(account)}${renderQuota(account)}</div>
+        <div class="policy-cell">${renderActualSuccess(account, groupID)}${renderBalanceAlertSummary(account, groupID)}${renderFinalMultiplier(account, protection)}</div>
         <div class="row-actions">
           <div class="schedulable-control ${schedulable.busy ? 'busy' : ''}" title="${escapeAttr(schedulable.reason)}">
             <span class="automation-copy"><strong>账号调度（全局）</strong><small>${escapeHTML(schedulable.label)}</small></span>
@@ -867,38 +848,55 @@
               <i aria-hidden="true"></i>
             </label>
           </div>
-          <div class="automation-control ${automation.busy ? 'busy' : ''}" title="${escapeAttr(automation.reason)}">
-            <span class="automation-copy"><strong>自动调度</strong><small>${escapeHTML(automation.label)}</small></span>
-            <label class="mini-switch">
-              <span class="sr-only">${escapeHTML(account.name || `账号 ${account.id}`)}自动调度</span>
-              <input type="checkbox" role="switch" data-action="automation-toggle" ${automation.enabled ? 'checked' : ''} ${automation.disabled ? 'disabled' : ''} aria-label="${escapeAttr(`${account.name || `账号 ${account.id}`}自动调度`)}">
-              <i aria-hidden="true"></i>
-            </label>
-          </div>
           <div class="row-tools">${actions}</div>
           ${relationActions}
-        </div>
-        <div class="history-row">
-          <span class="history-label">最近 50 次</span>
-          <div class="history-bars" aria-label="${escapeAttr(account.name || `账号 ${account.id}`)}最近 50 次检测状态">${renderHistory(account)}</div>
-          <span class="history-range">过去 → 现在</span>
         </div>
       </section>`
   }
 
-  function renderProbeSummary(probe) {
-    if (!probe || probe.source !== 'direct') return '<span class="probe-summary legacy">来源：Sub2API 检测</span>'
-    const state = String(probe.authorization_state || 'needs_reauthorization')
-    const labels = {
-      authorized: '来源：直连上游探测',
-      needs_reauthorization: '直连授权需要更新',
-      unsupported: '直连探测暂不支持',
-      credentials_unavailable: '直连探测加密未配置',
-      authorization_missing: '直连授权缺失',
+  function renderActualSuccess(account, groupID) {
+    const snapshot = state.actualSuccess
+    const metric = state.actualSuccessByKey.get(relationKey(groupID, account.id))
+    if (!snapshot?.ready) {
+      const label = snapshot?.notice || '实际成功率暂不可用'
+      return `<div class="actual-success unavailable" tabindex="0" data-tooltip="${escapeAttr(label)}" aria-label="${escapeAttr(label)}"><span class="data-label">最近实际成功率</span><strong>不可用</strong><span>${escapeHTML(label)}</span></div>`
     }
-    const tone = state === 'authorized' ? 'authorized' : 'attention'
-    const detail = probe.action_message || labels[state] || '直连探测需要处理'
-    return `<span class="probe-summary ${tone}" title="${escapeAttr(detail)}">${escapeHTML(labels[state] || '直连探测需要处理')}</span>`
+    const recent = metric?.recent || {}
+    const attempts = Math.max(0, Number(recent.effective_attempts) || 0)
+    const successes = Math.max(0, Number(recent.success_count) || 0)
+    const reference = metric?.reference_24h || {}
+    const referenceAttempts = Math.max(0, Number(reference.effective_attempts) || 0)
+    const notices = []
+    if (snapshot.stale) notices.push('数据已过期')
+    if (snapshot.partial) notices.push('数据不完整')
+    if (snapshot.collection_health?.status && snapshot.collection_health.status !== 'complete') {
+      notices.push(`主服务采集降级：丢弃 ${formatInteger(snapshot.collection_health.dropped_samples || 0)} 条，待写入 ${formatInteger(snapshot.collection_health.pending_samples || 0)} 条`)
+    }
+    if (snapshot.notice) notices.push(snapshot.notice)
+    const referenceText = referenceAttempts > 0
+      ? `近 24 个完整小时 ${formatPercent((Number(reference.rate) || 0) * 100)}（${formatInteger(reference.success_count || 0)}/${formatInteger(referenceAttempts)}）`
+      : '近 24 个完整小时暂无样本'
+    const details = [
+      referenceText,
+      `客户端取消 ${formatInteger((recent.client_canceled_count || 0))} 次`,
+      `发生切换 ${formatInteger((recent.failover_count || 0))} 次`,
+      recent.last_observed_at ? `最近一次真实调用 ${formatDateTime(recent.last_observed_at)}` : '',
+      snapshot.data_through ? `近 1 小时统计截至 ${formatDateTime(snapshot.data_through)}` : '',
+      snapshot.reference_through ? `24 小时统计截至 ${formatDateTime(snapshot.reference_through)}` : '',
+      ...notices,
+    ].filter(Boolean).join('；')
+    const freshness = snapshot.stale ? '数据已过期' : snapshot.partial ? '数据不完整' : ''
+    const freshnessLine = freshness ? `<span class="actual-success-state">${escapeHTML(freshness)}</span>` : ''
+    if (attempts === 0) {
+      return `<div class="actual-success empty ${snapshot.partial ? 'partial' : ''} ${snapshot.stale ? 'stale' : ''}" tabindex="0" data-tooltip="${escapeAttr(details)}" aria-label="最近一小时暂无真实调用；${escapeAttr(details)}"><span class="data-label">最近实际成功率</span><strong>暂无真实调用</strong><span>${escapeHTML(referenceText)}</span>${freshnessLine}</div>`
+    }
+    const rate = Math.max(0, Math.min(1, Number(recent.rate) || 0))
+    const tone = rate >= 0.99 ? 'success' : rate >= 0.95 ? 'warning' : 'danger'
+    const sampleLabel = recent.low_sample ? ' · 样本较少' : ''
+    const primary = `${formatPercent(rate * 100)}${snapshot.stale ? ' · 已过期' : ''}`
+    const counts = `${formatInteger(successes)} / ${formatInteger(attempts)} 次 · 近 1 小时${sampleLabel}`
+    const aria = `最近一小时实际成功率 ${formatPercent(rate * 100)}，成功 ${formatInteger(successes)} 次，有效尝试 ${formatInteger(attempts)} 次${recent.low_sample ? '，样本较少' : ''}；${details}`
+    return `<div class="actual-success ${tone} ${recent.low_sample ? 'low-sample' : ''} ${snapshot.partial ? 'partial' : ''} ${snapshot.stale ? 'stale' : ''}" tabindex="0" data-tooltip="${escapeAttr(details)}" aria-label="${escapeAttr(aria)}"><span class="data-label">最近实际成功率</span><strong>${escapeHTML(primary)}</strong><span>${escapeHTML(counts)}</span>${freshnessLine}</div>`
   }
 
   function renderTodayUsage(account) {
@@ -916,20 +914,6 @@
       cacheDetail = `缓存读取 ${formatCompact(cacheReadTokens)} / 提示词 ${formatCompact(promptTokens)} tokens；普通输入 ${formatCompact(inputTokens)}；缓存写入 ${formatCompact(cacheCreationTokens)}`
     }
     return `<strong>${formatInteger(usage.requests || 0)} 请求 · ${formatCompact(usage.tokens || 0)} tokens</strong><span title="${escapeAttr(cacheDetail)}">${formatCurrency(usage.cost || 0)} 今日成本 · ${escapeHTML(cacheLabel)}</span>`
-  }
-
-  function renderDetectionStats(config) {
-    const stats = config?.detection_stats
-    if (!stats || !Number(stats.requests)) {
-      return '<div class="detection-consumption"><span class="data-label">状态检测消耗（1 倍率）</span><strong>尚无检测消耗</strong></div>'
-    }
-    const totalTokens = ['input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_write_tokens']
-      .reduce((sum, key) => sum + (Number(stats[key]) || 0), 0)
-    const knownChecks = Number(stats.known_cost_checks) || 0
-    const requests = Number(stats.requests) || 0
-    const costText = knownChecks > 0 ? formatProbeCost(stats.known_cost || 0) : '金额不可用'
-    const detail = knownChecks < requests ? `其中 ${formatInteger(knownChecks)} 次取得模型定价` : '全部检测均已取得模型定价'
-    return `<div class="detection-consumption" title="${escapeAttr(detail)}"><span class="data-label">状态检测消耗（1 倍率）</span><strong>${formatInteger(requests)} 次 · ${formatCompact(totalTokens)} tokens</strong><span>${escapeHTML(costText)} · ${escapeHTML(detail)}</span></div>`
   }
 
   function renderQuota(account) {
@@ -1016,43 +1000,12 @@
     return `<div class="multiplier-pair">${finalBlock}${protectionBlock}</div>`
   }
 
-  function automationState(account) {
-    const config = account.config || null
-    const busy = state.automationBusy.has(account.id)
-    if (state.schedulableBusy.has(account.id)) {
-      return { enabled: Boolean(config?.policy?.enabled && (account.schedulable || config.managed_suspended)), disabled: true, busy: false, label: '调度状态保存中', reason: '全局调度状态更新完成后可修改自动调度' }
-    }
-    if (account.status !== 'active') {
-      return { enabled: false, disabled: true, busy, label: account.status === 'error' ? '账号异常' : '账号未启用', reason: '仅 active 账号可以启用自动调度' }
-    }
-    const enabled = Boolean(config?.policy?.enabled && (account.schedulable || config.managed_suspended))
-    if (busy) return { enabled, disabled: true, busy: true, label: '保存中', reason: '正在更新自动调度状态' }
-    if (config?.running) return { enabled, disabled: true, busy: false, label: '检测进行中', reason: '检测结束后可修改自动调度状态' }
-    if (enabled && config?.managed_suspended) {
-      return { enabled: true, disabled: false, busy: false, label: '自动暂停，持续检测', reason: '健康检测已暂停调度，连续检测正常后会自动恢复' }
-    }
-    if (enabled) return { enabled: true, disabled: false, busy: false, label: '已接管', reason: '账号由健康检测自动管理调度状态' }
-    if (!account.schedulable) {
-      return { enabled: false, disabled: false, busy: false, label: '管理员停止', reason: '开启后将恢复账号调度并交给健康检测管理' }
-    }
-    return { enabled: false, disabled: false, busy: false, label: config ? '自动规则停用' : '未配置', reason: '开启后由健康检测自动管理调度状态' }
-  }
-
   function schedulableState(account) {
     const enabled = Boolean(account.schedulable)
     const busy = state.schedulableBusy.has(account.id)
     if (busy) return { enabled, disabled: true, busy: true, label: '保存中', reason: '正在更新账号的全局调度状态' }
-    if (state.automationBusy.has(account.id)) {
-      return { enabled, disabled: true, busy: false, label: '自动调度保存中', reason: '自动调度状态更新完成后可修改全局调度' }
-    }
-    if (account.config?.running) {
-      return { enabled, disabled: true, busy: false, label: '检测进行中', reason: '检测结束后可修改全局调度状态' }
-    }
     if (!enabled && account.status !== 'active') {
       return { enabled: false, disabled: true, busy: false, label: account.status === 'error' ? '账号异常' : '账号未启用', reason: '仅 active 账号可以启用全局调度' }
-    }
-    if (!enabled && account.config?.managed_suspended) {
-      return { enabled: false, disabled: false, busy: false, label: '检测自动停止', reason: '可手动恢复；自动检测规则仍可能在后续异常时再次暂停' }
     }
     if (!enabled) {
       return { enabled: false, disabled: false, busy: false, label: '管理员停止', reason: '账号当前不参与任何分组的调度' }
@@ -1063,38 +1016,12 @@
     return { enabled: true, disabled: false, busy: false, label: '当前启用', reason: '账号当前可在所有已绑定分组中参与调度' }
   }
 
-  function renderHistory(account) {
-    const history = [...(account.config?.history || [])].slice(0, 50).reverse()
-    const padding = Array.from({ length: 50 - history.length }, () => '<span class="history-bar empty"></span>')
-    const bars = history.map((result) => {
-      const failed = result.status === 'failed' || result.status === 'error'
-      const balanceFailure = result.failure_kind === 'balance_insufficient'
-      const title = failed
-        ? `${formatDateTime(result.checked_at)} · ${balanceFailure ? '余额不足 · ' : ''}${result.message || statusLabel(result.status)}`
-        : `${formatDateTime(result.checked_at)} · 耗时 ${formatMilliseconds(result.latency_ms)}`
-      const color = failed
-        ? 'failed'
-        : result.status === 'skipped'
-          ? 'skipped'
-          : (result.status === 'degraded' || Number(result.latency_ms) >= CHANNEL_SLOW_MS ? 'slow' : 'success')
-      return `<button type="button" class="history-bar ${color} ${balanceFailure ? 'balance-insufficient' : ''}" data-action="result" data-result-id="${escapeAttr(result.id)}" title="${escapeAttr(title)}" aria-label="${escapeAttr(title)}"></button>`
-    })
-    return padding.concat(bars).join('')
-  }
-
   function accountState(account) {
     if (account.status === 'error') {
       return { key: 'error', tone: 'danger', label: '账号异常', reason: account.error_message || '账号状态为 error' }
     }
     if (account.status !== 'active') {
       return { key: 'inactive', tone: 'neutral', label: '账号停用', reason: '账号状态由管理员设为 inactive' }
-    }
-    if (account.config?.last_failure_kind === 'balance_insufficient') {
-      const key = account.config?.managed_suspended && !account.schedulable ? 'auto' : account.schedulable ? 'enabled' : 'manual'
-      return { key, tone: 'danger', label: '余额不足导致检测失败', reason: account.config.last_error || '直连上游返回额度或余额不足' }
-    }
-    if (account.config?.managed_suspended && !account.schedulable) {
-      return { key: 'auto', tone: 'warning', label: '检测自动停止', reason: account.config.last_error || '连续检测异常达到暂停阈值' }
     }
     if (!account.schedulable) {
       return { key: 'manual', tone: 'neutral', label: '管理员停止', reason: '管理员手动关闭账号调度' }
@@ -1208,11 +1135,7 @@
     const groupID = Number(row.dataset.groupId)
     if (!account) return
     switch (action) {
-      case 'create': openCreateDialog(account.id); break
-      case 'run': await runNow(account); break
       case 'edit': openEditDialog(account); break
-      case 'delete': openDeleteDialog(account); break
-      case 'result': openResultDialog(account, button.dataset.resultId); break
       case 'edit-protection': openProtectionDialog(account, groupID); break
       case 'release-protection': openBindingActionDialog('release', account, groupID); break
       case 'remove-binding': openBindingActionDialog('remove', account, groupID); break
@@ -1221,7 +1144,7 @@
 
   async function handleGroupChange(event) {
     const action = event.target.dataset.action
-    if (action !== 'automation-toggle' && action !== 'schedulable-toggle') return
+    if (action !== 'schedulable-toggle') return
     const row = event.target.closest('[data-account-id]')
     const account = findAccount(Number(row?.dataset.accountId))
     if (!account) return
@@ -1239,23 +1162,6 @@
         showToast(error.message || '更新账号调度失败', true)
       }
       return
-    }
-    state.automationBusy.add(account.id)
-    render()
-    try {
-      if (account.config) {
-        await api(`/api/configs/${account.id}`, { method: 'PUT', body: { enabled } })
-      } else {
-        if (!enabled) return
-        await api('/api/configs', { method: 'POST', body: { account_id: account.id, enabled: true } })
-      }
-      showToast(enabled ? '自动调度已启用' : '自动调度已停用')
-      await loadOverview(true)
-    } catch (error) {
-      showToast(error.message || '更新失败', true)
-    } finally {
-      state.automationBusy.delete(account.id)
-      render()
     }
   }
 
@@ -1296,213 +1202,47 @@
     }
   }
 
-  function openCreateDialog(preselectedID = null) {
-    const available = state.accounts.filter((account) => isAPIKey(account) && !account.config)
-    state.editingID = null
-    elements.configTitle.textContent = '新增状态检测'
-    elements.accountSelect.disabled = false
-    elements.accountSelect.innerHTML = available.length
-      ? '<option value="">请选择账号</option>' + available.map(accountOption).join('')
-      : '<option value="">没有可配置的 API Key 账号</option>'
-    if (preselectedID && available.some((account) => account.id === preselectedID)) {
-      elements.accountSelect.value = String(preselectedID)
-    }
-    fillPolicyForm(state.defaultPolicy, null)
-    elements.formError.hidden = true
-    renderDirectProbeControl(null)
-    elements.saveButton.disabled = available.length === 0
-    elements.configDialog.showModal()
-  }
-
   function openEditDialog(account) {
-    const config = account.config
-    if (!config) return
+    if (!isAPIKey(account)) return
     state.editingID = account.id
-    elements.configTitle.textContent = '编辑检测规则'
+    elements.configTitle.textContent = '账号设置'
     elements.accountSelect.innerHTML = accountOption(account)
     elements.accountSelect.value = String(account.id)
     elements.accountSelect.disabled = true
-    fillPolicyForm(config.policy, config.balance_alert_threshold)
+    const threshold = account.config?.balance_alert_threshold
+    elements.balanceAlertInput.value = Number.isFinite(Number(threshold)) && threshold !== null ? String(threshold) : ''
     elements.formError.hidden = true
-    renderDirectProbeControl(config.probe || null)
     elements.saveButton.disabled = false
+    elements.saveButton.textContent = '保存设置'
     elements.configDialog.showModal()
-  }
-
-  function fillPolicyForm(policy, balanceThreshold = null) {
-    const normalized = policy || state.defaultPolicy
-    elements.intervalInput.value = normalized.interval_seconds
-    elements.modelInput.value = normalized.model || ''
-    elements.latencyInput.value = (normalized.latency_limit_ms / 1000).toFixed(normalized.latency_limit_ms % 1000 ? 1 : 0)
-    elements.failureInput.value = normalized.failure_threshold
-    elements.recoveryInput.value = normalized.recovery_threshold
-    elements.enabledInput.checked = Boolean(normalized.enabled)
-    elements.balanceAlertInput.value = Number.isFinite(Number(balanceThreshold)) && balanceThreshold !== null ? String(balanceThreshold) : ''
-    elements.promptInput.value = normalized.prompt || ''
-  }
-
-  function renderDirectProbeControl(probe) {
-    const visible = Boolean(state.editingID)
-    elements.directProbeControl.hidden = !visible
-    if (!visible) return
-    const source = probe?.source || 'legacy'
-    const status = probe?.authorization_state || 'authorization_missing'
-    const authorized = source === 'direct' && status === 'authorized'
-    const labels = {
-      authorization_missing: '尚未授权',
-      authorized: '已授权',
-      needs_reauthorization: '需要重新授权',
-      unsupported: '暂不支持',
-      credentials_unavailable: '加密未配置',
-    }
-    const heading = authorized ? '直连上游探测' : '通过 Sub2API 检测'
-    const defaultMessage = authorized
-      ? `已于 ${probe?.imported_at ? formatDateTime(probe.imported_at) : '此前'} 导入路由授权；检测将直接发送到该账号上游。`
-      : '授权后，检测会从本服务直接流式调用该 API Key 的上游，不再通过 Sub2API 账号检测接口。'
-    elements.directProbeState.textContent = heading
-    elements.directProbeMessage.textContent = probe?.action_message || defaultMessage
-    elements.directProbeAuthorizeButton.textContent = authorized ? '重新授权直连探测' : '授权直连探测'
-    elements.directProbeAuthorizeButton.disabled = state.directProbeBusy || status === 'unsupported' || status === 'credentials_unavailable'
-    elements.directProbeAuthorizeButton.hidden = status === 'unsupported' || status === 'credentials_unavailable'
-    elements.directProbeRevokeButton.hidden = source !== 'direct'
-    elements.directProbeRevokeButton.disabled = state.directProbeBusy
-  }
-
-  async function authorizeDirectProbe() {
-    const accountID = state.editingID
-    if (!accountID || state.directProbeBusy) return
-    state.directProbeBusy = true
-    renderDirectProbeControl(findAccount(accountID)?.config?.probe || null)
-    try {
-      const updated = await api(`/api/configs/${accountID}/direct-probe`, { method: 'POST', body: {} })
-      const account = findAccount(accountID)
-      if (account) account.config = updated
-      renderDirectProbeControl(updated.probe)
-      showToast('直连上游探测已授权，并已安排立即检测')
-      await loadOverview(true)
-      const refreshed = findAccount(accountID)
-      renderDirectProbeControl(refreshed?.config?.probe || updated.probe)
-    } catch (error) {
-      elements.formError.textContent = error.message || '直连探测授权失败'
-      elements.formError.hidden = false
-    } finally {
-      state.directProbeBusy = false
-      renderDirectProbeControl(findAccount(accountID)?.config?.probe || null)
-    }
-  }
-
-  async function revokeDirectProbe() {
-    const accountID = state.editingID
-    if (!accountID || state.directProbeBusy) return
-    state.directProbeBusy = true
-    renderDirectProbeControl(findAccount(accountID)?.config?.probe || null)
-    try {
-      const updated = await api(`/api/configs/${accountID}/direct-probe`, { method: 'DELETE' })
-      const account = findAccount(accountID)
-      if (account) account.config = updated
-      renderDirectProbeControl(updated.probe)
-      showToast('直连探测授权已撤销，后续将使用 Sub2API 检测')
-      await loadOverview(true)
-      const refreshed = findAccount(accountID)
-      renderDirectProbeControl(refreshed?.config?.probe || updated.probe)
-    } catch (error) {
-      elements.formError.textContent = error.message || '撤销直连探测授权失败'
-      elements.formError.hidden = false
-    } finally {
-      state.directProbeBusy = false
-      renderDirectProbeControl(findAccount(accountID)?.config?.probe || null)
-    }
   }
 
   async function saveConfig(event) {
     event.preventDefault()
     if (!elements.configForm.reportValidity()) return
-    const accountID = state.editingID || Number(elements.accountSelect.value)
-    const payload = {
-      account_id: accountID,
-      enabled: elements.enabledInput.checked,
-      interval_seconds: Number(elements.intervalInput.value),
-      model: elements.modelInput.value.trim(),
-      latency_limit_ms: Math.round(Number(elements.latencyInput.value) * 1000),
-      failure_threshold: Number(elements.failureInput.value),
-      recovery_threshold: Number(elements.recoveryInput.value),
-      // Keep a custom probe prompt byte-for-byte as entered. The server only
-      // substitutes the shared default for whitespace-only input.
-      prompt: elements.promptInput.value,
-    }
+    const accountID = state.editingID
+    if (!accountID) return
     elements.saveButton.disabled = true
     elements.saveButton.textContent = '保存中'
     elements.formError.hidden = true
     try {
-      await api(state.editingID ? `/api/configs/${accountID}` : '/api/configs', {
-        method: state.editingID ? 'PUT' : 'POST',
-        body: payload,
-      })
       const thresholdRaw = elements.balanceAlertInput.value.trim()
       if (thresholdRaw) {
         const threshold = Number(thresholdRaw)
         if (!Number.isFinite(threshold) || threshold < 0) throw new Error('余额告警阈值必须是大于等于 0 的有限数值')
         await api(`/api/configs/${accountID}/balance-alert`, { method: 'PUT', body: { threshold } })
-      } else if (state.editingID && findAccount(accountID)?.config?.balance_alert_threshold !== undefined) {
+      } else {
         await api(`/api/configs/${accountID}/balance-alert`, { method: 'DELETE' })
       }
       elements.configDialog.close()
-      showToast(state.editingID ? '检测规则已更新' : '状态检测已添加')
+      showToast('账号余额告警设置已保存')
       await loadOverview(true)
     } catch (error) {
       elements.formError.textContent = error.message || '保存失败'
       elements.formError.hidden = false
     } finally {
       elements.saveButton.disabled = false
-      elements.saveButton.textContent = '保存'
-    }
-  }
-
-  async function runNow(account) {
-    if (!account.config) return
-    account.config.running = true
-    render()
-    try {
-      await api(`/api/configs/${account.id}/run`, { method: 'POST' })
-      showToast('检测已启动')
-      scheduleRunPolling(account.id)
-    } catch (error) {
-      account.config.running = false
-      render()
-      showToast(error.message || '启动检测失败', true)
-    }
-  }
-
-  function scheduleRunPolling(accountID) {
-    let attempts = 0
-    const poll = async () => {
-      attempts += 1
-      await loadOverview(true)
-      const current = findAccount(accountID)
-      if (current?.config?.running && attempts < 90) window.setTimeout(poll, 1000)
-    }
-    window.setTimeout(poll, 700)
-  }
-
-  function openDeleteDialog(account) {
-    if (!account.config) return
-    state.deletingID = account.id
-    elements.deleteAccountName.textContent = account.name || `账号 ${account.id}`
-    elements.deleteDialog.showModal()
-  }
-
-  async function deleteConfig() {
-    if (!state.deletingID) return
-    elements.confirmDeleteButton.disabled = true
-    try {
-      await api(`/api/configs/${state.deletingID}`, { method: 'DELETE' })
-      elements.deleteDialog.close()
-      showToast('检测配置已删除')
-      await loadOverview(true)
-    } catch (error) {
-      showToast(error.message || '删除失败', true)
-    } finally {
-      elements.confirmDeleteButton.disabled = false
+      elements.saveButton.textContent = '保存设置'
     }
   }
 
@@ -1839,24 +1579,19 @@
 
   function openSchedulingActionDialog(account, schedulable) {
     if (!account) return
-    const automaticRecovery = Boolean(schedulable && account.config?.managed_suspended)
-    state.schedulingAction = { accountID: account.id, schedulable, automaticRecovery }
+    state.schedulingAction = { accountID: account.id, schedulable }
     elements.schedulingActionDialog.dataset.busy = 'false'
     elements.schedulingActionAccountName.textContent = `${account.name || `账号 ${account.id}`} · 影响该账号所在的所有分组`
     elements.schedulingActionError.hidden = true
     elements.schedulingActionConfirmButton.disabled = false
     if (schedulable) {
       elements.schedulingActionTitle.textContent = '恢复账号全局调度'
-      elements.schedulingActionMessage.textContent = automaticRecovery
-        ? '该账号当前由状态检测自动暂停。确认后会解除本次自动暂停并立即恢复调度；自动检测规则仍保持启用，后续再次连续异常时仍可能自动暂停。'
-        : '确认后该账号会重新参与所有已绑定分组的调度。'
+      elements.schedulingActionMessage.textContent = '确认后该账号会重新参与所有已绑定分组的调度。实际成功率仅用于展示，不会自动改变调度状态。'
       elements.schedulingActionConfirmButton.textContent = '确认启用'
       elements.schedulingActionConfirmButton.className = 'button primary'
     } else {
       elements.schedulingActionTitle.textContent = '停止账号全局调度'
-      elements.schedulingActionMessage.textContent = account.config?.policy?.enabled
-        ? '确认后该账号会立即退出所有已绑定分组的调度。状态检测仍会继续，但健康结果不会自动恢复该账号，直到你再次手动启用或重新开启自动调度接管。'
-        : '确认后该账号会立即退出所有已绑定分组的调度。当前未启用状态检测，之后需要你手动恢复调度。'
+      elements.schedulingActionMessage.textContent = '确认后该账号会立即退出所有已绑定分组的调度，之后需要你手动恢复。实际成功率不会自动启用或停止账号。'
       elements.schedulingActionConfirmButton.textContent = '确认停止'
       elements.schedulingActionConfirmButton.className = 'button danger'
     }
@@ -1944,30 +1679,6 @@
       elements.bindingActionConfirmButton.textContent = originalText
       render()
     }
-  }
-
-  function openResultDialog(account, resultID) {
-    const result = account.config?.history?.find((item) => item.id === resultID)
-    if (!result) return
-    elements.resultAccountName.textContent = account.name || `账号 ${account.id}`
-    const rows = [
-      ['状态', statusLabel(result.status)],
-      ['检测时间', formatDateTime(result.checked_at)],
-      ['耗时', formatMilliseconds(result.latency_ms)],
-      ['调度动作', actionLabel(result.action)],
-      ['信息', result.message || '—'],
-    ]
-    if (result.failure_kind) rows.splice(1, 0, ['失败原因', failureKindLabel(result.failure_kind)])
-    if (result.usage) {
-      const usageTokens = ['input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_write_tokens']
-        .reduce((sum, key) => sum + (Number(result.usage[key]) || 0), 0)
-      rows.push(['检测 Token', `${formatInteger(usageTokens)} · 输入 ${formatInteger(result.usage.input_tokens || 0)} / 输出 ${formatInteger(result.usage.output_tokens || 0)}`])
-      if (result.usage.model) rows.push(['计费模型', result.usage.model])
-    }
-    if (result.cost) rows.push(['检测成本（1 倍率）', result.cost.known ? formatProbeCost(result.cost.amount || 0) : '定价不可用'])
-    if (result.response_text) rows.push(['响应片段', result.response_text])
-    elements.resultDetails.innerHTML = rows.map(([term, detail]) => `<dt>${escapeHTML(term)}</dt><dd>${escapeHTML(detail)}</dd>`).join('')
-    elements.resultDialog.showModal()
   }
 
   function openBindingDialog(groupID, trigger = null) {
@@ -2530,49 +2241,10 @@
     return `<option value="${account.id}">${escapeHTML(account.name || `账号 ${account.id}`)} · ${escapeHTML(account.platform || 'unknown')} · #${account.id}</option>`
   }
 
-  function statusLabel(status) {
-    return ({ operational: '正常', degraded: '耗时超限', failed: '调用失败', error: '检测错误', skipped: '等待授权' })[status] || '未检测'
-  }
-
-  function actionLabel(action) {
-    return ({ disabled: '已关闭调度', restored: '已恢复调度', disable_failed: '关闭调度失败', restore_failed: '恢复调度失败', restore_blocked: '等待恢复' })[action] || '无'
-  }
-
-  function failureKindLabel(kind) {
-    return ({ balance_insufficient: '余额不足导致检测失败' })[kind] || String(kind || '未分类')
-  }
-
-  function formatInterval(seconds) {
-    if (seconds >= 3600 && seconds % 3600 === 0) return `${seconds / 3600} 小时`
-    if (seconds >= 60 && seconds % 60 === 0) return `${seconds / 60} 分钟`
-    return `${seconds} 秒`
-  }
-
-  function formatSeconds(milliseconds) {
-    const seconds = milliseconds / 1000
-    return `${Number.isInteger(seconds) ? seconds : seconds.toFixed(1)} 秒`
-  }
-
-  function formatMilliseconds(milliseconds) {
-    const value = Number(milliseconds)
-    return Number.isFinite(value) ? `${formatInteger(value)} ms` : '—'
-  }
-
   function formatDateTime(value) {
     const date = value instanceof Date ? value : new Date(value)
     if (Number.isNaN(date.getTime())) return '—'
     return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(date)
-  }
-
-  function formatRelative(value) {
-    const milliseconds = new Date(value).getTime() - Date.now()
-    if (!Number.isFinite(milliseconds)) return '—'
-    if (milliseconds <= 0) return '即将执行'
-    const seconds = Math.ceil(milliseconds / 1000)
-    if (seconds < 60) return `${seconds} 秒`
-    const minutes = Math.ceil(seconds / 60)
-    if (minutes < 60) return `${minutes} 分钟`
-    return `${Math.ceil(minutes / 60)} 小时`
   }
 
   function formatInteger(value) {
@@ -2595,12 +2267,6 @@
   function formatCurrency(value) {
     const normalized = Number(value) || 0
     return `$${normalized.toLocaleString('en-US', { minimumFractionDigits: normalized > 0 && normalized < 0.01 ? 4 : 2, maximumFractionDigits: 4 })}`
-  }
-
-  function formatProbeCost(value) {
-    const normalized = Number(value) || 0
-    const digits = normalized > 0 && normalized < 0.0001 ? 8 : normalized > 0 && normalized < 0.01 ? 6 : 4
-    return `$${normalized.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: digits })}`
   }
 
   function formatPercent(value) {

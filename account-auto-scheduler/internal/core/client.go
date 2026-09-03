@@ -239,6 +239,14 @@ func (c *Client) GetTodayStatsBatch(ctx context.Context, accountIDs []int64) (ma
 	return stats, nil
 }
 
+func (c *Client) GetAccountPerformanceHealth(ctx context.Context) (model.AccountPerformanceCollectionHealth, error) {
+	var health model.AccountPerformanceCollectionHealth
+	if err := c.adminJSON(ctx, http.MethodGet, "/admin/account-performance/health", nil, &health); err != nil {
+		return model.AccountPerformanceCollectionHealth{}, err
+	}
+	return health, nil
+}
+
 func (c *Client) enrichTodayAccountCacheStats(ctx context.Context, accountIDs []int64, stats map[string]model.WindowStats) {
 	if len(accountIDs) == 0 || stats == nil {
 		return

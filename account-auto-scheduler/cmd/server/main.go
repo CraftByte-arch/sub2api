@@ -66,7 +66,11 @@ func main() {
 		logger,
 		engine.WithDirectProbeCredentials(credentialBox),
 	)
-	scheduler.Start(rootCtx)
+	if err := scheduler.EnterPassiveMode(rootCtx); err != nil {
+		logger.Warn("active probing disabled with account restoration failures", "error", err)
+	} else {
+		logger.Info("active account probing disabled; passive success metrics enabled")
+	}
 	notificationCoordinator := notify.NewCoordinator(
 		stateStore,
 		coreClient,
@@ -84,6 +88,7 @@ func main() {
 		Upstreams:         upstreamManager,
 		Notifications:     notificationCoordinator,
 		OnlineUsers:       onlineUsers,
+		AccountSuccess:    onlineUsers,
 	}, logger)
 
 	if cfg.AutoRegisterTab {
@@ -126,7 +131,6 @@ func main() {
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
 		logger.Error("shutdown http server", "error", err)
 	}
-	scheduler.Stop()
 	notificationCoordinator.Stop()
 	logger.Info("account auto scheduler stopped")
 }
