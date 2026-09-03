@@ -51,6 +51,7 @@
     groupConsumptionTrigger: null,
     groupConsumptionRequestID: 0,
     collapsedGroups: new Set(),
+    expandedAccounts: new Set(),
     schedulableBusy: new Set(),
     protectionBusy: new Set(),
     protectionTarget: null,
@@ -179,6 +180,7 @@
     })
     elements.groupList.addEventListener('click', handleGroupClick)
     elements.groupList.addEventListener('change', handleGroupChange)
+    document.addEventListener('click', closeAccountActionMenus)
     elements.configForm.addEventListener('submit', saveConfig)
     elements.protectionForm.addEventListener('submit', saveProtection)
     elements.groupProtectionForm.addEventListener('submit', saveGroupProtection)
@@ -238,6 +240,13 @@
     })
     document.addEventListener('keydown', (event) => {
       if (event.key !== 'Escape') return
+      const openAccountMenu = document.querySelector('.account-action-menu[open]')
+      if (openAccountMenu) {
+        event.preventDefault()
+        openAccountMenu.open = false
+        openAccountMenu.querySelector('summary')?.focus()
+        return
+      }
       const dialogs = [...document.querySelectorAll('dialog[open]')]
       const activeDialog = dialogs.at(-1)
       if (!activeDialog) return
@@ -766,7 +775,7 @@
           <div class="group-actions">${detailButtons}${groupConsumptionButton}${groupBalanceButton}${groupProtectionButton}${bindButton}</div>
         </header>
         <div id="${escapeAttr(contentID)}" class="api-key-table" ${collapsed ? 'hidden' : ''}>
-          <div class="api-key-header" aria-hidden="true"><span>账号状态</span><span>用量与管理员额度</span><span>实际成功率与最终倍率</span><span>全局调度 / 操作</span></div>
+          <div class="api-key-header" aria-hidden="true"><span>账号</span><span>调度状态</span><span>今日使用</span><span>可用余额</span><span>成功率 / 倍率</span><span>操作</span></div>
           ${apiKeys.length ? apiKeys.map((account) => renderAPIKeyAccount(account, view.group.id)).join('') : '<div class="group-empty">暂无 API Key 账号</div>'}
         </div>
       </article>`
@@ -824,34 +833,120 @@
     const schedulable = schedulableState(account)
     const protectionKey = relationKey(groupID, account.id)
     const protectionBusy = state.protectionBusy.has(protectionKey)
-    const actions = `<button class="icon-button" type="button" data-action="edit" title="账号设置" aria-label="设置 ${escapeAttr(account.name || `账号 ${account.id}`)} 的余额告警"><svg class="icon"><use href="#icon-edit"/></svg></button>`
-    const relationActions = groupID > 0 ? `<div class="binding-row-actions">
-      <button class="button secondary relation-button" type="button" data-action="edit-protection" ${protectionBusy ? 'disabled' : ''}>${protection && !protection.inherited ? '编辑账号保护倍率' : '设置保护倍率（账号级）'}</button>
-      ${protection?.status === 'rate_protected' && !protection.inherited ? `<button class="button warning relation-button" type="button" data-action="release-protection" ${protectionBusy ? 'disabled' : ''}>解除倍率保护</button>` : ''}
-      <button class="button danger relation-button" type="button" data-action="remove-binding" ${protectionBusy ? 'disabled' : ''}>移除绑定</button>
-    </div>` : ''
+    const accountKey = relationKey(groupID, account.id)
+    const expanded = state.expandedAccounts.has(accountKey)
+    const detailsID = `account-details-${groupID}-${account.id}`
     return `
-      <section class="api-key-row" data-account-id="${account.id}" data-group-id="${groupID}">
-        <div class="account-cell">
-          <div class="account-name-line"><strong>${escapeHTML(account.name || `账号 ${account.id}`)}</strong><span>#${account.id}</span></div>
-          <div class="account-meta"><span class="platform-tag">${escapeHTML(account.platform || 'unknown')}</span><span>API Key</span></div>
-          <div class="account-state ${escapeAttr(scheduling.tone)}"><i class="status-dot"></i><span><strong>${escapeHTML(scheduling.label)}</strong><small title="${escapeAttr(scheduling.reason)}">${escapeHTML(scheduling.reason)}</small></span></div>
-        </div>
-        <div class="usage-cell">${renderTodayUsage(account)}${renderQuota(account)}</div>
-        <div class="policy-cell">${renderActualSuccess(account, groupID)}${renderBalanceAlertSummary(account, groupID)}${renderFinalMultiplier(account, protection)}</div>
-        <div class="row-actions">
-          <div class="schedulable-control ${schedulable.busy ? 'busy' : ''}" title="${escapeAttr(schedulable.reason)}">
-            <span class="automation-copy"><strong>账号调度（全局）</strong><small>${escapeHTML(schedulable.label)}</small></span>
-            <label class="mini-switch">
-              <span class="sr-only">${escapeHTML(account.name || `账号 ${account.id}`)}全局调度</span>
-              <input type="checkbox" role="switch" data-action="schedulable-toggle" ${schedulable.enabled ? 'checked' : ''} ${schedulable.disabled ? 'disabled' : ''} aria-label="${escapeAttr(`${account.name || `账号 ${account.id}`}全局调度`)}">
-              <i aria-hidden="true"></i>
-            </label>
+      <section class="api-key-record ${expanded ? 'expanded' : ''}" data-account-id="${account.id}" data-group-id="${groupID}">
+        <div class="api-key-row">
+          <div class="account-cell">
+            <div class="account-name-line"><strong>${escapeHTML(account.name || `账号 ${account.id}`)}</strong><span>#${account.id}</span></div>
+            <div class="account-meta"><span class="platform-tag">${escapeHTML(account.platform || 'unknown')}</span><span>API Key</span></div>
           </div>
-          <div class="row-tools">${actions}</div>
-          ${relationActions}
+          <div class="schedule-cell">
+            <div class="account-state ${escapeAttr(scheduling.tone)}"><i class="status-dot"></i><span><strong>${escapeHTML(scheduling.label)}</strong><small title="${escapeAttr(scheduling.reason)}">${escapeHTML(scheduling.reason)}</small></span></div>
+          </div>
+          <div class="usage-cell compact-usage">${renderTodayUsage(account)}</div>
+          <div class="balance-cell">${renderCompactBalance(account, groupID)}</div>
+          <div class="health-cell">${renderActualSuccessCompact(account, groupID)}${renderCompactMultiplier(account, protection)}</div>
+          <div class="row-actions">
+            <button class="icon-button account-expand-button" type="button" data-action="toggle-account-details" title="${expanded ? '收起账号详情' : '展开账号详情'}" aria-label="${expanded ? '收起' : '展开'} ${escapeAttr(account.name || `账号 ${account.id}`)} 详情" aria-expanded="${expanded ? 'true' : 'false'}" aria-controls="${escapeAttr(detailsID)}"><svg class="icon"><use href="#icon-chevron-right"/></svg></button>
+            ${renderAccountActionMenu(account, groupID, protection, schedulable, protectionBusy)}
+          </div>
+        </div>
+        <div id="${escapeAttr(detailsID)}" class="api-key-details" ${expanded ? '' : 'hidden'}>
+          <section class="account-detail-section schedule-detail">
+            <span class="detail-heading">调度与状态</span>
+            ${renderSchedulableControl(account, schedulable)}
+            <p class="detail-note">${escapeHTML(scheduling.reason)}</p>
+          </section>
+          <section class="account-detail-section balance-detail">
+            <span class="detail-heading">额度与告警</span>
+            ${renderQuota(account)}
+            ${renderBalanceAlertSummary(account, groupID)}
+          </section>
+          <section class="account-detail-section success-detail">
+            <span class="detail-heading">实际成功率</span>
+            ${renderActualSuccess(account, groupID)}
+          </section>
+          <section class="account-detail-section multiplier-detail">
+            <span class="detail-heading">倍率与保护</span>
+            ${renderFinalMultiplier(account, protection)}
+          </section>
+          <div class="account-detail-actions">
+            ${renderAccountDetailActions(account, groupID, protection, protectionBusy)}
+          </div>
         </div>
       </section>`
+  }
+
+  function renderSchedulableControl(account, schedulable) {
+    return `<div class="schedulable-control ${schedulable.busy ? 'busy' : ''}" title="${escapeAttr(schedulable.reason)}">
+      <span class="automation-copy"><strong>账号调度（全局）</strong><small>${escapeHTML(schedulable.label)}</small></span>
+      <label class="mini-switch">
+        <span class="sr-only">${escapeHTML(account.name || `账号 ${account.id}`)}全局调度</span>
+        <input type="checkbox" role="switch" data-action="schedulable-toggle" ${schedulable.enabled ? 'checked' : ''} ${schedulable.disabled ? 'disabled' : ''} aria-label="${escapeAttr(`${account.name || `账号 ${account.id}`}全局调度`)}">
+        <i aria-hidden="true"></i>
+      </label>
+    </div>`
+  }
+
+  function renderAccountActionMenu(account, groupID, protection, schedulable, protectionBusy) {
+    const accountName = account.name || `账号 ${account.id}`
+    const schedulingLabel = account.schedulable ? '停止全局调度' : '启用全局调度'
+    const protectionLabel = protection && !protection.inherited ? '编辑保护倍率' : '设置保护倍率'
+    const relationItems = groupID > 0 ? `
+      <button type="button" role="menuitem" data-action="edit-protection" ${protectionBusy ? 'disabled' : ''}>${escapeHTML(protectionLabel)}</button>
+      ${protection?.status === 'rate_protected' && !protection.inherited ? `<button type="button" role="menuitem" data-action="release-protection" ${protectionBusy ? 'disabled' : ''}>解除倍率保护</button>` : ''}
+      <button class="danger-menu-item" type="button" role="menuitem" data-action="remove-binding" ${protectionBusy ? 'disabled' : ''}>移除绑定</button>` : ''
+    return `<details class="account-action-menu">
+      <summary class="icon-button" title="更多操作" aria-label="${escapeAttr(`${accountName}更多操作`)}"><svg class="icon"><use href="#icon-more-horizontal"/></svg></summary>
+      <div class="account-action-popover" role="menu" aria-label="${escapeAttr(`${accountName}账号操作`)}">
+        <button type="button" role="menuitem" data-action="request-schedulable-toggle" ${schedulable.disabled ? 'disabled' : ''}>${escapeHTML(schedulingLabel)}</button>
+        <button type="button" role="menuitem" data-action="edit">编辑余额告警</button>
+        ${relationItems}
+      </div>
+    </details>`
+  }
+
+  function renderAccountDetailActions(account, groupID, protection, protectionBusy) {
+    const protectionLabel = protection && !protection.inherited ? '编辑保护倍率' : '设置保护倍率'
+    const relationActions = groupID > 0 ? `
+      <button class="button secondary compact-account-action" type="button" data-action="edit-protection" ${protectionBusy ? 'disabled' : ''}>${escapeHTML(protectionLabel)}</button>
+      ${protection?.status === 'rate_protected' && !protection.inherited ? `<button class="button warning compact-account-action" type="button" data-action="release-protection" ${protectionBusy ? 'disabled' : ''}>解除倍率保护</button>` : ''}
+      <button class="button danger-outline compact-account-action" type="button" data-action="remove-binding" ${protectionBusy ? 'disabled' : ''}>移除绑定</button>` : ''
+    return `<button class="button secondary compact-account-action" type="button" data-action="edit">编辑余额告警</button>${relationActions}`
+  }
+
+  function renderActualSuccessCompact(account, groupID) {
+    const snapshot = state.actualSuccess
+    const metric = state.actualSuccessByKey.get(relationKey(groupID, account.id))
+    if (!snapshot?.ready) {
+      const label = snapshot?.notice || '实际成功率暂不可用'
+      return `<div class="compact-success unavailable" title="${escapeAttr(label)}" aria-label="${escapeAttr(label)}"><span>最近成功率</span><strong>不可用</strong><small>${escapeHTML(label)}</small></div>`
+    }
+    const recent = metric?.recent || {}
+    const attempts = Math.max(0, Number(recent.effective_attempts) || 0)
+    const successes = Math.max(0, Number(recent.success_count) || 0)
+    const reference = metric?.reference_24h || {}
+    const referenceAttempts = Math.max(0, Number(reference.effective_attempts) || 0)
+    const freshness = snapshot.stale ? '数据已过期' : snapshot.partial ? '数据不完整' : ''
+    if (attempts === 0) {
+      const referenceText = referenceAttempts > 0
+        ? `24h ${formatPercent((Number(reference.rate) || 0) * 100)} · ${formatInteger(reference.success_count || 0)}/${formatInteger(referenceAttempts)}`
+        : '24h 暂无样本'
+      const detail = ['最近一小时暂无真实调用', referenceText, freshness, snapshot.notice].filter(Boolean).join('；')
+      return `<div class="compact-success empty ${snapshot.partial ? 'partial' : ''} ${snapshot.stale ? 'stale' : ''}" title="${escapeAttr(detail)}" aria-label="${escapeAttr(detail)}"><span>最近成功率</span><strong>暂无真实调用</strong><small>${escapeHTML(referenceText)}${freshness ? ` · ${escapeHTML(freshness)}` : ''}</small></div>`
+    }
+    const rate = Math.max(0, Math.min(1, Number(recent.rate) || 0))
+    const tone = rate >= 0.99 ? 'success' : rate >= 0.95 ? 'warning' : 'danger'
+    const details = [
+      `近 1 小时成功 ${formatInteger(successes)} 次，有效尝试 ${formatInteger(attempts)} 次`,
+      recent.low_sample ? '样本较少' : '',
+      recent.last_observed_at ? `最近调用 ${formatDateTime(recent.last_observed_at)}` : '',
+      freshness,
+    ].filter(Boolean).join('；')
+    return `<div class="compact-success ${tone} ${recent.low_sample ? 'low-sample' : ''} ${snapshot.partial ? 'partial' : ''} ${snapshot.stale ? 'stale' : ''}" title="${escapeAttr(details)}" aria-label="${escapeAttr(details)}"><span>最近成功率</span><strong>${escapeHTML(formatPercent(rate * 100))}</strong><small>${formatInteger(successes)}/${formatInteger(attempts)} · 近 1 小时${recent.low_sample ? ' · 样本少' : ''}</small></div>`
   }
 
   function renderActualSuccess(account, groupID) {
@@ -916,14 +1011,14 @@
     return `<strong>${formatInteger(usage.requests || 0)} 请求 · ${formatCompact(usage.tokens || 0)} tokens</strong><span title="${escapeAttr(cacheDetail)}">${formatCurrency(usage.cost || 0)} 今日成本 · ${escapeHTML(cacheLabel)}</span>`
   }
 
-  function renderQuota(account) {
-    const quotas = [
-      quotaDimension('日额度', account.quota_daily_used, account.quota_daily_limit),
-      quotaDimension('周额度', account.quota_weekly_used, account.quota_weekly_limit),
-      quotaDimension('总额度', account.quota_used, account.quota_limit),
-    ].filter(Boolean)
+  function balancePresentation(account) {
+    const dimensions = [
+      { label: '日额度', used: account.quota_daily_used, limit: account.quota_daily_limit },
+      { label: '周额度', used: account.quota_weekly_used, limit: account.quota_weekly_limit },
+      { label: '总额度', used: account.quota_used, limit: account.quota_limit },
+    ].filter((dimension) => Number.isFinite(Number(dimension.limit)) && Number(dimension.limit) > 0)
     const balance = account.admin_balance || {}
-    const configured = typeof balance.configured === 'boolean' ? balance.configured : quotas.length > 0
+    const configured = typeof balance.configured === 'boolean' ? balance.configured : dimensions.length > 0
     const totalLimit = Number(account.quota_limit)
     const totalUsed = Number(account.quota_used) || 0
     const projectedRemaining = Number(balance.remaining)
@@ -933,7 +1028,6 @@
     const insufficient = Boolean(balance.insufficient) || exhausted.length > 0
     const dimensionLabels = { daily: '日额度', weekly: '周额度', total: '总额度' }
     const exhaustedLabel = exhausted.map((dimension) => dimensionLabels[dimension]).filter(Boolean).join('、')
-    const source = balance.managed ? '<span class="admin-balance-source">上游同步</span>' : ''
     let tone = 'neutral'
     let value = '未配置（不限）'
     let note = '当前没有管理员额度上限'
@@ -954,9 +1048,26 @@
       value = '额度可用'
       note = '未配置总额度，请查看周期额度'
     }
-    const detail = quotas.length ? `<dl class="quota-list">${quotas.join('')}</dl>` : ''
     const label = insufficient ? `管理员余额不足，${note}` : `管理员余额：${value}，${note}`
-    return `<div class="quota-summary"><div class="admin-balance-card ${tone}" aria-label="${escapeAttr(label)}"><div class="admin-balance-heading"><span>管理员余额</span>${source}</div><strong class="admin-balance-value">${escapeHTML(value)}</strong><span class="admin-balance-note">${escapeHTML(note)}</span></div>${detail}</div>`
+    return { balance, configured, dimensions, tone, value, note, label, insufficient }
+  }
+
+  function renderCompactBalance(account, groupID) {
+    const view = balancePresentation(account)
+    const threshold = effectiveBalanceThreshold(account, groupID)
+    const source = view.balance.managed ? '上游同步' : view.configured ? '管理员配置' : '不限额度'
+    const thresholdLabel = threshold ? `阈值 ${formatCurrency(threshold.value)}` : '未设告警'
+    const detail = `${view.label}；${source}；${threshold ? `${threshold.source}告警阈值 ${formatCurrency(threshold.value)}` : '未设置余额告警阈值'}`
+    return `<div class="compact-balance ${escapeAttr(view.tone)}" title="${escapeAttr(detail)}" aria-label="${escapeAttr(detail)}"><strong>${escapeHTML(view.value)}</strong><span>${escapeHTML(source)} · ${escapeHTML(thresholdLabel)}</span></div>`
+  }
+
+  function renderQuota(account) {
+    const view = balancePresentation(account)
+    const source = view.balance.managed ? '<span class="admin-balance-source">上游同步</span>' : ''
+    const detail = view.dimensions.length
+      ? `<dl class="quota-list">${view.dimensions.map((dimension) => quotaDimension(dimension.label, dimension.used, dimension.limit)).join('')}</dl>`
+      : ''
+    return `<div class="quota-summary"><div class="admin-balance-card ${escapeAttr(view.tone)}" aria-label="${escapeAttr(view.label)}"><div class="admin-balance-heading"><span>管理员余额</span>${source}</div><strong class="admin-balance-value">${escapeHTML(view.value)}</strong><span class="admin-balance-note">${escapeHTML(view.note)}</span></div>${detail}</div>`
   }
 
   function quotaDimension(label, used, limit) {
@@ -998,6 +1109,40 @@
       ? `<div class="multiplier-item protection-multiplier ${protection.status === 'rate_protected' ? 'exceeded' : ['multiplier_unavailable', 'rebind_pending'].includes(protection.status) ? 'unavailable' : ''}"><span class="data-label">保护倍率 · ${escapeHTML(protectionSource)}</span><strong>${escapeHTML(formatMultiplier(protection.protection_multiplier))}x</strong><span>${protection.status === 'rate_protected' ? '已触发保护' : protection.status === 'multiplier_unavailable' ? '最终倍率不可用，保护不生效' : protection.status === 'rebind_pending' ? '等待自动回绑' : '保护中'}</span></div>`
       : '<div class="multiplier-item protection-multiplier unset"><span class="data-label">保护倍率</span><strong>未设置</strong><span>沿用原绑定逻辑</span></div>'
     return `<div class="multiplier-pair">${finalBlock}${protectionBlock}</div>`
+  }
+
+  function renderCompactMultiplier(account, protection = null) {
+    const projection = account.upstream_final_multiplier || {}
+    const protectedFinal = Number(protection?.final_multiplier)
+    const finalMultiplier = Number.isFinite(protectedFinal) ? protectedFinal : Number(projection.final_multiplier)
+    const finalAvailable = Number.isFinite(finalMultiplier) && (protection || projection.status === 'available')
+    const finalLabel = finalAvailable ? `${formatMultiplier(finalMultiplier)}x` : '未计算'
+    const protectionSource = protection?.inherited ? '分组默认' : '账号级'
+    const protectionLabel = protection ? `${formatMultiplier(protection.protection_multiplier)}x` : '未设置'
+    const protectionState = protection?.status === 'rate_protected'
+      ? '已触发'
+      : protection?.status === 'multiplier_unavailable'
+        ? '待倍率'
+        : protection?.status === 'rebind_pending'
+          ? '待回绑'
+          : protection ? protectionSource : '沿用绑定'
+    const projectionStatus = String(projection.status || 'unavailable')
+    const statusLabels = {
+      unbound: '未绑定上游 Key',
+      stale: '上游 Key 绑定已失效',
+      ambiguous: '存在多个有效上游 Key 绑定',
+      recharge_unset: '充值倍率未设置',
+      group_multiplier_unknown: '分组倍率未知',
+      invalid_upstream: '上游地址无效',
+      unavailable: '最终倍率暂不可用',
+    }
+    const detail = finalAvailable
+      ? `最终倍率 ${finalLabel}；保护倍率 ${protectionLabel}；${protectionState}`
+      : `${protection?.last_error || statusLabels[projectionStatus] || '最终倍率未计算'}；保护倍率 ${protectionLabel}`
+    const tone = protection?.status === 'rate_protected'
+      ? 'warning'
+      : finalAvailable ? 'available' : 'unavailable'
+    return `<div class="compact-multiplier ${escapeAttr(tone)}" title="${escapeAttr(detail)}" aria-label="${escapeAttr(detail)}"><span>最终 <strong>${escapeHTML(finalLabel)}</strong></span><small>保护 ${escapeHTML(protectionLabel)} · ${escapeHTML(protectionState)}</small></div>`
   }
 
   function schedulableState(account) {
@@ -1134,12 +1279,33 @@
     const account = findAccount(Number(row.dataset.accountId))
     const groupID = Number(row.dataset.groupId)
     if (!account) return
+    button.closest('.account-action-menu')?.removeAttribute('open')
     switch (action) {
+      case 'toggle-account-details': toggleAccountDetails(account.id, groupID); break
+      case 'request-schedulable-toggle': openSchedulingActionDialog(account, !account.schedulable); break
       case 'edit': openEditDialog(account); break
       case 'edit-protection': openProtectionDialog(account, groupID); break
       case 'release-protection': openBindingActionDialog('release', account, groupID); break
       case 'remove-binding': openBindingActionDialog('remove', account, groupID); break
     }
+  }
+
+  function toggleAccountDetails(accountID, groupID) {
+    const key = relationKey(groupID, accountID)
+    if (state.expandedAccounts.has(key)) state.expandedAccounts.delete(key)
+    else state.expandedAccounts.add(key)
+    render()
+    window.requestAnimationFrame(() => {
+      const selector = `[data-account-id="${accountID}"][data-group-id="${groupID}"] [data-action="toggle-account-details"]`
+      document.querySelector(selector)?.focus()
+    })
+  }
+
+  function closeAccountActionMenus(event) {
+    const activeMenu = event.target.closest?.('.account-action-menu') || null
+    document.querySelectorAll('.account-action-menu[open]').forEach((menu) => {
+      if (menu !== activeMenu) menu.open = false
+    })
   }
 
   async function handleGroupChange(event) {

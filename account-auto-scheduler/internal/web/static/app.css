@@ -740,3 +740,116 @@ button:disabled, input:disabled, select:disabled { cursor: not-allowed; opacity:
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }
 }
+
+.group-section { overflow: visible; }
+.api-key-header, .api-key-row {
+  display: grid;
+  grid-template-columns: minmax(190px, 1.15fr) minmax(150px, 0.85fr) minmax(180px, 1fr) minmax(150px, 0.8fr) minmax(240px, 1.15fr) 72px;
+  column-gap: 12px;
+}
+.api-key-header { min-height: 34px; padding: 0 12px; }
+.api-key-record { position: relative; min-width: 0; border-bottom: 1px solid var(--border); }
+.api-key-record:last-child { border-bottom: 0; }
+.api-key-record.expanded { background: color-mix(in srgb, var(--surface-subtle) 46%, var(--surface)); }
+.api-key-row { min-height: 78px; padding: 10px 12px; align-items: center; border-bottom: 0; }
+.api-key-row:hover { background: var(--surface-hover); }
+.api-key-record.expanded > .api-key-row { background: color-mix(in srgb, var(--primary-soft) 16%, transparent); }
+.account-cell, .schedule-cell, .usage-cell, .balance-cell, .health-cell, .row-actions { min-width: 0; }
+.account-name-line { align-items: center; }
+.account-name-line strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-meta { margin-top: 3px; flex-wrap: nowrap; overflow: hidden; }
+.account-meta > * { flex: none; }
+.schedule-cell .account-state { margin-top: 0; align-items: center; }
+.schedule-cell .status-dot { margin-top: 0; }
+.schedule-cell .account-state strong, .schedule-cell .account-state small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.compact-usage { padding-top: 0; }
+.compact-usage strong, .compact-usage span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.compact-usage strong { font-size: 12px; line-height: 18px; }
+.compact-usage span { margin-top: 1px; font-size: 10px; line-height: 15px; }
+.compact-balance { min-width: 0; padding: 5px 7px; border: 1px solid transparent; border-radius: 6px; }
+.compact-balance strong, .compact-balance span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.compact-balance strong { color: var(--primary-hover); font-size: 13px; line-height: 18px; font-variant-numeric: tabular-nums; }
+.compact-balance span { margin-top: 1px; color: var(--text-muted); font-size: 10px; line-height: 14px; }
+.compact-balance.insufficient { border-color: color-mix(in srgb, var(--danger) 48%, var(--border)); background: var(--danger-soft); }
+.compact-balance.insufficient strong, .compact-balance.insufficient span { color: var(--danger-hover); }
+.compact-balance.neutral strong { color: var(--text-secondary); font-size: 11px; }
+.health-cell { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: stretch; gap: 6px; }
+.compact-success, .compact-multiplier { min-width: 0; min-height: 48px; padding: 5px 7px; display: grid; align-content: center; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-subtle); }
+.compact-success > span, .compact-success > strong, .compact-success > small, .compact-multiplier > span, .compact-multiplier > small { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.compact-success > span, .compact-multiplier > span { color: var(--text-muted); font-size: 9px; line-height: 13px; }
+.compact-success > strong { color: var(--text-secondary); font-size: 13px; line-height: 17px; font-variant-numeric: tabular-nums; }
+.compact-success > small, .compact-multiplier > small { color: var(--text-muted); font-size: 9px; line-height: 13px; }
+.compact-success.success { border-color: color-mix(in srgb, var(--success) 40%, var(--border)); background: color-mix(in srgb, var(--success-soft) 64%, var(--surface)); }
+.compact-success.success > strong { color: var(--success); }
+.compact-success.warning, .compact-multiplier.warning { border-color: color-mix(in srgb, var(--warning) 48%, var(--border)); background: var(--warning-soft); }
+.compact-success.warning > strong, .compact-multiplier.warning strong { color: var(--warning); }
+.compact-success.danger { border-color: color-mix(in srgb, var(--danger) 45%, var(--border)); background: var(--danger-soft); }
+.compact-success.danger > strong { color: var(--danger-hover); }
+.compact-success.low-sample { border-style: dashed; }
+.compact-success.partial, .compact-success.stale { box-shadow: inset 3px 0 0 var(--warning); }
+.compact-multiplier.available { border-color: color-mix(in srgb, var(--primary) 34%, var(--border)); background: color-mix(in srgb, var(--primary-soft) 54%, var(--surface)); }
+.compact-multiplier span strong { color: var(--primary-hover); font-size: 13px; font-variant-numeric: tabular-nums; }
+.compact-multiplier.unavailable span strong { color: var(--text-secondary); font-size: 11px; }
+.row-actions { min-width: 0; display: flex; flex-direction: row; align-items: center; justify-content: flex-end; gap: 2px; }
+.row-actions .icon-button { width: 32px; height: 32px; border-color: transparent; background: transparent; }
+.account-expand-button .icon { transition: transform 160ms ease; }
+.api-key-record.expanded .account-expand-button .icon { transform: rotate(90deg); }
+.account-action-menu { position: relative; }
+.account-action-menu > summary { list-style: none; }
+.account-action-menu > summary::-webkit-details-marker { display: none; }
+.account-action-menu[open] > summary { border-color: var(--border); background: var(--surface-subtle); color: var(--text); }
+.account-action-popover { position: absolute; z-index: 40; top: calc(100% + 5px); right: 0; width: max-content; min-width: 180px; padding: 5px; display: grid; gap: 2px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); box-shadow: 0 14px 32px rgba(15, 23, 42, 0.18); }
+.account-action-popover button { min-height: 32px; padding: 6px 9px; border: 0; border-radius: 5px; background: transparent; color: var(--text-secondary); font-size: 11px; font-weight: 600; text-align: left; white-space: nowrap; }
+.account-action-popover button:hover:not(:disabled), .account-action-popover button:focus-visible { outline: none; background: var(--surface-subtle); color: var(--text); }
+.account-action-popover .danger-menu-item { color: var(--danger); }
+.account-action-popover .danger-menu-item:hover:not(:disabled), .account-action-popover .danger-menu-item:focus-visible { background: var(--danger-soft); color: var(--danger-hover); }
+.api-key-details { padding: 12px 12px 14px 42px; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); align-items: start; gap: 10px; border-top: 1px solid var(--border); background: color-mix(in srgb, var(--surface-subtle) 68%, var(--surface)); }
+.account-detail-section { min-width: 0; min-height: 100%; padding: 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); }
+.detail-heading { display: block; margin-bottom: 8px; color: var(--text-muted); font-size: 10px; font-weight: 750; letter-spacing: 0.02em; }
+.detail-note { margin: 7px 0 0; color: var(--text-muted); font-size: 10px; line-height: 15px; text-wrap: pretty; }
+.account-detail-section .schedulable-control { min-height: 44px; }
+.account-detail-section .quota-summary, .account-detail-section .balance-alert-summary, .account-detail-section .multiplier-pair { margin-top: 8px; }
+.account-detail-actions { grid-column: 1 / -1; min-width: 0; padding-top: 2px; display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 6px; }
+.compact-account-action { min-height: 32px; padding: 5px 9px; font-size: 10px; }
+.button.danger-outline { border-color: color-mix(in srgb, var(--danger) 46%, var(--border)); background: transparent; color: var(--danger); }
+.button.danger-outline:hover:not(:disabled) { border-color: var(--danger); background: var(--danger-soft); color: var(--danger-hover); }
+
+@media (max-width: 1120px) {
+  .api-key-header, .api-key-row { grid-template-columns: minmax(170px, 1.05fr) minmax(135px, 0.8fr) minmax(155px, 0.9fr) minmax(135px, 0.75fr) minmax(210px, 1.05fr) 68px; column-gap: 10px; }
+  .api-key-details { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 960px) {
+  .api-key-header { display: none; }
+  .api-key-row { grid-template-columns: minmax(0, 1.1fr) minmax(165px, 0.8fr) minmax(220px, 1fr); grid-template-areas: "account schedule health" "usage balance health"; gap: 8px 14px; padding-right: 86px; }
+  .account-cell { grid-area: account; align-self: end; }
+  .schedule-cell { grid-area: schedule; align-self: end; }
+  .usage-cell { grid-area: usage; align-self: start; }
+  .balance-cell { grid-area: balance; align-self: start; }
+  .health-cell { grid-area: health; align-self: stretch; }
+  .row-actions { position: absolute; top: 50%; right: 12px; transform: translateY(-50%); }
+  .api-key-details { padding-left: 12px; }
+}
+
+@media (max-width: 620px) {
+  .api-key-row { min-height: 0; grid-template-columns: minmax(0, 1fr) minmax(180px, 0.8fr); grid-template-areas: "account actions" "schedule schedule" "balance health" "usage usage"; gap: 8px 12px; padding: 11px 12px; }
+  .account-cell { grid-area: account; align-self: center; }
+  .row-actions { position: static; grid-area: actions; justify-self: end; transform: none; }
+  .schedule-cell { grid-area: schedule; align-self: center; }
+  .usage-cell { grid-area: usage; align-self: center; padding-top: 6px; border-top: 1px solid var(--border); }
+  .balance-cell { grid-area: balance; align-self: stretch; }
+  .health-cell { grid-area: health; align-self: stretch; }
+  .schedule-cell .account-state small { white-space: normal; }
+  .health-cell { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .api-key-details { grid-template-columns: minmax(0, 1fr); padding: 10px 12px 12px; }
+  .account-detail-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .compact-account-action { width: 100%; min-height: 40px; white-space: normal; }
+  .account-action-popover { position: fixed; z-index: 70; top: auto; right: 12px; bottom: 12px; left: 12px; width: auto; padding: 8px; border-radius: 10px; }
+  .account-action-popover button { min-height: 42px; font-size: 12px; }
+}
+
+@media (max-width: 420px) {
+  .api-key-row { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "account actions" "schedule schedule" "usage usage" "balance balance" "health health"; }
+  .health-cell { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .account-detail-actions { grid-template-columns: minmax(0, 1fr); }
+}

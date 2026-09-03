@@ -287,7 +287,8 @@ func TestStaticPageIsPublicButFramingIsRestricted(t *testing.T) {
 		!strings.Contains(response.Body.String(), `id="online-users-dialog"`) ||
 		!strings.Contains(response.Body.String(), "最近 10 分钟内有调用的用户") ||
 		!strings.Contains(response.Body.String(), `id="scheduling-action-dialog"`) ||
-		!strings.Contains(response.Body.String(), `id="scheduling-action-confirm-button"`) {
+		!strings.Contains(response.Body.String(), `id="scheduling-action-confirm-button"`) ||
+		!strings.Contains(response.Body.String(), `id="icon-more-horizontal"`) {
 		t.Fatal("binding dialog is missing metric column headings")
 	}
 	for _, removed := range []string{`id="add-button"`, `id="delete-dialog"`, `id="result-dialog"`, "新增检测", "删除检测配置", "最近 50 次检测状态"} {
@@ -338,6 +339,8 @@ func TestGroupsAppUsesFinalMultiplierAndPassiveActualSuccess(t *testing.T) {
 		"上游余额按当前分组倍率折算后的同步投影", "不限额度", "暂不可用",
 		"groupBalanceSummaries", "group_balance_summaries", "renderGroupBalanceSummary", "启用余额", "未启用余额",
 		"schedulableBusy", "schedulable-toggle", "schedulableState", "账号调度（全局）", "openSchedulingActionDialog",
+		"expandedAccounts", "toggle-account-details", "api-key-details", "account-action-menu",
+		"renderCompactBalance", "renderActualSuccessCompact", "renderCompactMultiplier",
 		"`/api/accounts/${accountID}/schedulable`", "实际成功率不会自动启用或停止账号", "影响该账号所在的所有分组",
 		"`/api/groups/${groupID}/accounts/${accountID}/protection`",
 		"`/api/groups/${groupID}/accounts/${accountID}/binding`",
@@ -360,6 +363,8 @@ func TestGroupsAppUsesFinalMultiplierAndPassiveActualSuccess(t *testing.T) {
 		".binding-list-header", ".binding-metric", ".binding-metric.insufficient", ".binding-metric-label",
 		".group-balance-summary", ".group-balance-item.enabled", ".group-balance-item.disabled",
 		".schedulable-control", ".schedulable-control.busy", "@media (max-width: 420px)",
+		".api-key-record", ".api-key-details", ".compact-balance", ".compact-success",
+		".account-action-menu", ".account-action-popover", ".button.danger-outline",
 		"@media (max-width: 620px)", ".multiplier-pair { grid-template-columns: minmax(0, 1fr); }",
 		".quota-list > div { grid-template-columns: 58px minmax(0, 1fr); }",
 	} {
