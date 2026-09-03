@@ -135,15 +135,6 @@ type Service struct {
 	hourlySuccess   map[groupAccountKey]accountSuccessCounters
 	hourlyThrough   time.Time
 	hourlyCachedAt  time.Time
-
-	cacheStatsMu           sync.Mutex
-	cacheStatsCachedKey    string
-	cacheStatsCached       *model.AccountCacheStatsSnapshot
-	cacheStatsCachedAt     time.Time
-	cacheStatsLastGood     map[string]model.AccountCacheStatsSnapshot
-	cacheStatsInFlight     map[string]*accountCacheStatsFlight
-	cacheStatsTTL          time.Duration
-	cacheStatsQueryTimeout time.Duration
 }
 
 type summaryFlight struct {
@@ -182,19 +173,15 @@ func newService(db *sql.DB, logger *slog.Logger) *Service {
 		logger = slog.Default()
 	}
 	return &Service{
-		db:                     db,
-		logger:                 logger,
-		now:                    time.Now,
-		cacheTTL:               defaultCacheTTL,
-		timeout:                defaultQueryTimeout,
-		staleAt:                defaultStaleAfter,
-		deadAt:                 defaultUnavailableAt,
-		successBuckets:         make(map[accountSuccessBucketKey]accountSuccessCounters),
-		hourlySuccess:          make(map[groupAccountKey]accountSuccessCounters),
-		cacheStatsLastGood:     make(map[string]model.AccountCacheStatsSnapshot),
-		cacheStatsInFlight:     make(map[string]*accountCacheStatsFlight),
-		cacheStatsTTL:          defaultCacheTTL,
-		cacheStatsQueryTimeout: defaultQueryTimeout,
+		db:             db,
+		logger:         logger,
+		now:            time.Now,
+		cacheTTL:       defaultCacheTTL,
+		timeout:        defaultQueryTimeout,
+		staleAt:        defaultStaleAfter,
+		deadAt:         defaultUnavailableAt,
+		successBuckets: make(map[accountSuccessBucketKey]accountSuccessCounters),
+		hourlySuccess:  make(map[groupAccountKey]accountSuccessCounters),
 	}
 }
 

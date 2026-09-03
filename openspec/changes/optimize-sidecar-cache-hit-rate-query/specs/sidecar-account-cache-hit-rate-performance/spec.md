@@ -1,41 +1,42 @@
 ## ADDED Requirements
 
-### Requirement: Sidecar bulk-loads today's cache statistics
-When its existing read-only aggregate database connection is configured, the sidecar SHALL obtain today's cache statistics for all requested overview account IDs through one bounded database aggregation rather than one main-service statistics request per account.
+### Requirement: Sidecar skips cache-detail reads for idle accounts
 
-#### Scenario: Overview has multiple accounts
-- **WHEN** an administrator loads an overview containing multiple account IDs and the database connection is configured
-- **THEN** the sidecar issues one grouped cache-stat query for the normalized ID set and attaches an individual cache projection to each requested account's today-usage data
+The sidecar SHALL derive a zero-valued cache projection for every requested account with no current-day requests, without calling an additional main-service statistics endpoint.
 
-#### Scenario: Account has no usage today
-- **WHEN** a requested account has no matching current-day usage rows
-- **THEN** the sidecar returns a present zero-valued cache projection with a 0.0 percent hit rate for that account
+#### Scenario: Overview includes idle accounts
 
-### Requirement: Sidecar preserves cache-hit semantics and response compatibility
-The sidecar SHALL calculate the cache-hit rate as cache-read tokens divided by input, cache-creation, and cache-read tokens, and SHALL retain the existing nested `today_usage.cache` response shape.
+- **WHEN** the batch today-usage response reports zero or omits the request count for an account
+- **THEN** the overview exposes a present zero-percent cache projection for that account and makes no per-account cache-detail request for it
 
-#### Scenario: Account has prompt token data
-- **WHEN** the grouped query returns input, cache-creation, or cache-read tokens for an account
-- **THEN** the sidecar exposes their non-negative sums, their prompt-token denominator, and the calculated percentage in that account's existing cache projection
+### Requirement: Sidecar bounds active-account cache-detail reads
 
-### Requirement: Bulk cache statistics are resilient and bounded
-The sidecar MUST cache a successful bulk result for a short period, share concurrent refreshes for the same account-ID set, and preserve the base overview when the cache-stat query is unavailable.
+The sidecar SHALL use the existing per-account administrator cache-statistics endpoint only for accounts with current-day requests, with at most four concurrent calls and a five-minute successful-result cache.
 
-#### Scenario: Same overview is refreshed within the cache lifetime
-- **WHEN** the normalized account-ID set is unchanged and its bulk result remains fresh
-- **THEN** the sidecar reuses the stored projection without issuing a new database query
+#### Scenario: Overview has active accounts
 
-#### Scenario: Configured database query fails
-- **WHEN** the direct database connection is configured but the bulk cache-stat query fails
-- **THEN** the sidecar uses the latest successful projection for that ID set when available, otherwise leaves cache statistics unavailable, and does not issue per-account main-service statistics requests
+- **WHEN** accounts have current-day requests
+- **THEN** the sidecar fetches cache-token details only for those accounts and attaches them to the existing `today_usage.cache` response shape
 
-#### Scenario: Direct database is not configured
-- **WHEN** the optional direct database connection is not configured
-- **THEN** the sidecar retains the existing bounded HTTP cache-enrichment behavior as a compatibility fallback
+#### Scenario: Overview refreshes within five minutes
+
+- **WHEN** an active account's cache projection was loaded successfully during the last five minutes
+- **THEN** the sidecar reuses that projection without another main-service cache-detail request
+
+### Requirement: Base overview remains available on cache-detail failure
+
+The sidecar SHALL preserve batch today usage if an active-account cache-detail request fails.
+
+#### Scenario: An active-account detail request fails
+
+- **WHEN** a cache-detail request returns an error or times out
+- **THEN** the account's cache projection is unavailable while all base today-usage data remains available
 
 ### Requirement: Sub2API production service remains unchanged
-The cache-stat performance improvement SHALL be implemented entirely in the sidecar and SHALL not require a Sub2API code, route, schema, configuration, image, or container change.
+
+The optimization SHALL be implemented entirely in the sidecar and SHALL not require a Sub2API code, route, schema, configuration, database-permission, image, or container change.
 
 #### Scenario: HC2 release
+
 - **WHEN** the optimized sidecar is deployed to HC2
-- **THEN** only the `account-auto-scheduler` container image is replaced and the running `sub2api-canary` container remains unchanged
+- **THEN** only the `account-auto-scheduler` container image is replaced and `sub2api-canary` remains unchanged

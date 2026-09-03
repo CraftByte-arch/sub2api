@@ -1,25 +1,14 @@
 ## Why
 
-The sidecar currently fills the account cache-hit indicator by calling Sub2API's full per-account statistics endpoint once for every account. On a cold cache this creates an N+1 request pattern, delays the overview, and produces canceled database work in the main service even though the sidecar already has a read-only aggregate database connection.
+Loading the sidecar overview used to request full cache statistics for every account. On HC2, the sidecar's intentionally limited read-only database role cannot read raw `usage_logs`, and no existing readable aggregate contains account-level cache tokens.
 
 ## What Changes
 
-- Replace per-account HTTP cache-stat enrichment on the overview path with one bounded, read-only PostgreSQL aggregation for all displayed account IDs.
-- Preserve the existing cache-hit calculation, payload shape, and unavailable-state behavior.
-- Cache and single-flight the sidecar's bulk cache-stat result, retain the latest successful snapshot during a transient database failure, and never fall back to the N+1 main-service route after a configured database query fails.
-- Keep Sub2API production code, routes, schemas, and deployment untouched.
-
-## Capabilities
-
-### New Capabilities
-
-- `sidecar-account-cache-hit-rate-performance`: Efficient, best-effort bulk collection of today's account cache-hit statistics inside the sidecar.
-
-### Modified Capabilities
-
-None.
+- Keep the existing one-request batch endpoint for base today usage.
+- Give every account with zero requests today a known-zero cache projection without an extra request.
+- Request the existing single-account cache statistics only for accounts that have requests today, with a five-minute sidecar cache and at most four concurrent calls.
+- Remove the unusable direct raw-usage-log path; do not change Sub2API code, routes, database grants, schemas, or containers.
 
 ## Impact
 
-- Affects only `account-auto-scheduler` database-read service, overview assembly, core client, focused tests, and HC2 sidecar deployment.
-- Reuses the existing `AUTO_SCHEDULER_ONLINE_DATABASE_URL` read-only connection and `usage_logs` index; no Sub2API API or database migration is introduced.
+Only `account-auto-scheduler` code and its HC2 image change. The main service remains untouched.

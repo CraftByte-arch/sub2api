@@ -27,9 +27,9 @@ const (
 	maxResponseTextBytes = 4 << 10
 	menuItemID           = "account-auto-scheduler"
 
-	todayAccountCacheStatsTTL         = time.Minute
-	todayAccountCacheStatsTimeout     = 10 * time.Second
-	todayAccountCacheStatsConcurrency = 8
+	todayAccountCacheStatsTTL         = 5 * time.Minute
+	todayAccountCacheStatsTimeout     = 5 * time.Second
+	todayAccountCacheStatsConcurrency = 4
 )
 
 type Client struct {
@@ -235,6 +235,7 @@ func (c *Client) GetTodayStatsBatch(ctx context.Context, accountIDs []int64) (ma
 			stats[accountID] = value
 		}
 	}
+	c.enrichTodayAccountCacheStats(ctx, ids, stats)
 	return stats, nil
 }
 
@@ -246,18 +247,42 @@ func (c *Client) GetAccountPerformanceHealth(ctx context.Context) (model.Account
 	return health, nil
 }
 
-// EnrichTodayAccountCacheStats is retained only for sidecar deployments that
-// do not configure the optional read-only aggregate database. HC2 uses the
-// bulk database path, so normal overview requests never call this N+1 fallback.
-func (c *Client) EnrichTodayAccountCacheStats(ctx context.Context, accountIDs []int64, stats map[string]model.WindowStats) {
+// enrichTodayAccountCacheStats uses the existing single-account HTTP endpoint
+// only for accounts that already have at least one request today. An account
+// with no requests has a known-zero cache rate, so it never needs an extra
+// main-service statistics query.
+func (c *Client) enrichTodayAccountCacheStats(ctx context.Context, accountIDs []int64, stats map[string]model.WindowStats) {
 	if len(accountIDs) == 0 || stats == nil {
+		return
+	}
+	activeIDs := make([]int64, 0, len(accountIDs))
+	seen := make(map[int64]struct{}, len(accountIDs))
+	for _, accountID := range accountIDs {
+		if accountID <= 0 {
+			continue
+		}
+		if _, exists := seen[accountID]; exists {
+			continue
+		}
+		seen[accountID] = struct{}{}
+		key := strconv.FormatInt(accountID, 10)
+		usage := stats[key]
+		if usage.Requests <= 0 {
+			zero := model.AccountCacheStats{}
+			usage.Cache = &zero
+			stats[key] = usage
+			continue
+		}
+		activeIDs = append(activeIDs, accountID)
+	}
+	if len(activeIDs) == 0 {
 		return
 	}
 
 	enrichmentCtx, cancel := context.WithTimeout(ctx, todayAccountCacheStatsTimeout)
 	defer cancel()
 
-	workerCount := min(todayAccountCacheStatsConcurrency, len(accountIDs))
+	workerCount := min(todayAccountCacheStatsConcurrency, len(activeIDs))
 	jobs := make(chan int64)
 	var workers sync.WaitGroup
 	var statsMu sync.Mutex
@@ -281,7 +306,7 @@ func (c *Client) EnrichTodayAccountCacheStats(ctx context.Context, accountIDs []
 	}
 
 sendLoop:
-	for _, accountID := range accountIDs {
+	for _, accountID := range activeIDs {
 		select {
 		case jobs <- accountID:
 		case <-enrichmentCtx.Done():

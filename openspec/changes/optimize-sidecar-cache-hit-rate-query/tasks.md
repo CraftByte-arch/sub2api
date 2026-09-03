@@ -1,16 +1,11 @@
-## 1. Bulk cache-stat data path
+## 1. Sidecar cache-stat reduction
 
-- [x] 1.1 Add a keyed, cached, read-only bulk today-cache-stat query to the existing sidecar database service.
-- [x] 1.2 Return zero-valued projections for requested accounts without rows and retain the last good result through transient query failure.
-- [x] 1.3 Remove unconditional per-account cache enrichment from the base Sub2API today-stats client path.
+- [x] 1.1 Remove the unusable direct raw-usage-log query path and retain the existing HTTP-only contract.
+- [x] 1.2 Materialize known-zero cache projections for idle accounts and fetch details only for active accounts.
+- [x] 1.3 Bound active-account calls to four workers and cache successful projections for five minutes.
 
-## 2. Overview integration and compatibility
+## 2. Verification and release
 
-- [x] 2.1 Attach the direct bulk cache projections to the existing overview response without changing its nested usage contract.
-- [x] 2.2 Preserve the bounded legacy HTTP enrichment only when the direct database facility is explicitly unconfigured; never use it after a configured database failure.
-
-## 3. Verification and release
-
-- [x] 3.1 Add focused database-service, overview, and core-client tests covering the no-N+1 path, zero data, cache reuse, stale fallback, and unconfigured compatibility path.
-- [ ] 3.2 Run formatting, sidecar tests, static checks, and a local container build.
-- [ ] 3.3 Build and deploy only the optimized `account-auto-scheduler` image to HC2, then verify health, overview output, and unchanged Sub2API container state.
+- [x] 2.1 Add focused tests for idle-account skipping, zero projections, bounded active failure, and cache reuse.
+- [ ] 2.2 Run formatting, sidecar tests, static checks, and a local Linux/amd64 container build.
+- [ ] 2.3 Deploy only the optimized `account-auto-scheduler` image to HC2, then verify authenticated overview output and unchanged Sub2API container state.
