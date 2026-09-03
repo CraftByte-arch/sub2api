@@ -7,5 +7,5 @@
 ## 2. Verification and release
 
 - [x] 2.1 Add focused tests for idle-account skipping, zero projections, bounded active failure, and cache reuse.
-- [ ] 2.2 Run formatting, sidecar tests, static checks, and a local Linux/amd64 container build.
-- [ ] 2.3 Deploy only the optimized `account-auto-scheduler` image to HC2, then verify authenticated overview output and unchanged Sub2API container state.
+- [x] 2.2 Run formatting, sidecar tests, static checks, and a local Linux/amd64 container build.
+- [x] 2.3 Deploy only the optimized `account-auto-scheduler` image to HC2, then verify authenticated overview output and unchanged Sub2API container state.
