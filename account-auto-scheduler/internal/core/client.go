@@ -27,9 +27,10 @@ const (
 	maxResponseTextBytes = 4 << 10
 	menuItemID           = "account-auto-scheduler"
 
-	todayAccountCacheStatsTTL         = 5 * time.Minute
-	todayAccountCacheStatsTimeout     = 5 * time.Second
-	todayAccountCacheStatsConcurrency = 4
+	todayAccountCacheStatsTTL          = 5 * time.Minute
+	todayAccountCacheStatsTimeout      = 5 * time.Second
+	todayAccountCacheStatsConcurrency  = 4
+	todayAccountCacheStatsRetryBackoff = time.Minute
 )
 
 type Client struct {
@@ -38,14 +39,24 @@ type Client struct {
 	httpClient  *http.Client
 	streamHTTP  *http.Client
 
-	todayCacheMu    sync.Mutex
-	todayCacheStats map[int64]cachedAccountCacheStats
+	todayCacheMu       sync.Mutex
+	todayCacheStats    map[int64]cachedAccountCacheStats
+	todayCacheFailures map[int64]time.Time
+	todayCacheFlights  map[int64]*todayAccountCacheStatsFlight
 }
 
 type cachedAccountCacheStats struct {
 	stats     model.AccountCacheStats
 	expiresAt time.Time
 }
+
+type todayAccountCacheStatsFlight struct {
+	done  chan struct{}
+	stats *model.AccountCacheStats
+	err   error
+}
+
+var errTodayAccountCacheStatsBackoff = errors.New("cache statistics retry is temporarily backed off")
 
 type ProbeOutcome struct {
 	Success      bool
@@ -247,10 +258,10 @@ func (c *Client) GetAccountPerformanceHealth(ctx context.Context) (model.Account
 	return health, nil
 }
 
-// enrichTodayAccountCacheStats uses the existing single-account HTTP endpoint
-// only for accounts that already have at least one request today. An account
-// with no requests has a known-zero cache rate, so it never needs an extra
-// main-service statistics query.
+// enrichTodayAccountCacheStats uses the indexed usage-statistics endpoint only
+// for accounts that already have at least one request today. An account with no
+// requests has a known-zero cache rate, so it never needs an extra main-service
+// statistics query.
 func (c *Client) enrichTodayAccountCacheStats(ctx context.Context, accountIDs []int64, stats map[string]model.WindowStats) {
 	if len(accountIDs) == 0 || stats == nil {
 		return
@@ -318,57 +329,125 @@ sendLoop:
 }
 
 func (c *Client) getTodayAccountCacheStats(ctx context.Context, accountID int64) (*model.AccountCacheStats, error) {
-	if cached, ok := c.loadTodayAccountCacheStats(accountID, time.Now()); ok {
-		return cached, nil
+	cached, flight, leader, err := c.acquireTodayAccountCacheStatsFlight(accountID, time.Now())
+	if cached != nil || err != nil {
+		return cached, err
+	}
+	if !leader {
+		select {
+		case <-flight.done:
+			if flight.stats == nil {
+				return nil, flight.err
+			}
+			return cloneAccountCacheStats(*flight.stats), flight.err
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}
 
-	var response struct {
-		Models []struct {
-			InputTokens         int64 `json:"input_tokens"`
-			CacheCreationTokens int64 `json:"cache_creation_tokens"`
-			CacheReadTokens     int64 `json:"cache_read_tokens"`
-		} `json:"models"`
+	cacheStats, err := c.fetchTodayAccountCacheStats(ctx, accountID)
+	c.completeTodayAccountCacheStatsFlight(accountID, flight, cacheStats, err, time.Now())
+	if cacheStats == nil {
+		return nil, err
 	}
-	path := "/admin/accounts/" + strconv.FormatInt(accountID, 10) + "/stats?days=1"
-	if err := c.adminJSON(ctx, http.MethodGet, path, nil, &response); err != nil {
+	return cloneAccountCacheStats(*cacheStats), err
+}
+
+func (c *Client) acquireTodayAccountCacheStatsFlight(accountID int64, now time.Time) (
+	cached *model.AccountCacheStats,
+	flight *todayAccountCacheStatsFlight,
+	leader bool,
+	err error,
+) {
+	c.todayCacheMu.Lock()
+	defer c.todayCacheMu.Unlock()
+
+	entry, ok := c.todayCacheStats[accountID]
+	if ok && now.Before(entry.expiresAt) {
+		return cloneAccountCacheStats(entry.stats), nil, false, nil
+	}
+	if ok {
+		delete(c.todayCacheStats, accountID)
+	}
+
+	if retryAt, failed := c.todayCacheFailures[accountID]; failed {
+		if now.Before(retryAt) {
+			return nil, nil, false, errTodayAccountCacheStatsBackoff
+		}
+		delete(c.todayCacheFailures, accountID)
+	}
+
+	if flight = c.todayCacheFlights[accountID]; flight != nil {
+		return nil, flight, false, nil
+	}
+	if c.todayCacheFlights == nil {
+		c.todayCacheFlights = make(map[int64]*todayAccountCacheStatsFlight)
+	}
+	flight = &todayAccountCacheStatsFlight{done: make(chan struct{})}
+	c.todayCacheFlights[accountID] = flight
+	return nil, flight, true, nil
+}
+
+func (c *Client) completeTodayAccountCacheStatsFlight(
+	accountID int64,
+	flight *todayAccountCacheStatsFlight,
+	stats *model.AccountCacheStats,
+	err error,
+	now time.Time,
+) {
+	c.todayCacheMu.Lock()
+	defer c.todayCacheMu.Unlock()
+
+	if err == nil && stats != nil {
+		if c.todayCacheStats == nil {
+			c.todayCacheStats = make(map[int64]cachedAccountCacheStats)
+		}
+		c.todayCacheStats[accountID] = cachedAccountCacheStats{
+			stats:     *stats,
+			expiresAt: now.Add(todayAccountCacheStatsTTL),
+		}
+		delete(c.todayCacheFailures, accountID)
+	} else {
+		if c.todayCacheFailures == nil {
+			c.todayCacheFailures = make(map[int64]time.Time)
+		}
+		c.todayCacheFailures[accountID] = now.Add(todayAccountCacheStatsRetryBackoff)
+	}
+
+	if stats != nil {
+		flight.stats = cloneAccountCacheStats(*stats)
+	}
+	flight.err = err
+	delete(c.todayCacheFlights, accountID)
+	close(flight.done)
+}
+
+func (c *Client) fetchTodayAccountCacheStats(ctx context.Context, accountID int64) (*model.AccountCacheStats, error) {
+	var response struct {
+		InputTokens         int64 `json:"total_input_tokens"`
+		CacheCreationTokens int64 `json:"total_cache_creation_tokens"`
+		CacheReadTokens     int64 `json:"total_cache_read_tokens"`
+	}
+	query := url.Values{
+		"account_id": {strconv.FormatInt(accountID, 10)},
+		"period":     {"today"},
+	}
+	if err := c.adminJSON(ctx, http.MethodGet, "/admin/usage/stats?"+query.Encode(), nil, &response); err != nil {
 		return nil, err
 	}
 
-	cacheStats := model.AccountCacheStats{}
-	for _, item := range response.Models {
-		cacheStats.InputTokens += max(item.InputTokens, 0)
-		cacheStats.CacheCreationTokens += max(item.CacheCreationTokens, 0)
-		cacheStats.CacheReadTokens += max(item.CacheReadTokens, 0)
+	cacheStats := model.AccountCacheStats{
+		InputTokens:         max(response.InputTokens, 0),
+		CacheCreationTokens: max(response.CacheCreationTokens, 0),
+		CacheReadTokens:     max(response.CacheReadTokens, 0),
 	}
-	cacheStats.PromptTokens = cacheStats.InputTokens + cacheStats.CacheCreationTokens + cacheStats.CacheReadTokens
+	// Match the usage-record page: cache writes are displayed separately and do
+	// not participate in the cache-hit denominator.
+	cacheStats.PromptTokens = cacheStats.InputTokens + cacheStats.CacheReadTokens
 	if cacheStats.PromptTokens > 0 {
 		cacheStats.HitRate = float64(cacheStats.CacheReadTokens) / float64(cacheStats.PromptTokens) * 100
 	}
-	c.storeTodayAccountCacheStats(accountID, cacheStats, time.Now().Add(todayAccountCacheStatsTTL))
-	return cloneAccountCacheStats(cacheStats), nil
-}
-
-func (c *Client) loadTodayAccountCacheStats(accountID int64, now time.Time) (*model.AccountCacheStats, bool) {
-	c.todayCacheMu.Lock()
-	defer c.todayCacheMu.Unlock()
-	entry, ok := c.todayCacheStats[accountID]
-	if !ok {
-		return nil, false
-	}
-	if !now.Before(entry.expiresAt) {
-		delete(c.todayCacheStats, accountID)
-		return nil, false
-	}
-	return cloneAccountCacheStats(entry.stats), true
-}
-
-func (c *Client) storeTodayAccountCacheStats(accountID int64, stats model.AccountCacheStats, expiresAt time.Time) {
-	c.todayCacheMu.Lock()
-	defer c.todayCacheMu.Unlock()
-	if c.todayCacheStats == nil {
-		c.todayCacheStats = make(map[int64]cachedAccountCacheStats)
-	}
-	c.todayCacheStats[accountID] = cachedAccountCacheStats{stats: stats, expiresAt: expiresAt}
+	return &cacheStats, nil
 }
 
 func cloneAccountCacheStats(stats model.AccountCacheStats) *model.AccountCacheStats {

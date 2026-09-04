@@ -354,9 +354,10 @@ type WindowStats struct {
 }
 
 // AccountCacheStats is the optional, sidecar-only daily prompt-cache
-// projection. A nil projection means the existing Sub2API account statistics
+// projection. A nil projection means the existing Sub2API usage-statistics
 // endpoint could not be read; a non-nil projection with PromptTokens == 0 is a
-// known zero-percent result.
+// known zero-percent result. PromptTokens uses the same cache-hit denominator
+// as the Sub2API usage-record page: input plus cache-read tokens.
 type AccountCacheStats struct {
 	InputTokens         int64   `json:"input_tokens"`
 	CacheCreationTokens int64   `json:"cache_creation_tokens"`
