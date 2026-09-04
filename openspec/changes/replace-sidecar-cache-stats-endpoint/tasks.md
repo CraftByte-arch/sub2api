@@ -11,4 +11,4 @@
 ## 3. Verification and release
 
 - [x] 3.1 Add focused client tests for source path/query, formula, idle accounts, concurrent reads, and failed-read backoff.
-- [ ] 3.2 Run focused tests and static checks, build the sidecar-only image, deploy it to HC2, and verify the main Sub2API container is unchanged.
+- [x] 3.2 Run focused tests and static checks, build the sidecar-only image, deploy it to HC2, and verify the main Sub2API container is unchanged.
