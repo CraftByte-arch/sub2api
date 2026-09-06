@@ -690,6 +690,8 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKeyReader(
 		safeErr := sanitizeUpstreamErrorMessage(err.Error())
 		setOpsUpstreamError(c, 0, safeErr, "")
 		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+			ProxyID:            opsUpstreamProxyID(account),
+			ProxyName:          opsUpstreamProxyName(account),
 			Platform:           account.Platform,
 			AccountID:          account.ID,
 			AccountName:        account.Name,
@@ -709,6 +711,8 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKeyReader(
 		upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
 		if s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMsg, respBody) {
 			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+				ProxyID:            opsUpstreamProxyID(account),
+				ProxyName:          opsUpstreamProxyName(account),
 				Platform:           account.Platform,
 				AccountID:          account.ID,
 				AccountName:        account.Name,
@@ -741,6 +745,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKeyReader(
 			if streamCount > 0 {
 				return &OpenAIForwardResult{
 					RequestID:        resp.Header.Get("x-request-id"),
+					UpstreamHeaders:  resp.Header,
 					Usage:            streamUsage,
 					Model:            requestModel,
 					UpstreamModel:    upstreamModel,
@@ -762,6 +767,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKeyReader(
 		firstTokenMs = ttft
 		return &OpenAIForwardResult{
 			RequestID:        resp.Header.Get("x-request-id"),
+			UpstreamHeaders:  resp.Header,
 			Usage:            usage,
 			Model:            requestModel,
 			UpstreamModel:    upstreamModel,
@@ -775,7 +781,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKeyReader(
 			ImageOutputSizes: imageOutputSizes,
 		}, nil
 	} else {
-		nonStreamUsage, nonStreamCount, nonStreamSizes, err := s.handleOpenAIImagesNonStreamingResponse(resp, c)
+		nonStreamUsage, nonStreamCount, nonStreamSizes, err := s.handleOpenAIImagesNonStreamingResponse(upstreamCtx, resp, c, account, parsed)
 		if err != nil {
 			return nil, err
 		}
@@ -785,6 +791,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKeyReader(
 		}
 		return &OpenAIForwardResult{
 			RequestID:        resp.Header.Get("x-request-id"),
+			UpstreamHeaders:  resp.Header,
 			Usage:            usage,
 			Model:            requestModel,
 			UpstreamModel:    upstreamModel,
@@ -950,11 +957,18 @@ func cloneMultipartHeader(src textproto.MIMEHeader) textproto.MIMEHeader {
 	return dst
 }
 
-func (s *OpenAIGatewayService) handleOpenAIImagesNonStreamingResponse(resp *http.Response, c *gin.Context) (OpenAIUsage, int, []string, error) {
+func (s *OpenAIGatewayService) handleOpenAIImagesNonStreamingResponse(
+	ctx context.Context,
+	resp *http.Response,
+	c *gin.Context,
+	account *Account,
+	parsed *OpenAIImagesRequest,
+) (OpenAIUsage, int, []string, error) {
 	body, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
 	if err != nil {
 		return OpenAIUsage{}, 0, nil, err
 	}
+	body = s.backfillOpenAIImagesB64JSON(ctx, account, parsed, body)
 	responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 	contentType := "application/json"
 	if s.cfg != nil && !s.cfg.Security.ResponseHeaders.Enabled {
