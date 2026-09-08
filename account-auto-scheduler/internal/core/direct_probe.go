@@ -449,7 +449,7 @@ func setDirectProbeHeaders(req *http.Request, snapshot model.DirectProbeSnapshot
 
 func newDirectProbeHTTPClient(proxyURL *url.URL, responseHeaderTimeout time.Duration) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.Proxy = nil
+	transport.Proxy = http.ProxyFromEnvironment
 	transport.MaxIdleConns = 8
 	transport.MaxIdleConnsPerHost = 2
 	transport.IdleConnTimeout = 30 * time.Second

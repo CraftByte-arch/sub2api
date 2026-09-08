@@ -19,7 +19,7 @@ services:
     networks:
       - sub2api-network
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8091/healthz"]
+      test: ["CMD", "wget", "-Y", "off", "-qO-", "http://127.0.0.1:8091/healthz"]
       interval: 15s
       timeout: 3s
       retries: 5

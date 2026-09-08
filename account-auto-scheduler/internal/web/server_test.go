@@ -58,6 +58,8 @@ type fakeConsoleCore struct {
 	exportCalls     []int64
 	exportToken     string
 	exportIdentity  core.ForwardedIdentity
+	testStarted     chan struct{}
+	testRelease     chan struct{}
 }
 
 type groupBindingCall struct {
@@ -134,6 +136,12 @@ func (f *fakeConsoleCore) GetAccount(_ context.Context, accountID int64) (model.
 }
 
 func (f *fakeConsoleCore) TestAccount(context.Context, int64, string, string) (core.ProbeOutcome, error) {
+	if f.testStarted != nil {
+		f.testStarted <- struct{}{}
+	}
+	if f.testRelease != nil {
+		<-f.testRelease
+	}
 	return core.ProbeOutcome{}, errors.New("not implemented")
 }
 
@@ -247,7 +255,9 @@ func TestStaticPageIsPublicButFramingIsRestricted(t *testing.T) {
 	}
 	if !strings.Contains(response.Body.String(), `class="binding-list-header"`) ||
 		!strings.Contains(response.Body.String(), "最终倍率") ||
-		!strings.Contains(response.Body.String(), "可用余额") {
+		!strings.Contains(response.Body.String(), "可用余额") ||
+		!strings.Contains(response.Body.String(), `id="scheduling-action-dialog"`) ||
+		!strings.Contains(response.Body.String(), `id="scheduling-action-confirm-button"`) {
 		t.Fatal("binding dialog is missing metric column headings")
 	}
 	if !strings.Contains(response.Body.String(), `id="upstream-connect-form" method="dialog" class="modal-panel" autocomplete="off"`) ||
@@ -296,6 +306,8 @@ func TestGroupsAppUsesFinalMultiplierInsteadOfProbeMultiplier(t *testing.T) {
 		"renderBindingMultiplier", "renderBindingBalance", "最终倍率", "可用余额",
 		"上游余额按当前分组倍率折算后的同步投影", "不限额度", "暂不可用",
 		"groupBalanceSummaries", "group_balance_summaries", "renderGroupBalanceSummary", "启用余额", "未启用余额",
+		"schedulableBusy", "schedulable-toggle", "schedulableState", "账号调度（全局）", "openSchedulingActionDialog",
+		"`/api/accounts/${accountID}/schedulable`", "自动检测规则仍保持启用", "影响该账号所在的所有分组",
 		"`/api/groups/${groupID}/accounts/${accountID}/protection`",
 		"`/api/groups/${groupID}/accounts/${accountID}/binding`",
 		"`/api/groups/${groupID}/protection-default`",
@@ -314,6 +326,7 @@ func TestGroupsAppUsesFinalMultiplierInsteadOfProbeMultiplier(t *testing.T) {
 		".admin-balance-card.insufficient", ".admin-balance-value", ".history-bar.balance-insufficient",
 		".binding-list-header", ".binding-metric", ".binding-metric.insufficient", ".binding-metric-label",
 		".group-balance-summary", ".group-balance-item.enabled", ".group-balance-item.disabled",
+		".schedulable-control", ".schedulable-control.busy", "@media (max-width: 420px)",
 		"@media (max-width: 620px)", ".multiplier-pair { grid-template-columns: minmax(0, 1fr); }",
 		".quota-list > div { grid-template-columns: 58px minmax(0, 1fr); }",
 	} {
@@ -797,6 +810,169 @@ func TestAutomationConfigSurfacesSchedulingRestoreFailure(t *testing.T) {
 	server.Handler().ServeHTTP(response, authenticatedRequest(http.MethodPost, "/api/configs", `{"account_id":9,"enabled":true}`))
 	if response.Code != http.StatusBadGateway || !strings.Contains(response.Body.String(), "SCHEDULING_UPDATE_FAILED") {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestManualSchedulingEndpointRequiresAdminAndWorksWithoutDetectionConfig(t *testing.T) {
+	backend := &fakeConsoleCore{
+		fakeAdminCore: fakeAdminCore{user: core.AdminUser{ID: 1, Role: "admin"}},
+		accounts: []model.UpstreamAccount{{
+			ID: 9, Name: "manual-key", Platform: "openai", Type: "apikey", Status: "active", Schedulable: true,
+		}},
+	}
+	server := newConsoleTestServer(t, backend, nil)
+
+	unauthorized := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPut, "/api/accounts/9/schedulable", strings.NewReader(`{"schedulable":false}`))
+	request.Header.Set("Content-Type", "application/json")
+	server.Handler().ServeHTTP(unauthorized, request)
+	if unauthorized.Code != http.StatusUnauthorized || backend.getAccountCalls != 0 || len(backend.setCalls) != 0 {
+		t.Fatalf("unauthorized update reached engine: status=%d get=%d set=%#v", unauthorized.Code, backend.getAccountCalls, backend.setCalls)
+	}
+
+	stopped := httptest.NewRecorder()
+	server.Handler().ServeHTTP(stopped, authenticatedRequest(http.MethodPut, "/api/accounts/9/schedulable", `{"schedulable":false}`))
+	if stopped.Code != http.StatusOK || backend.getAccountCalls != 1 || len(backend.setCalls) != 1 || backend.setCalls[0] {
+		t.Fatalf("stop status=%d get=%d set=%#v body=%s", stopped.Code, backend.getAccountCalls, backend.setCalls, stopped.Body.String())
+	}
+	var payload struct {
+		Account model.UpstreamAccount `json:"account"`
+	}
+	if err := json.NewDecoder(stopped.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Account.Schedulable || len(server.engine.List()) != 0 {
+		t.Fatalf("unexpected stop response or detection config creation: payload=%#v configs=%#v", payload, server.engine.List())
+	}
+}
+
+func TestManualSchedulingEndpointClearsAutomaticSuspensionOwnership(t *testing.T) {
+	backend := &fakeConsoleCore{
+		fakeAdminCore: fakeAdminCore{user: core.AdminUser{ID: 1, Role: "admin"}},
+		accounts: []model.UpstreamAccount{{
+			ID: 9, Name: "auto-paused-key", Platform: "openai", Type: "apikey", Status: "active", Schedulable: false,
+		}},
+	}
+	now := time.Now().UTC()
+	managed := model.ManagedAccount{
+		AccountID:            9,
+		Name:                 "auto-paused-key",
+		Platform:             "openai",
+		AccountStatus:        "active",
+		Schedulable:          false,
+		Policy:               model.DefaultPolicy(),
+		ManagedSuspended:     true,
+		ConsecutiveFailures:  3,
+		ConsecutiveSuccesses: 1,
+		LastError:            "upstream failed",
+		History:              []model.CheckResult{{ID: "previous", Status: model.CheckFailed, CheckedAt: now}},
+		CreatedAt:            now,
+		UpdatedAt:            now,
+	}
+	server := newConsoleTestServer(t, backend, &managed)
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, authenticatedRequest(http.MethodPut, "/api/accounts/9/schedulable", `{"schedulable":true}`))
+	if response.Code != http.StatusOK || len(backend.setCalls) != 1 || !backend.setCalls[0] {
+		t.Fatalf("status=%d set=%#v body=%s", response.Code, backend.setCalls, response.Body.String())
+	}
+	stored := server.engine.List()[0]
+	if !stored.Schedulable || stored.ManagedSuspended || stored.ConsecutiveFailures != 0 || stored.ConsecutiveSuccesses != 0 || !stored.Policy.Enabled || len(stored.History) != 1 || stored.LastError != "upstream failed" {
+		t.Fatalf("manual restore did not preserve detection state correctly: %#v", stored)
+	}
+}
+
+func TestManualSchedulingEndpointValidatesRequestAndMapsFailures(t *testing.T) {
+	tests := []struct {
+		name       string
+		body       string
+		prepare    func(*fakeConsoleCore)
+		wantStatus int
+		wantCode   string
+	}{
+		{name: "missing schedulable", body: `{}`, wantStatus: http.StatusBadRequest, wantCode: "INVALID_REQUEST"},
+		{name: "invalid schedulable type", body: `{"schedulable":"yes"}`, wantStatus: http.StatusBadRequest, wantCode: "INVALID_REQUEST"},
+		{name: "unknown field", body: `{"schedulable":false,"force":true}`, wantStatus: http.StatusBadRequest, wantCode: "INVALID_REQUEST"},
+		{
+			name: "OAuth account",
+			body: `{"schedulable":false}`,
+			prepare: func(backend *fakeConsoleCore) {
+				backend.accounts[0].Type = "oauth"
+			},
+			wantStatus: http.StatusBadRequest,
+			wantCode:   "UNSUPPORTED_ACCOUNT",
+		},
+		{
+			name: "inactive enable",
+			body: `{"schedulable":true}`,
+			prepare: func(backend *fakeConsoleCore) {
+				backend.accounts[0].Status = "inactive"
+				backend.accounts[0].Schedulable = false
+			},
+			wantStatus: http.StatusConflict,
+			wantCode:   "ACCOUNT_NOT_ACTIVE",
+		},
+		{
+			name: "Sub2API update failure",
+			body: `{"schedulable":false}`,
+			prepare: func(backend *fakeConsoleCore) {
+				backend.setErr = errors.New("upstream unavailable")
+			},
+			wantStatus: http.StatusBadGateway,
+			wantCode:   "SCHEDULING_UPDATE_FAILED",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			backend := &fakeConsoleCore{
+				fakeAdminCore: fakeAdminCore{user: core.AdminUser{ID: 1, Role: "admin"}},
+				accounts: []model.UpstreamAccount{{
+					ID: 9, Name: "key", Platform: "openai", Type: "apikey", Status: "active", Schedulable: true,
+				}},
+			}
+			if test.prepare != nil {
+				test.prepare(backend)
+			}
+			server := newConsoleTestServer(t, backend, nil)
+			response := httptest.NewRecorder()
+			server.Handler().ServeHTTP(response, authenticatedRequest(http.MethodPut, "/api/accounts/9/schedulable", test.body))
+			if response.Code != test.wantStatus || !strings.Contains(response.Body.String(), `"code":"`+test.wantCode+`"`) {
+				t.Fatalf("status=%d want=%d body=%s", response.Code, test.wantStatus, response.Body.String())
+			}
+		})
+	}
+}
+
+func TestManualSchedulingEndpointConflictsWithRunningCheck(t *testing.T) {
+	backend := &fakeConsoleCore{
+		fakeAdminCore: fakeAdminCore{user: core.AdminUser{ID: 1, Role: "admin"}},
+		accounts: []model.UpstreamAccount{{
+			ID: 9, Name: "checking-key", Platform: "openai", Type: "apikey", Status: "active", Schedulable: true,
+		}},
+		testStarted: make(chan struct{}),
+		testRelease: make(chan struct{}),
+	}
+	now := time.Now().UTC()
+	managed := model.ManagedAccount{
+		AccountID: 9, Name: "checking-key", Platform: "openai", AccountStatus: "active", Schedulable: true,
+		Policy: model.DefaultPolicy(), History: []model.CheckResult{}, CreatedAt: now, UpdatedAt: now,
+	}
+	server := newConsoleTestServer(t, backend, &managed)
+	ctx, cancel := context.WithCancel(context.Background())
+	server.engine.Start(ctx)
+	defer func() {
+		close(backend.testRelease)
+		cancel()
+		server.engine.Stop()
+	}()
+	if err := server.engine.Trigger(9); err != nil {
+		t.Fatal(err)
+	}
+	<-backend.testStarted
+
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, authenticatedRequest(http.MethodPut, "/api/accounts/9/schedulable", `{"schedulable":false}`))
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), `"code":"CHECK_RUNNING"`) || len(backend.setCalls) != 0 {
+		t.Fatalf("status=%d set=%#v body=%s", response.Code, backend.setCalls, response.Body.String())
 	}
 }
 

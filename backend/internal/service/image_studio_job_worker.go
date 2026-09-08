@@ -55,6 +55,7 @@ type imageStudioSettlementPayload struct {
 
 type imageStudioSettlementResult struct {
 	RequestID            string         `json:"request_id"`
+	UpstreamRequestID    *string        `json:"upstream_request_id,omitempty"`
 	ResponseID           string         `json:"response_id"`
 	Usage                OpenAIUsage    `json:"usage"`
 	Model                string         `json:"model"`
@@ -130,6 +131,7 @@ func marshalImageStudioSettlementPayloadWithSubscription(accountID int64, result
 		UpstreamEndpoint:   upstreamEndpoint,
 		Result: imageStudioSettlementResult{
 			RequestID:            result.RequestID,
+			UpstreamRequestID:    result.UpstreamRequestID,
 			ResponseID:           result.ResponseID,
 			Usage:                result.Usage,
 			Model:                result.Model,
@@ -171,6 +173,7 @@ func unmarshalImageStudioSettlementPayload(raw json.RawMessage) (*imageStudioSet
 	}
 	result := &OpenAIForwardResult{
 		RequestID:            payload.Result.RequestID,
+		UpstreamRequestID:    payload.Result.UpstreamRequestID,
 		ResponseID:           payload.Result.ResponseID,
 		Usage:                payload.Result.Usage,
 		Model:                payload.Result.Model,
@@ -701,6 +704,7 @@ func (s *ImageStudioJobService) forwardExecutionJob(ctx context.Context, job Ima
 	if storedEdit && selection.Account.Type == AccountTypeOAuth {
 		upstreamEndpoint = openAIResponsesEndpoint
 	}
+	result.UpstreamRequestID = usageUpstreamRequestIDPtr(selection.Account, result.UpstreamHeaders, result.OpenAIWSMode)
 	return &imageStudioForwardOutcome{
 		result:             result,
 		rawBody:            append([]byte(nil), recorder.Body.Bytes()...),
@@ -802,6 +806,7 @@ func (s *ImageStudioJobService) forwardResponsesJob(ctx context.Context, job Ima
 	if recorder.Code >= 400 {
 		return nil, fmt.Errorf("upstream request failed with status %d", recorder.Code)
 	}
+	result.UpstreamRequestID = usageUpstreamRequestIDPtr(selection.Account, result.UpstreamHeaders, result.OpenAIWSMode)
 	return &imageStudioForwardOutcome{
 		result:             result,
 		rawBody:            append([]byte(nil), recorder.Body.Bytes()...),

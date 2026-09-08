@@ -1716,9 +1716,6 @@ func (s *BillingService) applyModelSpecificPricingPolicyEx(model string, pricing
 	isGPT56 := isOpenAIGPT56Model(normalized)
 	needsMaxReasoningEffortMultiplier := isClaudeFable51Model(model) && pricing.MaxReasoningEffortMultiplier == nil
 	usesLegacyLongContextPricing := usesOpenAILegacyLongContextPricing(normalized)
-	if !isGPT56 && !usesLegacyLongContextPricing {
-		return pricing
-	}
 	runtime := OpenAILongContextBillingRuntime{
 		Enabled:          true,
 		Threshold:        defaultOpenAILongContextBillingThreshold,

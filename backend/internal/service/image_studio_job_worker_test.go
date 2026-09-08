@@ -1055,6 +1055,71 @@ func TestImageStudioJobServiceIgnoresNonLegacyAndAlreadyMaterializedJobs(t *test
 	require.Zero(t, repo.persistLegacyCalls)
 }
 
+func TestImageStudioForwardCapturesUpstreamRequestIDBeforeSettlement(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, protocol := range []string{"images", "responses"} {
+		for _, header := range []string{"", "x-provider-request-id"} {
+			t.Run(protocol+"/"+header, func(t *testing.T) {
+				resetOpenAIAdvancedSchedulerSettingCacheForTest()
+				t.Cleanup(resetOpenAIAdvancedSchedulerSettingCacheForTest)
+				account := Account{
+					ID: 77, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+					Status: StatusActive, Schedulable: true, Concurrency: 1,
+					Credentials: map[string]any{"api_key": "test-key"},
+					Extra:       map[string]any{AccountExtraUpstreamRequestIDHeader: header},
+				}
+				responseBody := `{"data":[{"b64_json":"aW1hZ2U="}],"usage":{"input_tokens":1,"output_tokens":1}}`
+				body := []byte(`{"model":"gpt-image-1","prompt":"draw","response_format":"b64_json"}`)
+				if protocol == "responses" {
+					responseBody = `{"id":"resp-image","object":"response","status":"completed","model":"gpt-5","output":[],"usage":{"input_tokens":1,"output_tokens":1}}`
+					body = []byte(`{"model":"gpt-5","input":"draw","stream":false}`)
+				}
+				upstream := &httpUpstreamRecorder{resp: &http.Response{
+					StatusCode: http.StatusOK,
+					Header: http.Header{
+						"Content-Type":          {"application/json"},
+						"X-Provider-Request-Id": {" provider-audit-id "},
+						"X-Request-Id":          {"transport-request-id"},
+						"Set-Cookie":            {"private-session"},
+					},
+					Body: io.NopCloser(strings.NewReader(responseBody)),
+				}}
+				gateway := &OpenAIGatewayService{
+					cfg:                &config.Config{},
+					accountRepo:        schedulerTestOpenAIAccountRepo{accounts: []Account{account}},
+					cache:              &schedulerTestGatewayCache{},
+					concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{}),
+					httpUpstream:       upstream,
+				}
+				svc := &ImageStudioJobService{openAIGateway: gateway}
+				job := ImageStudioJob{Mode: ImageStudioJobModeGenerate}
+				apiKey := &APIKey{ID: 41}
+				var outcome *imageStudioForwardOutcome
+				var err error
+				if protocol == "responses" {
+					outcome, err = svc.forwardResponsesJob(context.Background(), job, apiKey, body)
+				} else {
+					outcome, err = svc.forwardExecutionJob(context.Background(), job, apiKey, &imageStudioExecutionInput{Payload: body})
+				}
+				require.NoError(t, err)
+				require.NotNil(t, outcome)
+				raw, err := marshalImageStudioSettlementPayload(outcome.accountID, outcome.result, outcome.channelUsageFields, outcome.inboundEndpoint, outcome.upstreamEndpoint)
+				require.NoError(t, err)
+				require.NotContains(t, string(raw), "private-session")
+				_, restored, err := unmarshalImageStudioSettlementPayload(raw)
+				require.NoError(t, err)
+				require.Nil(t, restored.UpstreamHeaders)
+				if header == "" {
+					require.Nil(t, restored.UpstreamRequestID)
+				} else {
+					require.NotNil(t, restored.UpstreamRequestID)
+					require.Equal(t, "provider-audit-id", *restored.UpstreamRequestID)
+				}
+			})
+		}
+	}
+}
+
 func TestImageStudioJobServiceSettleUsesUnifiedUsageAndActualCost(t *testing.T) {
 	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
 	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true}}
@@ -1080,13 +1145,15 @@ func TestImageStudioJobServiceSettleUsesUnifiedUsageAndActualCost(t *testing.T) 
 		},
 		User: &User{ID: 42},
 	}
+	upstreamRequestID := "provider-audit-id"
 	settlementPayload, err := marshalImageStudioSettlementPayload(
 		77,
 		&OpenAIForwardResult{
-			RequestID:  "volatile-upstream-id",
-			Model:      "gpt-image-1",
-			ImageCount: 1,
-			ImageSize:  "1024x1024",
+			RequestID:         "volatile-upstream-id",
+			UpstreamRequestID: &upstreamRequestID,
+			Model:             "gpt-image-1",
+			ImageCount:        1,
+			ImageSize:         "1024x1024",
 		},
 		ChannelUsageFields{ChannelID: 8, OriginalModel: "image-alias", ChannelMappedModel: "gpt-image-1"},
 		"/v1/images/generations",
@@ -1121,6 +1188,8 @@ func TestImageStudioJobServiceSettleUsesUnifiedUsageAndActualCost(t *testing.T) 
 	require.Positive(t, repo.chargedAmountUSD)
 	require.InDelta(t, usageRepo.lastLog.ActualCost, repo.chargedAmountUSD, 1e-12)
 	require.Equal(t, int64(8), *usageRepo.lastLog.ChannelID)
+	require.Equal(t, &upstreamRequestID, usageRepo.lastLog.UpstreamRequestID,
+		"the captured audit ID must survive settlement even if the account no longer configures the header")
 }
 
 func TestImageStudioJobServiceSettleResolvesActiveSubscription(t *testing.T) {
@@ -1267,10 +1336,12 @@ func TestImageStudioJobServiceSettlingRetrySkipsUpstreamAndRequeuesCompletionFai
 		User: &User{ID: 42},
 	}
 	apiKeyService := NewAPIKeyService(&imageStudioAPIKeyRepoStub{apiKey: apiKey}, nil, nil, nil, nil, nil, nil)
+	upstreamRequestID := "provider-retry-audit-id"
 	settlementPayload, err := marshalImageStudioSettlementPayload(77, &OpenAIForwardResult{
-		Model:      "gpt-image-1",
-		ImageCount: 1,
-		ImageSize:  "1024x1024",
+		UpstreamRequestID: &upstreamRequestID,
+		Model:             "gpt-image-1",
+		ImageCount:        1,
+		ImageSize:         "1024x1024",
 	}, ChannelUsageFields{}, "/v1/images/generations", "/v1/images/generations")
 	require.NoError(t, err)
 
@@ -1291,6 +1362,7 @@ func TestImageStudioJobServiceSettlingRetrySkipsUpstreamAndRequeuesCompletionFai
 	require.Equal(t, 1, billingRepo.calls)
 	require.Equal(t, 1, repo.markSettlementRetryableCalls)
 	require.Equal(t, "settlement_failed", repo.retryErrorCode)
+	require.Equal(t, &upstreamRequestID, usageRepo.lastLog.UpstreamRequestID)
 }
 
 func TestImageStudioJobServiceExistingReceiptCompletesWithoutMutableDependencies(t *testing.T) {
@@ -1770,6 +1842,67 @@ func TestImageStudioSettlementPayloadRoundTripPreservesBillingMetadata(t *testin
 	require.Equal(t, result.FirstTokenMs, restored.FirstTokenMs)
 	require.Equal(t, result.ImageSizeBreakdown, restored.ImageSizeBreakdown)
 	require.Nil(t, restored.ResponseHeaders)
+	require.Nil(t, restored.UpstreamRequestID)
+}
+
+func TestImageStudioSettlementPayloadPreservesOnlyConfiguredUpstreamRequestID(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		header string
+		wsMode bool
+		wantID string
+	}{
+		{name: "configured", header: "x-provider-request-id", wantID: "provider-id"},
+		{name: "unconfigured"},
+		{name: "missing header", header: "x-missing"},
+		{name: "websocket", header: "x-provider-request-id", wsMode: true},
+		{name: "long ID", header: "x-long-id", wantID: strings.Repeat("a", maxUsageUpstreamRequestIDLen)},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			account := &Account{Extra: map[string]any{AccountExtraUpstreamRequestIDHeader: tt.header}}
+			headers := http.Header{
+				"X-Provider-Request-Id": {" provider-id "},
+				"X-Long-Id":             {strings.Repeat("a", 200)},
+				"X-Request-Id":          {"unconfigured-request-id"},
+				"Set-Cookie":            {"private-session"},
+				"Authorization":         {"private-token"},
+			}
+			result := &OpenAIForwardResult{
+				Model:             "gpt-image-1",
+				OpenAIWSMode:      tt.wsMode,
+				UpstreamHeaders:   headers,
+				ResponseHeaders:   headers,
+				UpstreamRequestID: usageUpstreamRequestIDPtr(account, headers, tt.wsMode),
+			}
+			raw, err := marshalImageStudioSettlementPayload(77, result, ChannelUsageFields{}, "", "")
+			require.NoError(t, err)
+			for _, secret := range []string{"private-session", "private-token", "unconfigured-request-id", "Set-Cookie", "Authorization"} {
+				require.NotContains(t, string(raw), secret)
+			}
+			_, restored, err := unmarshalImageStudioSettlementPayload(raw)
+			require.NoError(t, err)
+			require.Nil(t, restored.UpstreamHeaders)
+			require.Nil(t, restored.ResponseHeaders)
+			if tt.wantID == "" {
+				require.Nil(t, restored.UpstreamRequestID)
+				require.NotContains(t, string(raw), "upstream_request_id")
+			} else {
+				require.NotNil(t, restored.UpstreamRequestID)
+				require.Equal(t, tt.wantID, *restored.UpstreamRequestID)
+			}
+		})
+	}
+}
+
+func TestImageStudioSettlementPayloadAcceptsLegacyPayloadWithoutUpstreamRequestID(t *testing.T) {
+	raw := json.RawMessage(`{"version":1,"account_id":77,"result":{"request_id":"legacy-id","model":"gpt-image-1","image_count":1}}`)
+	payload, result, err := unmarshalImageStudioSettlementPayload(raw)
+	require.NoError(t, err)
+	require.Equal(t, int64(77), payload.AccountID)
+	require.Equal(t, "legacy-id", result.RequestID)
+	require.Equal(t, 1, result.ImageCount)
+	require.Nil(t, result.UpstreamRequestID)
+	require.Nil(t, result.UpstreamHeaders)
 }
 
 func TestImageStudioSettlementPayloadPreservesSubscriptionID(t *testing.T) {

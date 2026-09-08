@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api-account-auto-scheduler/internal/model"
@@ -25,6 +26,10 @@ const (
 	maxSSEEventBytes     = 20 << 20
 	maxResponseTextBytes = 4 << 10
 	menuItemID           = "account-auto-scheduler"
+
+	todayAccountCacheStatsTTL         = time.Minute
+	todayAccountCacheStatsTimeout     = 10 * time.Second
+	todayAccountCacheStatsConcurrency = 8
 )
 
 type Client struct {
@@ -32,6 +37,14 @@ type Client struct {
 	adminAPIKey string
 	httpClient  *http.Client
 	streamHTTP  *http.Client
+
+	todayCacheMu    sync.Mutex
+	todayCacheStats map[int64]cachedAccountCacheStats
+}
+
+type cachedAccountCacheStats struct {
+	stats     model.AccountCacheStats
+	expiresAt time.Time
 }
 
 type ProbeOutcome struct {
@@ -222,7 +235,110 @@ func (c *Client) GetTodayStatsBatch(ctx context.Context, accountIDs []int64) (ma
 			stats[accountID] = value
 		}
 	}
+	c.enrichTodayAccountCacheStats(ctx, ids, stats)
 	return stats, nil
+}
+
+func (c *Client) enrichTodayAccountCacheStats(ctx context.Context, accountIDs []int64, stats map[string]model.WindowStats) {
+	if len(accountIDs) == 0 || stats == nil {
+		return
+	}
+
+	enrichmentCtx, cancel := context.WithTimeout(ctx, todayAccountCacheStatsTimeout)
+	defer cancel()
+
+	workerCount := min(todayAccountCacheStatsConcurrency, len(accountIDs))
+	jobs := make(chan int64)
+	var workers sync.WaitGroup
+	var statsMu sync.Mutex
+	workers.Add(workerCount)
+	for range workerCount {
+		go func() {
+			defer workers.Done()
+			for accountID := range jobs {
+				cacheStats, err := c.getTodayAccountCacheStats(enrichmentCtx, accountID)
+				if err != nil || cacheStats == nil {
+					continue
+				}
+				key := strconv.FormatInt(accountID, 10)
+				statsMu.Lock()
+				value := stats[key]
+				value.Cache = cacheStats
+				stats[key] = value
+				statsMu.Unlock()
+			}
+		}()
+	}
+
+sendLoop:
+	for _, accountID := range accountIDs {
+		select {
+		case jobs <- accountID:
+		case <-enrichmentCtx.Done():
+			break sendLoop
+		}
+	}
+	close(jobs)
+	workers.Wait()
+}
+
+func (c *Client) getTodayAccountCacheStats(ctx context.Context, accountID int64) (*model.AccountCacheStats, error) {
+	if cached, ok := c.loadTodayAccountCacheStats(accountID, time.Now()); ok {
+		return cached, nil
+	}
+
+	var response struct {
+		Models []struct {
+			InputTokens         int64 `json:"input_tokens"`
+			CacheCreationTokens int64 `json:"cache_creation_tokens"`
+			CacheReadTokens     int64 `json:"cache_read_tokens"`
+		} `json:"models"`
+	}
+	path := "/admin/accounts/" + strconv.FormatInt(accountID, 10) + "/stats?days=1"
+	if err := c.adminJSON(ctx, http.MethodGet, path, nil, &response); err != nil {
+		return nil, err
+	}
+
+	cacheStats := model.AccountCacheStats{}
+	for _, item := range response.Models {
+		cacheStats.InputTokens += max(item.InputTokens, 0)
+		cacheStats.CacheCreationTokens += max(item.CacheCreationTokens, 0)
+		cacheStats.CacheReadTokens += max(item.CacheReadTokens, 0)
+	}
+	cacheStats.PromptTokens = cacheStats.InputTokens + cacheStats.CacheCreationTokens + cacheStats.CacheReadTokens
+	if cacheStats.PromptTokens > 0 {
+		cacheStats.HitRate = float64(cacheStats.CacheReadTokens) / float64(cacheStats.PromptTokens) * 100
+	}
+	c.storeTodayAccountCacheStats(accountID, cacheStats, time.Now().Add(todayAccountCacheStatsTTL))
+	return cloneAccountCacheStats(cacheStats), nil
+}
+
+func (c *Client) loadTodayAccountCacheStats(accountID int64, now time.Time) (*model.AccountCacheStats, bool) {
+	c.todayCacheMu.Lock()
+	defer c.todayCacheMu.Unlock()
+	entry, ok := c.todayCacheStats[accountID]
+	if !ok {
+		return nil, false
+	}
+	if !now.Before(entry.expiresAt) {
+		delete(c.todayCacheStats, accountID)
+		return nil, false
+	}
+	return cloneAccountCacheStats(entry.stats), true
+}
+
+func (c *Client) storeTodayAccountCacheStats(accountID int64, stats model.AccountCacheStats, expiresAt time.Time) {
+	c.todayCacheMu.Lock()
+	defer c.todayCacheMu.Unlock()
+	if c.todayCacheStats == nil {
+		c.todayCacheStats = make(map[int64]cachedAccountCacheStats)
+	}
+	c.todayCacheStats[accountID] = cachedAccountCacheStats{stats: stats, expiresAt: expiresAt}
+}
+
+func cloneAccountCacheStats(stats model.AccountCacheStats) *model.AccountCacheStats {
+	copy := stats
+	return &copy
 }
 
 func (c *Client) GetPassiveUsage(ctx context.Context, accountID int64) (model.AccountUsageInfo, error) {

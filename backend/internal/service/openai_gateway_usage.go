@@ -362,12 +362,16 @@ func (s *OpenAIGatewayService) recordUsageDetailed(ctx context.Context, input *O
 		)
 	}
 
+	upstreamRequestID := usageUpstreamRequestIDPtr(account, result.UpstreamHeaders, result.OpenAIWSMode)
+	if result.UpstreamRequestID != nil && !result.OpenAIWSMode {
+		upstreamRequestID = result.UpstreamRequestID
+	}
 	usageLog := &UsageLog{
 		UserID:                   user.ID,
 		APIKeyID:                 apiKey.ID,
 		AccountID:                account.ID,
 		RequestID:                requestID,
-		UpstreamRequestID:        usageUpstreamRequestIDPtr(account, result.UpstreamHeaders, result.OpenAIWSMode),
+		UpstreamRequestID:        upstreamRequestID,
 		Model:                    result.Model,
 		RequestedModel:           requestedModel,
 		UpstreamModel:            optionalTrimmedStringPtr(result.UpstreamModel),

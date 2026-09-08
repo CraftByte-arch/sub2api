@@ -162,6 +162,10 @@ type balanceAlertRequest struct {
 	Threshold *float64 `json:"threshold"`
 }
 
+type schedulableRequest struct {
+	Schedulable *bool `json:"schedulable"`
+}
+
 type groupBindingRequest struct {
 	Bound *bool `json:"bound"`
 }
@@ -260,6 +264,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/overview", s.requireAdmin(http.HandlerFunc(s.handleOverview)))
 	mux.Handle("GET /api/accounts", s.requireAdmin(http.HandlerFunc(s.handleAccounts)))
 	mux.Handle("GET /api/accounts/{accountID}/usage", s.requireAdmin(http.HandlerFunc(s.handleAccountUsage)))
+	mux.Handle("PUT /api/accounts/{accountID}/schedulable", s.requireAdmin(http.HandlerFunc(s.handleSetAccountSchedulable)))
 	mux.Handle("GET /api/notifications", s.requireAdmin(http.HandlerFunc(s.handleNotificationSettings)))
 	mux.Handle("PUT /api/notifications", s.requireAdmin(http.HandlerFunc(s.handleSaveNotificationSettings)))
 	mux.Handle("DELETE /api/notifications", s.requireAdmin(http.HandlerFunc(s.handleClearNotificationSettings)))
@@ -667,6 +672,34 @@ func (s *Server) handleAccountUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"usage": usage})
+}
+
+func (s *Server) handleSetAccountSchedulable(w http.ResponseWriter, r *http.Request) {
+	accountID, err := pathAccountID(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_ACCOUNT", err.Error())
+		return
+	}
+	request, err := decodeSchedulableRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		return
+	}
+	updated, err := s.engine.SetManualSchedulable(r.Context(), accountID, *request.Schedulable)
+	if err != nil {
+		switch {
+		case errors.Is(err, engine.ErrUnsupportedAccount):
+			writeError(w, http.StatusBadRequest, "UNSUPPORTED_ACCOUNT", "仅支持 API Key 添加的账号")
+		case errors.Is(err, engine.ErrAccountStatusInactive):
+			writeError(w, http.StatusConflict, "ACCOUNT_NOT_ACTIVE", "账号状态不是 active，无法启用调度")
+		case errors.Is(err, engine.ErrAlreadyRunning):
+			writeError(w, http.StatusConflict, "CHECK_RUNNING", "该账号正在检测，请稍后再修改调度状态")
+		default:
+			writeError(w, http.StatusBadGateway, "SCHEDULING_UPDATE_FAILED", err.Error())
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"account": updated})
 }
 
 func (s *Server) handleGroupBinding(w http.ResponseWriter, r *http.Request) {
@@ -1286,6 +1319,24 @@ func decodePolicyRequest(r *http.Request) (policyRequest, error) {
 	var extra any
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
 		return policyRequest{}, errors.New("无效的配置: 请求只能包含一个 JSON 对象")
+	}
+	return request, nil
+}
+
+func decodeSchedulableRequest(r *http.Request) (schedulableRequest, error) {
+	defer func() { _ = r.Body.Close() }()
+	decoder := json.NewDecoder(io.LimitReader(r.Body, (8<<10)+1))
+	decoder.DisallowUnknownFields()
+	var request schedulableRequest
+	if err := decoder.Decode(&request); err != nil {
+		return schedulableRequest{}, fmt.Errorf("无效的调度请求: %w", err)
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		return schedulableRequest{}, errors.New("无效的调度请求: 请求只能包含一个 JSON 对象")
+	}
+	if request.Schedulable == nil {
+		return schedulableRequest{}, errors.New("必须提供 schedulable")
 	}
 	return request, nil
 }

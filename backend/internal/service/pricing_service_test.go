@@ -130,6 +130,66 @@ func TestBillingServiceGPT6AstraUsesOfficialPricingAcrossTiersAndLongContext(t *
 	}
 }
 
+func TestBillingServiceGPT6AstraCorrectsStalePriorityPricing(t *testing.T) {
+	for _, model := range []string{"gpt-6-astra", "openai/gpt-6-astra", "gpt-6"} {
+		t.Run(model, func(t *testing.T) {
+			catalog := newStubPricingServiceFromJSON(t, gpt6AstraCatalogJSON)
+			entry := catalog.pricingData["gpt-6-astra"]
+			entry.InputCostPerTokenPriority = entry.InputCostPerToken * 3
+			entry.OutputCostPerTokenPriority = entry.OutputCostPerToken * 3
+			entry.CacheCreationInputTokenCostPriority = entry.CacheCreationInputTokenCost * 3
+			entry.CacheReadInputTokenCostPriority = entry.CacheReadInputTokenCost * 3
+			original := *entry
+			svc := NewBillingService(&config.Config{}, catalog)
+
+			pricing, err := svc.GetModelPricing(model)
+			require.NoError(t, err)
+			require.InDelta(t, pricing.InputPricePerToken*2, pricing.InputPricePerTokenPriority, 1e-12)
+			require.InDelta(t, pricing.OutputPricePerToken*2, pricing.OutputPricePerTokenPriority, 1e-12)
+			require.InDelta(t, pricing.CacheCreationPricePerToken*2, pricing.CacheCreationPricePerTokenPriority, 1e-12)
+			require.InDelta(t, pricing.CacheReadPricePerToken*2, pricing.CacheReadPricePerTokenPriority, 1e-12)
+			require.Equal(t, 272_000, pricing.LongContextInputThreshold)
+			require.InDelta(t, 2.0, pricing.LongContextInputMultiplier, 1e-12)
+			require.InDelta(t, 1.5, pricing.LongContextOutputMultiplier, 1e-12)
+			require.Equal(t, original, *entry, "normalization must not mutate the shared catalog")
+
+			tokens := UsageTokens{InputTokens: 100, OutputTokens: 10, CacheCreationTokens: 20, CacheReadTokens: 30}
+			standard, err := svc.CalculateCost(model, tokens, 1)
+			require.NoError(t, err)
+			fast, err := svc.CalculateCostWithServiceTier(model, tokens, 1, "priority")
+			require.NoError(t, err)
+			require.InDelta(t, standard.TotalCost*2, fast.TotalCost, 1e-12)
+		})
+	}
+}
+
+func TestBillingServiceFablePricingPolicyPreservesExplicitMultiplier(t *testing.T) {
+	svc := NewBillingService(&config.Config{}, nil)
+	explicitMultiplier := 4.0
+	for _, multiplier := range []*float64{nil, &explicitMultiplier} {
+		pricing := &ModelPricing{
+			InputPricePerToken:           10e-6,
+			MaxReasoningEffortMultiplier: multiplier,
+			LongContextPolicyExplicit:    true,
+			LongContextInputThreshold:    123_456,
+			LongContextInputMultiplier:   2.7,
+			LongContextOutputMultiplier:  1.8,
+		}
+		original := *pricing
+		resolved := svc.applyModelSpecificPricingPolicyEx("claude-fable-5-1", pricing, false)
+		require.NotNil(t, resolved.MaxReasoningEffortMultiplier)
+		want := 3.0
+		if multiplier != nil {
+			want = *multiplier
+		}
+		require.Equal(t, want, *resolved.MaxReasoningEffortMultiplier)
+		require.Equal(t, original.LongContextInputThreshold, resolved.LongContextInputThreshold)
+		require.Equal(t, original.LongContextInputMultiplier, resolved.LongContextInputMultiplier)
+		require.Equal(t, original.LongContextOutputMultiplier, resolved.LongContextOutputMultiplier)
+		require.Equal(t, original, *pricing)
+	}
+}
+
 func TestGPT6AstraDedicatedFallbacksUseOfficialRates(t *testing.T) {
 	tests := []struct {
 		name string
