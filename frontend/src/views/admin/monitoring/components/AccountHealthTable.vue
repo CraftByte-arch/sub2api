@@ -73,6 +73,7 @@ function platformLabel(platform: PerformanceAccount['platform']) {
     kimi: 'Kimi',
     zhipu: 'Zhipu AI',
     deepseek: 'DeepSeek',
+    minimax: 'MiniMax',
   })[platform]
 }
 
