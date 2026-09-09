@@ -484,6 +484,18 @@
     </article>
   </dialog>
 
+  <dialog id="upstream-bound-groups-dialog" class="modal wide-modal" aria-labelledby="upstream-bound-groups-title" aria-describedby="upstream-bound-groups-name">
+    <article class="modal-panel">
+      <header class="modal-header">
+        <div><h2 id="upstream-bound-groups-title">上游可用分组</h2><p id="upstream-bound-groups-name"></p></div>
+        <button class="icon-button ghost" type="button" data-close-dialog="upstream-bound-groups-dialog" title="关闭" aria-label="关闭"><svg class="icon"><use href="#icon-x"/></svg></button>
+      </header>
+      <div class="bound-groups-summary"><span id="upstream-bound-groups-count">尚无可用分组快照</span><span>已绑定项会显示上游 Key 与本地 API Key</span></div>
+      <div id="upstream-bound-groups-list" class="bound-groups-list"></div>
+      <footer class="modal-footer"><button class="button secondary" type="button" data-close-dialog="upstream-bound-groups-dialog">关闭</button></footer>
+    </article>
+  </dialog>
+
   <dialog id="upstream-delete-identity-dialog" class="modal small-modal">
     <article class="modal-panel">
       <header class="modal-header"><div><h2>删除登录身份</h2><p id="upstream-delete-identity-name"></p></div></header>
