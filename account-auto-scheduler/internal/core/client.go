@@ -43,6 +43,11 @@ type Client struct {
 	todayCacheStats    map[int64]cachedAccountCacheStats
 	todayCacheFailures map[int64]time.Time
 	todayCacheFlights  map[int64]*todayAccountCacheStatsFlight
+
+	groupUsageMu       sync.Mutex
+	groupUsageCached   *model.GroupUsageSummarySnapshot
+	groupUsageCachedAt time.Time
+	groupUsageFlight   *groupUsageSummaryFlight
 }
 
 type cachedAccountCacheStats struct {

@@ -16,6 +16,8 @@
     user: null,
     groups: [],
     accounts: [],
+    groupUsage: null,
+    groupUsageByID: new Map(),
     groupBalanceSummaries: {},
     groupProtectionDefaults: {},
     groupBalanceThresholds: {},
@@ -298,6 +300,8 @@
       const response = await api('/api/overview')
       state.groups = [...(response.groups || [])].sort((a, b) => (a.sort_order - b.sort_order) || (a.id - b.id))
       state.accounts = response.accounts || []
+      state.groupUsage = response.group_usage || null
+      state.groupUsageByID = new Map((state.groupUsage?.items || []).map((item) => [Number(item.group_id), item]))
       state.groupBalanceSummaries = response.group_balance_summaries || {}
       state.groupProtectionDefaults = response.group_protection_defaults || {}
       state.groupBalanceThresholds = response.group_balance_thresholds || {}
@@ -476,6 +480,35 @@
   function renderGroupOnlineBadge(groupID) {
     const projection = onlineUsersGroupProjection(groupID)
     return `<span class="group-online-users${projection.available ? '' : ' unavailable'}${projection.partial ? ' partial' : ''}" data-group-online-count="${escapeAttr(groupID)}" title="${escapeAttr(projection.title)}" aria-label="${escapeAttr(projection.ariaLabel)}"><span class="group-online-dot" aria-hidden="true"></span><span data-group-online-label>在线 ${escapeHTML(projection.label)}</span></span>`
+  }
+
+  function groupUsageProjection(groupID) {
+    const normalizedID = Number(groupID)
+    if (!Number.isInteger(normalizedID) || normalizedID <= 0) return null
+    const snapshot = state.groupUsage
+    if (!snapshot) return null
+    if (snapshot.ready !== true) {
+      const notice = snapshot.notice || '分组今日消耗暂不可用'
+      return { available: false, stale: false, value: '暂不可用', title: notice }
+    }
+    const summary = state.groupUsageByID.get(normalizedID)
+    const cost = Number(summary?.today_cost)
+    if (!summary || !Number.isFinite(cost)) {
+      return { available: false, stale: Boolean(snapshot.stale), value: '暂不可用', title: snapshot.notice || '该分组今日消耗暂不可用' }
+    }
+    const stale = Boolean(snapshot.stale)
+    const queriedAt = snapshot.queried_at ? `更新于 ${formatDateTime(snapshot.queried_at)}` : ''
+    const titleParts = [`今日实际消耗：${formatCurrency(cost)}`]
+    if (stale) titleParts.push('当前为最近一次成功结果')
+    if (queriedAt) titleParts.push(queriedAt)
+    if (snapshot.notice) titleParts.push(snapshot.notice)
+    return { available: true, stale, value: formatCurrency(cost), title: titleParts.join('；') }
+  }
+
+  function renderGroupTodayUsage(groupID) {
+    const projection = groupUsageProjection(groupID)
+    if (!projection) return ''
+    return `<span class="group-today-usage${projection.available ? '' : ' unavailable'}${projection.stale ? ' stale' : ''}" title="${escapeAttr(projection.title)}" aria-label="${escapeAttr(`今日消耗 ${projection.value}`)}"><span>今日消耗</span><strong>${escapeHTML(projection.value)}</strong></span>`
   }
 
   function renderOnlineUsers() {
@@ -724,6 +757,7 @@
       ? `<span class="group-balance-alert-badge" title="账号未设置账号级阈值时继承此分组默认值">余额告警 ${escapeHTML(formatCurrency(groupBalanceThreshold))}</span>`
       : ''
     const groupOnlineBadge = renderGroupOnlineBadge(view.group.id)
+    const groupTodayUsage = renderGroupTodayUsage(view.group.id)
     const bindButton = view.synthetic ? '' : `
       <button class="summary-button group-manage-button" type="button" data-action="bind-group" data-group-key="${escapeAttr(view.key)}" title="管理当前分组的 API Key 账号">
         <svg class="icon"><use href="#icon-users"/></svg>
@@ -765,7 +799,8 @@
               <p>${escapeHTML(view.group.description || `#${view.group.id || 'ungrouped'}`)}</p>
             </div>
           </div>
-          <div class="group-stats" aria-label="分组账号状态与在线人数">
+          <div class="group-stats" aria-label="分组账号状态、在线人数与今日消耗">
+            ${groupTodayUsage}
             ${groupOnlineBadge}
             <span><strong class="text-success">${formatInteger(enabled)}</strong> / ${formatInteger(total)} 可用</span>
             <span>${formatInteger(apiKeys.length)} API Key</span>

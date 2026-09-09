@@ -114,7 +114,7 @@ func TestSub2APIAdapterConnectAndSync(t *testing.T) {
 			}
 			writeTestJSON(t, w, http.StatusOK, map[string]any{"code": 0, "data": map[string]any{"id": 7, "email": "operator@example.com", "balance": 42.5}})
 		case "/api/v1/groups/available":
-			writeTestJSON(t, w, http.StatusOK, map[string]any{"code": 0, "data": []any{map[string]any{"id": 5, "name": "OpenAI", "rate_multiplier": 1.2}}})
+			writeTestJSON(t, w, http.StatusOK, map[string]any{"code": 0, "data": []any{map[string]any{"id": 5, "name": "OpenAI", "platform": "openai", "rate_multiplier": 1.2}}})
 		case "/api/v1/groups/rates":
 			writeTestJSON(t, w, http.StatusOK, map[string]any{"code": 0, "data": map[string]any{"5": 0.8}})
 		case "/api/v1/keys":
@@ -151,6 +151,9 @@ func TestSub2APIAdapterConnectAndSync(t *testing.T) {
 	}
 	if result.Balance == nil || result.Balance.Amount != 42.5 || result.Balance.Unit != "USD" || result.Balance.Source != "sub2api" {
 		t.Fatalf("unexpected sync balance: %#v", result.Balance)
+	}
+	if !result.GroupsFetched || len(result.Groups) != 1 || result.Groups[0].ID != "5" || result.Groups[0].Name != "OpenAI" || result.Groups[0].Platform != "openai" || result.Groups[0].Multiplier == nil || *result.Groups[0].Multiplier != 0.8 || result.Groups[0].MultiplierSource != "user_override" {
+		t.Fatalf("unexpected group snapshots: %#v", result.Groups)
 	}
 	key := result.Keys[0]
 	if key.Plaintext != "sk-sub2api-complete-secret" || strings.Contains(key.Key.MaskedKey, "complete-secret") {
@@ -417,7 +420,7 @@ func TestNewAPIAdapterConnectAndSyncMaskedAndDynamicKeys(t *testing.T) {
 			writeTestJSON(t, w, http.StatusOK, map[string]any{"success": true, "data": map[string]any{"quota_per_unit": 500000}})
 		case "/api/user/self/groups":
 			writeTestJSON(t, w, http.StatusOK, map[string]any{"success": true, "data": map[string]any{
-				"vip": map[string]any{"ratio": 1.25, "desc": "VIP"}, "auto": map[string]any{"ratio": "自动", "desc": "Auto"},
+				"vip": map[string]any{"ratio": 1.25, "platform": "anthropic", "desc": "VIP"}, "auto": map[string]any{"ratio": "自动", "platform": "grok", "desc": "Auto"},
 			}})
 		case "/api/token/":
 			writeTestJSON(t, w, http.StatusOK, map[string]any{"success": true, "data": map[string]any{
@@ -457,6 +460,21 @@ func TestNewAPIAdapterConnectAndSyncMaskedAndDynamicKeys(t *testing.T) {
 	}
 	if result.Balance == nil || result.Balance.Amount != 5 || result.Balance.Unit != "USD" || result.Balance.RawQuota == nil || result.Balance.QuotaPerUnit == nil {
 		t.Fatalf("unexpected normalized sync balance: %#v", result.Balance)
+	}
+	groups := make(map[string]model.RemoteGroup, len(result.Groups))
+	for _, group := range result.Groups {
+		groups[group.ID] = group
+	}
+	if !result.GroupsFetched || len(groups) != 2 {
+		t.Fatalf("unexpected NewAPI group snapshots: %#v", result.Groups)
+	}
+	vipGroup := groups["vip"]
+	if vipGroup.Platform != "anthropic" || vipGroup.Multiplier == nil || *vipGroup.Multiplier != 1.25 || vipGroup.MultiplierSource != "group" {
+		t.Fatalf("unexpected fixed group snapshot: %#v", vipGroup)
+	}
+	autoGroup := groups["auto"]
+	if autoGroup.Platform != "grok" || autoGroup.Multiplier != nil || autoGroup.MultiplierSource != "dynamic" {
+		t.Fatalf("unexpected dynamic group snapshot: %#v", autoGroup)
 	}
 	auto := result.Keys[0]
 	if auto.Key.MatchAvailable || auto.Plaintext != "" || auto.Key.Multiplier == nil || *auto.Key.Multiplier != 1.7 || auto.Key.MultiplierSource != "dynamic" || auto.Key.MultiplierObserved == nil {

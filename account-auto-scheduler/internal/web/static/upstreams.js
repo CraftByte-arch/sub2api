@@ -205,7 +205,8 @@
       const localText = (upstream.local_accounts || []).map((account) => `${account.name || ''} ${account.platform || ''} ${account.id}`).join(' ')
       const identityText = (upstream.identities || []).map((identity) => {
         const keys = (identity.keys || []).map((key) => `${key.name || ''} ${key.masked_key || ''} ${key.group || ''}`).join(' ')
-        return `${identity.label || ''} ${identity.principal || ''} ${keys}`
+        const groups = (identity.groups || []).map((group) => `${group.id || ''} ${group.name || ''} ${group.platform || ''} ${group.multiplier_source || ''}`).join(' ')
+        return `${identity.label || ''} ${identity.principal || ''} ${keys} ${groups}`
       }).join(' ')
       return `${upstream.name || ''} ${upstream.base_url || ''} ${upstream.type || ''} ${localText} ${identityText}`.toLocaleLowerCase().includes(state.search)
     }
@@ -214,6 +215,7 @@
       const identities = upstream.identities || []
       const localAccounts = [...(upstream.local_accounts || [])].sort(sortLocalAccounts)
       const keys = keyCountFor(upstream)
+      const groups = groupCountFor(upstream)
       const currentState = siteState(upstream)
       const expanded = Boolean(state.search) || state.expanded.has(upstream.id)
       const contentID = `upstream-content-${safeID(upstream.id)}`
@@ -239,7 +241,7 @@
           <div class="upstream-summary">
             ${renderUpstreamBalanceSummary(upstream)}
             <div class="upstream-secondary-summary">
-              ${renderResourceSummary(localAccounts.length, identities.length, keys)}
+              ${renderResourceSummary(localAccounts.length, identities.length, keys, groups)}
               ${renderRechargeSummary(upstream)}
             </div>
           </div>
@@ -271,6 +273,7 @@
     function renderIdentity(upstream, identity) {
       const status = identityStatus(identity.status)
       const keys = identity.keys || []
+      const groups = identity.groups || []
       const busy = state.busy.has(`identity:${upstream.id}:${identity.id}`)
       const identityLabel = identity.label || '登录身份'
       const principal = String(identity.principal || '').trim()
@@ -288,11 +291,32 @@
           </div>
         </div>
         ${statusMessage}
+        ${renderIdentityGroups(upstream, identity, groups)}
         <section class="identity-key-section" aria-label="${escapeAttr(`${identity.label || '登录身份'} 的上游 Key`)}">
           <div class="identity-key-heading"><h4>上游 Key <span class="section-count">${formatInteger(keys.length)}</span></h4><span>${keys.length ? '该登录身份的最近 Key 快照' : '尚无 Key 快照'}</span></div>
           ${keys.length ? `<div class="remote-key-header" aria-hidden="true"><span>Key</span><span>状态与分组</span><span>用量 / 额度</span><span>最终倍率</span><span>本地绑定 / 同步</span></div>${keys.map((key) => renderRemoteKey(upstream, identity, key)).join('')}` : '<div class="identity-empty">请同步该登录身份以获取 Key 快照</div>'}
         </section>
       </section>`
+    }
+
+    function renderIdentityGroups(upstream, identity, groups) {
+      const identityLabel = identity.label || '登录身份'
+      return `<section class="identity-group-section" aria-label="${escapeAttr(`${identityLabel} 的可用分组`)}">
+        <div class="identity-group-heading"><h4>可用分组 <span class="section-count">${formatInteger(groups.length)}</span></h4><span>${groups.length ? '当前登录身份同步到的全部可用分组' : '同步该登录身份后获取可用分组'}</span></div>
+        ${groups.length ? `<div class="remote-group-header" aria-hidden="true"><span>分组</span><span>类型</span><span>分组倍率</span><span>最终倍率</span><span>快照状态</span></div>${groups.map((group) => renderRemoteGroup(upstream, group)).join('')}` : '<div class="identity-empty">尚无可用分组快照</div>'}
+      </section>`
+    }
+
+    function renderRemoteGroup(upstream, group) {
+      const rate = formatRemoteGroupRate(group, upstream)
+      const snapshot = group.stale ? { label: '旧快照', tone: 'warning' } : { label: '已同步', tone: 'success' }
+      return `<div class="remote-group-row">
+        <div class="remote-group-cell"><span class="mobile-field-label">分组</span><strong>${escapeHTML(group.name || group.id || '未命名分组')}</strong><span>${escapeHTML(group.id || '上游未返回分组标识')}</span></div>
+        <div class="remote-group-cell"><span class="mobile-field-label">类型</span>${renderRemoteGroupPlatformBadge(group.platform)}</div>
+        <div class="remote-group-cell"><span class="mobile-field-label">分组倍率</span><strong class="rate-value">${escapeHTML(rate.groupPrimary)}</strong><span>${escapeHTML(rate.groupSecondary)}</span></div>
+        <div class="remote-group-cell"><span class="mobile-field-label">最终倍率</span><strong class="rate-value">${escapeHTML(rate.finalPrimary)}</strong><span>${escapeHTML(rate.finalSecondary)}</span></div>
+        <div class="remote-group-cell"><span class="mobile-field-label">快照状态</span>${renderStatusPill(snapshot.label, snapshot.tone)}<span>${escapeHTML(formatDateTime(group.synced_at))}</span></div>
+      </div>`
     }
 
     function renderRemoteKey(upstream, identity, key) {
@@ -1016,6 +1040,10 @@
       return (upstream.identities || []).reduce((total, identity) => total + (identity.keys || []).length, 0)
     }
 
+    function groupCountFor(upstream) {
+      return (upstream.identities || []).reduce((total, identity) => total + (identity.groups || []).length, 0)
+    }
+
     function siteState(upstream) {
       const identities = upstream.identities || []
       if (!identities.length) return { key: 'unconnected', label: '未连接', tone: 'neutral' }
@@ -1052,12 +1080,13 @@
       return `<div class="recharge-stat"><span class="upstream-summary-label">充值倍率</span><strong>${escapeHTML(formatMultiplier(rate))} CNY/USD</strong></div>`
     }
 
-    function renderResourceSummary(localAccountCount, identityCount, keyCount) {
+    function renderResourceSummary(localAccountCount, identityCount, keyCount, groupCount) {
       return `<div class="upstream-resource-summary">
         <span class="upstream-summary-label">资源</span>
         <div class="resource-summary-values">
           <span><strong>${formatInteger(localAccountCount)}</strong> 本地账号</span>
           <span><strong>${formatInteger(identityCount)}</strong> 登录身份</span>
+          <span><strong>${formatInteger(groupCount)}</strong> 分组</span>
           <span><strong>${formatInteger(keyCount)}</strong> Key</span>
         </div>
       </div>`
@@ -1155,6 +1184,42 @@
         primary: finalMultiplier === null ? '未计算' : `${formatMultiplier(finalMultiplier)}x`,
         secondary: `分组 ${groupLabel} × 充值 ${rechargeLabel}`,
         detail,
+      }
+    }
+
+    function renderRemoteGroupPlatformBadge(platform) {
+      const normalized = String(platform || '').trim().toLocaleLowerCase()
+      const metadata = {
+        openai: { label: 'OpenAI', tone: 'openai' },
+        anthropic: { label: 'Anthropic', tone: 'anthropic' },
+        gemini: { label: 'Gemini', tone: 'gemini' },
+        grok: { label: 'GROK', tone: 'grok' },
+      }[normalized] || { label: '未知类型', tone: 'unknown' }
+      return `<span class="remote-platform-badge ${metadata.tone}">${escapeHTML(metadata.label)}</span>`
+    }
+
+    function formatRemoteGroupRate(group, upstream) {
+      const groupMultiplier = numberOrNull(group.multiplier)
+      const rechargeMultiplier = numberOrNull(upstream.recharge_rate?.cny_per_usd)
+      const finalMultiplier = numberOrNull(group.final_multiplier)
+      const source = String(group.multiplier_source || '')
+      const sourceLabel = source === 'dynamic' ? '动态分组' : (source === 'user_override' ? '用户有效倍率' : (source === 'group' ? '分组固定倍率' : '上游未提供倍率'))
+      const groupPrimary = groupMultiplier === null ? (source === 'dynamic' ? '动态' : '未提供') : `${formatMultiplier(groupMultiplier)}x`
+      let finalSecondary
+      if (finalMultiplier !== null) {
+        finalSecondary = `分组 ${formatMultiplier(groupMultiplier)} × 充值 ${formatMultiplier(rechargeMultiplier)}`
+      } else if (source === 'dynamic') {
+        finalSecondary = '动态分组不设统一倍率'
+      } else if (groupMultiplier === null) {
+        finalSecondary = '上游未返回分组倍率'
+      } else {
+        finalSecondary = '请设置充值倍率'
+      }
+      return {
+        groupPrimary,
+        groupSecondary: sourceLabel,
+        finalPrimary: finalMultiplier === null ? '未计算' : `${formatMultiplier(finalMultiplier)}x`,
+        finalSecondary,
       }
     }
 

@@ -139,6 +139,37 @@ type RemoteKey struct {
 	SyncedAt           time.Time  `json:"synced_at"`
 }
 
+// RemoteGroup is an identity-scoped snapshot of one group that the upstream
+// account is currently allowed to use. It intentionally stays separate from a
+// RemoteKey: a group can be available even when that identity has no Key in it.
+type RemoteGroup struct {
+	ID               string    `json:"id"`
+	Name             string    `json:"name"`
+	Platform         string    `json:"platform,omitempty"`
+	Multiplier       *float64  `json:"multiplier,omitempty"`
+	MultiplierSource string    `json:"multiplier_source,omitempty"`
+	Stale            bool      `json:"stale,omitempty"`
+	SyncedAt         time.Time `json:"synced_at"`
+}
+
+// NormalizeRemoteGroupPlatform accepts only platform values explicitly
+// supplied by an upstream. Unknown values intentionally remain empty so the
+// management UI does not infer a platform from a group name.
+func NormalizeRemoteGroupPlatform(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "openai":
+		return "openai"
+	case "anthropic":
+		return "anthropic"
+	case "gemini":
+		return "gemini"
+	case "grok":
+		return "grok"
+	default:
+		return ""
+	}
+}
+
 // UpstreamBalance is the last successful account-level balance observation
 // for one authenticated upstream identity. It intentionally remains separate
 // from key quota and the administrator's recharge rate.
@@ -165,6 +196,7 @@ type UpstreamIdentity struct {
 	LastSuccessAt *time.Time             `json:"last_success_at,omitempty"`
 	Balance       *UpstreamBalance       `json:"balance,omitempty"`
 	Keys          map[string]RemoteKey   `json:"keys,omitempty"`
+	Groups        map[string]RemoteGroup `json:"groups,omitempty"`
 	CreatedAt     time.Time              `json:"created_at"`
 	UpdatedAt     time.Time              `json:"updated_at"`
 }

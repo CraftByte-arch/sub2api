@@ -85,6 +85,17 @@ type RemoteKeyView struct {
 	SyncedAt             time.Time  `json:"synced_at"`
 }
 
+type RemoteGroupView struct {
+	ID               string    `json:"id"`
+	Name             string    `json:"name"`
+	Platform         string    `json:"platform,omitempty"`
+	Multiplier       *float64  `json:"multiplier,omitempty"`
+	FinalMultiplier  *float64  `json:"final_multiplier,omitempty"`
+	MultiplierSource string    `json:"multiplier_source,omitempty"`
+	Stale            bool      `json:"stale,omitempty"`
+	SyncedAt         time.Time `json:"synced_at"`
+}
+
 type BalanceView struct {
 	Amount       float64   `json:"amount"`
 	Unit         string    `json:"unit"`
@@ -135,6 +146,7 @@ type IdentityView struct {
 	LastSuccessAt *time.Time                   `json:"last_success_at,omitempty"`
 	Balance       *BalanceView                 `json:"balance,omitempty"`
 	Keys          []RemoteKeyView              `json:"keys"`
+	Groups        []RemoteGroupView            `json:"groups"`
 	CreatedAt     time.Time                    `json:"created_at"`
 	UpdatedAt     time.Time                    `json:"updated_at"`
 }
@@ -928,6 +940,7 @@ func (m *Manager) syncIdentity(ctx context.Context, upstreamID, identityID strin
 		previous.Stale = true
 		normalizedKeys[keyID] = previous
 	}
+	normalizedGroups := normalizeRemoteGroups(result.Groups, now)
 	if err := m.store.UpdateUpstream(record.ID, func(upstream *model.ManagedUpstream) error {
 		item, exists := upstream.Identities[identity.ID]
 		if !exists {
@@ -935,6 +948,11 @@ func (m *Manager) syncIdentity(ctx context.Context, upstreamID, identityID strin
 		}
 		item.Credential = envelope
 		item.Keys = normalizedKeys
+		if result.GroupsFetched {
+			item.Groups = normalizedGroups
+		} else {
+			item.Groups = staleRemoteGroups(item.Groups)
+		}
 		item.Balance = freshBalance(result.Balance, now)
 		item.Principal = firstNonEmpty(result.Principal, item.Principal)
 		item.Status = model.IdentityStatusConnected
@@ -1344,6 +1362,7 @@ func (m *Manager) recordSyncFailure(upstreamID, identityID string, err error) er
 		identity.StatusMessage = failure.Message
 		identity.LastAttemptAt = &now
 		identity.Balance = staleBalance(identity.Balance)
+		identity.Groups = staleRemoteGroups(identity.Groups)
 		identity.UpdatedAt = now
 		upstream.Identities[identityID] = identity
 		upstream.UpdatedAt = now
@@ -1474,6 +1493,31 @@ func publicIdentity(identity model.UpstreamIdentity, rechargeRate *model.Upstrea
 		}
 		return left < right
 	})
+	groups := make([]RemoteGroupView, 0, len(identity.Groups))
+	for _, remoteGroup := range identity.Groups {
+		multiplier := finiteMultiplierValue(remoteGroup.Multiplier)
+		groups = append(groups, RemoteGroupView{
+			ID:               remoteGroup.ID,
+			Name:             remoteGroup.Name,
+			Platform:         remoteGroup.Platform,
+			Multiplier:       multiplier,
+			FinalMultiplier:  deriveFinalMultiplier(rechargeRate, multiplier),
+			MultiplierSource: remoteGroup.MultiplierSource,
+			Stale:            remoteGroup.Stale,
+			SyncedAt:         remoteGroup.SyncedAt,
+		})
+	}
+	sort.Slice(groups, func(i, j int) bool {
+		if groups[i].Stale != groups[j].Stale {
+			return !groups[i].Stale
+		}
+		left := strings.ToLower(firstNonEmpty(groups[i].Name, groups[i].ID))
+		right := strings.ToLower(firstNonEmpty(groups[j].Name, groups[j].ID))
+		if left == right {
+			return groups[i].ID < groups[j].ID
+		}
+		return left < right
+	})
 	return IdentityView{
 		ID:            identity.ID,
 		Label:         identity.Label,
@@ -1487,9 +1531,42 @@ func publicIdentity(identity model.UpstreamIdentity, rechargeRate *model.Upstrea
 		LastSuccessAt: identity.LastSuccessAt,
 		Balance:       publicBalance(identity.Balance),
 		Keys:          keys,
+		Groups:        groups,
 		CreatedAt:     identity.CreatedAt,
 		UpdatedAt:     identity.UpdatedAt,
 	}
+}
+
+func normalizeRemoteGroups(groups []model.RemoteGroup, syncedAt time.Time) map[string]model.RemoteGroup {
+	snapshots := make(map[string]model.RemoteGroup, len(groups))
+	for _, group := range groups {
+		group.ID = strings.TrimSpace(group.ID)
+		if group.ID == "" {
+			continue
+		}
+		group.Name = strings.TrimSpace(group.Name)
+		if group.Name == "" {
+			group.Name = group.ID
+		}
+		group.Platform = model.NormalizeRemoteGroupPlatform(group.Platform)
+		group.Multiplier = finiteMultiplierValue(group.Multiplier)
+		group.Stale = false
+		group.SyncedAt = syncedAt.UTC()
+		snapshots[group.ID] = group
+	}
+	return snapshots
+}
+
+func staleRemoteGroups(groups map[string]model.RemoteGroup) map[string]model.RemoteGroup {
+	if len(groups) == 0 {
+		return groups
+	}
+	snapshots := make(map[string]model.RemoteGroup, len(groups))
+	for groupID, group := range groups {
+		group.Stale = true
+		snapshots[groupID] = group
+	}
+	return snapshots
 }
 
 func publicBalance(balance *model.UpstreamBalance) *BalanceView {

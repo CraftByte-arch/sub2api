@@ -70,10 +70,12 @@ type SyncedKey struct {
 }
 
 type SyncResult struct {
-	Keys      []SyncedKey
-	Material  AuthMaterial
-	Principal string
-	Balance   *model.UpstreamBalance
+	Keys          []SyncedKey
+	Groups        []model.RemoteGroup
+	GroupsFetched bool
+	Material      AuthMaterial
+	Principal     string
+	Balance       *model.UpstreamBalance
 }
 
 type Adapter interface {

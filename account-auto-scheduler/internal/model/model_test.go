@@ -94,6 +94,23 @@ func TestNewUpstreamRechargeRateNormalizesBothInputModes(t *testing.T) {
 	}
 }
 
+func TestNormalizeRemoteGroupPlatformKeepsOnlyExplicitSupportedPlatforms(t *testing.T) {
+	tests := map[string]string{
+		" OpenAI ":  "openai",
+		"ANTHROPIC": "anthropic",
+		"gemini":    "gemini",
+		"Grok":      "grok",
+		"composite": "",
+		"custom":    "",
+		"":          "",
+	}
+	for input, want := range tests {
+		if got := NormalizeRemoteGroupPlatform(input); got != want {
+			t.Fatalf("NormalizeRemoteGroupPlatform(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
 func TestPolicyNormalizeUsesChannelMonitorPrompt(t *testing.T) {
 	policy := DefaultPolicy()
 	policy.Prompt = "  "

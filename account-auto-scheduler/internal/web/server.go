@@ -58,6 +58,13 @@ type accountPerformanceHealthConsole interface {
 	GetAccountPerformanceHealth(ctx context.Context) (model.AccountPerformanceCollectionHealth, error)
 }
 
+// groupUsageSummaryConsole is intentionally optional. This keeps the sidecar
+// compatible with older test doubles or older console implementations while
+// allowing the current Sub2API client to expose its existing rollup endpoint.
+type groupUsageSummaryConsole interface {
+	GetGroupUsageSummary(ctx context.Context) (model.GroupUsageSummarySnapshot, error)
+}
+
 type Options struct {
 	UIOrigin          string
 	PublicURL         string
@@ -493,6 +500,14 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	if s.notifications != nil {
 		groupBalanceThresholds = s.notifications.GroupBalanceThresholds()
 	}
+	var groupUsage *model.GroupUsageSummarySnapshot
+	if usageConsole, ok := s.console.(groupUsageSummaryConsole); ok {
+		snapshot, usageErr := usageConsole.GetGroupUsageSummary(r.Context())
+		if usageErr != nil {
+			s.logger.Warn("load group usage summary", "error", usageErr)
+		}
+		groupUsage = &snapshot
+	}
 	overviewAccounts := make([]overviewAccount, 0, len(accounts))
 	for _, account := range accounts {
 		// The overview uses only the administrator-configured upstream snapshot.
@@ -523,14 +538,18 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		overviewAccounts = append(overviewAccounts, item)
 	}
 	groupBalanceSummaries := projectGroupBalanceSummaries(overviewAccounts, logicalGroupIDs, groupProtections, time.Now().UTC())
-	writeJSON(w, http.StatusOK, map[string]any{
+	response := map[string]any{
 		"groups":                    groups,
 		"accounts":                  overviewAccounts,
 		"group_protection_defaults": groupProtectionDefaults,
 		"group_balance_thresholds":  groupBalanceThresholds,
 		"group_balance_summaries":   groupBalanceSummaries,
 		"actual_success":            actualSuccess,
-	})
+	}
+	if groupUsage != nil {
+		response["group_usage"] = groupUsage
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func appendOverviewNotice(existing, message string) string {

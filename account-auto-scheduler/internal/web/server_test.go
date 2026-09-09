@@ -38,6 +38,9 @@ type fakeConsoleCore struct {
 	accounts              []model.UpstreamAccount
 	groups                []model.UpstreamGroup
 	today                 map[string]model.WindowStats
+	groupUsage            model.GroupUsageSummarySnapshot
+	groupUsageErr         error
+	groupUsageCalls       int
 	onlineUsersSummary    model.OnlineUsersSummary
 	onlineUsers           model.OnlineUsersSnapshot
 	groupConsumption      model.GroupUserConsumptionSnapshot
@@ -89,6 +92,11 @@ func (f *fakeConsoleCore) ListGroups(context.Context) ([]model.UpstreamGroup, er
 
 func (f *fakeConsoleCore) GetTodayStatsBatch(context.Context, []int64) (map[string]model.WindowStats, error) {
 	return f.today, f.consoleErr
+}
+
+func (f *fakeConsoleCore) GetGroupUsageSummary(context.Context) (model.GroupUsageSummarySnapshot, error) {
+	f.groupUsageCalls++
+	return f.groupUsage, f.groupUsageErr
 }
 
 func (f *fakeConsoleCore) GetOnlineUsers(context.Context) (model.OnlineUsersSnapshot, error) {
@@ -556,6 +564,10 @@ func TestOverviewJoinsGroupsAccountsUsageAndConfig(t *testing.T) {
 			DetectedRate: &model.DetectedRate{Status: "operational", EffectiveMultiplier: float64Pointer(9.9)},
 		}},
 		today: map[string]model.WindowStats{"9": {Requests: 4, Tokens: 1200, Cost: 0.75}},
+		groupUsage: model.GroupUsageSummarySnapshot{
+			Ready: true, Source: "sub2api_group_usage_rollup", QueriedAt: time.Now().UTC(),
+			Items: []model.GroupUsageSummary{{GroupID: 7, TodayCost: 3.25}},
+		},
 	}
 	managed := model.ManagedAccount{
 		AccountID: 9, Name: "key", ManagedSuspended: true, Policy: model.DefaultPolicy(), CreatedAt: time.Now(), UpdatedAt: time.Now(),
@@ -580,6 +592,7 @@ func TestOverviewJoinsGroupsAccountsUsageAndConfig(t *testing.T) {
 			DetectedRate            *model.DetectedRate                   `json:"detected_rate"`
 		} `json:"accounts"`
 		GroupBalanceSummaries map[string]overviewGroupBalanceSummary `json:"group_balance_summaries"`
+		GroupUsage            model.GroupUsageSummarySnapshot        `json:"group_usage"`
 	}
 	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
 		t.Fatal(err)
@@ -595,6 +608,9 @@ func TestOverviewJoinsGroupsAccountsUsageAndConfig(t *testing.T) {
 	}
 	if summary := payload.GroupBalanceSummaries["7"]; summary.Disabled.AccountCount != 1 || summary.Disabled.UnavailableCount != 1 {
 		t.Fatalf("overview group balance summary is incorrect: %#v", payload.GroupBalanceSummaries)
+	}
+	if payload.GroupUsage.Items[0].GroupID != 7 || payload.GroupUsage.Items[0].TodayCost != 3.25 || backend.groupUsageCalls != 1 {
+		t.Fatalf("overview group usage summary is incorrect: %#v calls=%d", payload.GroupUsage, backend.groupUsageCalls)
 	}
 }
 

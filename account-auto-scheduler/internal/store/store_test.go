@@ -186,6 +186,71 @@ func TestStoreMigratesVersionTwoToLegacyDirectProbeDefaults(t *testing.T) {
 	}
 }
 
+func TestStoreMigratesRemoteGroupSnapshotStateAndDeepCopiesGroups(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	raw, err := json.Marshal(map[string]any{
+		"version": model.RemoteGroupSnapshotStateVersion,
+		"upstreams": map[string]any{
+			"up_existing": map[string]any{
+				"id": "up_existing", "name": "existing", "identities": map[string]any{
+					"identity": map[string]any{"id": "identity"},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	stateStore, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	upstream, err := stateStore.GetUpstream("up_existing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := upstream.Identities["identity"]
+	if identity.Groups == nil {
+		t.Fatal("legacy identity groups were not initialized")
+	}
+	multiplier := 0.8
+	identity.Groups["openai"] = model.RemoteGroup{ID: "openai", Name: "OpenAI", Multiplier: &multiplier}
+	upstream.Identities["identity"] = identity
+	if err := stateStore.PutUpstream(upstream); err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := stateStore.GetUpstream("up_existing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	*first.Identities["identity"].Groups["openai"].Multiplier = 9
+	second, err := stateStore.GetUpstream("up_existing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored := second.Identities["identity"].Groups["openai"]
+	if stored.Multiplier == nil || *stored.Multiplier != 0.8 {
+		t.Fatalf("remote group snapshot was mutated through clone: %#v", stored)
+	}
+
+	persistedRaw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var persisted model.State
+	if err := json.Unmarshal(persistedRaw, &persisted); err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Version != model.StateVersion {
+		t.Fatalf("persisted version = %d, want %d", persisted.Version, model.StateVersion)
+	}
+}
+
 func TestStoreDeepCopiesDirectProbeConfig(t *testing.T) {
 	stateStore, err := Open(filepath.Join(t.TempDir(), "state.json"))
 	if err != nil {

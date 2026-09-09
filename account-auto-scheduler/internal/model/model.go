@@ -9,11 +9,12 @@ import (
 )
 
 const (
-	StateVersion                           = 5
+	StateVersion                           = 6
 	LegacyStateVersion                     = 1
 	UpstreamStateVersion                   = 2
 	ProtectionStateVersion                 = 3
 	GroupProtectionDefaultStateVersion     = 4
+	RemoteGroupSnapshotStateVersion        = 5
 	HistoryLimit                           = 50
 	MinIntervalSeconds                     = 15
 	MaxIntervalSeconds                     = 86400
