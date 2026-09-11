@@ -45,6 +45,77 @@ type directProbeExporter interface {
 	ExportDirectProbeSnapshot(ctx context.Context, accountID int64, adminJWT string, identity core.ForwardedIdentity) (core.DirectProbeExport, error)
 }
 
+type ManualProbeResult struct {
+	Model   string            `json:"model"`
+	Outcome core.ProbeOutcome `json:"outcome"`
+	Error   string            `json:"error,omitempty"`
+}
+
+func (e *Engine) ManualProbe(ctx context.Context, accountID int64, adminJWT string, identity core.ForwardedIdentity, models []string, prompt, effort string) ([]ManualProbeResult, error) {
+	if !e.DirectProbeEnabled() {
+		return nil, errors.New("直连探测凭证加密未配置")
+	}
+	if len(models) == 0 || len(models) > 8 {
+		return nil, errors.New("模型数量必须在 1 到 8 个之间")
+	}
+	if _, err := e.store.Get(accountID); err != nil {
+		return nil, err
+	}
+	account, err := e.core.GetAccount(ctx, accountID)
+	if err != nil {
+		return nil, fmt.Errorf("读取账号失败: %w", err)
+	}
+	if !account.IsAPIKey() {
+		return nil, errors.New("仅支持 API Key 账号")
+	}
+	exporter, ok := e.core.(directProbeExporter)
+	if !ok {
+		return nil, errors.New("当前服务未启用直连探测授权导入")
+	}
+	exported, err := exporter.ExportDirectProbeSnapshot(ctx, accountID, adminJWT, identity)
+	if err != nil {
+		return nil, err
+	}
+	snapshot := exported.Snapshot
+	defer model.ClearDirectProbeSnapshot(&snapshot)
+	if snapshot.AccountID != accountID {
+		return nil, errors.New("账号导出内容与当前账号不一致")
+	}
+	prober, ok := e.core.(core.DirectProber)
+	if !ok {
+		return nil, errors.New("当前服务未启用直连上游探测")
+	}
+	if strings.TrimSpace(prompt) == "" {
+		prompt = model.DefaultPrompt
+	}
+	if len(prompt) > 8000 {
+		return nil, errors.New("提示词不能超过 8000 个字符")
+	}
+	policy := model.DefaultPolicy()
+	policy.Prompt, policy.ReasoningEffort, policy.LatencyLimitMS = prompt, effort, 120000
+	policy.Model = ""
+	normalized, err := policy.Normalize()
+	if err != nil {
+		return nil, err
+	}
+	policy = normalized
+	results := make([]ManualProbeResult, 0, len(models))
+	for _, requested := range models {
+		requested = strings.TrimSpace(requested)
+		if requested == "" || len(requested) > 200 {
+			return nil, errors.New("模型名称无效")
+		}
+		policy.Model = requested
+		outcome, probeErr := prober.ProbeDirect(ctx, snapshot, policy)
+		if probeErr != nil {
+			results = append(results, ManualProbeResult{Model: requested, Outcome: outcome, Error: probeErr.Error()})
+		} else {
+			results = append(results, ManualProbeResult{Model: requested, Outcome: outcome})
+		}
+	}
+	return results, nil
+}
+
 type EngineOption func(*Engine)
 
 // WithDirectProbeCredentials enables the explicit direct-upstream authorization

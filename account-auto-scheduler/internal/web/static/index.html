@@ -7,6 +7,7 @@
   <title>账号自动调度</title>
   <link rel="stylesheet" href="app.css">
   <script src="upstreams.js" defer></script>
+  <script src="group-access.js" defer></script>
   <script src="app.js" defer></script>
 </head>
 <body>
@@ -170,6 +171,47 @@
     </section>
   </main>
 
+  <dialog id="group-access-dialog" class="modal wide-modal" aria-labelledby="group-access-title">
+    <article class="modal-panel">
+      <header class="modal-header">
+        <div><h2 id="group-access-title">专属分组用户</h2><p id="group-access-target"></p></div>
+        <button type="button" class="icon-button ghost" data-close-dialog="group-access-dialog" aria-label="关闭用户权限弹窗"><svg class="icon"><use href="#icon-x"/></svg></button>
+      </header>
+      <div class="group-access-body">
+      <div class="group-access-toolbar">
+        <label class="field"><span>查看 / 从其他分组同步</span><select id="group-access-source"></select></label>
+        <label class="field"><span>搜索用户</span><input id="group-access-search" type="search" placeholder="用户名、邮箱或用户 ID"></label>
+        <button id="group-access-refresh" type="button" class="button secondary">刷新列表</button>
+      </div>
+      <p class="group-access-note">名单为明确授予分组权限的用户；禁用状态单独显示。同步只追加权限，不复制订阅、倍率或余额。同步期间请勿在主后台同时修改这些用户的分组权限。</p>
+      <div class="group-access-selection">
+        <button id="group-access-all" type="button" class="button secondary">全选全部可同步用户（跨页）</button>
+        <button id="group-access-clear" type="button" class="button secondary">清空选择</button>
+        <span id="group-access-count" role="status"></span>
+      </div>
+      <div class="group-access-scroll" id="group-access-scroll">
+        <table class="group-access-table">
+          <thead><tr><th scope="col">选择</th><th scope="col">用户</th><th scope="col">状态</th><th scope="col">目标分组权限 / 同步结果</th></tr></thead>
+          <tbody id="group-access-list"></tbody>
+        </table>
+      </div>
+      <p id="group-access-message" class="group-access-note" role="status" aria-live="polite"></p>
+      <section id="group-access-confirmation" class="group-access-confirmation" hidden aria-label="确认追加用户权限">
+        <p id="group-access-confirm-text"></p>
+        <button id="group-access-back" class="button secondary" type="button">返回选择</button>
+        <button id="group-access-confirm" class="button primary" type="button">确认追加权限</button>
+      </section>
+      </div>
+      <footer class="modal-footer group-access-footer">
+        <span id="group-access-page" class="page-label"></span>
+        <button id="group-access-prev" class="button secondary" type="button">上一页</button>
+        <button id="group-access-next" class="button secondary" type="button">下一页</button>
+        <button id="group-access-stop" class="button secondary" type="button" hidden>停止后续批次</button>
+        <button id="group-access-submit" class="button primary" type="button" disabled>同步所选用户</button>
+      </footer>
+    </article>
+  </dialog>
+
   <dialog id="config-dialog" class="modal small-modal">
     <form id="config-form" method="dialog" class="modal-panel">
       <header class="modal-header">
@@ -245,6 +287,20 @@
         </div>
       </footer>
     </article>
+  </dialog>
+  <dialog id="manual-probe-dialog" class="modal wide-modal">
+    <form method="dialog" class="modal-card" id="manual-probe-form">
+      <header class="modal-header"><div><h2>手动探测</h2><p id="manual-probe-account"></p></div><button class="icon-button ghost" data-close-dialog="manual-probe-dialog">×</button></header>
+      <div class="modal-body">
+        <label>模型（可多选）</label>
+        <div id="manual-probe-models" class="manual-probe-model-list"></div>
+        <input id="manual-probe-custom-model" placeholder="自定义模型名称（可选）">
+        <label>提示词</label><textarea id="manual-probe-prompt" rows="4" placeholder="留空使用默认检测提示词"></textarea>
+        <label>推理强度</label><select id="manual-probe-effort"><option value="">默认</option><option>none</option><option>minimal</option><option>low</option><option>medium</option><option>high</option><option>xhigh</option></select>
+        <p class="muted">手动探测会实际消耗上游额度。</p><div id="manual-probe-results" aria-live="polite"></div>
+      </div>
+      <footer class="modal-footer"><button type="button" class="button secondary" data-close-dialog="manual-probe-dialog">取消</button><button type="submit" class="button primary" id="manual-probe-submit">开始探测</button></footer>
+    </form>
   </dialog>
 
   <dialog id="online-users-dialog" class="modal wide-modal" aria-labelledby="online-users-title" aria-describedby="online-users-window-label">

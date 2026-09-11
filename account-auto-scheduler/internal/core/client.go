@@ -48,6 +48,7 @@ type Client struct {
 	groupUsageCached   *model.GroupUsageSummarySnapshot
 	groupUsageCachedAt time.Time
 	groupUsageFlight   *groupUsageSummaryFlight
+	groupAccessSyncMu  sync.Mutex
 }
 
 type cachedAccountCacheStats struct {

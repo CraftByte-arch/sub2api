@@ -70,6 +70,7 @@
   }
 
   const elements = {}
+  let groupAccessWorkspace
   let authRefreshPromise = null
   let authRedirecting = false
 
@@ -79,6 +80,7 @@
     cacheElements()
     captureEmbedContext()
     state.upstreamWorkspace = window.createUpstreamWorkspace({ api, showToast })
+    groupAccessWorkspace = window.createGroupAccessWorkspace({ api, getGroups: () => state.groups })
     bindEvents()
     if (!readStoredAccessToken() && !readStoredRefreshToken()) {
       redirectToLogin()
@@ -121,6 +123,7 @@
       'binding-search-input', 'binding-change-count', 'binding-list', 'binding-error', 'binding-save-button',
       'account-detail-dialog', 'account-detail-title', 'account-detail-group-name', 'account-detail-list',
       'account-detail-page-label', 'account-detail-prev', 'account-detail-next',
+      'manual-probe-dialog', 'manual-probe-form', 'manual-probe-account', 'manual-probe-models', 'manual-probe-custom-model', 'manual-probe-prompt', 'manual-probe-effort', 'manual-probe-results', 'manual-probe-submit',
       'online-users-dialog', 'online-users-window-label', 'online-users-summary', 'online-users-list', 'online-users-retry-button',
       'group-user-consumption-dialog', 'group-user-consumption-title', 'group-user-consumption-date',
       'group-user-consumption-summary', 'group-user-consumption-list', 'group-user-consumption-retry-button',
@@ -201,6 +204,7 @@
     })
     elements.bindingList.addEventListener('change', handleBindingChange)
     elements.bindingSaveButton.addEventListener('click', saveBindings)
+    elements.manualProbeForm.addEventListener('submit', submitManualProbe)
     elements.accountDetailPrev.addEventListener('click', () => changeDetailPage(-1))
     elements.accountDetailNext.addEventListener('click', () => changeDetailPage(1))
     document.querySelectorAll('[data-close-dialog]').forEach((button) => {
@@ -793,6 +797,9 @@
             <div class="group-identity">
               <div class="group-title-line">
                 <h2>${escapeHTML(view.group.name || `分组 ${view.group.id}`)}</h2>
+                ${view.group.id > 0 ? (view.group.is_exclusive
+                  ? `<button class="group-access-badge exclusive" type="button" data-action="group-access" data-group-key="${view.group.id}" aria-label="${escapeAttr(`查看 ${view.group.name} 的授权用户`)}">专属分组 · 用户</button>`
+                  : '<span class="group-access-badge">公开分组</span>') : ''}
                 <span class="platform-tag">${escapeHTML(view.group.platform || 'all')}</span>
                 ${groupStatus}${groupProtectionBadge}${groupBalanceBadge}
               </div>
@@ -950,7 +957,7 @@
       <button class="button secondary compact-account-action" type="button" data-action="edit-protection" ${protectionBusy ? 'disabled' : ''}>${escapeHTML(protectionLabel)}</button>
       ${protection?.status === 'rate_protected' && !protection.inherited ? `<button class="button warning compact-account-action" type="button" data-action="release-protection" ${protectionBusy ? 'disabled' : ''}>解除倍率保护</button>` : ''}
       <button class="button danger-outline compact-account-action" type="button" data-action="remove-binding" ${protectionBusy ? 'disabled' : ''}>移除绑定</button>` : ''
-    return `<button class="button secondary compact-account-action" type="button" data-action="edit">编辑余额告警</button>${relationActions}`
+    return `<button class="button primary compact-account-action" type="button" data-action="manual-probe">手动探测</button><button class="button secondary compact-account-action" type="button" data-action="edit">编辑余额告警</button>${relationActions}`
   }
 
   function renderActualSuccessCompact(account, groupID) {
@@ -1285,6 +1292,10 @@
     const button = event.target.closest('[data-action]')
     if (!button || button.tagName === 'INPUT') return
     const action = button.dataset.action
+    if (action === 'group-access') {
+      groupAccessWorkspace.open(Number(button.dataset.groupKey), button)
+      return
+    }
     if (action === 'toggle-group') {
       toggleGroup(button.dataset.groupKey)
       return
@@ -1316,6 +1327,7 @@
     if (!account) return
     button.closest('.account-action-menu')?.removeAttribute('open')
     switch (action) {
+      case 'manual-probe': openManualProbe(account); break
       case 'toggle-account-details': toggleAccountDetails(account.id, groupID); break
       case 'request-schedulable-toggle': openSchedulingActionDialog(account, !account.schedulable); break
       case 'edit': openEditDialog(account); break
@@ -1323,6 +1335,32 @@
       case 'release-protection': openBindingActionDialog('release', account, groupID); break
       case 'remove-binding': openBindingActionDialog('remove', account, groupID); break
     }
+  }
+
+  function openManualProbe(account) {
+    state.manualProbeAccount = account
+    elements.manualProbeAccount.textContent = account.name || `账号 ${account.id}`
+    const models = [...new Set([account.model, ...(account.models || []), 'gpt-4o-mini', 'claude-3-5-sonnet'])].filter(Boolean)
+    elements.manualProbeModels.innerHTML = models.map((m, i) => `<label class="manual-probe-model-option"><input type="checkbox" value="${escapeAttr(m)}" ${i === 0 ? 'checked' : ''}> ${escapeHTML(m)}</label>`).join('')
+    elements.manualProbeResults.innerHTML = ''
+    elements.manualProbeDialog.showModal()
+  }
+
+  async function submitManualProbe(event) {
+    event.preventDefault()
+    const account = state.manualProbeAccount
+    if (!account) return
+    const models = [...elements.manualProbeModels.querySelectorAll('input:checked')].map(x => x.value)
+    const custom = elements.manualProbeCustomModel.value.trim()
+    if (custom && !models.includes(custom)) models.push(custom)
+    if (!models.length || models.length > 8) { elements.manualProbeResults.textContent = '请选择 1 到 8 个模型'; return }
+    elements.manualProbeSubmit.disabled = true
+    elements.manualProbeResults.innerHTML = '<p>探测中，请稍候…</p>'
+    try {
+      const data = await api(`/api/accounts/${account.id}/manual-probe`, { method: 'POST', body: JSON.stringify({ models, prompt: elements.manualProbePrompt.value, reasoning_effort: elements.manualProbeEffort.value }) })
+      elements.manualProbeResults.innerHTML = data.results.map(r => `<div class="manual-probe-result ${r.outcome?.success ? 'success' : 'error'}"><strong>${escapeHTML(r.model)}</strong><span>${r.outcome?.success ? `成功 · ${escapeHTML(formatMilliseconds(r.outcome.latency))}` : escapeHTML(r.error || r.outcome?.error_message || '失败')}</span></div>`).join('')
+    } catch (error) { elements.manualProbeResults.textContent = error.message || '探测失败' }
+    finally { elements.manualProbeSubmit.disabled = false }
   }
 
   function toggleAccountDetails(accountID, groupID) {

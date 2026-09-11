@@ -57,6 +57,7 @@ func TestUpstreamGroupDialogShowsAllIdentityScopedRatesAndBindings(t *testing.T)
 		".bound-groups-summary", ".bound-groups-list", ".bound-group-identity", ".bound-group-table-header, .bound-group-row",
 		".remote-platform-badge.openai", ".remote-platform-badge.anthropic", ".remote-platform-badge.gemini", ".remote-platform-badge.grok",
 		".bound-group-row { grid-template-columns: repeat(2, minmax(0, 1fr));", ".bound-group-row { grid-template-columns: minmax(0, 1fr);",
+		"html:has(dialog[open]), body:has(dialog[open])", "overscroll-behavior-y: none", "overscroll-behavior-y: contain", "touch-action: pan-y",
 	} {
 		if !strings.Contains(style, expected) {
 			t.Fatalf("app.css is missing responsive upstream-group dialog style %q", expected)

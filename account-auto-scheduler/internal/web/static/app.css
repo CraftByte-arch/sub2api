@@ -56,6 +56,7 @@
 * { box-sizing: border-box; }
 html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text); }
 body { min-width: 320px; font-size: 14px; line-height: 1.5; }
+html:has(dialog[open]), body:has(dialog[open]) { overflow: hidden; overscroll-behavior-y: none; }
 button, input, select, textarea { font: inherit; letter-spacing: 0; }
 button, select, input[type="checkbox"] { cursor: pointer; }
 button:disabled, input:disabled, select:disabled { cursor: not-allowed; opacity: 0.55; }
@@ -515,7 +516,7 @@ button:disabled, input:disabled, select:disabled { cursor: not-allowed; opacity:
 .remote-key-cell .rate-value { color: var(--primary-hover); font-size: 12px; font-variant-numeric: tabular-nums; }
 .bound-groups-summary { min-height: 43px; padding: 8px 14px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--primary-soft) 28%, var(--surface)); color: var(--text-secondary); font-size: 11px; }
 .bound-groups-summary > span:last-child { color: var(--text-muted); font-size: 10px; text-align: right; }
-.bound-groups-list { min-width: 0; flex: 1 1 auto; overflow: auto; background: var(--surface); }
+.bound-groups-list { min-width: 0; min-height: 0; flex: 1 1 auto; overflow: auto; overscroll-behavior-y: contain; touch-action: pan-y; background: var(--surface); }
 .bound-group-identity { min-width: 0; border-top: 1px solid var(--border); }
 .bound-group-identity:first-child { border-top: 0; }
 .bound-group-identity-header { min-height: 48px; padding: 9px 14px; display: flex; align-items: center; justify-content: space-between; gap: 12px; background: var(--surface-subtle); }
@@ -897,4 +898,35 @@ button:disabled, input:disabled, select:disabled { cursor: not-allowed; opacity:
   .api-key-row { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "account actions" "schedule schedule" "usage usage" "balance balance" "health health"; }
   .health-cell { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .account-detail-actions { grid-template-columns: minmax(0, 1fr); }
+}
+.manual-probe-model-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.5rem;margin:.5rem 0 1rem}.manual-probe-model-option{padding:.55rem;border:1px solid var(--border-color);border-radius:.5rem}.manual-probe-result{display:flex;justify-content:space-between;padding:.6rem;border-radius:.4rem;margin-top:.4rem}.manual-probe-result.success{background:#e8f7f1;color:#087a5b}.manual-probe-result.error{background:#fff0f0;color:#b42318}@media(max-width:620px){.manual-probe-model-list{grid-template-columns:1fr}}
+.group-access-badge { display: inline-flex; align-items: center; padding: 3px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-subtle); color: var(--text-secondary); font-size: 12px; }
+.group-access-badge.exclusive { background: var(--primary-soft); color: var(--primary-hover); cursor: pointer; }
+.group-access-badge.exclusive:hover { border-color: var(--primary); }
+#group-access-dialog .modal-header, .group-access-footer { flex-shrink: 0; }
+.group-access-body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.group-access-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; align-items: end; gap: 12px; padding: 16px 20px 8px; }
+.group-access-toolbar .field { min-width: 0; }
+.group-access-note { padding: 0 20px; color: var(--text-secondary); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.group-access-selection { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 20px; font-size: 12px; }
+.group-access-scroll { min-height: 120px; max-height: 42vh; overflow-y: auto; overscroll-behavior: contain; }
+.group-access-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 13px; }
+.group-access-table th { text-align: left; background: var(--surface-subtle); position: sticky; top: 0; }
+.group-access-table th, .group-access-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+.group-access-table th:first-child { width: 60px; }
+.group-access-table th:nth-child(3) { width: 70px; }
+.group-access-table td small { display: block; color: var(--text-secondary); }
+.group-access-table tr:hover { background: var(--surface-hover); }
+.group-access-confirmation { padding: 12px 20px; background: var(--primary-soft); font-size: 13px; }
+.group-access-confirmation p { color: var(--text); }
+.group-access-footer { flex-wrap: wrap; }
+@media (max-width: 620px) {
+  .group-access-toolbar { grid-template-columns: minmax(0, 1fr); padding: 12px; }
+  .group-access-note, .group-access-selection { padding-left: 12px; padding-right: 12px; }
+  .group-access-table th, .group-access-table td { padding: 8px 6px; font-size: 12px; }
+  .group-access-table th:first-child { width: 48px; }
+  .group-access-table th:nth-child(3) { width: 52px; }
+  #group-access-dialog button, #group-access-dialog input:not([type="checkbox"]), #group-access-dialog select { min-height: 44px; }
+  .group-access-table input[type="checkbox"] { width: 22px; height: 22px; margin: 11px 0; }
+  .group-access-badge.exclusive { min-height: 44px; }
 }

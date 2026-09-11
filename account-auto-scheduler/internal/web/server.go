@@ -172,6 +172,13 @@ type policyRequest struct {
 	LatencyLimitMS    *int64  `json:"latency_limit_ms"`
 	FailureThreshold  *int    `json:"failure_threshold"`
 	RecoveryThreshold *int    `json:"recovery_threshold"`
+	ReasoningEffort   *string `json:"reasoning_effort"`
+}
+
+type manualProbeRequest struct {
+	Models          []string `json:"models"`
+	Prompt          string   `json:"prompt"`
+	ReasoningEffort string   `json:"reasoning_effort"`
 }
 
 type notificationSettingsRequest struct {
@@ -292,8 +299,11 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/online-users/summary", s.requireAdmin(http.HandlerFunc(s.handleOnlineUsersSummary)))
 	mux.Handle("GET /api/online-users", s.requireAdmin(http.HandlerFunc(s.handleOnlineUsers)))
 	mux.Handle("GET /api/groups/{groupID}/user-consumption", s.requireAdmin(http.HandlerFunc(s.handleGroupUserConsumption)))
+	mux.Handle("GET /api/groups/{groupID}/access-users", s.requireAdmin(http.HandlerFunc(s.handleGroupAccessUsers)))
+	mux.Handle("POST /api/groups/{groupID}/access-users/sync", s.requireAdmin(http.HandlerFunc(s.handleSyncGroupAccessUsers)))
 	mux.Handle("GET /api/accounts", s.requireAdmin(http.HandlerFunc(s.handleAccounts)))
 	mux.Handle("GET /api/accounts/{accountID}/usage", s.requireAdmin(http.HandlerFunc(s.handleAccountUsage)))
+	mux.Handle("POST /api/accounts/{accountID}/manual-probe", s.requireAdmin(http.HandlerFunc(s.handleManualProbe)))
 	mux.Handle("PUT /api/accounts/{accountID}/schedulable", s.requireAdmin(http.HandlerFunc(s.handleSetAccountSchedulable)))
 	mux.Handle("GET /api/notifications", s.requireAdmin(http.HandlerFunc(s.handleNotificationSettings)))
 	mux.Handle("PUT /api/notifications", s.requireAdmin(http.HandlerFunc(s.handleSaveNotificationSettings)))
@@ -1229,6 +1239,31 @@ func (s *Server) handleRunNow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "running"})
+}
+
+func (s *Server) handleManualProbe(w http.ResponseWriter, r *http.Request) {
+	accountID, err := pathAccountID(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_ACCOUNT", err.Error())
+		return
+	}
+	var request manualProbeRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&request); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "请求格式无效")
+		return
+	}
+	if len(request.Models) == 0 || len(request.Models) > 8 {
+		writeError(w, http.StatusBadRequest, "INVALID_MODELS", "模型数量必须在 1 到 8 个之间")
+		return
+	}
+	token, _ := r.Context().Value(adminTokenKey).(string)
+	identity, _ := r.Context().Value(forwardedIdentityKey).(core.ForwardedIdentity)
+	results, err := s.engine.ManualProbe(r.Context(), accountID, token, identity, request.Models, request.Prompt, request.ReasoningEffort)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "MANUAL_PROBE_FAILED", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"account_id": accountID, "results": results})
 }
 
 func (s *Server) handleDirectProbeStatus(w http.ResponseWriter, r *http.Request) {
