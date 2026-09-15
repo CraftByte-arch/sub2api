@@ -23,8 +23,20 @@ func accessTestGroups() []model.UpstreamGroup {
 	}
 }
 
-func TestGroupAccessListUsesExactPermissionAndPagedNameFilter(t *testing.T) {
-	calls := 0
+type fakeGroupAccessReader struct {
+	users          []model.GroupAccessEntry
+	err            error
+	calls          int
+	target, source int64
+}
+
+func (f *fakeGroupAccessReader) ListGroupAccessUsers(_ context.Context, target, source int64) ([]model.GroupAccessEntry, error) {
+	f.calls++
+	f.target, f.source = target, source
+	return append([]model.GroupAccessEntry(nil), f.users...), f.err
+}
+
+func TestGroupAccessListUsesReadOnlyReaderAndExactIDs(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "GET" {
 			t.Errorf("unexpected mutation: %s", r.Method)
@@ -33,32 +45,22 @@ func TestGroupAccessListUsesExactPermissionAndPagedNameFilter(t *testing.T) {
 			writeEnvelope(t, w, accessTestGroups())
 			return
 		}
-		if r.URL.Path != "/api/v1/admin/users" {
-			t.Errorf("unexpected route: %s", r.URL)
-			w.WriteHeader(404)
-			return
-		}
-		q := r.URL.Query()
-		if q.Get("group_name") != "A & 共享" || q.Get("include_subscriptions") != "false" || q.Get("sort_order") != "asc" {
-			t.Errorf("query = %s", r.URL)
-		}
-		calls++
-		items := []model.GroupAccessUser{
-			{ID: 11, AllowedGroups: []int64{1}, Email: "a@example.test", Status: "disabled"},
-			{ID: 12, AllowedGroups: []int64{99}}, // same/sub-string name, different ID
-		}
-		if calls == 2 {
-			items = []model.GroupAccessUser{{ID: 13, AllowedGroups: []int64{1, 2}}}
-		}
-		writeEnvelope(t, w, pageResponse[model.GroupAccessUser]{Items: items, Total: 3, Page: calls, Pages: 2})
+		t.Errorf("group-access read unexpectedly used admin HTTP: %s", r.URL)
+		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer server.Close()
-	result, err := newTestClient(t, server.URL).GetGroupAccessUsers(context.Background(), 2, 1)
+	reader := &fakeGroupAccessReader{users: []model.GroupAccessEntry{
+		{ID: 11, Email: "a@example.test", Status: "disabled"},
+		{ID: 13, Username: "thirteen", Status: "active", Authorized: true},
+	}}
+	client := newTestClient(t, server.URL)
+	client.SetGroupAccessReader(reader)
+	result, err := client.GetGroupAccessUsers(context.Background(), 2, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if calls != 2 || len(result.Users) != 2 || result.Users[0].ID != 11 || result.Users[0].Authorized || !result.Users[1].Authorized {
-		t.Fatalf("result = %#v, calls=%d", result, calls)
+	if reader.calls != 1 || reader.target != 2 || reader.source != 1 || len(result.Users) != 2 || result.Users[0].Authorized || !result.Users[1].Authorized {
+		t.Fatalf("result = %#v, reader=%#v", result, reader)
 	}
 	raw, _ := json.Marshal(result)
 	if strings.Contains(string(raw), "allowed_groups") {
@@ -66,40 +68,31 @@ func TestGroupAccessListUsesExactPermissionAndPagedNameFilter(t *testing.T) {
 	}
 }
 
-func TestGroupAccessListRejectsIncompleteOrUnboundedData(t *testing.T) {
-	for _, mode := range []string{"too-many", "empty-page", "duplicate", "page-failure", "wrong-page", "changed-total"} {
-		t.Run(mode, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if strings.HasSuffix(r.URL.Path, "/groups/all") {
-					writeEnvelope(t, w, accessTestGroups())
-					return
+func TestGroupAccessListRejectsUnavailableOrInvalidReaderData(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeEnvelope(t, w, accessTestGroups())
+	}))
+	defer server.Close()
+	client := newTestClient(t, server.URL)
+	if _, err := client.GetGroupAccessUsers(context.Background(), 2, 1); !errors.Is(err, ErrGroupAccessReadUnavailable) {
+		t.Fatalf("missing reader error = %v", err)
+	}
+
+	for name, users := range map[string][]model.GroupAccessEntry{
+		"invalid-id": {{ID: 0}},
+		"duplicate":  {{ID: 11}, {ID: 11}},
+		"too-many":   make([]model.GroupAccessEntry, 10001),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if name == "too-many" {
+				for index := range users {
+					users[index].ID = int64(index + 1)
 				}
-				page, _ := strconv.Atoi(r.URL.Query().Get("page"))
-				result := pageResponse[model.GroupAccessUser]{Page: page, Pages: 2, Total: 2,
-					Items: []model.GroupAccessUser{{ID: 11, AllowedGroups: []int64{1}}}}
-				switch mode {
-				case "too-many":
-					result.Total = 10001
-				case "empty-page":
-					result.Items = nil
-				case "page-failure":
-					if page == 2 {
-						w.WriteHeader(500)
-						return
-					}
-				case "wrong-page":
-					result.Page = 99
-				case "changed-total":
-					if page == 2 {
-						result.Total = 3
-					}
-				}
-				writeEnvelope(t, w, result)
-			}))
-			defer server.Close()
-			result, err := newTestClient(t, server.URL).GetGroupAccessUsers(context.Background(), 2, 1)
+			}
+			client.SetGroupAccessReader(&fakeGroupAccessReader{users: users})
+			result, err := client.GetGroupAccessUsers(context.Background(), 2, 1)
 			if err == nil || len(result.Users) != 0 {
-				t.Fatalf("partial data accepted: %#v %v", result, err)
+				t.Fatalf("invalid reader data accepted: %#v %v", result, err)
 			}
 		})
 	}

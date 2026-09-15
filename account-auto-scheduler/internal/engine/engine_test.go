@@ -439,6 +439,35 @@ func TestLatencyAtOrOverLimitCountsAsFailure(t *testing.T) {
 	}
 }
 
+func TestManualProbeDoesNotRequireOrCreateManagedAccountConfiguration(t *testing.T) {
+	fake := healthyAPIKeyAccount()
+	fake.exported = core.DirectProbeExport{Snapshot: directSnapshotForAccount(t, fake.account)}
+	fake.directOutcomes = []core.ProbeOutcome{{
+		Success:      true,
+		ResponseText: "manual probe ok",
+		Latency:      350 * time.Millisecond,
+	}}
+	scheduler := newTestEngineWithDirect(t, fake, &fakeDirectBox{enabled: true})
+	identity := core.ForwardedIdentity{ClientIP: "203.0.113.10", UserAgent: "sidecar-admin"}
+
+	results, err := scheduler.ManualProbe(
+		context.Background(), fake.account.ID, "admin-jwt", identity,
+		[]string{"gpt-real"}, "test prompt", "",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].Model != "gpt-real" || !results[0].Outcome.Success || results[0].Outcome.ResponseText != "manual probe ok" {
+		t.Fatalf("unexpected manual probe results: %#v", results)
+	}
+	if fake.exportCalls != 1 || fake.directCalls != 1 || fake.exportJWT != "admin-jwt" || fake.exportIdentity != identity {
+		t.Fatalf("unexpected direct probe calls: exports=%d probes=%d jwt=%q identity=%#v", fake.exportCalls, fake.directCalls, fake.exportJWT, fake.exportIdentity)
+	}
+	if managed := scheduler.List(); len(managed) != 0 {
+		t.Fatalf("manual probe created managed account configuration: %#v", managed)
+	}
+}
+
 func TestAuthorizeAndRevokeDirectProbeUsesStepUpExportAndRedactedState(t *testing.T) {
 	fake := healthyAPIKeyAccount()
 	fake.exported = core.DirectProbeExport{Snapshot: directSnapshotForAccount(t, fake.account)}

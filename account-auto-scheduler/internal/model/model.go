@@ -361,6 +361,19 @@ type GroupAccessUser struct {
 	AllowedGroups []int64 `json:"allowed_groups"`
 }
 
+type GroupAccessEntry struct {
+	ID         int64  `json:"id"`
+	Username   string `json:"username"`
+	Email      string `json:"email"`
+	Status     string `json:"status"`
+	Authorized bool   `json:"authorized"`
+}
+
+type AccountModel struct {
+	ID          string `json:"id"`
+	DisplayName string `json:"display_name,omitempty"`
+}
+
 type WindowStats struct {
 	Requests     int64              `json:"requests"`
 	Tokens       int64              `json:"tokens"`

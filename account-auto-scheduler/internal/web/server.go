@@ -54,6 +54,10 @@ type AccountSuccessConsole interface {
 	GetAccountSuccessRates(ctx context.Context) (model.AccountSuccessSnapshot, error)
 }
 
+type accountModelsConsole interface {
+	GetAvailableModels(context.Context, int64) ([]model.AccountModel, error)
+}
+
 type accountPerformanceHealthConsole interface {
 	GetAccountPerformanceHealth(ctx context.Context) (model.AccountPerformanceCollectionHealth, error)
 }
@@ -303,6 +307,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/groups/{groupID}/access-users/sync", s.requireAdmin(http.HandlerFunc(s.handleSyncGroupAccessUsers)))
 	mux.Handle("GET /api/accounts", s.requireAdmin(http.HandlerFunc(s.handleAccounts)))
 	mux.Handle("GET /api/accounts/{accountID}/usage", s.requireAdmin(http.HandlerFunc(s.handleAccountUsage)))
+	mux.Handle("GET /api/accounts/{accountID}/models", s.requireAdmin(http.HandlerFunc(s.handleAccountModels)))
 	mux.Handle("POST /api/accounts/{accountID}/manual-probe", s.requireAdmin(http.HandlerFunc(s.handleManualProbe)))
 	mux.Handle("PUT /api/accounts/{accountID}/schedulable", s.requireAdmin(http.HandlerFunc(s.handleSetAccountSchedulable)))
 	mux.Handle("GET /api/notifications", s.requireAdmin(http.HandlerFunc(s.handleNotificationSettings)))
@@ -1264,6 +1269,27 @@ func (s *Server) handleManualProbe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"account_id": accountID, "results": results})
+}
+
+func (s *Server) handleAccountModels(w http.ResponseWriter, r *http.Request) {
+	accountID, err := pathAccountID(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_ACCOUNT", err.Error())
+		return
+	}
+	client, ok := s.core.(accountModelsConsole)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "ACCOUNT_MODELS_UNAVAILABLE", "账号模型服务不可用")
+		return
+	}
+	models, err := client.GetAvailableModels(r.Context(), accountID)
+	if err != nil {
+		s.logger.WarnContext(r.Context(), "load account models", "account_id", accountID, "error", err)
+		writeError(w, http.StatusBadGateway, "ACCOUNT_MODELS_FAILED", "无法读取账号真实模型列表，请稍后重试")
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, map[string]any{"account_id": accountID, "models": models})
 }
 
 func (s *Server) handleDirectProbeStatus(w http.ResponseWriter, r *http.Request) {

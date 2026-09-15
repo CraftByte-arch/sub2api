@@ -46,9 +46,27 @@ type directProbeExporter interface {
 }
 
 type ManualProbeResult struct {
-	Model   string            `json:"model"`
-	Outcome core.ProbeOutcome `json:"outcome"`
-	Error   string            `json:"error,omitempty"`
+	Model   string             `json:"model"`
+	Outcome ManualProbeOutcome `json:"outcome"`
+	Error   string             `json:"error,omitempty"`
+}
+
+type ManualProbeOutcome struct {
+	Success      bool              `json:"success"`
+	ResponseText string            `json:"response_text,omitempty"`
+	ErrorMessage string            `json:"error_message,omitempty"`
+	LatencyMS    int64             `json:"latency_ms"`
+	Usage        *model.ProbeUsage `json:"usage,omitempty"`
+}
+
+func publicManualProbeOutcome(outcome core.ProbeOutcome) ManualProbeOutcome {
+	return ManualProbeOutcome{
+		Success:      outcome.Success,
+		ResponseText: outcome.ResponseText,
+		ErrorMessage: outcome.ErrorMessage,
+		LatencyMS:    outcome.Latency.Milliseconds(),
+		Usage:        outcome.Usage,
+	}
 }
 
 func (e *Engine) ManualProbe(ctx context.Context, accountID int64, adminJWT string, identity core.ForwardedIdentity, models []string, prompt, effort string) ([]ManualProbeResult, error) {
@@ -57,9 +75,6 @@ func (e *Engine) ManualProbe(ctx context.Context, accountID int64, adminJWT stri
 	}
 	if len(models) == 0 || len(models) > 8 {
 		return nil, errors.New("模型数量必须在 1 到 8 个之间")
-	}
-	if _, err := e.store.Get(accountID); err != nil {
-		return nil, err
 	}
 	account, err := e.core.GetAccount(ctx, accountID)
 	if err != nil {
@@ -107,10 +122,11 @@ func (e *Engine) ManualProbe(ctx context.Context, accountID int64, adminJWT stri
 		}
 		policy.Model = requested
 		outcome, probeErr := prober.ProbeDirect(ctx, snapshot, policy)
+		publicOutcome := publicManualProbeOutcome(outcome)
 		if probeErr != nil {
-			results = append(results, ManualProbeResult{Model: requested, Outcome: outcome, Error: probeErr.Error()})
+			results = append(results, ManualProbeResult{Model: requested, Outcome: publicOutcome, Error: probeErr.Error()})
 		} else {
-			results = append(results, ManualProbeResult{Model: requested, Outcome: outcome})
+			results = append(results, ManualProbeResult{Model: requested, Outcome: publicOutcome})
 		}
 	}
 	return results, nil

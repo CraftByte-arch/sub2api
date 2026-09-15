@@ -167,7 +167,8 @@ GRANT SELECT ON TABLE
     account_performance_minute,
     account_performance_hourly
 TO sidecar_reader;
-GRANT SELECT (id, email, username) ON TABLE users TO sidecar_reader;
+GRANT SELECT (id, email, username, status, deleted_at) ON TABLE users TO sidecar_reader;
+GRANT SELECT (user_id, group_id) ON TABLE user_allowed_groups TO sidecar_reader;
 ```
 
 连接串示例为 `postgres://sidecar_reader:<URL 编码后的密码>@数据库地址:5432/sub2api?sslmode=require&application_name=account-auto-scheduler`。数据库未提供 TLS 时应仅在受信内网中按实际能力选择 `sslmode`。侧车连接池最多打开 2 个连接；在线用户查询有 3 秒应用级超时，实际成功率查询有 5 秒应用级超时，同时仍受上面更严格的数据库 `statement_timeout` 限制。未配置、连接失败或授权缺失时只把对应聚合视图显示为不可用，不会回退扫描 `usage_logs`、Ops 请求明细或任何原始调用接口。

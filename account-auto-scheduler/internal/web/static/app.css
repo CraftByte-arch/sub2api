@@ -899,7 +899,51 @@ button:disabled, input:disabled, select:disabled { cursor: not-allowed; opacity:
   .health-cell { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .account-detail-actions { grid-template-columns: minmax(0, 1fr); }
 }
-.manual-probe-model-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.5rem;margin:.5rem 0 1rem}.manual-probe-model-option{padding:.55rem;border:1px solid var(--border-color);border-radius:.5rem}.manual-probe-result{display:flex;justify-content:space-between;padding:.6rem;border-radius:.4rem;margin-top:.4rem}.manual-probe-result.success{background:#e8f7f1;color:#087a5b}.manual-probe-result.error{background:#fff0f0;color:#b42318}@media(max-width:620px){.manual-probe-model-list{grid-template-columns:1fr}}
+#manual-probe-dialog .modal-panel { width: 100%; }
+#manual-probe-dialog .modal-header, #manual-probe-dialog .modal-footer { flex: none; }
+.manual-probe-body { min-height: 0; overscroll-behavior: contain; }
+.manual-probe-body > .full-width { grid-column: 1 / -1; }
+.manual-probe-model-field { min-width: 0; }
+.manual-probe-field-heading { min-height: 38px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.manual-probe-field-heading > span { color: var(--text-secondary); font-size: 12px; font-weight: 600; }
+.manual-probe-inline-status { min-height: 20px; margin: 2px 0 8px; color: var(--text-muted); font-size: 12px; line-height: 20px; }
+.manual-probe-inline-status.success { color: var(--success); }
+.manual-probe-inline-status.error { color: var(--danger); }
+.manual-probe-model-list { min-height: 96px; max-height: min(30vh, 280px); padding: 8px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; gap: 8px; overflow-y: auto; overscroll-behavior: contain; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-subtle); }
+.manual-probe-model-option { min-width: 0; min-height: 48px; padding: 8px 10px; display: flex; align-items: center; gap: 9px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--text-secondary); cursor: pointer; transition: border-color 160ms ease, background-color 160ms ease, color 160ms ease; }
+.manual-probe-model-option:hover { border-color: var(--border-strong); background: var(--surface-hover); color: var(--text); }
+.manual-probe-model-option:has(input:checked) { border-color: var(--primary); background: var(--primary-soft); color: var(--primary-hover); }
+.manual-probe-model-option input { width: 18px; height: 18px; flex: none; accent-color: var(--primary); }
+.manual-probe-model-option span { min-width: 0; }
+.manual-probe-model-option strong, .manual-probe-model-option small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.manual-probe-model-option strong { font-size: 12px; font-weight: 600; }
+.manual-probe-model-option small { margin-top: 2px; color: var(--text-muted); font-size: 10px; }
+.manual-probe-model-skeleton { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.manual-probe-model-skeleton i { height: 48px; border-radius: 7px; background: linear-gradient(90deg, var(--border) 20%, var(--surface-hover) 45%, var(--border) 70%); background-size: 220% 100%; animation: manual-probe-loading 1.2s ease-in-out infinite; }
+@keyframes manual-probe-loading { to { background-position: -220% 0; } }
+.manual-probe-model-empty { grid-column: 1 / -1; min-height: 78px; display: grid; place-items: center; padding: 16px; color: var(--text-muted); font-size: 12px; text-align: center; }
+.manual-probe-notice { margin: 0; padding: 9px 11px; border: 1px solid color-mix(in srgb, var(--warning) 34%, var(--border)); border-radius: 7px; background: var(--warning-soft); color: var(--text-secondary); font-size: 12px; }
+.manual-probe-results { min-width: 0; }
+.manual-probe-running, .manual-probe-error { padding: 11px 12px; border-radius: 7px; font-size: 12px; }
+.manual-probe-running { border: 1px solid var(--border); background: var(--surface-subtle); color: var(--text-secondary); }
+.manual-probe-error { border: 1px solid color-mix(in srgb, var(--danger) 42%, var(--border)); background: var(--danger-soft); color: var(--danger); }
+.manual-probe-result { margin-top: 8px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-subtle); }
+.manual-probe-result.success { border-color: color-mix(in srgb, var(--success) 42%, var(--border)); background: var(--success-soft); }
+.manual-probe-result.error { border-color: color-mix(in srgb, var(--danger) 42%, var(--border)); background: var(--danger-soft); }
+.manual-probe-result-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.manual-probe-result-heading strong { min-width: 0; overflow-wrap: anywhere; }
+.manual-probe-result-heading span { flex: none; font-size: 12px; font-weight: 700; }
+.manual-probe-result.success .manual-probe-result-heading span { color: var(--success); }
+.manual-probe-result.error .manual-probe-result-heading span { color: var(--danger); }
+.manual-probe-result-meta { margin-top: 3px; color: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.manual-probe-result p { margin: 7px 0 0; color: var(--text-secondary); font-size: 12px; overflow-wrap: anywhere; white-space: pre-wrap; }
+.manual-probe-result.error p { color: var(--danger); }
+@media (prefers-reduced-motion: reduce) { .manual-probe-model-skeleton i { animation: none; } }
+@media (max-width: 620px) {
+  .manual-probe-model-list, .manual-probe-model-skeleton { grid-template-columns: minmax(0, 1fr); }
+  .manual-probe-field-heading { align-items: flex-start; }
+  #manual-probe-dialog .modal-footer .button { min-height: 44px; }
+}
 .group-access-badge { display: inline-flex; align-items: center; padding: 3px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-subtle); color: var(--text-secondary); font-size: 12px; }
 .group-access-badge.exclusive { background: var(--primary-soft); color: var(--primary-hover); cursor: pointer; }
 .group-access-badge.exclusive:hover { border-color: var(--primary); }

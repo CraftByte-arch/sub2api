@@ -43,6 +43,9 @@ func main() {
 		logger.Warn("online aggregate database disabled", "error", onlineUsersErr)
 		onlineUsers, _ = onlineusers.Open("", logger)
 	}
+	if onlineUsers.Configured() {
+		coreClient.SetGroupAccessReader(onlineUsers)
+	}
 	defer func() {
 		if err := onlineUsers.Close(); err != nil {
 			logger.Warn("close online aggregate database", "error", err)

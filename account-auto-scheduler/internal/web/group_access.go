@@ -100,6 +100,8 @@ func writeGroupAccessError(w http.ResponseWriter, err error) {
 		writeError(w, 400, "INVALID_GROUP_ACCESS", "请选择有效且不同的专属分组；每批选择 1–10 个不同用户")
 	case errors.Is(err, core.ErrGroupAccessBusy):
 		writeError(w, 409, "GROUP_ACCESS_BUSY", "已有授权同步正在执行，请稍后重试")
+	case errors.Is(err, core.ErrGroupAccessReadUnavailable):
+		writeError(w, 503, "GROUP_ACCESS_READ_UNAVAILABLE", "侧车未配置专属分组授权只读数据库，请检查数据库连接配置")
 	default:
 		writeError(w, 502, "GROUP_ACCESS_FAILED", "无法完整获取分组授权数据，请刷新重试或在主后台核对")
 	}

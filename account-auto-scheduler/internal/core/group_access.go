@@ -5,28 +5,25 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
 	"slices"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api-account-auto-scheduler/internal/model"
 )
 
 var (
-	ErrGroupAccessInvalid = errors.New("请选择有效且不同的专属分组")
-	ErrGroupAccessBusy    = errors.New("已有用户授权同步正在执行，请稍后重试")
+	ErrGroupAccessInvalid         = errors.New("请选择有效且不同的专属分组")
+	ErrGroupAccessBusy            = errors.New("已有用户授权同步正在执行，请稍后重试")
+	ErrGroupAccessReadUnavailable = errors.New("未配置专属分组授权只读数据库")
 )
 
 const GroupAccessBatchSize = 10
 
-type GroupAccessEntry struct {
-	ID         int64  `json:"id"`
-	Username   string `json:"username"`
-	Email      string `json:"email"`
-	Status     string `json:"status"`
-	Authorized bool   `json:"authorized"`
+type GroupAccessEntry = model.GroupAccessEntry
+
+type GroupAccessReader interface {
+	ListGroupAccessUsers(context.Context, int64, int64) ([]model.GroupAccessEntry, error)
 }
 
 type GroupAccessList struct {
@@ -41,7 +38,14 @@ type GroupAccessSyncResult struct {
 	Message string `json:"message"`
 }
 
-// Both reads and writes use the existing admin HTTP API, never the database.
+func (c *Client) SetGroupAccessReader(reader GroupAccessReader) {
+	c.groupAccessReader = reader
+}
+
+// Group metadata and all permission mutations use the administrator HTTP API.
+// Membership reads use the sidecar's optional read-only database connection so
+// this dialog never invokes the general user-list endpoint and its usage-log
+// enrichment queries.
 func (c *Client) accessGroups(ctx context.Context, targetID, sourceID int64) (model.UpstreamGroup, model.UpstreamGroup, error) {
 	var target, source model.UpstreamGroup
 	if targetID <= 0 || sourceID <= 0 {
@@ -66,59 +70,33 @@ func (c *Client) accessGroups(ctx context.Context, targetID, sourceID int64) (mo
 }
 
 func (c *Client) GetGroupAccessUsers(ctx context.Context, targetID, sourceID int64) (GroupAccessList, error) {
-	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	target, source, err := c.accessGroups(ctx, targetID, sourceID)
 	if err != nil {
 		return GroupAccessList{}, err
 	}
-	out := GroupAccessList{Group: target, SourceGroup: source, Users: []GroupAccessEntry{}}
-	seen := map[int64]bool{}
-	scanned := 0
-	var expectedTotal int64 = -1
-	// group_name is only a narrowing filter. Exact allowed_groups below is
-	// authoritative even for duplicate names and substring matches.
-	for page := 1; page <= 100; page++ {
-		query := url.Values{
-			"page": {strconv.Itoa(page)}, "page_size": {"100"},
-			"include_subscriptions": {"false"}, "group_name": {strings.TrimSpace(source.Name)},
-			"sort_by": {"created_at"}, "sort_order": {"asc"},
-		}
-		var result pageResponse[model.GroupAccessUser]
-		if err := c.adminJSON(ctx, http.MethodGet, "/admin/users?"+query.Encode(), nil, &result); err != nil {
-			return GroupAccessList{}, err
-		}
-		if result.Total > 10000 || result.Page != page || result.Total < 0 || (len(result.Items) == 0 && int64(scanned) < result.Total) {
-			return GroupAccessList{}, errors.New("用户列表过大或分页不完整，请在主后台处理或重试")
-		}
-		if expectedTotal >= 0 && expectedTotal != result.Total {
-			return GroupAccessList{}, errors.New("用户总数在读取期间发生变化，请刷新重试")
-		}
-		expectedTotal = result.Total
-		scanned += len(result.Items)
-		if int64(scanned) > result.Total {
-			return GroupAccessList{}, errors.New("用户分页数据不一致，请重试")
-		}
-		for _, user := range result.Items {
-			if user.ID <= 0 || seen[user.ID] {
-				return GroupAccessList{}, errors.New("用户列表在读取期间发生变化，请刷新重试")
-			}
-			seen[user.ID] = true
-			if slices.Contains(user.AllowedGroups, sourceID) {
-				out.Users = append(out.Users, GroupAccessEntry{
-					ID: user.ID, Username: user.Username, Email: user.Email, Status: user.Status,
-					Authorized: slices.Contains(user.AllowedGroups, targetID),
-				})
-			}
-		}
-		if int64(scanned) >= result.Total {
-			return out, nil
-		}
-		if result.Pages > 0 && page >= result.Pages {
-			return GroupAccessList{}, errors.New("用户分页数据不完整，请重试")
-		}
+	if c.groupAccessReader == nil {
+		return GroupAccessList{}, ErrGroupAccessReadUnavailable
 	}
-	return GroupAccessList{}, errors.New("用户数量超过读取上限，请在主后台处理")
+	users, err := c.groupAccessReader.ListGroupAccessUsers(ctx, targetID, sourceID)
+	if err != nil {
+		return GroupAccessList{}, err
+	}
+	if len(users) > 10000 {
+		return GroupAccessList{}, errors.New("用户数量超过读取上限，请在主后台处理")
+	}
+	seen := make(map[int64]struct{}, len(users))
+	for _, user := range users {
+		if user.ID <= 0 {
+			return GroupAccessList{}, errors.New("授权用户数据无效，请刷新重试")
+		}
+		if _, exists := seen[user.ID]; exists {
+			return GroupAccessList{}, errors.New("授权用户数据重复，请刷新重试")
+		}
+		seen[user.ID] = struct{}{}
+	}
+	return GroupAccessList{Group: target, SourceGroup: source, Users: users}, nil
 }
 
 func (c *Client) SyncGroupAccessUsers(ctx context.Context, targetID, sourceID int64, ids []int64) ([]GroupAccessSyncResult, error) {

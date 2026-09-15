@@ -49,6 +49,7 @@ type Client struct {
 	groupUsageCachedAt time.Time
 	groupUsageFlight   *groupUsageSummaryFlight
 	groupAccessSyncMu  sync.Mutex
+	groupAccessReader  GroupAccessReader
 }
 
 type cachedAccountCacheStats struct {
@@ -183,6 +184,34 @@ func (c *Client) ListAPIKeyAccounts(ctx context.Context) ([]model.UpstreamAccoun
 
 func (c *Client) ListAccounts(ctx context.Context) ([]model.UpstreamAccount, error) {
 	return c.listAccounts(ctx, nil)
+}
+
+func (c *Client) GetAvailableModels(ctx context.Context, accountID int64) ([]model.AccountModel, error) {
+	if accountID <= 0 {
+		return nil, errors.New("account ID must be positive")
+	}
+	var response []model.AccountModel
+	if err := c.adminJSON(ctx, http.MethodGet, "/admin/accounts/"+strconv.FormatInt(accountID, 10)+"/models", nil, &response); err != nil {
+		return nil, err
+	}
+	models := make([]model.AccountModel, 0, len(response))
+	seen := make(map[string]struct{}, len(response))
+	for _, item := range response {
+		item.ID = strings.TrimSpace(item.ID)
+		item.DisplayName = strings.TrimSpace(item.DisplayName)
+		if item.ID == "" {
+			continue
+		}
+		if _, exists := seen[item.ID]; exists {
+			continue
+		}
+		seen[item.ID] = struct{}{}
+		if item.DisplayName == "" {
+			item.DisplayName = item.ID
+		}
+		models = append(models, item)
+	}
+	return models, nil
 }
 
 func (c *Client) listAccounts(ctx context.Context, filters url.Values) ([]model.UpstreamAccount, error) {

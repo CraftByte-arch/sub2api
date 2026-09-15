@@ -35,6 +35,10 @@
     bindingSearch: '',
     bindingSaving: false,
     bindingTrigger: null,
+    manualProbeAccount: null,
+    manualProbeTrigger: null,
+    manualProbeRequestID: 0,
+    manualProbeBusy: false,
     detailGroupKey: null,
     detailKind: 'oauth',
     detailPage: 1,
@@ -123,7 +127,7 @@
       'binding-search-input', 'binding-change-count', 'binding-list', 'binding-error', 'binding-save-button',
       'account-detail-dialog', 'account-detail-title', 'account-detail-group-name', 'account-detail-list',
       'account-detail-page-label', 'account-detail-prev', 'account-detail-next',
-      'manual-probe-dialog', 'manual-probe-form', 'manual-probe-account', 'manual-probe-models', 'manual-probe-custom-model', 'manual-probe-prompt', 'manual-probe-effort', 'manual-probe-results', 'manual-probe-submit',
+      'manual-probe-dialog', 'manual-probe-form', 'manual-probe-account', 'manual-probe-models', 'manual-probe-model-status', 'manual-probe-retry', 'manual-probe-custom-model', 'manual-probe-prompt', 'manual-probe-effort', 'manual-probe-results', 'manual-probe-submit',
       'online-users-dialog', 'online-users-window-label', 'online-users-summary', 'online-users-list', 'online-users-retry-button',
       'group-user-consumption-dialog', 'group-user-consumption-title', 'group-user-consumption-date',
       'group-user-consumption-summary', 'group-user-consumption-list', 'group-user-consumption-retry-button',
@@ -205,6 +209,7 @@
     elements.bindingList.addEventListener('change', handleBindingChange)
     elements.bindingSaveButton.addEventListener('click', saveBindings)
     elements.manualProbeForm.addEventListener('submit', submitManualProbe)
+    elements.manualProbeRetry.addEventListener('click', loadManualProbeModels)
     elements.accountDetailPrev.addEventListener('click', () => changeDetailPage(-1))
     elements.accountDetailNext.addEventListener('click', () => changeDetailPage(1))
     document.querySelectorAll('[data-close-dialog]').forEach((button) => {
@@ -220,6 +225,16 @@
       if (state.bindingSaving) event.preventDefault()
     })
     elements.bindingDialog.addEventListener('close', restoreBindingFocus)
+    elements.manualProbeDialog.addEventListener('cancel', (event) => {
+      if (state.manualProbeBusy) event.preventDefault()
+    })
+    elements.manualProbeDialog.addEventListener('close', () => {
+      state.manualProbeRequestID++
+      state.manualProbeAccount = null
+      const trigger = state.manualProbeTrigger
+      state.manualProbeTrigger = null
+      window.requestAnimationFrame(() => trigger?.isConnected && trigger.focus())
+    })
     elements.protectionDialog.addEventListener('close', () => { state.protectionTarget = null })
     elements.groupProtectionDialog.addEventListener('close', () => { state.groupProtectionTarget = null })
     elements.groupBalanceAlertDialog.addEventListener('close', () => { state.groupBalanceAlertTarget = null })
@@ -944,6 +959,7 @@
     return `<details class="account-action-menu">
       <summary class="icon-button" title="更多操作" aria-label="${escapeAttr(`${accountName}更多操作`)}"><svg class="icon"><use href="#icon-more-horizontal"/></svg></summary>
       <div class="account-action-popover" role="menu" aria-label="${escapeAttr(`${accountName}账号操作`)}">
+        <button type="button" role="menuitem" data-action="manual-probe">手动探测</button>
         <button type="button" role="menuitem" data-action="request-schedulable-toggle" ${schedulable.disabled ? 'disabled' : ''}>${escapeHTML(schedulingLabel)}</button>
         <button type="button" role="menuitem" data-action="edit">编辑余额告警</button>
         ${relationItems}
@@ -1327,7 +1343,7 @@
     if (!account) return
     button.closest('.account-action-menu')?.removeAttribute('open')
     switch (action) {
-      case 'manual-probe': openManualProbe(account); break
+      case 'manual-probe': openManualProbe(account, button); break
       case 'toggle-account-details': toggleAccountDetails(account.id, groupID); break
       case 'request-schedulable-toggle': openSchedulingActionDialog(account, !account.schedulable); break
       case 'edit': openEditDialog(account); break
@@ -1337,13 +1353,67 @@
     }
   }
 
-  function openManualProbe(account) {
+  function openManualProbe(account, trigger) {
     state.manualProbeAccount = account
+    state.manualProbeTrigger = trigger
     elements.manualProbeAccount.textContent = account.name || `账号 ${account.id}`
-    const models = [...new Set([account.model, ...(account.models || []), 'gpt-4o-mini', 'claude-3-5-sonnet'])].filter(Boolean)
-    elements.manualProbeModels.innerHTML = models.map((m, i) => `<label class="manual-probe-model-option"><input type="checkbox" value="${escapeAttr(m)}" ${i === 0 ? 'checked' : ''}> ${escapeHTML(m)}</label>`).join('')
+    elements.manualProbeCustomModel.value = ''
+    elements.manualProbePrompt.value = ''
+    elements.manualProbeEffort.value = ''
     elements.manualProbeResults.innerHTML = ''
     elements.manualProbeDialog.showModal()
+    void loadManualProbeModels()
+  }
+
+  async function loadManualProbeModels() {
+    const account = state.manualProbeAccount
+    if (!account || state.manualProbeBusy) return
+    const requestID = ++state.manualProbeRequestID
+    elements.manualProbeRetry.hidden = true
+    elements.manualProbeModelStatus.className = 'manual-probe-inline-status loading'
+    elements.manualProbeModelStatus.textContent = '正在读取账号真实模型…'
+    elements.manualProbeModels.innerHTML = '<div class="manual-probe-model-skeleton" aria-hidden="true"><i></i><i></i><i></i><i></i></div>'
+    try {
+      const response = await api(`/api/accounts/${account.id}/models`)
+      if (requestID !== state.manualProbeRequestID || !elements.manualProbeDialog.open) return
+      const seen = new Set()
+      const models = (Array.isArray(response.models) ? response.models : []).map(item => ({
+        id: String(item?.id || '').trim(),
+        displayName: String(item?.display_name || item?.id || '').trim(),
+      })).filter(item => item.id && !seen.has(item.id) && seen.add(item.id))
+      if (!models.length) {
+        elements.manualProbeModelStatus.className = 'manual-probe-inline-status empty'
+        elements.manualProbeModelStatus.textContent = '后台没有返回可用模型；你仍可在下方填写自定义模型。'
+        elements.manualProbeModels.innerHTML = '<div class="manual-probe-model-empty">暂无可选择的真实模型</div>'
+        elements.manualProbeRetry.hidden = false
+        return
+      }
+      elements.manualProbeModelStatus.className = 'manual-probe-inline-status success'
+      elements.manualProbeModelStatus.textContent = `已读取 ${models.length} 个真实模型，请选择要探测的模型。`
+      elements.manualProbeModels.innerHTML = models.map(item => {
+        const detail = item.displayName && item.displayName !== item.id ? `<small>${escapeHTML(item.id)}</small>` : ''
+        return `<label class="manual-probe-model-option"><input type="checkbox" value="${escapeAttr(item.id)}"><span><strong>${escapeHTML(item.displayName || item.id)}</strong>${detail}</span></label>`
+      }).join('')
+    } catch (error) {
+      if (requestID !== state.manualProbeRequestID || !elements.manualProbeDialog.open) return
+      elements.manualProbeModelStatus.className = 'manual-probe-inline-status error'
+      elements.manualProbeModelStatus.textContent = error.message || '账号真实模型加载失败'
+      elements.manualProbeModels.innerHTML = '<div class="manual-probe-model-empty">模型列表不可用，可重试或填写自定义模型。</div>'
+      elements.manualProbeRetry.hidden = false
+    }
+  }
+
+  function setManualProbeBusy(busy) {
+    state.manualProbeBusy = busy
+    elements.manualProbeDialog.dataset.busy = busy ? 'true' : 'false'
+    elements.manualProbeSubmit.disabled = busy
+    elements.manualProbeCustomModel.disabled = busy
+    elements.manualProbePrompt.disabled = busy
+    elements.manualProbeEffort.disabled = busy
+    elements.manualProbeRetry.disabled = busy
+    elements.manualProbeModels.querySelectorAll('input').forEach(input => { input.disabled = busy })
+    document.querySelectorAll('[data-close-dialog="manual-probe-dialog"]').forEach(button => { button.disabled = busy })
+    elements.manualProbeSubmit.textContent = busy ? '正在探测…' : '开始探测'
   }
 
   async function submitManualProbe(event) {
@@ -1353,14 +1423,38 @@
     const models = [...elements.manualProbeModels.querySelectorAll('input:checked')].map(x => x.value)
     const custom = elements.manualProbeCustomModel.value.trim()
     if (custom && !models.includes(custom)) models.push(custom)
-    if (!models.length || models.length > 8) { elements.manualProbeResults.textContent = '请选择 1 到 8 个模型'; return }
-    elements.manualProbeSubmit.disabled = true
-    elements.manualProbeResults.innerHTML = '<p>探测中，请稍候…</p>'
+    if (!models.length || models.length > 8) {
+      elements.manualProbeResults.innerHTML = '<div class="manual-probe-error" role="alert">请选择 1 到 8 个模型；可勾选真实模型或填写自定义模型。</div>'
+      return
+    }
+    setManualProbeBusy(true)
+    elements.manualProbeResults.innerHTML = `<div class="manual-probe-running" role="status">正在依次探测 ${models.length} 个模型，请稍候…</div>`
     try {
-      const data = await api(`/api/accounts/${account.id}/manual-probe`, { method: 'POST', body: JSON.stringify({ models, prompt: elements.manualProbePrompt.value, reasoning_effort: elements.manualProbeEffort.value }) })
-      elements.manualProbeResults.innerHTML = data.results.map(r => `<div class="manual-probe-result ${r.outcome?.success ? 'success' : 'error'}"><strong>${escapeHTML(r.model)}</strong><span>${r.outcome?.success ? `成功 · ${escapeHTML(formatMilliseconds(r.outcome.latency))}` : escapeHTML(r.error || r.outcome?.error_message || '失败')}</span></div>`).join('')
-    } catch (error) { elements.manualProbeResults.textContent = error.message || '探测失败' }
-    finally { elements.manualProbeSubmit.disabled = false }
+      const data = await api(`/api/accounts/${account.id}/manual-probe`, { method: 'POST', body: { models, prompt: elements.manualProbePrompt.value, reasoning_effort: elements.manualProbeEffort.value } })
+      if (!Array.isArray(data.results)) throw new Error('探测结果格式无效')
+      elements.manualProbeResults.innerHTML = data.results.map(result => renderManualProbeResult(result)).join('') || '<div class="manual-probe-model-empty">没有返回探测结果</div>'
+    } catch (error) {
+      elements.manualProbeResults.innerHTML = `<div class="manual-probe-error" role="alert">${escapeHTML(error.message || '探测失败，请稍后重试')}</div>`
+    } finally {
+      setManualProbeBusy(false)
+    }
+  }
+
+  function renderManualProbeResult(result) {
+    const outcome = result?.outcome || {}
+    const success = outcome.success === true
+    const latency = Number(outcome.latency_ms)
+    const usage = outcome.usage || null
+    const totalTokens = usage ? ['input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_write_tokens']
+      .reduce((total, key) => total + Math.max(0, Number(usage[key]) || 0), 0) : null
+    const error = String(result?.error || outcome.error_message || '探测失败')
+    const response = String(outcome.response_text || '').trim()
+    return `<article class="manual-probe-result ${success ? 'success' : 'error'}">
+      <div class="manual-probe-result-heading"><strong>${escapeHTML(result?.model || '未知模型')}</strong><span>${success ? '成功' : '失败'}</span></div>
+      <div class="manual-probe-result-meta">${Number.isFinite(latency) ? `耗时 ${escapeHTML(formatDurationMS(latency))}` : '耗时不可用'}${totalTokens === null ? '' : ` · ${escapeHTML(totalTokens)} tokens`}</div>
+      ${success && response ? `<p>${escapeHTML(response)}</p>` : ''}
+      ${success ? '' : `<p role="alert">${escapeHTML(error)}</p>`}
+    </article>`
   }
 
   function toggleAccountDetails(accountID, groupID) {
@@ -2511,6 +2605,13 @@
   function formatPercent(value) {
     const normalized = Number(value)
     return Number.isFinite(normalized) ? `${normalized.toFixed(normalized % 1 ? 1 : 0)}%` : '—'
+  }
+
+  function formatDurationMS(value) {
+    const milliseconds = Math.max(0, Number(value) || 0)
+    if (milliseconds < 1000) return `${Math.round(milliseconds)} ms`
+    if (milliseconds < 10000) return `${(milliseconds / 1000).toFixed(2)} s`
+    return `${(milliseconds / 1000).toFixed(1)} s`
   }
 
   function escapeHTML(value) {

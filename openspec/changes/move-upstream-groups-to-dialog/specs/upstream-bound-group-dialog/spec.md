@@ -32,3 +32,10 @@ The bound-group dialog SHALL have a descriptive title, a visible close control, 
 #### Scenario: Closing the bound-group dialog
 - **WHEN** an administrator closes the dialog through its close control or Escape
 - **THEN** focus returns to the button that opened the dialog
+
+### Requirement: Contain dialog scrolling
+While the bound-group dialog is open, the sidecar SHALL keep scrolling within the dialog list and SHALL NOT scroll the background upstream-management page when the list reaches either vertical edge.
+
+#### Scenario: Scrolling past the end of a long group list
+- **WHEN** an administrator continues to scroll after the group list reaches its top or bottom edge
+- **THEN** the background upstream-management page remains stationary until the dialog is closed
