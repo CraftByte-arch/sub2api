@@ -321,6 +321,22 @@ describe('CustomPageView', () => {
     expect(getHtml).not.toHaveBeenCalled()
   })
 
+  it.each([undefined, false, true])('honors the per-menu hide button setting %s while keeping the iframe', async (hidden) => {
+    appStoreState.cachedPublicSettings.custom_menu_items = [
+      menuItem({
+        id: 'docs',
+        label: 'Docs',
+        url: 'https://example.com/docs',
+        content_type: 'url',
+        page_slug: undefined,
+        hide_open_button: hidden
+      })
+    ]
+    const { wrapper } = await mountView('docs')
+    expect(wrapper.find('.custom-open-fab').exists()).toBe(hidden !== true)
+    expect(wrapper.get('iframe').attributes('src')).toContain('https://example.com/docs')
+  })
+
   it('preserves the embedded URL, secure link attributes, and normal clicks with small pointer movements', async () => {
     appStoreState.cachedPublicSettings.custom_menu_items = [
       menuItem({

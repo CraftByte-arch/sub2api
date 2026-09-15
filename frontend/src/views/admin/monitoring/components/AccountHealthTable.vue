@@ -74,6 +74,7 @@ function platformLabel(platform: PerformanceAccount['platform']) {
     zhipu: 'Zhipu AI',
     deepseek: 'DeepSeek',
     minimax: 'MiniMax',
+    opencode_go: 'OpenCode',
   })[platform]
 }
 
