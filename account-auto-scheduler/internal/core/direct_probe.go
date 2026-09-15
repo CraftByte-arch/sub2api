@@ -138,7 +138,7 @@ func (c *Client) ProbeDirect(ctx context.Context, snapshot model.DirectProbeSnap
 	}
 
 	protocol := chooseDirectProbeProtocol(snapshot, upstreamModel)
-	payload, endpoint, err := buildDirectProbeRequest(snapshot, protocol, upstreamModel, prompt.Text)
+	payload, endpoint, err := buildDirectProbeRequest(snapshot, protocol, upstreamModel, prompt.Text, policy.ReasoningEffort)
 	if err != nil {
 		return ProbeOutcome{Latency: time.Since(startedAt)}, err
 	}
@@ -298,7 +298,7 @@ func chooseDirectProbeProtocol(snapshot model.DirectProbeSnapshot, modelID strin
 	}
 }
 
-func buildDirectProbeRequest(snapshot model.DirectProbeSnapshot, protocol directProbeProtocol, modelID, prompt string) ([]byte, string, error) {
+func buildDirectProbeRequest(snapshot model.DirectProbeSnapshot, protocol directProbeProtocol, modelID, prompt, effort string) ([]byte, string, error) {
 	var body any
 	var endpoint string
 	switch protocol {
@@ -312,6 +312,9 @@ func buildDirectProbeRequest(snapshot model.DirectProbeSnapshot, protocol direct
 				"role": "user", "content": prompt,
 			}},
 		}
+		if effort != "" && effort != "none" {
+			body.(map[string]any)["reasoning_effort"] = effort
+		}
 		endpoint = directProbeEndpoint(snapshot.BaseURL, "v1/chat/completions")
 	case directProbeOpenAIResponses:
 		body = map[string]any{
@@ -319,6 +322,9 @@ func buildDirectProbeRequest(snapshot model.DirectProbeSnapshot, protocol direct
 			"input":             prompt,
 			"stream":            true,
 			"max_output_tokens": 128,
+		}
+		if effort != "" && effort != "none" {
+			body.(map[string]any)["reasoning"] = map[string]string{"effort": effort}
 		}
 		endpoint = directProbeEndpoint(snapshot.BaseURL, "v1/responses")
 	case directProbeAnthropic:
@@ -330,6 +336,16 @@ func buildDirectProbeRequest(snapshot model.DirectProbeSnapshot, protocol direct
 				"role": "user", "content": prompt,
 			}},
 		}
+		if effort != "" && effort != "none" {
+			budget := 1024
+			if effort == "medium" {
+				budget = 4096
+			}
+			if effort == "high" || effort == "xhigh" {
+				budget = 8192
+			}
+			body.(map[string]any)["thinking"] = map[string]any{"type": "enabled", "budget_tokens": budget}
+		}
 		endpoint = directProbeEndpoint(snapshot.BaseURL, "v1/messages")
 	case directProbeGemini:
 		body = map[string]any{
@@ -338,6 +354,16 @@ func buildDirectProbeRequest(snapshot model.DirectProbeSnapshot, protocol direct
 				"parts": []map[string]string{{"text": prompt}},
 			}},
 			"generationConfig": map[string]any{"maxOutputTokens": 128},
+		}
+		if effort != "" && effort != "none" {
+			budget := 1024
+			if effort == "medium" {
+				budget = 4096
+			}
+			if effort == "high" || effort == "xhigh" {
+				budget = 8192
+			}
+			body.(map[string]any)["generationConfig"].(map[string]any)["thinkingConfig"] = map[string]int{"thinkingBudget": budget}
 		}
 		endpoint = directGeminiEndpoint(snapshot.BaseURL, modelID)
 	default:

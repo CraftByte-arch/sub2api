@@ -23,7 +23,7 @@ func TestOverviewExposesTodayAccountCacheStats(t *testing.T) {
 			Tokens:   1800,
 			Cost:     0.75,
 			Cache: &model.AccountCacheStats{
-				InputTokens: 600, CacheCreationTokens: 300, CacheReadTokens: 600, PromptTokens: 1500, HitRate: 40,
+				InputTokens: 600, CacheCreationTokens: 300, CacheReadTokens: 600, PromptTokens: 1200, HitRate: 50,
 			},
 		}},
 	}
@@ -45,7 +45,7 @@ func TestOverviewExposesTodayAccountCacheStats(t *testing.T) {
 		t.Fatalf("cache projection missing from overview: %#v", payload)
 	}
 	cache := payload.Accounts[0].TodayUsage.Cache
-	if cache.CacheReadTokens != 600 || cache.PromptTokens != 1500 || cache.HitRate != 40 {
+	if cache.CacheReadTokens != 600 || cache.PromptTokens != 1200 || cache.HitRate != 50 {
 		t.Fatalf("unexpected cache projection: %#v", cache)
 	}
 }

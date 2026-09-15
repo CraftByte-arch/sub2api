@@ -190,6 +190,68 @@ func TestPublicUpstreamDoesNotSumMultipleIdentityBalances(t *testing.T) {
 	}
 }
 
+func TestPublicIdentityProjectsGroupFinalMultiplierAndUnknownValues(t *testing.T) {
+	now := time.Now().UTC()
+	groupMultiplier := 0.8
+	rechargeRate, err := model.NewUpstreamRechargeRate(model.RechargeRateUSDPerCNY, 5, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view := publicIdentity(model.UpstreamIdentity{
+		ID: "identity",
+		Groups: map[string]model.RemoteGroup{
+			"openai": {
+				ID: "openai", Name: "OpenAI Standard", Platform: "openai", Multiplier: &groupMultiplier,
+				MultiplierSource: "user_override", SyncedAt: now,
+			},
+			"auto": {
+				ID: "auto", Name: "Auto", Platform: "grok", MultiplierSource: "dynamic", Stale: true, SyncedAt: now.Add(-time.Minute),
+			},
+		},
+	}, &rechargeRate)
+	if len(view.Groups) != 2 {
+		t.Fatalf("groups = %#v", view.Groups)
+	}
+	openAI := view.Groups[0]
+	if openAI.ID != "openai" || openAI.Platform != "openai" || openAI.Multiplier == nil || *openAI.Multiplier != 0.8 || openAI.FinalMultiplier == nil || math.Abs(*openAI.FinalMultiplier-0.16) > 1e-12 || openAI.Stale {
+		t.Fatalf("unexpected projected group: %#v", openAI)
+	}
+	auto := view.Groups[1]
+	if auto.ID != "auto" || auto.Platform != "grok" || auto.Multiplier != nil || auto.FinalMultiplier != nil || !auto.Stale || auto.MultiplierSource != "dynamic" {
+		t.Fatalf("unexpected unavailable group projection: %#v", auto)
+	}
+}
+
+func TestManagerMarksRemoteGroupsStaleAfterSyncFailure(t *testing.T) {
+	stateStore := managerTestStore(t)
+	now := time.Now().UTC()
+	multiplier := 1.2
+	if err := stateStore.PutUpstream(model.ManagedUpstream{
+		ID: "upstream", Name: "Upstream", BaseURL: "https://upstream.example", CreatedAt: now, UpdatedAt: now,
+		Identities: map[string]model.UpstreamIdentity{
+			"identity": {
+				ID: "identity", Groups: map[string]model.RemoteGroup{
+					"group": {ID: "group", Name: "Group", Multiplier: &multiplier, SyncedAt: now},
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	manager := NewManager(stateStore, &managerLocalCore{}, nil, 0, nil)
+	if err := manager.recordSyncFailure("upstream", "identity", adapterError("UPSTREAM_NETWORK_ERROR", "network", model.IdentityStatusNetworkError, http.StatusBadGateway)); err == nil {
+		t.Fatal("recordSyncFailure unexpectedly succeeded")
+	}
+	stored, err := stateStore.GetUpstream("upstream")
+	if err != nil {
+		t.Fatal(err)
+	}
+	group := stored.Identities["identity"].Groups["group"]
+	if !group.Stale || group.Multiplier == nil || *group.Multiplier != 1.2 {
+		t.Fatalf("failed sync did not preserve a stale snapshot: %#v", group)
+	}
+}
+
 func TestManagerDisabledCredentialBoxDoesNotBlockListing(t *testing.T) {
 	box, err := NewCredentialBox("")
 	if err != nil {

@@ -60,6 +60,11 @@ type dynamicRatioObservation struct {
 	ObservedAt time.Time
 }
 
+type newAPIGroupInfo struct {
+	Ratio    *float64
+	Platform string
+}
+
 func (newAPIAdapter) Connect(ctx context.Context, managementURL string, input LoginInput) (LoginResult, error) {
 	client, err := newRemoteClient(managementURL)
 	if err != nil {
@@ -94,7 +99,7 @@ func (newAPIAdapter) Sync(ctx context.Context, managementURL string, material Au
 	}
 	balance := fetchNewAPIBalance(ctx, client, user)
 
-	groupRatios, err := fetchNewAPIGroupRatios(ctx, client, material)
+	groupInfos, err := fetchNewAPIGroupRatios(ctx, client, material)
 	if err != nil {
 		return SyncResult{}, err
 	}
@@ -116,13 +121,15 @@ func (newAPIAdapter) Sync(ctx context.Context, managementURL string, material Au
 
 	keys := make([]SyncedKey, 0, len(tokens))
 	for _, token := range tokens {
-		keys = append(keys, normalizeNewAPIKey(token, groupRatios, dynamicRatios))
+		keys = append(keys, normalizeNewAPIKey(token, groupInfos, dynamicRatios))
 	}
 	return SyncResult{
-		Keys:      keys,
-		Material:  material,
-		Principal: firstNonEmpty(user.Username, user.Email, strconv.Itoa(user.ID)),
-		Balance:   balance,
+		Keys:          keys,
+		Groups:        normalizeNewAPIGroups(groupInfos),
+		GroupsFetched: true,
+		Material:      material,
+		Principal:     firstNonEmpty(user.Username, user.Email, strconv.Itoa(user.ID)),
+		Balance:       balance,
 	}, nil
 }
 
@@ -331,24 +338,32 @@ func refreshNewAPI(ctx context.Context, client *remoteClient, material AuthMater
 	return material, nil
 }
 
-func fetchNewAPIGroupRatios(ctx context.Context, client *remoteClient, material AuthMaterial) (map[string]float64, error) {
+func fetchNewAPIGroupRatios(ctx context.Context, client *remoteClient, material AuthMaterial) (map[string]newAPIGroupInfo, error) {
 	response, err := client.do(ctx, http.MethodGet, "/api/user/self/groups", nil, material)
 	if err != nil {
 		return nil, adapterError("UPSTREAM_NETWORK_ERROR", "无法读取 NewAPI 分组倍率", model.IdentityStatusNetworkError, http.StatusBadGateway)
 	}
 	var raw map[string]struct {
-		Ratio json.RawMessage `json:"ratio"`
+		Ratio    json.RawMessage `json:"ratio"`
+		Platform string          `json:"platform"`
+		Type     string          `json:"type"`
 	}
 	if err := decodeNewAPIResponse(response, &raw); err != nil {
 		return nil, err
 	}
-	ratios := make(map[string]float64, len(raw))
+	groups := make(map[string]newAPIGroupInfo, len(raw))
 	for group, value := range raw {
-		if ratio, ok := parseJSONNumber(value.Ratio); ok {
-			ratios[group] = ratio
+		group = strings.TrimSpace(group)
+		if group == "" {
+			continue
 		}
+		info := newAPIGroupInfo{Platform: model.NormalizeRemoteGroupPlatform(firstNonEmpty(value.Platform, value.Type))}
+		if ratio, ok := parseJSONNumber(value.Ratio); ok {
+			info.Ratio = floatPointer(ratio)
+		}
+		groups[group] = info
 	}
-	return ratios, nil
+	return groups, nil
 }
 
 func fetchNewAPITokens(ctx context.Context, client *remoteClient, material AuthMaterial) ([]newAPIToken, error) {
@@ -425,7 +440,7 @@ func decodeNewAPIResponse(response remoteResponse, target any) error {
 	return nil
 }
 
-func normalizeNewAPIKey(item newAPIToken, ratios map[string]float64, observations map[int]dynamicRatioObservation) SyncedKey {
+func normalizeNewAPIKey(item newAPIToken, groups map[string]newAPIGroupInfo, observations map[int]dynamicRatioObservation) SyncedKey {
 	group := strings.TrimSpace(item.Group)
 	var multiplier *float64
 	source := ""
@@ -437,8 +452,8 @@ func normalizeNewAPIKey(item newAPIToken, ratios map[string]float64, observation
 			value := observation.ObservedAt
 			observedAt = &value
 		}
-	} else if ratio, ok := ratios[group]; ok {
-		multiplier = floatPointer(ratio)
+	} else if info, ok := groups[group]; ok && info.Ratio != nil {
+		multiplier = floatPointer(*info.Ratio)
 		source = "group"
 	}
 	plain := ""
@@ -469,6 +484,29 @@ func normalizeNewAPIKey(item newAPIToken, ratios map[string]float64, observation
 		},
 		Plaintext: plain,
 	}
+}
+
+func normalizeNewAPIGroups(groups map[string]newAPIGroupInfo) []model.RemoteGroup {
+	snapshots := make([]model.RemoteGroup, 0, len(groups))
+	for groupID, info := range groups {
+		groupID = strings.TrimSpace(groupID)
+		if groupID == "" {
+			continue
+		}
+		group := model.RemoteGroup{
+			ID:       groupID,
+			Name:     groupID,
+			Platform: info.Platform,
+		}
+		if strings.EqualFold(groupID, "auto") {
+			group.MultiplierSource = "dynamic"
+		} else if info.Ratio != nil {
+			group.Multiplier = floatPointer(*info.Ratio)
+			group.MultiplierSource = "group"
+		}
+		snapshots = append(snapshots, group)
+	}
+	return snapshots
 }
 
 func newAPITokenStatus(status int, expiresAt int64) string {

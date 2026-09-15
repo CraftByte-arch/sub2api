@@ -10,22 +10,22 @@
   const AUTH_REFRESH_TIMEOUT_MS = 30000
   const SIDECAR_RETURN_PATH = '/custom/account-auto-scheduler'
   const COLLAPSED_GROUPS_KEY = 'sub2api-auto-scheduler-collapsed-groups'
-  const CHANNEL_SLOW_MS = 6000
   const DETAIL_PAGE_SIZE = 10
   const state = {
     token: '',
     user: null,
     groups: [],
     accounts: [],
+    groupUsage: null,
+    groupUsageByID: new Map(),
     groupBalanceSummaries: {},
     groupProtectionDefaults: {},
     groupBalanceThresholds: {},
+    actualSuccess: null,
+    actualSuccessByKey: new Map(),
     notificationsAvailable: false,
     notificationSettings: null,
-    defaultPolicy: null,
     editingID: null,
-    directProbeBusy: false,
-    deletingID: null,
     search: '',
     status: 'all',
     loading: false,
@@ -35,12 +35,29 @@
     bindingSearch: '',
     bindingSaving: false,
     bindingTrigger: null,
+    manualProbeAccount: null,
+    manualProbeTrigger: null,
+    manualProbeRequestID: 0,
+    manualProbeBusy: false,
     detailGroupKey: null,
     detailKind: 'oauth',
     detailPage: 1,
     usageCache: new Map(),
+    onlineUsersSummary: null,
+    onlineUsersSummaryLoading: false,
+    onlineUsersSummaryError: '',
+    onlineUsers: null,
+    onlineUsersLoading: false,
+    onlineUsersError: '',
+    onlineUsersTrigger: null,
+    groupConsumption: null,
+    groupConsumptionGroupKey: null,
+    groupConsumptionLoading: false,
+    groupConsumptionError: '',
+    groupConsumptionTrigger: null,
+    groupConsumptionRequestID: 0,
     collapsedGroups: new Set(),
-    automationBusy: new Set(),
+    expandedAccounts: new Set(),
     schedulableBusy: new Set(),
     protectionBusy: new Set(),
     protectionTarget: null,
@@ -52,10 +69,12 @@
     activeTab: 'groups',
     upstreamWorkspace: null,
     pollTimer: null,
+    onlinePollTimer: null,
     toastTimer: null,
   }
 
   const elements = {}
+  let groupAccessWorkspace
   let authRefreshPromise = null
   let authRedirecting = false
 
@@ -65,6 +84,7 @@
     cacheElements()
     captureEmbedContext()
     state.upstreamWorkspace = window.createUpstreamWorkspace({ api, showToast })
+    groupAccessWorkspace = window.createGroupAccessWorkspace({ api, getGroups: () => state.groups })
     bindEvents()
     if (!readStoredAccessToken() && !readStoredRefreshToken()) {
       redirectToLogin()
@@ -73,7 +93,6 @@
     try {
       const session = await api('/api/session')
       state.user = session.user
-      state.defaultPolicy = session.default_policy
       state.notificationsAvailable = Boolean(session.notifications_available)
       state.upstreamWorkspace.setCredentialsEnabled(session.credentials_enabled)
       elements.registerTabButton.hidden = !session.public_url
@@ -81,12 +100,18 @@
       elements.authState.hidden = true
       elements.app.hidden = false
       await loadOverview()
+      await loadOnlineUsersSummary(true)
       state.pollTimer = window.setInterval(() => {
         if (document.visibilityState === 'visible' && !document.querySelector('dialog[open]')) {
           void loadOverview(true)
           if (state.activeTab === 'upstreams') void state.upstreamWorkspace.refresh(true)
         }
       }, 10000)
+      state.onlinePollTimer = window.setInterval(() => {
+        if (document.visibilityState === 'visible' && !document.querySelector('dialog[open]')) {
+          void loadOnlineUsersSummary(true)
+        }
+      }, 60000)
     } catch (error) {
       if (!authRedirecting) showAuthError(error.message || '管理员身份验证失败')
     }
@@ -94,16 +119,19 @@
 
   function cacheElements() {
     const ids = [
-      'auth-state', 'auth-message', 'app', 'sync-label', 'register-tab-button', 'refresh-button', 'add-button',
+      'auth-state', 'auth-message', 'app', 'sync-label', 'register-tab-button', 'refresh-button',
       'search-input', 'status-filter', 'group-list', 'empty-state', 'no-match-state', 'metric-groups',
-      'metric-accounts', 'metric-enabled', 'metric-auto-stopped', 'config-dialog', 'config-form', 'config-title',
-      'account-select', 'interval-input', 'model-input', 'latency-input', 'failure-input', 'recovery-input',
-      'enabled-input', 'balance-alert-input', 'prompt-input', 'form-error', 'save-button', 'binding-dialog', 'binding-group-name',
-      'direct-probe-control', 'direct-probe-state', 'direct-probe-message', 'direct-probe-authorize-button', 'direct-probe-revoke-button',
+      'metric-accounts', 'metric-enabled', 'metric-active-traffic', 'online-users-metric', 'metric-online-window', 'metric-online-users',
+      'config-dialog', 'config-form', 'config-title',
+      'account-select', 'balance-alert-input', 'form-error', 'save-button', 'binding-dialog', 'binding-group-name',
       'binding-search-input', 'binding-change-count', 'binding-list', 'binding-error', 'binding-save-button',
       'account-detail-dialog', 'account-detail-title', 'account-detail-group-name', 'account-detail-list',
-      'account-detail-page-label', 'account-detail-prev', 'account-detail-next', 'delete-dialog',
-      'delete-account-name', 'confirm-delete-button', 'result-dialog', 'result-account-name', 'result-details', 'toast',
+      'account-detail-page-label', 'account-detail-prev', 'account-detail-next',
+      'manual-probe-dialog', 'manual-probe-form', 'manual-probe-account', 'manual-probe-models', 'manual-probe-model-status', 'manual-probe-retry', 'manual-probe-custom-model', 'manual-probe-prompt', 'manual-probe-effort', 'manual-probe-results', 'manual-probe-submit',
+      'online-users-dialog', 'online-users-window-label', 'online-users-summary', 'online-users-list', 'online-users-retry-button',
+      'group-user-consumption-dialog', 'group-user-consumption-title', 'group-user-consumption-date',
+      'group-user-consumption-summary', 'group-user-consumption-list', 'group-user-consumption-retry-button',
+      'toast',
       'protection-dialog', 'protection-form', 'protection-account-name', 'protection-multiplier-input',
       'protection-final-preview', 'protection-error', 'protection-save-button', 'binding-action-dialog',
       'binding-action-title', 'binding-action-account-name', 'binding-action-message', 'binding-action-error',
@@ -142,8 +170,13 @@
     elements.groupsTab.addEventListener('click', () => setWorkspaceTab('groups'))
     elements.upstreamsTab.addEventListener('click', () => setWorkspaceTab('upstreams'))
     for (const tab of [elements.groupsTab, elements.upstreamsTab]) tab.addEventListener('keydown', handleWorkspaceTabKeydown)
-    elements.refreshButton.addEventListener('click', () => loadOverview())
-    elements.addButton.addEventListener('click', () => openCreateDialog())
+    elements.refreshButton.addEventListener('click', () => {
+      void loadOverview()
+      void loadOnlineUsersSummary()
+    })
+    elements.onlineUsersMetric.addEventListener('click', (event) => openOnlineUsersDialog(event.currentTarget))
+    elements.onlineUsersRetryButton.addEventListener('click', () => loadOnlineUsers())
+    elements.groupUserConsumptionRetryButton.addEventListener('click', () => loadGroupUserConsumption())
     elements.registerTabButton.addEventListener('click', registerTab)
     elements.notificationSettingsButton.addEventListener('click', openNotificationSettings)
     elements.searchInput.addEventListener('input', (event) => {
@@ -156,10 +189,8 @@
     })
     elements.groupList.addEventListener('click', handleGroupClick)
     elements.groupList.addEventListener('change', handleGroupChange)
+    document.addEventListener('click', closeAccountActionMenus)
     elements.configForm.addEventListener('submit', saveConfig)
-    elements.directProbeAuthorizeButton.addEventListener('click', authorizeDirectProbe)
-    elements.directProbeRevokeButton.addEventListener('click', revokeDirectProbe)
-    elements.confirmDeleteButton.addEventListener('click', deleteConfig)
     elements.protectionForm.addEventListener('submit', saveProtection)
     elements.groupProtectionForm.addEventListener('submit', saveGroupProtection)
     elements.groupProtectionClearButton.addEventListener('click', clearGroupProtection)
@@ -177,6 +208,8 @@
     })
     elements.bindingList.addEventListener('change', handleBindingChange)
     elements.bindingSaveButton.addEventListener('click', saveBindings)
+    elements.manualProbeForm.addEventListener('submit', submitManualProbe)
+    elements.manualProbeRetry.addEventListener('click', loadManualProbeModels)
     elements.accountDetailPrev.addEventListener('click', () => changeDetailPage(-1))
     elements.accountDetailNext.addEventListener('click', () => changeDetailPage(1))
     document.querySelectorAll('[data-close-dialog]').forEach((button) => {
@@ -192,6 +225,16 @@
       if (state.bindingSaving) event.preventDefault()
     })
     elements.bindingDialog.addEventListener('close', restoreBindingFocus)
+    elements.manualProbeDialog.addEventListener('cancel', (event) => {
+      if (state.manualProbeBusy) event.preventDefault()
+    })
+    elements.manualProbeDialog.addEventListener('close', () => {
+      state.manualProbeRequestID++
+      state.manualProbeAccount = null
+      const trigger = state.manualProbeTrigger
+      state.manualProbeTrigger = null
+      window.requestAnimationFrame(() => trigger?.isConnected && trigger.focus())
+    })
     elements.protectionDialog.addEventListener('close', () => { state.protectionTarget = null })
     elements.groupProtectionDialog.addEventListener('close', () => { state.groupProtectionTarget = null })
     elements.groupBalanceAlertDialog.addEventListener('close', () => { state.groupBalanceAlertTarget = null })
@@ -201,8 +244,30 @@
     elements.schedulingActionDialog.addEventListener('close', () => {
       if (elements.schedulingActionDialog.dataset.busy !== 'true') state.schedulingAction = null
     })
+    elements.onlineUsersDialog.addEventListener('close', () => {
+      const trigger = state.onlineUsersTrigger
+      state.onlineUsersTrigger = null
+      window.requestAnimationFrame(() => trigger?.isConnected && trigger.focus())
+    })
+    elements.groupUserConsumptionDialog.addEventListener('close', () => {
+      const trigger = state.groupConsumptionTrigger
+      state.groupConsumptionTrigger = null
+      state.groupConsumptionGroupKey = null
+      state.groupConsumption = null
+      state.groupConsumptionError = ''
+      state.groupConsumptionLoading = false
+      state.groupConsumptionRequestID += 1
+      window.requestAnimationFrame(() => trigger?.isConnected && trigger.focus())
+    })
     document.addEventListener('keydown', (event) => {
       if (event.key !== 'Escape') return
+      const openAccountMenu = document.querySelector('.account-action-menu[open]')
+      if (openAccountMenu) {
+        event.preventDefault()
+        openAccountMenu.open = false
+        openAccountMenu.querySelector('summary')?.focus()
+        return
+      }
       const dialogs = [...document.querySelectorAll('dialog[open]')]
       const activeDialog = dialogs.at(-1)
       if (!activeDialog) return
@@ -254,9 +319,13 @@
       const response = await api('/api/overview')
       state.groups = [...(response.groups || [])].sort((a, b) => (a.sort_order - b.sort_order) || (a.id - b.id))
       state.accounts = response.accounts || []
+      state.groupUsage = response.group_usage || null
+      state.groupUsageByID = new Map((state.groupUsage?.items || []).map((item) => [Number(item.group_id), item]))
       state.groupBalanceSummaries = response.group_balance_summaries || {}
       state.groupProtectionDefaults = response.group_protection_defaults || {}
       state.groupBalanceThresholds = response.group_balance_thresholds || {}
+      state.actualSuccess = response.actual_success || null
+      state.actualSuccessByKey = new Map((state.actualSuccess?.items || []).map((item) => [relationKey(item.group_id, item.account_id), item]))
       elements.syncLabel.textContent = `已同步 ${formatDateTime(new Date())}`
       render()
       return true
@@ -266,6 +335,60 @@
     } finally {
       state.loading = false
       setRefreshLoading(false)
+    }
+  }
+
+  async function loadOnlineUsers(silent = false) {
+    if (state.onlineUsersLoading) return false
+    state.onlineUsersLoading = true
+    renderOnlineUsers()
+    try {
+      const response = await api('/api/online-users')
+      state.onlineUsers = response || null
+      state.onlineUsersError = ''
+      adoptOnlineUsersSummary(response)
+      renderOnlineUsers()
+      return true
+    } catch (error) {
+      state.onlineUsersError = error.message || '在线用户数据暂不可用'
+      state.onlineUsers = null
+      renderOnlineUsers()
+      if (!silent && !elements.onlineUsersDialog.open) showToast(state.onlineUsersError, true)
+      return false
+    } finally {
+      state.onlineUsersLoading = false
+      renderOnlineUsers()
+    }
+  }
+
+  async function loadOnlineUsersSummary(silent = false) {
+    if (state.onlineUsersSummaryLoading) return false
+    state.onlineUsersSummaryLoading = true
+    renderOnlineUsersMetric()
+    try {
+      const response = await api('/api/online-users/summary')
+      state.onlineUsersSummary = response || null
+      state.onlineUsersSummaryError = ''
+      renderOnlineUsersMetric()
+      return true
+    } catch (error) {
+      state.onlineUsersSummaryError = error.message || '在线用户数据暂不可用'
+      renderOnlineUsersMetric()
+      if (!silent) showToast(state.onlineUsersSummaryError, true)
+      return false
+    } finally {
+      state.onlineUsersSummaryLoading = false
+      renderOnlineUsersMetric()
+    }
+  }
+
+  function adoptOnlineUsersSummary(snapshot) {
+    if (!snapshot) return
+    const incoming = new Date(snapshot.queried_at || 0).getTime()
+    const current = new Date(state.onlineUsersSummary?.queried_at || 0).getTime()
+    if (!state.onlineUsersSummary || !Number.isFinite(current) || incoming >= current) {
+      state.onlineUsersSummary = snapshot
+      state.onlineUsersSummaryError = ''
     }
   }
 
@@ -284,7 +407,304 @@
     elements.metricGroups.textContent = formatInteger(state.groups.length)
     elements.metricAccounts.textContent = formatInteger(state.accounts.length)
     elements.metricEnabled.textContent = formatInteger(state.accounts.filter((account) => accountState(account).key === 'enabled').length)
-    elements.metricAutoStopped.textContent = formatInteger(state.accounts.filter((account) => account.config?.managed_suspended && !account.schedulable).length)
+    const activeTraffic = Number(state.actualSuccess?.active_account_count)
+    elements.metricActiveTraffic.textContent = state.actualSuccess?.ready && Number.isFinite(activeTraffic) ? formatInteger(activeTraffic) : '—'
+    elements.metricActiveTraffic.title = state.actualSuccess?.notice || '最近一小时内有真实上游尝试的账号数量'
+    renderOnlineUsersMetric()
+  }
+
+  function renderOnlineUsersMetric() {
+    const snapshot = state.onlineUsersSummary
+    const count = Number(snapshot?.count)
+    const ready = snapshot?.ready === true
+    elements.metricOnlineUsers.textContent = state.onlineUsersSummaryLoading && !snapshot
+      ? '…'
+      : ready && Number.isFinite(count) ? formatInteger(count) : snapshot || state.onlineUsersSummaryError ? '不可用' : '—'
+    elements.metricOnlineWindow.textContent = snapshot?.window_minutes
+      ? `最近 ${formatInteger(snapshot.window_minutes)} 分钟`
+      : '最近 10 分钟'
+    elements.onlineUsersWindowLabel.textContent = snapshot?.window_minutes
+      ? `最近 ${formatInteger(snapshot.window_minutes)} 分钟内有调用的用户`
+      : '最近 10 分钟内有调用的用户'
+    elements.onlineUsersMetric.classList.toggle('metric-error', Boolean((state.onlineUsersSummaryError || snapshot?.ready === false) && !ready))
+    elements.onlineUsersMetric.classList.toggle('metric-loading', state.onlineUsersSummaryLoading)
+    elements.onlineUsersMetric.title = state.onlineUsersSummaryError && !ready
+      ? `${state.onlineUsersSummaryError}；点击查看或重试`
+      : snapshot?.notice || onlineAggregateFreshnessLabel(snapshot) || '查看最近十分钟有调用的用户'
+    renderGroupOnlineCounts()
+  }
+
+  function onlineUsersGroupProjection(groupID) {
+    const snapshot = state.onlineUsersSummary
+    if (state.onlineUsersSummaryLoading && !snapshot) {
+      return {
+        label: '…',
+        available: false,
+        partial: false,
+        title: '正在读取最近 10 分钟分组在线人数',
+        ariaLabel: '正在读取分组在线人数',
+      }
+    }
+    if (!snapshot || snapshot.ready !== true || snapshot.group_counts_available !== true) {
+      return {
+        label: '—',
+        available: false,
+        partial: false,
+        title: state.onlineUsersSummaryError || snapshot?.notice || '最近 10 分钟分组在线人数暂不可用',
+        ariaLabel: '分组在线人数暂不可用',
+      }
+    }
+    const groupKey = String(Number(groupID))
+    const rawCount = Object.prototype.hasOwnProperty.call(snapshot.group_counts || {}, groupKey)
+      ? snapshot.group_counts[groupKey]
+      : 0
+    const count = Number(rawCount)
+    if (!Number.isFinite(count) || count < 0) {
+      return {
+        label: '—',
+        available: false,
+        partial: Boolean(snapshot.group_counts_partial),
+        title: '最近 10 分钟分组在线人数暂不可用',
+        ariaLabel: '分组在线人数暂不可用',
+      }
+    }
+    const formatted = formatInteger(count)
+    const partial = Boolean(snapshot.group_counts_partial || snapshot.stale)
+    return {
+      label: formatted,
+      available: true,
+      partial,
+      title: partial
+        ? `最近 10 分钟内有调用的用户：${formatted} 人；${snapshot.notice || '聚合数据可能延迟'}`
+        : `最近 10 分钟内有调用的用户：${formatted} 人`,
+      ariaLabel: partial
+        ? `最近 10 分钟分组在线人数 ${formatted} 人，聚合数据可能延迟`
+        : `最近 10 分钟分组在线人数 ${formatted} 人`,
+    }
+  }
+
+  function renderGroupOnlineCounts() {
+    const badges = document.querySelectorAll('[data-group-online-count]')
+    for (const badge of badges) {
+      const projection = onlineUsersGroupProjection(badge.dataset.groupOnlineCount)
+      const label = badge.querySelector('[data-group-online-label]')
+      if (label) label.textContent = `在线 ${projection.label}`
+      badge.title = projection.title
+      badge.setAttribute('aria-label', projection.ariaLabel)
+      badge.classList.toggle('unavailable', !projection.available)
+      badge.classList.toggle('partial', projection.partial)
+    }
+  }
+
+  function renderGroupOnlineBadge(groupID) {
+    const projection = onlineUsersGroupProjection(groupID)
+    return `<span class="group-online-users${projection.available ? '' : ' unavailable'}${projection.partial ? ' partial' : ''}" data-group-online-count="${escapeAttr(groupID)}" title="${escapeAttr(projection.title)}" aria-label="${escapeAttr(projection.ariaLabel)}"><span class="group-online-dot" aria-hidden="true"></span><span data-group-online-label>在线 ${escapeHTML(projection.label)}</span></span>`
+  }
+
+  function groupUsageProjection(groupID) {
+    const normalizedID = Number(groupID)
+    if (!Number.isInteger(normalizedID) || normalizedID <= 0) return null
+    const snapshot = state.groupUsage
+    if (!snapshot) return null
+    if (snapshot.ready !== true) {
+      const notice = snapshot.notice || '分组今日消耗暂不可用'
+      return { available: false, stale: false, value: '暂不可用', title: notice }
+    }
+    const summary = state.groupUsageByID.get(normalizedID)
+    const cost = Number(summary?.today_cost)
+    if (!summary || !Number.isFinite(cost)) {
+      return { available: false, stale: Boolean(snapshot.stale), value: '暂不可用', title: snapshot.notice || '该分组今日消耗暂不可用' }
+    }
+    const stale = Boolean(snapshot.stale)
+    const queriedAt = snapshot.queried_at ? `更新于 ${formatDateTime(snapshot.queried_at)}` : ''
+    const titleParts = [`今日实际消耗：${formatCurrency(cost)}`]
+    if (stale) titleParts.push('当前为最近一次成功结果')
+    if (queriedAt) titleParts.push(queriedAt)
+    if (snapshot.notice) titleParts.push(snapshot.notice)
+    return { available: true, stale, value: formatCurrency(cost), title: titleParts.join('；') }
+  }
+
+  function renderGroupTodayUsage(groupID) {
+    const projection = groupUsageProjection(groupID)
+    if (!projection) return ''
+    return `<span class="group-today-usage${projection.available ? '' : ' unavailable'}${projection.stale ? ' stale' : ''}" title="${escapeAttr(projection.title)}" aria-label="${escapeAttr(`今日消耗 ${projection.value}`)}"><span>今日消耗</span><strong>${escapeHTML(projection.value)}</strong></span>`
+  }
+
+  function renderOnlineUsers() {
+    renderOnlineUsersMetric()
+    if (!elements.onlineUsersDialog?.open) return
+    const snapshot = state.onlineUsers
+    if (state.onlineUsersLoading && !snapshot) {
+      elements.onlineUsersSummary.innerHTML = '<span class="online-users-loading">正在读取最近 10 分钟的聚合数据…</span>'
+      elements.onlineUsersList.innerHTML = '<div class="online-users-skeleton" aria-hidden="true"><i></i><i></i><i></i></div>'
+      elements.onlineUsersRetryButton.disabled = true
+      return
+    }
+    elements.onlineUsersRetryButton.disabled = state.onlineUsersLoading
+    if (state.onlineUsersError && !snapshot) {
+      elements.onlineUsersSummary.innerHTML = `<span class="online-users-error">${escapeHTML(state.onlineUsersError)}</span>`
+      elements.onlineUsersList.innerHTML = '<div class="dialog-empty">在线用户暂时无法读取，请点击“刷新列表”重试。</div>'
+      return
+    }
+    if (snapshot && snapshot.ready !== true) {
+      elements.onlineUsersSummary.innerHTML = `<span class="online-users-error">${escapeHTML(snapshot.notice || '在线人数聚合数据暂不可用')}</span>`
+      elements.onlineUsersList.innerHTML = '<div class="dialog-empty">当前没有足够新的聚合数据，请稍后刷新。</div>'
+      return
+    }
+    const count = Number(snapshot?.count) || 0
+    const notices = snapshot?.notice ? `<span class="online-users-notice">${escapeHTML(snapshot.notice)}</span>` : ''
+    const freshness = onlineAggregateFreshnessLabel(snapshot)
+    const queriedAt = snapshot?.queried_at ? `查询于 ${escapeHTML(formatDateTime(snapshot.queried_at))}` : '刚刚查询'
+    elements.onlineUsersSummary.innerHTML = `<strong>${formatInteger(count)} 人在线</strong><span>${escapeHTML(freshness || queriedAt)}</span>${notices}`
+    const users = Array.isArray(snapshot?.users) ? snapshot.users : []
+    elements.onlineUsersList.innerHTML = users.length ? users.map(renderOnlineUser).join('') : '<div class="dialog-empty">最近 10 分钟暂无用户调用。</div>'
+  }
+
+  function renderOnlineUser(user) {
+    const id = Number(user?.id)
+    const displayName = user?.display_name || `用户 #${Number.isFinite(id) ? id : '—'}`
+    const email = user?.email || ''
+    const cost = user?.today_cost
+    const tokens = user?.today_tokens
+    const requests = user?.today_requests
+    const costLabel = cost === null || cost === undefined
+      ? '<strong class="muted">金额暂不可用</strong>'
+      : `<strong>${escapeHTML(formatCurrency(cost))}</strong>`
+    const usageDetails = []
+    if (requests !== null && requests !== undefined) usageDetails.push(`${formatInteger(requests)} 次调用`)
+    if (tokens !== null && tokens !== undefined) usageDetails.push(`${formatCompact(tokens)} tokens`)
+    if (!usageDetails.length) usageDetails.push('今日统计暂不可用')
+    const consumption = `${costLabel}<span>${escapeHTML(usageDetails.join(' · '))}</span>`
+    const lastCall = user?.last_call_at ? formatDateTime(user.last_call_at) : '—'
+    return `<div class="online-user-row">
+      <div class="online-user-identity"><span class="mobile-field-label">用户</span><strong>${escapeHTML(displayName)}</strong><span>${email ? `${escapeHTML(email)} · ` : ''}#${escapeHTML(id)}</span></div>
+      <div class="online-user-last-call"><span class="mobile-field-label">最后调用</span><strong>${escapeHTML(lastCall)}</strong><span>${escapeHTML(formatOnlineAge(user?.last_call_at))}</span></div>
+      <div class="online-user-consumption"><span class="mobile-field-label">今日消耗</span>${consumption}</div>
+    </div>`
+  }
+
+  function formatOnlineAge(value) {
+    const timestamp = new Date(value).getTime()
+    if (!Number.isFinite(timestamp)) return '时间未知'
+    const seconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000))
+    if (seconds < 60) return `${seconds} 秒前`
+    const minutes = Math.floor(seconds / 60)
+    if (minutes < 60) return `${minutes} 分钟前`
+    return `${Math.floor(minutes / 60)} 小时前`
+  }
+
+  function onlineAggregateFreshnessLabel(snapshot) {
+    if (!snapshot) return ''
+    const parts = []
+    if (snapshot.data_through) parts.push(`数据截至 ${formatDateTime(snapshot.data_through)}`)
+    const lag = Number(snapshot.aggregation_lag_seconds)
+    if (Number.isFinite(lag) && lag >= 0) {
+      parts.push(lag < 60 ? `延迟 ${formatInteger(lag)} 秒` : `延迟 ${formatInteger(Math.ceil(lag / 60))} 分钟`)
+    }
+    return parts.join(' · ')
+  }
+
+  async function openOnlineUsersDialog(trigger = null) {
+    state.onlineUsersTrigger = trigger
+    if (!elements.onlineUsersDialog.open) elements.onlineUsersDialog.showModal()
+    renderOnlineUsers()
+    await loadOnlineUsers()
+  }
+
+  async function openGroupUserConsumptionDialog(groupKey, trigger = null) {
+    const view = buildGroupViews().find((item) => item.key === String(groupKey))
+    if (!view || view.synthetic || Number(view.group.id) <= 0) return
+    state.groupConsumptionGroupKey = view.key
+    state.groupConsumptionTrigger = trigger
+    state.groupConsumptionRequestID += 1
+    state.groupConsumption = null
+    state.groupConsumptionError = ''
+    state.groupConsumptionLoading = false
+    elements.groupUserConsumptionTitle.textContent = '今日用户消耗 Top 20'
+    elements.groupUserConsumptionDate.textContent = `${view.group.name || `分组 ${view.group.id}`} · 正在读取当天统计`
+    if (!elements.groupUserConsumptionDialog.open) elements.groupUserConsumptionDialog.showModal()
+    renderGroupUserConsumption()
+    await loadGroupUserConsumption()
+  }
+
+  async function loadGroupUserConsumption() {
+    const groupKey = state.groupConsumptionGroupKey
+    const requestID = state.groupConsumptionRequestID
+    const view = buildGroupViews().find((item) => item.key === String(groupKey))
+    const groupID = Number(view?.group?.id)
+    if (!groupKey || !Number.isInteger(groupID) || groupID <= 0 || state.groupConsumptionLoading) return false
+    state.groupConsumptionLoading = true
+    state.groupConsumptionError = ''
+    renderGroupUserConsumption()
+    try {
+      const response = await api(`/api/groups/${groupID}/user-consumption`)
+      if (state.groupConsumptionGroupKey !== groupKey || state.groupConsumptionRequestID !== requestID) return false
+      state.groupConsumption = response || null
+      state.groupConsumptionError = ''
+      renderGroupUserConsumption()
+      return true
+    } catch (error) {
+      if (state.groupConsumptionGroupKey !== groupKey || state.groupConsumptionRequestID !== requestID) return false
+      state.groupConsumption = null
+      state.groupConsumptionError = error.message || '分组用户消耗暂不可用'
+      renderGroupUserConsumption()
+      return false
+    } finally {
+      if (state.groupConsumptionRequestID === requestID) {
+        state.groupConsumptionLoading = false
+        if (state.groupConsumptionGroupKey === groupKey) renderGroupUserConsumption()
+      }
+    }
+  }
+
+  function renderGroupUserConsumption() {
+    if (!elements.groupUserConsumptionDialog?.open) return
+    const snapshot = state.groupConsumption
+    const currentView = buildGroupViews().find((item) => item.key === String(state.groupConsumptionGroupKey))
+    const groupName = snapshot?.group_name || currentView?.group?.name || '当前分组'
+    const date = snapshot?.date || '当天'
+    elements.groupUserConsumptionDate.textContent = `${groupName} · ${date}`
+    elements.groupUserConsumptionRetryButton.disabled = state.groupConsumptionLoading
+
+    if (state.groupConsumptionLoading && !snapshot) {
+      elements.groupUserConsumptionSummary.innerHTML = '<span class="group-consumption-loading">正在读取当天用户消耗…</span>'
+      elements.groupUserConsumptionList.innerHTML = '<div class="group-consumption-skeleton" aria-hidden="true"><i></i><i></i><i></i></div>'
+      return
+    }
+    if (state.groupConsumptionError && !snapshot) {
+      elements.groupUserConsumptionSummary.innerHTML = `<span class="group-consumption-error">${escapeHTML(state.groupConsumptionError)}</span>`
+      elements.groupUserConsumptionList.innerHTML = '<div class="dialog-empty">统计暂时无法读取，请点击“刷新统计”重试。</div>'
+      return
+    }
+
+    const users = Array.isArray(snapshot?.users) ? snapshot.users : []
+    const limit = Number(snapshot?.limit) || 20
+    const notices = snapshot?.notice ? `<span class="group-consumption-notice">${escapeHTML(snapshot.notice)}</span>` : ''
+    const queriedAt = snapshot?.queried_at ? `更新于 ${escapeHTML(formatDateTime(snapshot.queried_at))}` : '刚刚更新'
+    const partial = snapshot?.partial ? '<span class="group-consumption-partial">部分字段暂不可用</span>' : ''
+    elements.groupUserConsumptionSummary.innerHTML = `<strong>前 ${formatInteger(limit)} 位</strong><span>${escapeHTML(date)} · ${queriedAt}</span>${partial}${notices}`
+    elements.groupUserConsumptionList.innerHTML = users.length
+      ? users.map((user, index) => renderGroupUserConsumptionRow(user, index + 1)).join('')
+      : '<div class="dialog-empty">当天暂无用户消耗记录。</div>'
+  }
+
+  function renderGroupUserConsumptionRow(user, rank) {
+    const id = Number(user?.user_id)
+    const displayName = user?.display_name || `用户 #${Number.isFinite(id) ? id : '—'}`
+    const email = user?.email || ''
+    const cost = user?.actual_cost
+    const requests = user?.requests
+    const tokens = user?.total_tokens
+    const costValue = cost === null || cost === undefined
+      ? '<strong class="muted">金额暂不可用</strong>'
+      : `<strong>${escapeHTML(formatCurrency(cost))}</strong>`
+    const requestValue = requests === null || requests === undefined ? '请求数暂不可用' : `${formatInteger(requests)} 次调用`
+    const tokenValue = tokens === null || tokens === undefined ? 'Token 数暂不可用' : `${formatCompact(tokens)} tokens`
+    return `<div class="group-consumption-row">
+      <div class="group-consumption-identity"><span class="mobile-field-label">用户</span><strong><span class="consumption-rank">${formatInteger(rank)}</span>${escapeHTML(displayName)}</strong><span>${email && email !== displayName ? `${escapeHTML(email)} · ` : ''}#${escapeHTML(id)}</span></div>
+      <div class="group-consumption-cost"><span class="mobile-field-label">今日消耗</span>${costValue}</div>
+      <div class="group-consumption-metrics"><span class="mobile-field-label">请求 / Token</span><strong>${escapeHTML(requestValue)}</strong><span>${escapeHTML(tokenValue)}</span></div>
+    </div>`
   }
 
   function buildGroupViews() {
@@ -355,6 +775,8 @@
     const groupBalanceBadge = Number.isFinite(groupBalanceThreshold)
       ? `<span class="group-balance-alert-badge" title="账号未设置账号级阈值时继承此分组默认值">余额告警 ${escapeHTML(formatCurrency(groupBalanceThreshold))}</span>`
       : ''
+    const groupOnlineBadge = renderGroupOnlineBadge(view.group.id)
+    const groupTodayUsage = renderGroupTodayUsage(view.group.id)
     const bindButton = view.synthetic ? '' : `
       <button class="summary-button group-manage-button" type="button" data-action="bind-group" data-group-key="${escapeAttr(view.key)}" title="管理当前分组的 API Key 账号">
         <svg class="icon"><use href="#icon-users"/></svg>
@@ -369,6 +791,11 @@
       <button class="summary-button group-balance-alert-button" type="button" data-action="edit-group-balance-alert" data-group-key="${escapeAttr(view.key)}" title="设置当前分组默认余额告警阈值">
         <svg class="icon"><use href="#icon-bell"/></svg>
         <span>${Number.isFinite(groupBalanceThreshold) ? '编辑余额告警' : '设置余额告警'}</span>
+      </button>`
+    const groupConsumptionButton = view.synthetic ? '' : `
+      <button class="summary-button group-consumption-button" type="button" data-action="open-group-consumption" data-group-key="${escapeAttr(view.key)}" aria-haspopup="dialog" aria-controls="group-user-consumption-dialog" title="查看当前分组今日用户消耗前 20 位">
+        <svg class="icon"><use href="#icon-activity"/></svg>
+        <span>今日用户 Top 20</span>
       </button>`
     const detailButtons = [
       oauthAccounts.length ? renderDetailButton(view.key, 'oauth', `OAuth ${formatInteger(oauthAccounts.length)}`) : '',
@@ -385,22 +812,27 @@
             <div class="group-identity">
               <div class="group-title-line">
                 <h2>${escapeHTML(view.group.name || `分组 ${view.group.id}`)}</h2>
+                ${view.group.id > 0 ? (view.group.is_exclusive
+                  ? `<button class="group-access-badge exclusive" type="button" data-action="group-access" data-group-key="${view.group.id}" aria-label="${escapeAttr(`查看 ${view.group.name} 的授权用户`)}">专属分组 · 用户</button>`
+                  : '<span class="group-access-badge">公开分组</span>') : ''}
                 <span class="platform-tag">${escapeHTML(view.group.platform || 'all')}</span>
                 ${groupStatus}${groupProtectionBadge}${groupBalanceBadge}
               </div>
               <p>${escapeHTML(view.group.description || `#${view.group.id || 'ungrouped'}`)}</p>
             </div>
           </div>
-          <div class="group-stats" aria-label="分组账号状态">
+          <div class="group-stats" aria-label="分组账号状态、在线人数与今日消耗">
+            ${groupTodayUsage}
+            ${groupOnlineBadge}
             <span><strong class="text-success">${formatInteger(enabled)}</strong> / ${formatInteger(total)} 可用</span>
             <span>${formatInteger(apiKeys.length)} API Key</span>
             ${limited ? `<span class="text-warning">${formatInteger(limited)} 临时受限</span>` : ''}
             ${balanceSummary}
           </div>
-          <div class="group-actions">${detailButtons}${groupBalanceButton}${groupProtectionButton}${bindButton}</div>
+          <div class="group-actions">${detailButtons}${groupConsumptionButton}${groupBalanceButton}${groupProtectionButton}${bindButton}</div>
         </header>
         <div id="${escapeAttr(contentID)}" class="api-key-table" ${collapsed ? 'hidden' : ''}>
-          <div class="api-key-header" aria-hidden="true"><span>账号状态</span><span>用量与管理员额度</span><span>检测规则与最终倍率</span><span>全局调度 / 自动检测 / 操作</span></div>
+          <div class="api-key-header" aria-hidden="true"><span>账号</span><span>调度状态</span><span>今日使用</span><span>可用余额</span><span>成功率 / 倍率</span><span>操作</span></div>
           ${apiKeys.length ? apiKeys.map((account) => renderAPIKeyAccount(account, view.group.id)).join('') : '<div class="group-empty">暂无 API Key 账号</div>'}
         </div>
       </article>`
@@ -453,80 +885,171 @@
   }
 
   function renderAPIKeyAccount(account, groupID) {
-    const config = account.config || null
     const protection = protectionFor(account, groupID)
     const scheduling = groupAccountState(account, groupID)
-    const policy = config?.policy
-    const latest = config?.history?.[0]
-    const automation = automationState(account)
     const schedulable = schedulableState(account)
     const protectionKey = relationKey(groupID, account.id)
     const protectionBusy = state.protectionBusy.has(protectionKey)
-    const policyText = policy
-      ? `<strong>${escapeHTML(policy.model || '平台默认模型')}</strong><span>每 ${formatInterval(policy.interval_seconds)} · 上限 ${formatSeconds(policy.latency_limit_ms)}</span><span>${policy.enabled ? '自动规则启用' : '自动规则停用'} · ${policy.failure_threshold} 次暂停 / ${policy.recovery_threshold} 次恢复</span>${renderProbeSummary(config.probe)}`
-      : '<strong>未配置自动调度</strong><span>开启开关后使用默认检测规则</span>'
-    const actions = config ? `
-      <button class="icon-button ${config.running ? 'spin' : ''}" type="button" data-action="run" title="立即检测" aria-label="立即检测" ${config.running ? 'disabled' : ''}><svg class="icon"><use href="${config.running ? '#icon-refresh' : '#icon-play'}"/></svg></button>
-      <button class="icon-button" type="button" data-action="edit" title="编辑检测规则" aria-label="编辑检测规则"><svg class="icon"><use href="#icon-edit"/></svg></button>
-      <button class="icon-button danger-tool" type="button" data-action="delete" title="删除检测配置" aria-label="删除检测配置" ${config.running ? 'disabled' : ''}><svg class="icon"><use href="#icon-trash"/></svg></button>` : `
-      <button class="icon-button" type="button" data-action="create" title="配置状态检测" aria-label="配置状态检测"><svg class="icon"><use href="#icon-plus"/></svg></button>`
-    const relationActions = groupID > 0 ? `<div class="binding-row-actions">
-      <button class="button secondary relation-button" type="button" data-action="edit-protection" ${protectionBusy ? 'disabled' : ''}>${protection && !protection.inherited ? '编辑账号保护倍率' : '设置保护倍率（账号级）'}</button>
-      ${protection?.status === 'rate_protected' && !protection.inherited ? `<button class="button warning relation-button" type="button" data-action="release-protection" ${protectionBusy ? 'disabled' : ''}>解除倍率保护</button>` : ''}
-      <button class="button danger relation-button" type="button" data-action="remove-binding" ${protectionBusy ? 'disabled' : ''}>移除绑定</button>
-    </div>` : ''
-    const latestText = latest ? `${statusLabel(latest.status)} · ${formatMilliseconds(latest.latency_ms)}` : '尚未检测'
-    const nextText = policy?.enabled && config.next_check_at ? `下次 ${formatRelative(config.next_check_at)}` : '—'
+    const accountKey = relationKey(groupID, account.id)
+    const expanded = state.expandedAccounts.has(accountKey)
+    const detailsID = `account-details-${groupID}-${account.id}`
     return `
-      <section class="api-key-row" data-account-id="${account.id}" data-group-id="${groupID}">
-        <div class="account-cell">
-          <div class="account-name-line"><strong>${escapeHTML(account.name || `账号 ${account.id}`)}</strong><span>#${account.id}</span></div>
-          <div class="account-meta"><span class="platform-tag">${escapeHTML(account.platform || 'unknown')}</span><span>API Key</span></div>
-          <div class="account-state ${escapeAttr(scheduling.tone)}"><i class="status-dot"></i><span><strong>${escapeHTML(scheduling.label)}</strong><small title="${escapeAttr(scheduling.reason)}">${escapeHTML(scheduling.reason)}</small></span></div>
-        </div>
-        <div class="usage-cell">${renderTodayUsage(account)}${renderDetectionStats(config)}${renderQuota(account)}</div>
-        <div class="policy-cell">${policyText}${renderBalanceAlertSummary(account, groupID)}${renderFinalMultiplier(account, protection)}<span class="latest-check">${escapeHTML(latestText)} · ${escapeHTML(nextText)}</span></div>
-        <div class="row-actions">
-          <div class="schedulable-control ${schedulable.busy ? 'busy' : ''}" title="${escapeAttr(schedulable.reason)}">
-            <span class="automation-copy"><strong>账号调度（全局）</strong><small>${escapeHTML(schedulable.label)}</small></span>
-            <label class="mini-switch">
-              <span class="sr-only">${escapeHTML(account.name || `账号 ${account.id}`)}全局调度</span>
-              <input type="checkbox" role="switch" data-action="schedulable-toggle" ${schedulable.enabled ? 'checked' : ''} ${schedulable.disabled ? 'disabled' : ''} aria-label="${escapeAttr(`${account.name || `账号 ${account.id}`}全局调度`)}">
-              <i aria-hidden="true"></i>
-            </label>
+      <section class="api-key-record ${expanded ? 'expanded' : ''}" data-account-id="${account.id}" data-group-id="${groupID}">
+        <div class="api-key-row">
+          <div class="account-cell">
+            <div class="account-name-line"><strong>${escapeHTML(account.name || `账号 ${account.id}`)}</strong><span>#${account.id}</span></div>
+            <div class="account-meta"><span class="platform-tag">${escapeHTML(account.platform || 'unknown')}</span><span>API Key</span></div>
           </div>
-          <div class="automation-control ${automation.busy ? 'busy' : ''}" title="${escapeAttr(automation.reason)}">
-            <span class="automation-copy"><strong>自动调度</strong><small>${escapeHTML(automation.label)}</small></span>
-            <label class="mini-switch">
-              <span class="sr-only">${escapeHTML(account.name || `账号 ${account.id}`)}自动调度</span>
-              <input type="checkbox" role="switch" data-action="automation-toggle" ${automation.enabled ? 'checked' : ''} ${automation.disabled ? 'disabled' : ''} aria-label="${escapeAttr(`${account.name || `账号 ${account.id}`}自动调度`)}">
-              <i aria-hidden="true"></i>
-            </label>
+          <div class="schedule-cell">
+            <div class="account-state ${escapeAttr(scheduling.tone)}"><i class="status-dot"></i><span><strong>${escapeHTML(scheduling.label)}</strong><small title="${escapeAttr(scheduling.reason)}">${escapeHTML(scheduling.reason)}</small></span></div>
           </div>
-          <div class="row-tools">${actions}</div>
-          ${relationActions}
+          <div class="usage-cell compact-usage">${renderTodayUsage(account)}</div>
+          <div class="balance-cell">${renderCompactBalance(account, groupID)}</div>
+          <div class="health-cell">${renderActualSuccessCompact(account, groupID)}${renderCompactMultiplier(account, protection)}</div>
+          <div class="row-actions">
+            <button class="icon-button account-expand-button" type="button" data-action="toggle-account-details" title="${expanded ? '收起账号详情' : '展开账号详情'}" aria-label="${expanded ? '收起' : '展开'} ${escapeAttr(account.name || `账号 ${account.id}`)} 详情" aria-expanded="${expanded ? 'true' : 'false'}" aria-controls="${escapeAttr(detailsID)}"><svg class="icon"><use href="#icon-chevron-right"/></svg></button>
+            ${renderAccountActionMenu(account, groupID, protection, schedulable, protectionBusy)}
+          </div>
         </div>
-        <div class="history-row">
-          <span class="history-label">最近 50 次</span>
-          <div class="history-bars" aria-label="${escapeAttr(account.name || `账号 ${account.id}`)}最近 50 次检测状态">${renderHistory(account)}</div>
-          <span class="history-range">过去 → 现在</span>
+        <div id="${escapeAttr(detailsID)}" class="api-key-details" ${expanded ? '' : 'hidden'}>
+          <section class="account-detail-section schedule-detail">
+            <span class="detail-heading">调度与状态</span>
+            ${renderSchedulableControl(account, schedulable)}
+            <p class="detail-note">${escapeHTML(scheduling.reason)}</p>
+          </section>
+          <section class="account-detail-section balance-detail">
+            <span class="detail-heading">额度与告警</span>
+            ${renderQuota(account)}
+            ${renderBalanceAlertSummary(account, groupID)}
+          </section>
+          <section class="account-detail-section success-detail">
+            <span class="detail-heading">实际成功率</span>
+            ${renderActualSuccess(account, groupID)}
+          </section>
+          <section class="account-detail-section multiplier-detail">
+            <span class="detail-heading">倍率与保护</span>
+            ${renderFinalMultiplier(account, protection)}
+          </section>
+          <div class="account-detail-actions">
+            ${renderAccountDetailActions(account, groupID, protection, protectionBusy)}
+          </div>
         </div>
       </section>`
   }
 
-  function renderProbeSummary(probe) {
-    if (!probe || probe.source !== 'direct') return '<span class="probe-summary legacy">来源：Sub2API 检测</span>'
-    const state = String(probe.authorization_state || 'needs_reauthorization')
-    const labels = {
-      authorized: '来源：直连上游探测',
-      needs_reauthorization: '直连授权需要更新',
-      unsupported: '直连探测暂不支持',
-      credentials_unavailable: '直连探测加密未配置',
-      authorization_missing: '直连授权缺失',
+  function renderSchedulableControl(account, schedulable) {
+    return `<div class="schedulable-control ${schedulable.busy ? 'busy' : ''}" title="${escapeAttr(schedulable.reason)}">
+      <span class="automation-copy"><strong>账号调度（全局）</strong><small>${escapeHTML(schedulable.label)}</small></span>
+      <label class="mini-switch">
+        <span class="sr-only">${escapeHTML(account.name || `账号 ${account.id}`)}全局调度</span>
+        <input type="checkbox" role="switch" data-action="schedulable-toggle" ${schedulable.enabled ? 'checked' : ''} ${schedulable.disabled ? 'disabled' : ''} aria-label="${escapeAttr(`${account.name || `账号 ${account.id}`}全局调度`)}">
+        <i aria-hidden="true"></i>
+      </label>
+    </div>`
+  }
+
+  function renderAccountActionMenu(account, groupID, protection, schedulable, protectionBusy) {
+    const accountName = account.name || `账号 ${account.id}`
+    const schedulingLabel = account.schedulable ? '停止全局调度' : '启用全局调度'
+    const protectionLabel = protection && !protection.inherited ? '编辑保护倍率' : '设置保护倍率'
+    const relationItems = groupID > 0 ? `
+      <button type="button" role="menuitem" data-action="edit-protection" ${protectionBusy ? 'disabled' : ''}>${escapeHTML(protectionLabel)}</button>
+      ${protection?.status === 'rate_protected' && !protection.inherited ? `<button type="button" role="menuitem" data-action="release-protection" ${protectionBusy ? 'disabled' : ''}>解除倍率保护</button>` : ''}
+      <button class="danger-menu-item" type="button" role="menuitem" data-action="remove-binding" ${protectionBusy ? 'disabled' : ''}>移除绑定</button>` : ''
+    return `<details class="account-action-menu">
+      <summary class="icon-button" title="更多操作" aria-label="${escapeAttr(`${accountName}更多操作`)}"><svg class="icon"><use href="#icon-more-horizontal"/></svg></summary>
+      <div class="account-action-popover" role="menu" aria-label="${escapeAttr(`${accountName}账号操作`)}">
+        <button type="button" role="menuitem" data-action="manual-probe">手动探测</button>
+        <button type="button" role="menuitem" data-action="request-schedulable-toggle" ${schedulable.disabled ? 'disabled' : ''}>${escapeHTML(schedulingLabel)}</button>
+        <button type="button" role="menuitem" data-action="edit">编辑余额告警</button>
+        ${relationItems}
+      </div>
+    </details>`
+  }
+
+  function renderAccountDetailActions(account, groupID, protection, protectionBusy) {
+    const protectionLabel = protection && !protection.inherited ? '编辑保护倍率' : '设置保护倍率'
+    const relationActions = groupID > 0 ? `
+      <button class="button secondary compact-account-action" type="button" data-action="edit-protection" ${protectionBusy ? 'disabled' : ''}>${escapeHTML(protectionLabel)}</button>
+      ${protection?.status === 'rate_protected' && !protection.inherited ? `<button class="button warning compact-account-action" type="button" data-action="release-protection" ${protectionBusy ? 'disabled' : ''}>解除倍率保护</button>` : ''}
+      <button class="button danger-outline compact-account-action" type="button" data-action="remove-binding" ${protectionBusy ? 'disabled' : ''}>移除绑定</button>` : ''
+    return `<button class="button primary compact-account-action" type="button" data-action="manual-probe">手动探测</button><button class="button secondary compact-account-action" type="button" data-action="edit">编辑余额告警</button>${relationActions}`
+  }
+
+  function renderActualSuccessCompact(account, groupID) {
+    const snapshot = state.actualSuccess
+    const metric = state.actualSuccessByKey.get(relationKey(groupID, account.id))
+    if (!snapshot?.ready) {
+      const label = snapshot?.notice || '实际成功率暂不可用'
+      return `<div class="compact-success unavailable" title="${escapeAttr(label)}" aria-label="${escapeAttr(label)}"><span>最近成功率</span><strong>不可用</strong><small>${escapeHTML(label)}</small></div>`
     }
-    const tone = state === 'authorized' ? 'authorized' : 'attention'
-    const detail = probe.action_message || labels[state] || '直连探测需要处理'
-    return `<span class="probe-summary ${tone}" title="${escapeAttr(detail)}">${escapeHTML(labels[state] || '直连探测需要处理')}</span>`
+    const recent = metric?.recent || {}
+    const attempts = Math.max(0, Number(recent.effective_attempts) || 0)
+    const successes = Math.max(0, Number(recent.success_count) || 0)
+    const reference = metric?.reference_24h || {}
+    const referenceAttempts = Math.max(0, Number(reference.effective_attempts) || 0)
+    const freshness = snapshot.stale ? '数据已过期' : snapshot.partial ? '数据不完整' : ''
+    if (attempts === 0) {
+      const referenceText = referenceAttempts > 0
+        ? `24h ${formatPercent((Number(reference.rate) || 0) * 100)} · ${formatInteger(reference.success_count || 0)}/${formatInteger(referenceAttempts)}`
+        : '24h 暂无样本'
+      const detail = ['最近一小时暂无真实调用', referenceText, freshness, snapshot.notice].filter(Boolean).join('；')
+      return `<div class="compact-success empty ${snapshot.partial ? 'partial' : ''} ${snapshot.stale ? 'stale' : ''}" title="${escapeAttr(detail)}" aria-label="${escapeAttr(detail)}"><span>最近成功率</span><strong>暂无真实调用</strong><small>${escapeHTML(referenceText)}${freshness ? ` · ${escapeHTML(freshness)}` : ''}</small></div>`
+    }
+    const rate = Math.max(0, Math.min(1, Number(recent.rate) || 0))
+    const tone = rate >= 0.99 ? 'success' : rate >= 0.95 ? 'warning' : 'danger'
+    const details = [
+      `近 1 小时成功 ${formatInteger(successes)} 次，有效尝试 ${formatInteger(attempts)} 次`,
+      recent.low_sample ? '样本较少' : '',
+      recent.last_observed_at ? `最近调用 ${formatDateTime(recent.last_observed_at)}` : '',
+      freshness,
+    ].filter(Boolean).join('；')
+    return `<div class="compact-success ${tone} ${recent.low_sample ? 'low-sample' : ''} ${snapshot.partial ? 'partial' : ''} ${snapshot.stale ? 'stale' : ''}" title="${escapeAttr(details)}" aria-label="${escapeAttr(details)}"><span>最近成功率</span><strong>${escapeHTML(formatPercent(rate * 100))}</strong><small>${formatInteger(successes)}/${formatInteger(attempts)} · 近 1 小时${recent.low_sample ? ' · 样本少' : ''}</small></div>`
+  }
+
+  function renderActualSuccess(account, groupID) {
+    const snapshot = state.actualSuccess
+    const metric = state.actualSuccessByKey.get(relationKey(groupID, account.id))
+    if (!snapshot?.ready) {
+      const label = snapshot?.notice || '实际成功率暂不可用'
+      return `<div class="actual-success unavailable" tabindex="0" data-tooltip="${escapeAttr(label)}" aria-label="${escapeAttr(label)}"><span class="data-label">最近实际成功率</span><strong>不可用</strong><span>${escapeHTML(label)}</span></div>`
+    }
+    const recent = metric?.recent || {}
+    const attempts = Math.max(0, Number(recent.effective_attempts) || 0)
+    const successes = Math.max(0, Number(recent.success_count) || 0)
+    const reference = metric?.reference_24h || {}
+    const referenceAttempts = Math.max(0, Number(reference.effective_attempts) || 0)
+    const notices = []
+    if (snapshot.stale) notices.push('数据已过期')
+    if (snapshot.partial) notices.push('数据不完整')
+    if (snapshot.collection_health?.status && snapshot.collection_health.status !== 'complete') {
+      notices.push(`主服务采集降级：丢弃 ${formatInteger(snapshot.collection_health.dropped_samples || 0)} 条，待写入 ${formatInteger(snapshot.collection_health.pending_samples || 0)} 条`)
+    }
+    if (snapshot.notice) notices.push(snapshot.notice)
+    const referenceText = referenceAttempts > 0
+      ? `近 24 个完整小时 ${formatPercent((Number(reference.rate) || 0) * 100)}（${formatInteger(reference.success_count || 0)}/${formatInteger(referenceAttempts)}）`
+      : '近 24 个完整小时暂无样本'
+    const details = [
+      referenceText,
+      `客户端取消 ${formatInteger((recent.client_canceled_count || 0))} 次`,
+      `发生切换 ${formatInteger((recent.failover_count || 0))} 次`,
+      recent.last_observed_at ? `最近一次真实调用 ${formatDateTime(recent.last_observed_at)}` : '',
+      snapshot.data_through ? `近 1 小时统计截至 ${formatDateTime(snapshot.data_through)}` : '',
+      snapshot.reference_through ? `24 小时统计截至 ${formatDateTime(snapshot.reference_through)}` : '',
+      ...notices,
+    ].filter(Boolean).join('；')
+    const freshness = snapshot.stale ? '数据已过期' : snapshot.partial ? '数据不完整' : ''
+    const freshnessLine = freshness ? `<span class="actual-success-state">${escapeHTML(freshness)}</span>` : ''
+    if (attempts === 0) {
+      return `<div class="actual-success empty ${snapshot.partial ? 'partial' : ''} ${snapshot.stale ? 'stale' : ''}" tabindex="0" data-tooltip="${escapeAttr(details)}" aria-label="最近一小时暂无真实调用；${escapeAttr(details)}"><span class="data-label">最近实际成功率</span><strong>暂无真实调用</strong><span>${escapeHTML(referenceText)}</span>${freshnessLine}</div>`
+    }
+    const rate = Math.max(0, Math.min(1, Number(recent.rate) || 0))
+    const tone = rate >= 0.99 ? 'success' : rate >= 0.95 ? 'warning' : 'danger'
+    const sampleLabel = recent.low_sample ? ' · 样本较少' : ''
+    const primary = `${formatPercent(rate * 100)}${snapshot.stale ? ' · 已过期' : ''}`
+    const counts = `${formatInteger(successes)} / ${formatInteger(attempts)} 次 · 近 1 小时${sampleLabel}`
+    const aria = `最近一小时实际成功率 ${formatPercent(rate * 100)}，成功 ${formatInteger(successes)} 次，有效尝试 ${formatInteger(attempts)} 次${recent.low_sample ? '，样本较少' : ''}；${details}`
+    return `<div class="actual-success ${tone} ${recent.low_sample ? 'low-sample' : ''} ${snapshot.partial ? 'partial' : ''} ${snapshot.stale ? 'stale' : ''}" tabindex="0" data-tooltip="${escapeAttr(details)}" aria-label="${escapeAttr(aria)}"><span class="data-label">最近实际成功率</span><strong>${escapeHTML(primary)}</strong><span>${escapeHTML(counts)}</span>${freshnessLine}</div>`
   }
 
   function renderTodayUsage(account) {
@@ -546,28 +1069,14 @@
     return `<strong>${formatInteger(usage.requests || 0)} 请求 · ${formatCompact(usage.tokens || 0)} tokens</strong><span title="${escapeAttr(cacheDetail)}">${formatCurrency(usage.cost || 0)} 今日成本 · ${escapeHTML(cacheLabel)}</span>`
   }
 
-  function renderDetectionStats(config) {
-    const stats = config?.detection_stats
-    if (!stats || !Number(stats.requests)) {
-      return '<div class="detection-consumption"><span class="data-label">状态检测消耗（1 倍率）</span><strong>尚无检测消耗</strong></div>'
-    }
-    const totalTokens = ['input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_write_tokens']
-      .reduce((sum, key) => sum + (Number(stats[key]) || 0), 0)
-    const knownChecks = Number(stats.known_cost_checks) || 0
-    const requests = Number(stats.requests) || 0
-    const costText = knownChecks > 0 ? formatProbeCost(stats.known_cost || 0) : '金额不可用'
-    const detail = knownChecks < requests ? `其中 ${formatInteger(knownChecks)} 次取得模型定价` : '全部检测均已取得模型定价'
-    return `<div class="detection-consumption" title="${escapeAttr(detail)}"><span class="data-label">状态检测消耗（1 倍率）</span><strong>${formatInteger(requests)} 次 · ${formatCompact(totalTokens)} tokens</strong><span>${escapeHTML(costText)} · ${escapeHTML(detail)}</span></div>`
-  }
-
-  function renderQuota(account) {
-    const quotas = [
-      quotaDimension('日额度', account.quota_daily_used, account.quota_daily_limit),
-      quotaDimension('周额度', account.quota_weekly_used, account.quota_weekly_limit),
-      quotaDimension('总额度', account.quota_used, account.quota_limit),
-    ].filter(Boolean)
+  function balancePresentation(account) {
+    const dimensions = [
+      { label: '日额度', used: account.quota_daily_used, limit: account.quota_daily_limit },
+      { label: '周额度', used: account.quota_weekly_used, limit: account.quota_weekly_limit },
+      { label: '总额度', used: account.quota_used, limit: account.quota_limit },
+    ].filter((dimension) => Number.isFinite(Number(dimension.limit)) && Number(dimension.limit) > 0)
     const balance = account.admin_balance || {}
-    const configured = typeof balance.configured === 'boolean' ? balance.configured : quotas.length > 0
+    const configured = typeof balance.configured === 'boolean' ? balance.configured : dimensions.length > 0
     const totalLimit = Number(account.quota_limit)
     const totalUsed = Number(account.quota_used) || 0
     const projectedRemaining = Number(balance.remaining)
@@ -577,7 +1086,6 @@
     const insufficient = Boolean(balance.insufficient) || exhausted.length > 0
     const dimensionLabels = { daily: '日额度', weekly: '周额度', total: '总额度' }
     const exhaustedLabel = exhausted.map((dimension) => dimensionLabels[dimension]).filter(Boolean).join('、')
-    const source = balance.managed ? '<span class="admin-balance-source">上游同步</span>' : ''
     let tone = 'neutral'
     let value = '未配置（不限）'
     let note = '当前没有管理员额度上限'
@@ -598,9 +1106,26 @@
       value = '额度可用'
       note = '未配置总额度，请查看周期额度'
     }
-    const detail = quotas.length ? `<dl class="quota-list">${quotas.join('')}</dl>` : ''
     const label = insufficient ? `管理员余额不足，${note}` : `管理员余额：${value}，${note}`
-    return `<div class="quota-summary"><div class="admin-balance-card ${tone}" aria-label="${escapeAttr(label)}"><div class="admin-balance-heading"><span>管理员余额</span>${source}</div><strong class="admin-balance-value">${escapeHTML(value)}</strong><span class="admin-balance-note">${escapeHTML(note)}</span></div>${detail}</div>`
+    return { balance, configured, dimensions, tone, value, note, label, insufficient }
+  }
+
+  function renderCompactBalance(account, groupID) {
+    const view = balancePresentation(account)
+    const threshold = effectiveBalanceThreshold(account, groupID)
+    const source = view.balance.managed ? '上游同步' : view.configured ? '管理员配置' : '不限额度'
+    const thresholdLabel = threshold ? `阈值 ${formatCurrency(threshold.value)}` : '未设告警'
+    const detail = `${view.label}；${source}；${threshold ? `${threshold.source}告警阈值 ${formatCurrency(threshold.value)}` : '未设置余额告警阈值'}`
+    return `<div class="compact-balance ${escapeAttr(view.tone)}" title="${escapeAttr(detail)}" aria-label="${escapeAttr(detail)}"><strong>${escapeHTML(view.value)}</strong><span>${escapeHTML(source)} · ${escapeHTML(thresholdLabel)}</span></div>`
+  }
+
+  function renderQuota(account) {
+    const view = balancePresentation(account)
+    const source = view.balance.managed ? '<span class="admin-balance-source">上游同步</span>' : ''
+    const detail = view.dimensions.length
+      ? `<dl class="quota-list">${view.dimensions.map((dimension) => quotaDimension(dimension.label, dimension.used, dimension.limit)).join('')}</dl>`
+      : ''
+    return `<div class="quota-summary"><div class="admin-balance-card ${escapeAttr(view.tone)}" aria-label="${escapeAttr(view.label)}"><div class="admin-balance-heading"><span>管理员余额</span>${source}</div><strong class="admin-balance-value">${escapeHTML(view.value)}</strong><span class="admin-balance-note">${escapeHTML(view.note)}</span></div>${detail}</div>`
   }
 
   function quotaDimension(label, used, limit) {
@@ -644,43 +1169,46 @@
     return `<div class="multiplier-pair">${finalBlock}${protectionBlock}</div>`
   }
 
-  function automationState(account) {
-    const config = account.config || null
-    const busy = state.automationBusy.has(account.id)
-    if (state.schedulableBusy.has(account.id)) {
-      return { enabled: Boolean(config?.policy?.enabled && (account.schedulable || config.managed_suspended)), disabled: true, busy: false, label: '调度状态保存中', reason: '全局调度状态更新完成后可修改自动调度' }
+  function renderCompactMultiplier(account, protection = null) {
+    const projection = account.upstream_final_multiplier || {}
+    const protectedFinal = Number(protection?.final_multiplier)
+    const finalMultiplier = Number.isFinite(protectedFinal) ? protectedFinal : Number(projection.final_multiplier)
+    const finalAvailable = Number.isFinite(finalMultiplier) && (protection || projection.status === 'available')
+    const finalLabel = finalAvailable ? `${formatMultiplier(finalMultiplier)}x` : '未计算'
+    const protectionSource = protection?.inherited ? '分组默认' : '账号级'
+    const protectionLabel = protection ? `${formatMultiplier(protection.protection_multiplier)}x` : '未设置'
+    const protectionState = protection?.status === 'rate_protected'
+      ? '已触发'
+      : protection?.status === 'multiplier_unavailable'
+        ? '待倍率'
+        : protection?.status === 'rebind_pending'
+          ? '待回绑'
+          : protection ? protectionSource : '沿用绑定'
+    const projectionStatus = String(projection.status || 'unavailable')
+    const statusLabels = {
+      unbound: '未绑定上游 Key',
+      stale: '上游 Key 绑定已失效',
+      ambiguous: '存在多个有效上游 Key 绑定',
+      recharge_unset: '充值倍率未设置',
+      group_multiplier_unknown: '分组倍率未知',
+      invalid_upstream: '上游地址无效',
+      unavailable: '最终倍率暂不可用',
     }
-    if (account.status !== 'active') {
-      return { enabled: false, disabled: true, busy, label: account.status === 'error' ? '账号异常' : '账号未启用', reason: '仅 active 账号可以启用自动调度' }
-    }
-    const enabled = Boolean(config?.policy?.enabled && (account.schedulable || config.managed_suspended))
-    if (busy) return { enabled, disabled: true, busy: true, label: '保存中', reason: '正在更新自动调度状态' }
-    if (config?.running) return { enabled, disabled: true, busy: false, label: '检测进行中', reason: '检测结束后可修改自动调度状态' }
-    if (enabled && config?.managed_suspended) {
-      return { enabled: true, disabled: false, busy: false, label: '自动暂停，持续检测', reason: '健康检测已暂停调度，连续检测正常后会自动恢复' }
-    }
-    if (enabled) return { enabled: true, disabled: false, busy: false, label: '已接管', reason: '账号由健康检测自动管理调度状态' }
-    if (!account.schedulable) {
-      return { enabled: false, disabled: false, busy: false, label: '管理员停止', reason: '开启后将恢复账号调度并交给健康检测管理' }
-    }
-    return { enabled: false, disabled: false, busy: false, label: config ? '自动规则停用' : '未配置', reason: '开启后由健康检测自动管理调度状态' }
+    const detail = finalAvailable
+      ? `最终倍率 ${finalLabel}；保护倍率 ${protectionLabel}；${protectionState}`
+      : `${protection?.last_error || statusLabels[projectionStatus] || '最终倍率未计算'}；保护倍率 ${protectionLabel}`
+    const tone = protection?.status === 'rate_protected'
+      ? 'warning'
+      : finalAvailable ? 'available' : 'unavailable'
+    return `<div class="compact-multiplier ${escapeAttr(tone)}" title="${escapeAttr(detail)}" aria-label="${escapeAttr(detail)}"><span>最终 <strong>${escapeHTML(finalLabel)}</strong></span><small>保护 ${escapeHTML(protectionLabel)} · ${escapeHTML(protectionState)}</small></div>`
   }
 
   function schedulableState(account) {
     const enabled = Boolean(account.schedulable)
     const busy = state.schedulableBusy.has(account.id)
     if (busy) return { enabled, disabled: true, busy: true, label: '保存中', reason: '正在更新账号的全局调度状态' }
-    if (state.automationBusy.has(account.id)) {
-      return { enabled, disabled: true, busy: false, label: '自动调度保存中', reason: '自动调度状态更新完成后可修改全局调度' }
-    }
-    if (account.config?.running) {
-      return { enabled, disabled: true, busy: false, label: '检测进行中', reason: '检测结束后可修改全局调度状态' }
-    }
     if (!enabled && account.status !== 'active') {
       return { enabled: false, disabled: true, busy: false, label: account.status === 'error' ? '账号异常' : '账号未启用', reason: '仅 active 账号可以启用全局调度' }
-    }
-    if (!enabled && account.config?.managed_suspended) {
-      return { enabled: false, disabled: false, busy: false, label: '检测自动停止', reason: '可手动恢复；自动检测规则仍可能在后续异常时再次暂停' }
     }
     if (!enabled) {
       return { enabled: false, disabled: false, busy: false, label: '管理员停止', reason: '账号当前不参与任何分组的调度' }
@@ -691,38 +1219,12 @@
     return { enabled: true, disabled: false, busy: false, label: '当前启用', reason: '账号当前可在所有已绑定分组中参与调度' }
   }
 
-  function renderHistory(account) {
-    const history = [...(account.config?.history || [])].slice(0, 50).reverse()
-    const padding = Array.from({ length: 50 - history.length }, () => '<span class="history-bar empty"></span>')
-    const bars = history.map((result) => {
-      const failed = result.status === 'failed' || result.status === 'error'
-      const balanceFailure = result.failure_kind === 'balance_insufficient'
-      const title = failed
-        ? `${formatDateTime(result.checked_at)} · ${balanceFailure ? '余额不足 · ' : ''}${result.message || statusLabel(result.status)}`
-        : `${formatDateTime(result.checked_at)} · 耗时 ${formatMilliseconds(result.latency_ms)}`
-      const color = failed
-        ? 'failed'
-        : result.status === 'skipped'
-          ? 'skipped'
-          : (result.status === 'degraded' || Number(result.latency_ms) >= CHANNEL_SLOW_MS ? 'slow' : 'success')
-      return `<button type="button" class="history-bar ${color} ${balanceFailure ? 'balance-insufficient' : ''}" data-action="result" data-result-id="${escapeAttr(result.id)}" title="${escapeAttr(title)}" aria-label="${escapeAttr(title)}"></button>`
-    })
-    return padding.concat(bars).join('')
-  }
-
   function accountState(account) {
     if (account.status === 'error') {
       return { key: 'error', tone: 'danger', label: '账号异常', reason: account.error_message || '账号状态为 error' }
     }
     if (account.status !== 'active') {
       return { key: 'inactive', tone: 'neutral', label: '账号停用', reason: '账号状态由管理员设为 inactive' }
-    }
-    if (account.config?.last_failure_kind === 'balance_insufficient') {
-      const key = account.config?.managed_suspended && !account.schedulable ? 'auto' : account.schedulable ? 'enabled' : 'manual'
-      return { key, tone: 'danger', label: '余额不足导致检测失败', reason: account.config.last_error || '直连上游返回额度或余额不足' }
-    }
-    if (account.config?.managed_suspended && !account.schedulable) {
-      return { key: 'auto', tone: 'warning', label: '检测自动停止', reason: account.config.last_error || '连续检测异常达到暂停阈值' }
     }
     if (!account.schedulable) {
       return { key: 'manual', tone: 'neutral', label: '管理员停止', reason: '管理员手动关闭账号调度' }
@@ -806,6 +1308,10 @@
     const button = event.target.closest('[data-action]')
     if (!button || button.tagName === 'INPUT') return
     const action = button.dataset.action
+    if (action === 'group-access') {
+      groupAccessWorkspace.open(Number(button.dataset.groupKey), button)
+      return
+    }
     if (action === 'toggle-group') {
       toggleGroup(button.dataset.groupKey)
       return
@@ -822,6 +1328,10 @@
       openGroupBalanceAlertDialog(Number(button.dataset.groupKey))
       return
     }
+    if (action === 'open-group-consumption') {
+      await openGroupUserConsumptionDialog(button.dataset.groupKey, button)
+      return
+    }
     if (action === 'open-detail') {
       openAccountDetail(button.dataset.groupKey, button.dataset.kind)
       return
@@ -831,21 +1341,143 @@
     const account = findAccount(Number(row.dataset.accountId))
     const groupID = Number(row.dataset.groupId)
     if (!account) return
+    button.closest('.account-action-menu')?.removeAttribute('open')
     switch (action) {
-      case 'create': openCreateDialog(account.id); break
-      case 'run': await runNow(account); break
+      case 'manual-probe': openManualProbe(account, button); break
+      case 'toggle-account-details': toggleAccountDetails(account.id, groupID); break
+      case 'request-schedulable-toggle': openSchedulingActionDialog(account, !account.schedulable); break
       case 'edit': openEditDialog(account); break
-      case 'delete': openDeleteDialog(account); break
-      case 'result': openResultDialog(account, button.dataset.resultId); break
       case 'edit-protection': openProtectionDialog(account, groupID); break
       case 'release-protection': openBindingActionDialog('release', account, groupID); break
       case 'remove-binding': openBindingActionDialog('remove', account, groupID); break
     }
   }
 
+  function openManualProbe(account, trigger) {
+    state.manualProbeAccount = account
+    state.manualProbeTrigger = trigger
+    elements.manualProbeAccount.textContent = account.name || `账号 ${account.id}`
+    elements.manualProbeCustomModel.value = ''
+    elements.manualProbePrompt.value = ''
+    elements.manualProbeEffort.value = ''
+    elements.manualProbeResults.innerHTML = ''
+    elements.manualProbeDialog.showModal()
+    void loadManualProbeModels()
+  }
+
+  async function loadManualProbeModels() {
+    const account = state.manualProbeAccount
+    if (!account || state.manualProbeBusy) return
+    const requestID = ++state.manualProbeRequestID
+    elements.manualProbeRetry.hidden = true
+    elements.manualProbeModelStatus.className = 'manual-probe-inline-status loading'
+    elements.manualProbeModelStatus.textContent = '正在读取账号真实模型…'
+    elements.manualProbeModels.innerHTML = '<div class="manual-probe-model-skeleton" aria-hidden="true"><i></i><i></i><i></i><i></i></div>'
+    try {
+      const response = await api(`/api/accounts/${account.id}/models`)
+      if (requestID !== state.manualProbeRequestID || !elements.manualProbeDialog.open) return
+      const seen = new Set()
+      const models = (Array.isArray(response.models) ? response.models : []).map(item => ({
+        id: String(item?.id || '').trim(),
+        displayName: String(item?.display_name || item?.id || '').trim(),
+      })).filter(item => item.id && !seen.has(item.id) && seen.add(item.id))
+      if (!models.length) {
+        elements.manualProbeModelStatus.className = 'manual-probe-inline-status empty'
+        elements.manualProbeModelStatus.textContent = '后台没有返回可用模型；你仍可在下方填写自定义模型。'
+        elements.manualProbeModels.innerHTML = '<div class="manual-probe-model-empty">暂无可选择的真实模型</div>'
+        elements.manualProbeRetry.hidden = false
+        return
+      }
+      elements.manualProbeModelStatus.className = 'manual-probe-inline-status success'
+      elements.manualProbeModelStatus.textContent = `已读取 ${models.length} 个真实模型，请选择要探测的模型。`
+      elements.manualProbeModels.innerHTML = models.map(item => {
+        const detail = item.displayName && item.displayName !== item.id ? `<small>${escapeHTML(item.id)}</small>` : ''
+        return `<label class="manual-probe-model-option"><input type="checkbox" value="${escapeAttr(item.id)}"><span><strong>${escapeHTML(item.displayName || item.id)}</strong>${detail}</span></label>`
+      }).join('')
+    } catch (error) {
+      if (requestID !== state.manualProbeRequestID || !elements.manualProbeDialog.open) return
+      elements.manualProbeModelStatus.className = 'manual-probe-inline-status error'
+      elements.manualProbeModelStatus.textContent = error.message || '账号真实模型加载失败'
+      elements.manualProbeModels.innerHTML = '<div class="manual-probe-model-empty">模型列表不可用，可重试或填写自定义模型。</div>'
+      elements.manualProbeRetry.hidden = false
+    }
+  }
+
+  function setManualProbeBusy(busy) {
+    state.manualProbeBusy = busy
+    elements.manualProbeDialog.dataset.busy = busy ? 'true' : 'false'
+    elements.manualProbeSubmit.disabled = busy
+    elements.manualProbeCustomModel.disabled = busy
+    elements.manualProbePrompt.disabled = busy
+    elements.manualProbeEffort.disabled = busy
+    elements.manualProbeRetry.disabled = busy
+    elements.manualProbeModels.querySelectorAll('input').forEach(input => { input.disabled = busy })
+    document.querySelectorAll('[data-close-dialog="manual-probe-dialog"]').forEach(button => { button.disabled = busy })
+    elements.manualProbeSubmit.textContent = busy ? '正在探测…' : '开始探测'
+  }
+
+  async function submitManualProbe(event) {
+    event.preventDefault()
+    const account = state.manualProbeAccount
+    if (!account) return
+    const models = [...elements.manualProbeModels.querySelectorAll('input:checked')].map(x => x.value)
+    const custom = elements.manualProbeCustomModel.value.trim()
+    if (custom && !models.includes(custom)) models.push(custom)
+    if (!models.length || models.length > 8) {
+      elements.manualProbeResults.innerHTML = '<div class="manual-probe-error" role="alert">请选择 1 到 8 个模型；可勾选真实模型或填写自定义模型。</div>'
+      return
+    }
+    setManualProbeBusy(true)
+    elements.manualProbeResults.innerHTML = `<div class="manual-probe-running" role="status">正在依次探测 ${models.length} 个模型，请稍候…</div>`
+    try {
+      const data = await api(`/api/accounts/${account.id}/manual-probe`, { method: 'POST', body: { models, prompt: elements.manualProbePrompt.value, reasoning_effort: elements.manualProbeEffort.value } })
+      if (!Array.isArray(data.results)) throw new Error('探测结果格式无效')
+      elements.manualProbeResults.innerHTML = data.results.map(result => renderManualProbeResult(result)).join('') || '<div class="manual-probe-model-empty">没有返回探测结果</div>'
+    } catch (error) {
+      elements.manualProbeResults.innerHTML = `<div class="manual-probe-error" role="alert">${escapeHTML(error.message || '探测失败，请稍后重试')}</div>`
+    } finally {
+      setManualProbeBusy(false)
+    }
+  }
+
+  function renderManualProbeResult(result) {
+    const outcome = result?.outcome || {}
+    const success = outcome.success === true
+    const latency = Number(outcome.latency_ms)
+    const usage = outcome.usage || null
+    const totalTokens = usage ? ['input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_write_tokens']
+      .reduce((total, key) => total + Math.max(0, Number(usage[key]) || 0), 0) : null
+    const error = String(result?.error || outcome.error_message || '探测失败')
+    const response = String(outcome.response_text || '').trim()
+    return `<article class="manual-probe-result ${success ? 'success' : 'error'}">
+      <div class="manual-probe-result-heading"><strong>${escapeHTML(result?.model || '未知模型')}</strong><span>${success ? '成功' : '失败'}</span></div>
+      <div class="manual-probe-result-meta">${Number.isFinite(latency) ? `耗时 ${escapeHTML(formatDurationMS(latency))}` : '耗时不可用'}${totalTokens === null ? '' : ` · ${escapeHTML(totalTokens)} tokens`}</div>
+      ${success && response ? `<p>${escapeHTML(response)}</p>` : ''}
+      ${success ? '' : `<p role="alert">${escapeHTML(error)}</p>`}
+    </article>`
+  }
+
+  function toggleAccountDetails(accountID, groupID) {
+    const key = relationKey(groupID, accountID)
+    if (state.expandedAccounts.has(key)) state.expandedAccounts.delete(key)
+    else state.expandedAccounts.add(key)
+    render()
+    window.requestAnimationFrame(() => {
+      const selector = `[data-account-id="${accountID}"][data-group-id="${groupID}"] [data-action="toggle-account-details"]`
+      document.querySelector(selector)?.focus()
+    })
+  }
+
+  function closeAccountActionMenus(event) {
+    const activeMenu = event.target.closest?.('.account-action-menu') || null
+    document.querySelectorAll('.account-action-menu[open]').forEach((menu) => {
+      if (menu !== activeMenu) menu.open = false
+    })
+  }
+
   async function handleGroupChange(event) {
     const action = event.target.dataset.action
-    if (action !== 'automation-toggle' && action !== 'schedulable-toggle') return
+    if (action !== 'schedulable-toggle') return
     const row = event.target.closest('[data-account-id]')
     const account = findAccount(Number(row?.dataset.accountId))
     if (!account) return
@@ -864,21 +1496,16 @@
       }
       return
     }
-    state.automationBusy.add(account.id)
+  }
+
+  async function setAccountSchedulable(accountID, schedulable) {
+    state.schedulableBusy.add(accountID)
     render()
     try {
-      if (account.config) {
-        await api(`/api/configs/${account.id}`, { method: 'PUT', body: { enabled } })
-      } else {
-        if (!enabled) return
-        await api('/api/configs', { method: 'POST', body: { account_id: account.id, enabled: true } })
-      }
-      showToast(enabled ? '自动调度已启用' : '自动调度已停用')
+      await api(`/api/accounts/${accountID}/schedulable`, { method: 'PUT', body: { schedulable } })
       await loadOverview(true)
-    } catch (error) {
-      showToast(error.message || '更新失败', true)
     } finally {
-      state.automationBusy.delete(account.id)
+      state.schedulableBusy.delete(accountID)
       render()
     }
   }
@@ -920,213 +1547,47 @@
     }
   }
 
-  function openCreateDialog(preselectedID = null) {
-    const available = state.accounts.filter((account) => isAPIKey(account) && !account.config)
-    state.editingID = null
-    elements.configTitle.textContent = '新增状态检测'
-    elements.accountSelect.disabled = false
-    elements.accountSelect.innerHTML = available.length
-      ? '<option value="">请选择账号</option>' + available.map(accountOption).join('')
-      : '<option value="">没有可配置的 API Key 账号</option>'
-    if (preselectedID && available.some((account) => account.id === preselectedID)) {
-      elements.accountSelect.value = String(preselectedID)
-    }
-    fillPolicyForm(state.defaultPolicy, null)
-    elements.formError.hidden = true
-    renderDirectProbeControl(null)
-    elements.saveButton.disabled = available.length === 0
-    elements.configDialog.showModal()
-  }
-
   function openEditDialog(account) {
-    const config = account.config
-    if (!config) return
+    if (!isAPIKey(account)) return
     state.editingID = account.id
-    elements.configTitle.textContent = '编辑检测规则'
+    elements.configTitle.textContent = '账号设置'
     elements.accountSelect.innerHTML = accountOption(account)
     elements.accountSelect.value = String(account.id)
     elements.accountSelect.disabled = true
-    fillPolicyForm(config.policy, config.balance_alert_threshold)
+    const threshold = account.config?.balance_alert_threshold
+    elements.balanceAlertInput.value = Number.isFinite(Number(threshold)) && threshold !== null ? String(threshold) : ''
     elements.formError.hidden = true
-    renderDirectProbeControl(config.probe || null)
     elements.saveButton.disabled = false
+    elements.saveButton.textContent = '保存设置'
     elements.configDialog.showModal()
-  }
-
-  function fillPolicyForm(policy, balanceThreshold = null) {
-    const normalized = policy || state.defaultPolicy
-    elements.intervalInput.value = normalized.interval_seconds
-    elements.modelInput.value = normalized.model || ''
-    elements.latencyInput.value = (normalized.latency_limit_ms / 1000).toFixed(normalized.latency_limit_ms % 1000 ? 1 : 0)
-    elements.failureInput.value = normalized.failure_threshold
-    elements.recoveryInput.value = normalized.recovery_threshold
-    elements.enabledInput.checked = Boolean(normalized.enabled)
-    elements.balanceAlertInput.value = Number.isFinite(Number(balanceThreshold)) && balanceThreshold !== null ? String(balanceThreshold) : ''
-    elements.promptInput.value = normalized.prompt || ''
-  }
-
-  function renderDirectProbeControl(probe) {
-    const visible = Boolean(state.editingID)
-    elements.directProbeControl.hidden = !visible
-    if (!visible) return
-    const source = probe?.source || 'legacy'
-    const status = probe?.authorization_state || 'authorization_missing'
-    const authorized = source === 'direct' && status === 'authorized'
-    const labels = {
-      authorization_missing: '尚未授权',
-      authorized: '已授权',
-      needs_reauthorization: '需要重新授权',
-      unsupported: '暂不支持',
-      credentials_unavailable: '加密未配置',
-    }
-    const heading = authorized ? '直连上游探测' : '通过 Sub2API 检测'
-    const defaultMessage = authorized
-      ? `已于 ${probe?.imported_at ? formatDateTime(probe.imported_at) : '此前'} 导入路由授权；检测将直接发送到该账号上游。`
-      : '授权后，检测会从本服务直接流式调用该 API Key 的上游，不再通过 Sub2API 账号检测接口。'
-    elements.directProbeState.textContent = heading
-    elements.directProbeMessage.textContent = probe?.action_message || defaultMessage
-    elements.directProbeAuthorizeButton.textContent = authorized ? '重新授权直连探测' : '授权直连探测'
-    elements.directProbeAuthorizeButton.disabled = state.directProbeBusy || status === 'unsupported' || status === 'credentials_unavailable'
-    elements.directProbeAuthorizeButton.hidden = status === 'unsupported' || status === 'credentials_unavailable'
-    elements.directProbeRevokeButton.hidden = source !== 'direct'
-    elements.directProbeRevokeButton.disabled = state.directProbeBusy
-  }
-
-  async function authorizeDirectProbe() {
-    const accountID = state.editingID
-    if (!accountID || state.directProbeBusy) return
-    state.directProbeBusy = true
-    renderDirectProbeControl(findAccount(accountID)?.config?.probe || null)
-    try {
-      const updated = await api(`/api/configs/${accountID}/direct-probe`, { method: 'POST', body: {} })
-      const account = findAccount(accountID)
-      if (account) account.config = updated
-      renderDirectProbeControl(updated.probe)
-      showToast('直连上游探测已授权，并已安排立即检测')
-      await loadOverview(true)
-      const refreshed = findAccount(accountID)
-      renderDirectProbeControl(refreshed?.config?.probe || updated.probe)
-    } catch (error) {
-      elements.formError.textContent = error.message || '直连探测授权失败'
-      elements.formError.hidden = false
-    } finally {
-      state.directProbeBusy = false
-      renderDirectProbeControl(findAccount(accountID)?.config?.probe || null)
-    }
-  }
-
-  async function revokeDirectProbe() {
-    const accountID = state.editingID
-    if (!accountID || state.directProbeBusy) return
-    state.directProbeBusy = true
-    renderDirectProbeControl(findAccount(accountID)?.config?.probe || null)
-    try {
-      const updated = await api(`/api/configs/${accountID}/direct-probe`, { method: 'DELETE' })
-      const account = findAccount(accountID)
-      if (account) account.config = updated
-      renderDirectProbeControl(updated.probe)
-      showToast('直连探测授权已撤销，后续将使用 Sub2API 检测')
-      await loadOverview(true)
-      const refreshed = findAccount(accountID)
-      renderDirectProbeControl(refreshed?.config?.probe || updated.probe)
-    } catch (error) {
-      elements.formError.textContent = error.message || '撤销直连探测授权失败'
-      elements.formError.hidden = false
-    } finally {
-      state.directProbeBusy = false
-      renderDirectProbeControl(findAccount(accountID)?.config?.probe || null)
-    }
   }
 
   async function saveConfig(event) {
     event.preventDefault()
     if (!elements.configForm.reportValidity()) return
-    const accountID = state.editingID || Number(elements.accountSelect.value)
-    const payload = {
-      account_id: accountID,
-      enabled: elements.enabledInput.checked,
-      interval_seconds: Number(elements.intervalInput.value),
-      model: elements.modelInput.value.trim(),
-      latency_limit_ms: Math.round(Number(elements.latencyInput.value) * 1000),
-      failure_threshold: Number(elements.failureInput.value),
-      recovery_threshold: Number(elements.recoveryInput.value),
-      // Keep a custom probe prompt byte-for-byte as entered. The server only
-      // substitutes the shared default for whitespace-only input.
-      prompt: elements.promptInput.value,
-    }
+    const accountID = state.editingID
+    if (!accountID) return
     elements.saveButton.disabled = true
     elements.saveButton.textContent = '保存中'
     elements.formError.hidden = true
     try {
-      await api(state.editingID ? `/api/configs/${accountID}` : '/api/configs', {
-        method: state.editingID ? 'PUT' : 'POST',
-        body: payload,
-      })
       const thresholdRaw = elements.balanceAlertInput.value.trim()
       if (thresholdRaw) {
         const threshold = Number(thresholdRaw)
         if (!Number.isFinite(threshold) || threshold < 0) throw new Error('余额告警阈值必须是大于等于 0 的有限数值')
         await api(`/api/configs/${accountID}/balance-alert`, { method: 'PUT', body: { threshold } })
-      } else if (state.editingID && findAccount(accountID)?.config?.balance_alert_threshold !== undefined) {
+      } else {
         await api(`/api/configs/${accountID}/balance-alert`, { method: 'DELETE' })
       }
       elements.configDialog.close()
-      showToast(state.editingID ? '检测规则已更新' : '状态检测已添加')
+      showToast('账号余额告警设置已保存')
       await loadOverview(true)
     } catch (error) {
       elements.formError.textContent = error.message || '保存失败'
       elements.formError.hidden = false
     } finally {
       elements.saveButton.disabled = false
-      elements.saveButton.textContent = '保存'
-    }
-  }
-
-  async function runNow(account) {
-    if (!account.config) return
-    account.config.running = true
-    render()
-    try {
-      await api(`/api/configs/${account.id}/run`, { method: 'POST' })
-      showToast('检测已启动')
-      scheduleRunPolling(account.id)
-    } catch (error) {
-      account.config.running = false
-      render()
-      showToast(error.message || '启动检测失败', true)
-    }
-  }
-
-  function scheduleRunPolling(accountID) {
-    let attempts = 0
-    const poll = async () => {
-      attempts += 1
-      await loadOverview(true)
-      const current = findAccount(accountID)
-      if (current?.config?.running && attempts < 90) window.setTimeout(poll, 1000)
-    }
-    window.setTimeout(poll, 700)
-  }
-
-  function openDeleteDialog(account) {
-    if (!account.config) return
-    state.deletingID = account.id
-    elements.deleteAccountName.textContent = account.name || `账号 ${account.id}`
-    elements.deleteDialog.showModal()
-  }
-
-  async function deleteConfig() {
-    if (!state.deletingID) return
-    elements.confirmDeleteButton.disabled = true
-    try {
-      await api(`/api/configs/${state.deletingID}`, { method: 'DELETE' })
-      elements.deleteDialog.close()
-      showToast('检测配置已删除')
-      await loadOverview(true)
-    } catch (error) {
-      showToast(error.message || '删除失败', true)
-    } finally {
-      elements.confirmDeleteButton.disabled = false
+      elements.saveButton.textContent = '保存设置'
     }
   }
 
@@ -1463,24 +1924,19 @@
 
   function openSchedulingActionDialog(account, schedulable) {
     if (!account) return
-    const automaticRecovery = Boolean(schedulable && account.config?.managed_suspended)
-    state.schedulingAction = { accountID: account.id, schedulable, automaticRecovery }
+    state.schedulingAction = { accountID: account.id, schedulable }
     elements.schedulingActionDialog.dataset.busy = 'false'
     elements.schedulingActionAccountName.textContent = `${account.name || `账号 ${account.id}`} · 影响该账号所在的所有分组`
     elements.schedulingActionError.hidden = true
     elements.schedulingActionConfirmButton.disabled = false
     if (schedulable) {
       elements.schedulingActionTitle.textContent = '恢复账号全局调度'
-      elements.schedulingActionMessage.textContent = automaticRecovery
-        ? '该账号当前由状态检测自动暂停。确认后会解除本次自动暂停并立即恢复调度；自动检测规则仍保持启用，后续再次连续异常时仍可能自动暂停。'
-        : '确认后该账号会重新参与所有已绑定分组的调度。'
+      elements.schedulingActionMessage.textContent = '确认后该账号会重新参与所有已绑定分组的调度。实际成功率仅用于展示，不会自动改变调度状态。'
       elements.schedulingActionConfirmButton.textContent = '确认启用'
       elements.schedulingActionConfirmButton.className = 'button primary'
     } else {
       elements.schedulingActionTitle.textContent = '停止账号全局调度'
-      elements.schedulingActionMessage.textContent = account.config?.policy?.enabled
-        ? '确认后该账号会立即退出所有已绑定分组的调度。状态检测仍会继续，但健康结果不会自动恢复该账号，直到你再次手动启用或重新开启自动调度接管。'
-        : '确认后该账号会立即退出所有已绑定分组的调度。当前未启用状态检测，之后需要你手动恢复调度。'
+      elements.schedulingActionMessage.textContent = '确认后该账号会立即退出所有已绑定分组的调度，之后需要你手动恢复。实际成功率不会自动启用或停止账号。'
       elements.schedulingActionConfirmButton.textContent = '确认停止'
       elements.schedulingActionConfirmButton.className = 'button danger'
     }
@@ -1568,30 +2024,6 @@
       elements.bindingActionConfirmButton.textContent = originalText
       render()
     }
-  }
-
-  function openResultDialog(account, resultID) {
-    const result = account.config?.history?.find((item) => item.id === resultID)
-    if (!result) return
-    elements.resultAccountName.textContent = account.name || `账号 ${account.id}`
-    const rows = [
-      ['状态', statusLabel(result.status)],
-      ['检测时间', formatDateTime(result.checked_at)],
-      ['耗时', formatMilliseconds(result.latency_ms)],
-      ['调度动作', actionLabel(result.action)],
-      ['信息', result.message || '—'],
-    ]
-    if (result.failure_kind) rows.splice(1, 0, ['失败原因', failureKindLabel(result.failure_kind)])
-    if (result.usage) {
-      const usageTokens = ['input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_write_tokens']
-        .reduce((sum, key) => sum + (Number(result.usage[key]) || 0), 0)
-      rows.push(['检测 Token', `${formatInteger(usageTokens)} · 输入 ${formatInteger(result.usage.input_tokens || 0)} / 输出 ${formatInteger(result.usage.output_tokens || 0)}`])
-      if (result.usage.model) rows.push(['计费模型', result.usage.model])
-    }
-    if (result.cost) rows.push(['检测成本（1 倍率）', result.cost.known ? formatProbeCost(result.cost.amount || 0) : '定价不可用'])
-    if (result.response_text) rows.push(['响应片段', result.response_text])
-    elements.resultDetails.innerHTML = rows.map(([term, detail]) => `<dt>${escapeHTML(term)}</dt><dd>${escapeHTML(detail)}</dd>`).join('')
-    elements.resultDialog.showModal()
   }
 
   function openBindingDialog(groupID, trigger = null) {
@@ -2154,49 +2586,10 @@
     return `<option value="${account.id}">${escapeHTML(account.name || `账号 ${account.id}`)} · ${escapeHTML(account.platform || 'unknown')} · #${account.id}</option>`
   }
 
-  function statusLabel(status) {
-    return ({ operational: '正常', degraded: '耗时超限', failed: '调用失败', error: '检测错误', skipped: '等待授权' })[status] || '未检测'
-  }
-
-  function actionLabel(action) {
-    return ({ disabled: '已关闭调度', restored: '已恢复调度', disable_failed: '关闭调度失败', restore_failed: '恢复调度失败', restore_blocked: '等待恢复' })[action] || '无'
-  }
-
-  function failureKindLabel(kind) {
-    return ({ balance_insufficient: '余额不足导致检测失败' })[kind] || String(kind || '未分类')
-  }
-
-  function formatInterval(seconds) {
-    if (seconds >= 3600 && seconds % 3600 === 0) return `${seconds / 3600} 小时`
-    if (seconds >= 60 && seconds % 60 === 0) return `${seconds / 60} 分钟`
-    return `${seconds} 秒`
-  }
-
-  function formatSeconds(milliseconds) {
-    const seconds = milliseconds / 1000
-    return `${Number.isInteger(seconds) ? seconds : seconds.toFixed(1)} 秒`
-  }
-
-  function formatMilliseconds(milliseconds) {
-    const value = Number(milliseconds)
-    return Number.isFinite(value) ? `${formatInteger(value)} ms` : '—'
-  }
-
   function formatDateTime(value) {
     const date = value instanceof Date ? value : new Date(value)
     if (Number.isNaN(date.getTime())) return '—'
     return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(date)
-  }
-
-  function formatRelative(value) {
-    const milliseconds = new Date(value).getTime() - Date.now()
-    if (!Number.isFinite(milliseconds)) return '—'
-    if (milliseconds <= 0) return '即将执行'
-    const seconds = Math.ceil(milliseconds / 1000)
-    if (seconds < 60) return `${seconds} 秒`
-    const minutes = Math.ceil(seconds / 60)
-    if (minutes < 60) return `${minutes} 分钟`
-    return `${Math.ceil(minutes / 60)} 小时`
   }
 
   function formatInteger(value) {
@@ -2221,15 +2614,16 @@
     return `$${normalized.toLocaleString('en-US', { minimumFractionDigits: normalized > 0 && normalized < 0.01 ? 4 : 2, maximumFractionDigits: 4 })}`
   }
 
-  function formatProbeCost(value) {
-    const normalized = Number(value) || 0
-    const digits = normalized > 0 && normalized < 0.0001 ? 8 : normalized > 0 && normalized < 0.01 ? 6 : 4
-    return `$${normalized.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: digits })}`
-  }
-
   function formatPercent(value) {
     const normalized = Number(value)
     return Number.isFinite(normalized) ? `${normalized.toFixed(normalized % 1 ? 1 : 0)}%` : '—'
+  }
+
+  function formatDurationMS(value) {
+    const milliseconds = Math.max(0, Number(value) || 0)
+    if (milliseconds < 1000) return `${Math.round(milliseconds)} ms`
+    if (milliseconds < 10000) return `${(milliseconds / 1000).toFixed(2)} s`
+    return `${(milliseconds / 1000).toFixed(1)} s`
   }
 
   function escapeHTML(value) {

@@ -45,6 +45,93 @@ type directProbeExporter interface {
 	ExportDirectProbeSnapshot(ctx context.Context, accountID int64, adminJWT string, identity core.ForwardedIdentity) (core.DirectProbeExport, error)
 }
 
+type ManualProbeResult struct {
+	Model   string             `json:"model"`
+	Outcome ManualProbeOutcome `json:"outcome"`
+	Error   string             `json:"error,omitempty"`
+}
+
+type ManualProbeOutcome struct {
+	Success      bool              `json:"success"`
+	ResponseText string            `json:"response_text,omitempty"`
+	ErrorMessage string            `json:"error_message,omitempty"`
+	LatencyMS    int64             `json:"latency_ms"`
+	Usage        *model.ProbeUsage `json:"usage,omitempty"`
+}
+
+func publicManualProbeOutcome(outcome core.ProbeOutcome) ManualProbeOutcome {
+	return ManualProbeOutcome{
+		Success:      outcome.Success,
+		ResponseText: outcome.ResponseText,
+		ErrorMessage: outcome.ErrorMessage,
+		LatencyMS:    outcome.Latency.Milliseconds(),
+		Usage:        outcome.Usage,
+	}
+}
+
+func (e *Engine) ManualProbe(ctx context.Context, accountID int64, adminJWT string, identity core.ForwardedIdentity, models []string, prompt, effort string) ([]ManualProbeResult, error) {
+	if !e.DirectProbeEnabled() {
+		return nil, errors.New("直连探测凭证加密未配置")
+	}
+	if len(models) == 0 || len(models) > 8 {
+		return nil, errors.New("模型数量必须在 1 到 8 个之间")
+	}
+	account, err := e.core.GetAccount(ctx, accountID)
+	if err != nil {
+		return nil, fmt.Errorf("读取账号失败: %w", err)
+	}
+	if !account.IsAPIKey() {
+		return nil, errors.New("仅支持 API Key 账号")
+	}
+	exporter, ok := e.core.(directProbeExporter)
+	if !ok {
+		return nil, errors.New("当前服务未启用直连探测授权导入")
+	}
+	exported, err := exporter.ExportDirectProbeSnapshot(ctx, accountID, adminJWT, identity)
+	if err != nil {
+		return nil, err
+	}
+	snapshot := exported.Snapshot
+	defer model.ClearDirectProbeSnapshot(&snapshot)
+	if snapshot.AccountID != accountID {
+		return nil, errors.New("账号导出内容与当前账号不一致")
+	}
+	prober, ok := e.core.(core.DirectProber)
+	if !ok {
+		return nil, errors.New("当前服务未启用直连上游探测")
+	}
+	if strings.TrimSpace(prompt) == "" {
+		prompt = model.DefaultPrompt
+	}
+	if len(prompt) > 8000 {
+		return nil, errors.New("提示词不能超过 8000 个字符")
+	}
+	policy := model.DefaultPolicy()
+	policy.Prompt, policy.ReasoningEffort, policy.LatencyLimitMS = prompt, effort, 120000
+	policy.Model = ""
+	normalized, err := policy.Normalize()
+	if err != nil {
+		return nil, err
+	}
+	policy = normalized
+	results := make([]ManualProbeResult, 0, len(models))
+	for _, requested := range models {
+		requested = strings.TrimSpace(requested)
+		if requested == "" || len(requested) > 200 {
+			return nil, errors.New("模型名称无效")
+		}
+		policy.Model = requested
+		outcome, probeErr := prober.ProbeDirect(ctx, snapshot, policy)
+		publicOutcome := publicManualProbeOutcome(outcome)
+		if probeErr != nil {
+			results = append(results, ManualProbeResult{Model: requested, Outcome: publicOutcome, Error: probeErr.Error()})
+		} else {
+			results = append(results, ManualProbeResult{Model: requested, Outcome: publicOutcome})
+		}
+	}
+	return results, nil
+}
+
 type EngineOption func(*Engine)
 
 // WithDirectProbeCredentials enables the explicit direct-upstream authorization
@@ -128,6 +215,63 @@ func (e *Engine) Stop() {
 	}
 	e.mu.Unlock()
 	e.wg.Wait()
+}
+
+// EnterPassiveMode permanently disables the legacy active-probe runtime while
+// preserving the serialized account records used by balance alerts and manual
+// scheduling. Only suspensions explicitly owned by the probe state machine are
+// restored; administrator-owned stops never carry ManagedSuspended and remain
+// unchanged. The transition is idempotent and best effort per account.
+func (e *Engine) EnterPassiveMode(ctx context.Context) error {
+	if e == nil || e.store == nil {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	var failures []error
+	for _, managed := range e.store.List() {
+		var snapshot *model.UpstreamAccount
+		if managed.ManagedSuspended {
+			if e.core == nil {
+				failures = append(failures, fmt.Errorf("restore probe-owned suspension for account %d: core client unavailable", managed.AccountID))
+			} else {
+				account, err := e.core.GetAccount(ctx, managed.AccountID)
+				if err != nil {
+					failures = append(failures, fmt.Errorf("restore probe-owned suspension for account %d: %w", managed.AccountID, err))
+				} else {
+					snapshot = &account
+					if !account.Schedulable {
+						if account.Status != "active" {
+							failures = append(failures, fmt.Errorf("restore probe-owned suspension for account %d: account status is %s", managed.AccountID, account.Status))
+						} else if restored, restoreErr := e.core.SetSchedulable(ctx, managed.AccountID, true); restoreErr != nil {
+							failures = append(failures, fmt.Errorf("restore probe-owned suspension for account %d: %w", managed.AccountID, restoreErr))
+						} else {
+							snapshot = &restored
+						}
+					}
+				}
+			}
+		}
+
+		if err := e.store.Update(managed.AccountID, func(current *model.ManagedAccount) error {
+			if snapshot != nil {
+				current.ApplySnapshot(*snapshot)
+			}
+			current.Policy.Enabled = false
+			current.NextCheckAt = nil
+			current.Running = false
+			current.ManagedSuspended = false
+			current.ConsecutiveFailures = 0
+			current.ConsecutiveSuccesses = 0
+			current.UpdatedAt = e.now().UTC()
+			return nil
+		}); err != nil {
+			failures = append(failures, fmt.Errorf("disable active probing for account %d: %w", managed.AccountID, err))
+		}
+	}
+	return errors.Join(failures...)
 }
 
 func (e *Engine) List() []model.ManagedAccount {
@@ -258,6 +402,35 @@ func (e *Engine) AvailableAccounts(ctx context.Context) ([]model.UpstreamAccount
 	}
 	e.syncSnapshots(accounts)
 	return accounts, nil
+}
+
+// EnsurePassiveAccount creates the compatibility record required by account-
+// level alerts without enabling any probe policy or scheduling a check.
+func (e *Engine) EnsurePassiveAccount(ctx context.Context, accountID int64) (model.ManagedAccount, error) {
+	if existing, err := e.store.Get(accountID); err == nil {
+		return existing, nil
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return model.ManagedAccount{}, err
+	}
+	if e.core == nil {
+		return model.ManagedAccount{}, errors.New("core client unavailable")
+	}
+	account, err := e.core.GetAccount(ctx, accountID)
+	if err != nil {
+		return model.ManagedAccount{}, err
+	}
+	if !account.IsAPIKey() {
+		return model.ManagedAccount{}, ErrUnsupportedAccount
+	}
+	now := e.now().UTC()
+	policy := model.DefaultPolicy()
+	policy.Enabled = false
+	managed := model.ManagedAccount{AccountID: accountID, Policy: policy, History: []model.CheckResult{}, CreatedAt: now, UpdatedAt: now}
+	managed.ApplySnapshot(account)
+	if err := e.store.Put(managed); err != nil {
+		return model.ManagedAccount{}, err
+	}
+	return e.store.Get(accountID)
 }
 
 func (e *Engine) Upsert(ctx context.Context, accountID int64, policy model.Policy) (model.ManagedAccount, error) {

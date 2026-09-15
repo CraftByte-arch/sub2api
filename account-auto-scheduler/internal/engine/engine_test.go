@@ -439,6 +439,35 @@ func TestLatencyAtOrOverLimitCountsAsFailure(t *testing.T) {
 	}
 }
 
+func TestManualProbeDoesNotRequireOrCreateManagedAccountConfiguration(t *testing.T) {
+	fake := healthyAPIKeyAccount()
+	fake.exported = core.DirectProbeExport{Snapshot: directSnapshotForAccount(t, fake.account)}
+	fake.directOutcomes = []core.ProbeOutcome{{
+		Success:      true,
+		ResponseText: "manual probe ok",
+		Latency:      350 * time.Millisecond,
+	}}
+	scheduler := newTestEngineWithDirect(t, fake, &fakeDirectBox{enabled: true})
+	identity := core.ForwardedIdentity{ClientIP: "203.0.113.10", UserAgent: "sidecar-admin"}
+
+	results, err := scheduler.ManualProbe(
+		context.Background(), fake.account.ID, "admin-jwt", identity,
+		[]string{"gpt-real"}, "test prompt", "",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].Model != "gpt-real" || !results[0].Outcome.Success || results[0].Outcome.ResponseText != "manual probe ok" {
+		t.Fatalf("unexpected manual probe results: %#v", results)
+	}
+	if fake.exportCalls != 1 || fake.directCalls != 1 || fake.exportJWT != "admin-jwt" || fake.exportIdentity != identity {
+		t.Fatalf("unexpected direct probe calls: exports=%d probes=%d jwt=%q identity=%#v", fake.exportCalls, fake.directCalls, fake.exportJWT, fake.exportIdentity)
+	}
+	if managed := scheduler.List(); len(managed) != 0 {
+		t.Fatalf("manual probe created managed account configuration: %#v", managed)
+	}
+}
+
 func TestAuthorizeAndRevokeDirectProbeUsesStepUpExportAndRedactedState(t *testing.T) {
 	fake := healthyAPIKeyAccount()
 	fake.exported = core.DirectProbeExport{Snapshot: directSnapshotForAccount(t, fake.account)}
@@ -668,6 +697,110 @@ func TestStoreFailureDoesNotHideMissingConfiguration(t *testing.T) {
 	scheduler := newTestEngine(t, fake)
 	if err := scheduler.Trigger(999); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("Trigger error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestEnterPassiveModeRestoresOnlyProbeOwnedSuspensionAndIsIdempotent(t *testing.T) {
+	fake := healthyAPIKeyAccount()
+	fake.account.Schedulable = false
+	scheduler := newTestEngine(t, fake)
+	now := time.Now().UTC()
+	next := now.Add(time.Minute)
+	managed := model.ManagedAccount{
+		AccountID:            fake.account.ID,
+		Name:                 fake.account.Name,
+		Platform:             fake.account.Platform,
+		AccountStatus:        fake.account.Status,
+		Schedulable:          false,
+		ManagedSuspended:     true,
+		ConsecutiveFailures:  4,
+		ConsecutiveSuccesses: 2,
+		Running:              true,
+		Policy:               model.DefaultPolicy(),
+		NextCheckAt:          &next,
+		History:              []model.CheckResult{{ID: "kept-history", Status: "failed"}},
+		DetectionStats:       model.DetectionStats{Requests: 7, InputTokens: 12},
+		CreatedAt:            now,
+		UpdatedAt:            now,
+	}
+	managed.Policy.Enabled = true
+	if err := scheduler.store.Put(managed); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := scheduler.EnterPassiveMode(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	stored := scheduler.List()[0]
+	if !stored.Schedulable || stored.ManagedSuspended || stored.Policy.Enabled || stored.NextCheckAt != nil || stored.Running || stored.ConsecutiveFailures != 0 || stored.ConsecutiveSuccesses != 0 {
+		t.Fatalf("passive transition did not clear active state: %#v", stored)
+	}
+	if len(stored.History) != 1 || stored.History[0].ID != "kept-history" || stored.DetectionStats.Requests != 7 {
+		t.Fatalf("passive transition removed rollback compatibility data: %#v", stored)
+	}
+	if len(fake.setCalls) != 1 || !fake.setCalls[0] {
+		t.Fatalf("probe-owned suspension was not restored exactly once: %#v", fake.setCalls)
+	}
+
+	if err := scheduler.EnterPassiveMode(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.setCalls) != 1 {
+		t.Fatalf("idempotent passive transition repeated scheduling mutation: %#v", fake.setCalls)
+	}
+}
+
+func TestEnterPassiveModePreservesAdministratorStop(t *testing.T) {
+	fake := healthyAPIKeyAccount()
+	fake.account.Schedulable = false
+	scheduler := newTestEngine(t, fake)
+	now := time.Now().UTC()
+	next := now.Add(time.Minute)
+	policy := model.DefaultPolicy()
+	policy.Enabled = true
+	if err := scheduler.store.Put(model.ManagedAccount{
+		AccountID: fake.account.ID, Name: fake.account.Name, Platform: fake.account.Platform,
+		AccountStatus: fake.account.Status, Schedulable: false, Policy: policy, NextCheckAt: &next,
+		History: []model.CheckResult{}, CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := scheduler.EnterPassiveMode(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	stored := scheduler.List()[0]
+	if stored.Schedulable || stored.Policy.Enabled || stored.NextCheckAt != nil || len(fake.setCalls) != 0 {
+		t.Fatalf("administrator stop was changed by passive transition: stored=%#v calls=%#v", stored, fake.setCalls)
+	}
+}
+
+func TestEnterPassiveModeDisablesPolicyWhenOwnedRestorationFails(t *testing.T) {
+	fake := healthyAPIKeyAccount()
+	fake.account.Schedulable = false
+	fake.setErr = errors.New("sub2api unavailable")
+	scheduler := newTestEngine(t, fake)
+	now := time.Now().UTC()
+	policy := model.DefaultPolicy()
+	policy.Enabled = true
+	if err := scheduler.store.Put(model.ManagedAccount{
+		AccountID: fake.account.ID, Name: fake.account.Name, Platform: fake.account.Platform,
+		AccountStatus: fake.account.Status, Schedulable: false, ManagedSuspended: true, Policy: policy,
+		Running: true, ConsecutiveFailures: 3, History: []model.CheckResult{}, CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	err := scheduler.EnterPassiveMode(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "sub2api unavailable") {
+		t.Fatalf("restore failure not reported: %v", err)
+	}
+	stored := scheduler.List()[0]
+	if stored.Policy.Enabled || stored.NextCheckAt != nil || stored.Running || stored.ManagedSuspended || stored.ConsecutiveFailures != 0 {
+		t.Fatalf("failed restoration left active probe state: %#v", stored)
+	}
+	if stored.Schedulable || len(fake.setCalls) != 1 || !fake.setCalls[0] {
+		t.Fatalf("failed restoration was represented incorrectly: stored=%#v calls=%#v", stored, fake.setCalls)
 	}
 }
 

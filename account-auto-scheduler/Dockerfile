@@ -5,9 +5,13 @@ FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS build
 
 ARG TARGETOS
 ARG TARGETARCH
+ARG GOPROXY=https://proxy.golang.org,direct
+
+ENV GOPROXY=$GOPROXY
 
 WORKDIR /src
-COPY go.mod ./
+COPY go.mod go.sum ./
+RUN go mod download
 COPY . .
 
 RUN CGO_ENABLED=0 go test ./... && \

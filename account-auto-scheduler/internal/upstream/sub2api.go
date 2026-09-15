@@ -62,6 +62,7 @@ type sub2APIKey struct {
 type sub2APIGroup struct {
 	ID             int64   `json:"id"`
 	Name           string  `json:"name"`
+	Platform       string  `json:"platform"`
 	RateMultiplier float64 `json:"rate_multiplier"`
 }
 
@@ -166,8 +167,10 @@ func (sub2APIAdapter) Sync(ctx context.Context, managementURL string, material A
 
 	groups := make(map[int64]sub2APIGroup)
 	var groupList []sub2APIGroup
+	groupsFetched := false
 	if response, requestErr := client.do(ctx, http.MethodGet, "/api/v1/groups/available", nil, material); requestErr == nil {
 		if decodeSub2APIResponse(response, &groupList) == nil {
+			groupsFetched = true
 			for _, group := range groupList {
 				groups[group.ID] = group
 			}
@@ -200,10 +203,12 @@ func (sub2APIAdapter) Sync(ctx context.Context, managementURL string, material A
 		}
 	}
 	return SyncResult{
-		Keys:      keys,
-		Material:  material,
-		Principal: firstNonEmpty(user.Email, user.Username, strconv.FormatInt(user.ID, 10)),
-		Balance:   balance,
+		Keys:          keys,
+		Groups:        normalizeSub2APIGroups(groupList, userRates),
+		GroupsFetched: groupsFetched,
+		Material:      material,
+		Principal:     firstNonEmpty(user.Email, user.Username, strconv.FormatInt(user.ID, 10)),
+		Balance:       balance,
 	}, nil
 }
 
@@ -446,6 +451,27 @@ func normalizeSub2APIKey(item sub2APIKey, groups map[int64]sub2APIGroup, userRat
 		},
 		Plaintext: plain,
 	}
+}
+
+func normalizeSub2APIGroups(groups []sub2APIGroup, userRates map[string]float64) []model.RemoteGroup {
+	snapshots := make([]model.RemoteGroup, 0, len(groups))
+	for _, group := range groups {
+		groupID := strconv.FormatInt(group.ID, 10)
+		multiplier := floatPointer(group.RateMultiplier)
+		source := "group"
+		if override, ok := userRates[groupID]; ok {
+			multiplier = floatPointer(override)
+			source = "user_override"
+		}
+		snapshots = append(snapshots, model.RemoteGroup{
+			ID:               groupID,
+			Name:             strings.TrimSpace(group.Name),
+			Platform:         model.NormalizeRemoteGroupPlatform(group.Platform),
+			Multiplier:       multiplier,
+			MultiplierSource: source,
+		})
+	}
+	return snapshots
 }
 
 func floatPointer(value float64) *float64 {

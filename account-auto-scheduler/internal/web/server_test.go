@@ -35,31 +35,43 @@ func (f *fakeAdminCore) RegisterAdminMenu(context.Context, string) error { retur
 
 type fakeConsoleCore struct {
 	fakeAdminCore
-	accounts        []model.UpstreamAccount
-	groups          []model.UpstreamGroup
-	today           map[string]model.WindowStats
-	usage           model.AccountUsageInfo
-	consoleErr      error
-	usageErr        error
-	bindingErr      error
-	bindingErrByID  map[int64]error
-	accountErr      error
-	setErr          error
-	overviewCalls   int
-	groupCalls      int
-	getAccountCalls int
-	setCalls        []bool
-	boundAccountID  int64
-	boundGroupID    int64
-	bound           bool
-	bindingCalls    []groupBindingCall
-	exportErr       error
-	exportErrByID   map[int64]error
-	exportCalls     []int64
-	exportToken     string
-	exportIdentity  core.ForwardedIdentity
-	testStarted     chan struct{}
-	testRelease     chan struct{}
+	accounts              []model.UpstreamAccount
+	groups                []model.UpstreamGroup
+	today                 map[string]model.WindowStats
+	groupUsage            model.GroupUsageSummarySnapshot
+	groupUsageErr         error
+	groupUsageCalls       int
+	onlineUsersSummary    model.OnlineUsersSummary
+	onlineUsers           model.OnlineUsersSnapshot
+	groupConsumption      model.GroupUserConsumptionSnapshot
+	groupConsumptionErr   error
+	usage                 model.AccountUsageInfo
+	consoleErr            error
+	onlineUsersErr        error
+	onlineUsersSummaryErr error
+	usageErr              error
+	bindingErr            error
+	bindingErrByID        map[int64]error
+	accountErr            error
+	setErr                error
+	overviewCalls         int
+	groupCalls            int
+	getAccountCalls       int
+	setCalls              []bool
+	onlineCalls           int
+	onlineSummaryCalls    int
+	groupConsumptionCalls int
+	boundAccountID        int64
+	boundGroupID          int64
+	bound                 bool
+	bindingCalls          []groupBindingCall
+	exportErr             error
+	exportErrByID         map[int64]error
+	exportCalls           []int64
+	exportToken           string
+	exportIdentity        core.ForwardedIdentity
+	testStarted           chan struct{}
+	testRelease           chan struct{}
 }
 
 type groupBindingCall struct {
@@ -80,6 +92,26 @@ func (f *fakeConsoleCore) ListGroups(context.Context) ([]model.UpstreamGroup, er
 
 func (f *fakeConsoleCore) GetTodayStatsBatch(context.Context, []int64) (map[string]model.WindowStats, error) {
 	return f.today, f.consoleErr
+}
+
+func (f *fakeConsoleCore) GetGroupUsageSummary(context.Context) (model.GroupUsageSummarySnapshot, error) {
+	f.groupUsageCalls++
+	return f.groupUsage, f.groupUsageErr
+}
+
+func (f *fakeConsoleCore) GetOnlineUsers(context.Context) (model.OnlineUsersSnapshot, error) {
+	f.onlineCalls++
+	return f.onlineUsers, f.onlineUsersErr
+}
+
+func (f *fakeConsoleCore) GetOnlineUsersSummary(context.Context) (model.OnlineUsersSummary, error) {
+	f.onlineSummaryCalls++
+	return f.onlineUsersSummary, f.onlineUsersSummaryErr
+}
+
+func (f *fakeConsoleCore) GetGroupUserConsumption(_ context.Context, _ int64) (model.GroupUserConsumptionSnapshot, error) {
+	f.groupConsumptionCalls++
+	return f.groupConsumption, f.groupConsumptionErr
 }
 
 func (f *fakeConsoleCore) GetPassiveUsage(context.Context, int64) (model.AccountUsageInfo, error) {
@@ -256,9 +288,21 @@ func TestStaticPageIsPublicButFramingIsRestricted(t *testing.T) {
 	if !strings.Contains(response.Body.String(), `class="binding-list-header"`) ||
 		!strings.Contains(response.Body.String(), "最终倍率") ||
 		!strings.Contains(response.Body.String(), "可用余额") ||
+		!strings.Contains(response.Body.String(), `id="metric-active-traffic"`) ||
+		!strings.Contains(response.Body.String(), "真实成功率来自实际用户调用，不会主动探测") ||
+		!strings.Contains(response.Body.String(), "这里仅保留余额告警设置") ||
+		!strings.Contains(response.Body.String(), `id="online-users-metric"`) ||
+		!strings.Contains(response.Body.String(), `id="online-users-dialog"`) ||
+		!strings.Contains(response.Body.String(), "最近 10 分钟内有调用的用户") ||
 		!strings.Contains(response.Body.String(), `id="scheduling-action-dialog"`) ||
-		!strings.Contains(response.Body.String(), `id="scheduling-action-confirm-button"`) {
+		!strings.Contains(response.Body.String(), `id="scheduling-action-confirm-button"`) ||
+		!strings.Contains(response.Body.String(), `id="icon-more-horizontal"`) {
 		t.Fatal("binding dialog is missing metric column headings")
+	}
+	for _, removed := range []string{`id="add-button"`, `id="delete-dialog"`, `id="result-dialog"`, "新增检测", "删除检测配置", "最近 50 次检测状态"} {
+		if strings.Contains(response.Body.String(), removed) {
+			t.Fatalf("static page still exposes removed active-probe interaction %q", removed)
+		}
 	}
 	if !strings.Contains(response.Body.String(), `id="upstream-connect-form" method="dialog" class="modal-panel" autocomplete="off"`) ||
 		!strings.Contains(response.Body.String(), `id="upstream-password-input" type="password" autocomplete="new-password"`) ||
@@ -272,7 +316,7 @@ func TestStaticPageIsPublicButFramingIsRestricted(t *testing.T) {
 	}
 }
 
-func TestGroupsAppUsesFinalMultiplierInsteadOfProbeMultiplier(t *testing.T) {
+func TestGroupsAppUsesFinalMultiplierAndPassiveActualSuccess(t *testing.T) {
 	server := NewServer(nil, &fakeAdminCore{}, Options{}, nil)
 	response := httptest.NewRecorder()
 	server.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/app.js", nil))
@@ -283,31 +327,29 @@ func TestGroupsAppUsesFinalMultiplierInsteadOfProbeMultiplier(t *testing.T) {
 	if !strings.Contains(body, "renderFinalMultiplier") || !strings.Contains(body, "upstream_final_multiplier") || !strings.Contains(body, "最终倍率") {
 		t.Fatalf("groups app is missing final-multiplier rendering: %s", body)
 	}
-	if strings.Contains(body, "renderDetectedRate") || strings.Contains(body, "探测倍率") {
-		t.Fatalf("groups app still renders the billing-probe multiplier: %s", body)
-	}
-	if !strings.Contains(body, "prompt: elements.promptInput.value,") || strings.Contains(body, "prompt: elements.promptInput.value.trim()") {
-		t.Fatal("groups app must submit the custom probe prompt without trimming it")
-	}
-	if !strings.Contains(body, "`/api/configs/${accountID}/direct-probe`, { method: 'POST', body: {} }") ||
-		!strings.Contains(body, "`/api/configs/${accountID}/direct-probe`, { method: 'DELETE' }") {
-		t.Fatal("groups app is missing the bounded direct-probe authorization or revocation request")
-	}
-	for _, forbidden := range []string{"api_key:", "proxy_password:", "admin_jwt:"} {
+	for _, forbidden := range []string{
+		"renderDetectedRate", "探测倍率", "promptInput", "automation-toggle", "renderHistory",
+		"runNow", "direct-probe", "状态检测消耗（1 倍率）", "检测自动停止",
+		"api_key:", "proxy_password:", "admin_jwt:",
+	} {
 		if strings.Contains(body, forbidden) {
-			t.Fatalf("groups app constructs forbidden direct-probe secret field %q", forbidden)
+			t.Fatalf("groups app still contains removed active-probe behavior %q", forbidden)
 		}
 	}
 	for _, required := range []string{
+		"actualSuccessByKey", "actual_success", "renderActualSuccess", "reference_24h",
+		"effective_attempts", "暂无真实调用", "样本较少", "data-tooltip",
+		"/api/configs/${accountID}/balance-alert", "账号余额告警设置已保存",
 		"group_protections", "logical_group_ids", "设置保护倍率", "解除倍率保护", "移除绑定",
 		"group_protection_defaults", "设置分组保护", "group-protection-dialog", "分组默认保护倍率",
-		"状态检测消耗（1 倍率）", "binding-action-dialog", "protection-dialog",
-		"admin_balance", "admin-balance-card", "余额不足导致检测失败", "failure_kind === 'balance_insufficient'",
+		"binding-action-dialog", "protection-dialog", "admin_balance", "admin-balance-card",
 		"renderBindingMultiplier", "renderBindingBalance", "最终倍率", "可用余额",
 		"上游余额按当前分组倍率折算后的同步投影", "不限额度", "暂不可用",
 		"groupBalanceSummaries", "group_balance_summaries", "renderGroupBalanceSummary", "启用余额", "未启用余额",
 		"schedulableBusy", "schedulable-toggle", "schedulableState", "账号调度（全局）", "openSchedulingActionDialog",
-		"`/api/accounts/${accountID}/schedulable`", "自动检测规则仍保持启用", "影响该账号所在的所有分组",
+		"expandedAccounts", "toggle-account-details", "api-key-details", "account-action-menu",
+		"renderCompactBalance", "renderActualSuccessCompact", "renderCompactMultiplier",
+		"`/api/accounts/${accountID}/schedulable`", "实际成功率不会自动启用或停止账号", "影响该账号所在的所有分组",
 		"`/api/groups/${groupID}/accounts/${accountID}/protection`",
 		"`/api/groups/${groupID}/accounts/${accountID}/binding`",
 		"`/api/groups/${groupID}/protection-default`",
@@ -323,10 +365,14 @@ func TestGroupsAppUsesFinalMultiplierInsteadOfProbeMultiplier(t *testing.T) {
 	for _, required := range []string{
 		".multiplier-pair", ".protection-multiplier.exceeded", ".binding-row-actions",
 		".group-protection-badge", ".modal-footer-spacer",
-		".admin-balance-card.insufficient", ".admin-balance-value", ".history-bar.balance-insufficient",
+		".admin-balance-card.insufficient", ".admin-balance-value",
+		".actual-success", ".actual-success.warning", ".actual-success.danger", ".actual-success.low-sample",
+		".actual-success.empty", ".actual-success.partial", ".actual-success-state", ".passive-health-note",
 		".binding-list-header", ".binding-metric", ".binding-metric.insufficient", ".binding-metric-label",
 		".group-balance-summary", ".group-balance-item.enabled", ".group-balance-item.disabled",
 		".schedulable-control", ".schedulable-control.busy", "@media (max-width: 420px)",
+		".api-key-record", ".api-key-details", ".compact-balance", ".compact-success",
+		".account-action-menu", ".account-action-popover", ".button.danger-outline",
 		"@media (max-width: 620px)", ".multiplier-pair { grid-template-columns: minmax(0, 1fr); }",
 		".quota-list > div { grid-template-columns: 58px minmax(0, 1fr); }",
 	} {
@@ -518,6 +564,10 @@ func TestOverviewJoinsGroupsAccountsUsageAndConfig(t *testing.T) {
 			DetectedRate: &model.DetectedRate{Status: "operational", EffectiveMultiplier: float64Pointer(9.9)},
 		}},
 		today: map[string]model.WindowStats{"9": {Requests: 4, Tokens: 1200, Cost: 0.75}},
+		groupUsage: model.GroupUsageSummarySnapshot{
+			Ready: true, Source: "sub2api_group_usage_rollup", QueriedAt: time.Now().UTC(),
+			Items: []model.GroupUsageSummary{{GroupID: 7, TodayCost: 3.25}},
+		},
 	}
 	managed := model.ManagedAccount{
 		AccountID: 9, Name: "key", ManagedSuspended: true, Policy: model.DefaultPolicy(), CreatedAt: time.Now(), UpdatedAt: time.Now(),
@@ -542,6 +592,7 @@ func TestOverviewJoinsGroupsAccountsUsageAndConfig(t *testing.T) {
 			DetectedRate            *model.DetectedRate                   `json:"detected_rate"`
 		} `json:"accounts"`
 		GroupBalanceSummaries map[string]overviewGroupBalanceSummary `json:"group_balance_summaries"`
+		GroupUsage            model.GroupUsageSummarySnapshot        `json:"group_usage"`
 	}
 	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
 		t.Fatal(err)
@@ -557,6 +608,9 @@ func TestOverviewJoinsGroupsAccountsUsageAndConfig(t *testing.T) {
 	}
 	if summary := payload.GroupBalanceSummaries["7"]; summary.Disabled.AccountCount != 1 || summary.Disabled.UnavailableCount != 1 {
 		t.Fatalf("overview group balance summary is incorrect: %#v", payload.GroupBalanceSummaries)
+	}
+	if payload.GroupUsage.Items[0].GroupID != 7 || payload.GroupUsage.Items[0].TodayCost != 3.25 || backend.groupUsageCalls != 1 {
+		t.Fatalf("overview group usage summary is incorrect: %#v calls=%d", payload.GroupUsage, backend.groupUsageCalls)
 	}
 }
 
@@ -759,57 +813,54 @@ func TestBulkGroupBindingReturnsStructuredPartialFailures(t *testing.T) {
 	}
 }
 
-func TestAutomationConfigMutationsRequireAdminAndRestoreManualStops(t *testing.T) {
+func TestActiveProbeEndpointsAreGoneWithoutOutboundCalls(t *testing.T) {
 	backend := &fakeConsoleCore{
 		fakeAdminCore: fakeAdminCore{user: core.AdminUser{ID: 1, Role: "admin"}},
 		accounts: []model.UpstreamAccount{{
 			ID: 9, Name: "manual-key", Platform: "openai", Type: "apikey", Status: "active", Schedulable: false,
 		}},
 	}
-	server := newConsoleTestServer(t, backend, nil)
+	managed := directProbeManagedAccount(backend.accounts[0])
+	managed.Policy.Enabled = true
+	nextCheck := time.Now().UTC().Add(time.Minute)
+	managed.NextCheckAt = &nextCheck
+	server := newDirectProbeTestServer(t, backend, managed)
 
 	unauthorized := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/api/configs", strings.NewReader(`{"account_id":9,"enabled":true}`))
 	request.Header.Set("Content-Type", "application/json")
 	server.Handler().ServeHTTP(unauthorized, request)
-	if unauthorized.Code != http.StatusUnauthorized || backend.getAccountCalls != 0 || len(backend.setCalls) != 0 {
-		t.Fatalf("unauthorized mutation reached engine: status=%d get=%d set=%#v", unauthorized.Code, backend.getAccountCalls, backend.setCalls)
+	if unauthorized.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthorized status=%d body=%s", unauthorized.Code, unauthorized.Body.String())
 	}
 
-	created := httptest.NewRecorder()
-	server.Handler().ServeHTTP(created, authenticatedRequest(http.MethodPost, "/api/configs", `{"account_id":9,"enabled":true}`))
-	if created.Code != http.StatusCreated || backend.getAccountCalls != 1 || len(backend.setCalls) != 1 || !backend.setCalls[0] {
-		t.Fatalf("create status=%d get=%d set=%#v body=%s", created.Code, backend.getAccountCalls, backend.setCalls, created.Body.String())
+	tests := []struct {
+		method string
+		path   string
+		body   string
+	}{
+		{method: http.MethodPost, path: "/api/configs", body: `{"account_id":9,"enabled":true}`},
+		{method: http.MethodPut, path: "/api/configs/9", body: `{"enabled":true}`},
+		{method: http.MethodDelete, path: "/api/configs/9"},
+		{method: http.MethodPost, path: "/api/configs/9/run"},
+		{method: http.MethodGet, path: "/api/configs/9/direct-probe"},
+		{method: http.MethodPost, path: "/api/configs/9/direct-probe", body: `{}`},
+		{method: http.MethodDelete, path: "/api/configs/9/direct-probe"},
+		{method: http.MethodPost, path: "/api/direct-probes/authorize", body: `{"account_ids":[9]}`},
 	}
-	var createdConfig model.ManagedAccount
-	if err := json.NewDecoder(created.Body).Decode(&createdConfig); err != nil {
-		t.Fatal(err)
+	for _, test := range tests {
+		response := httptest.NewRecorder()
+		server.Handler().ServeHTTP(response, authenticatedRequest(test.method, test.path, test.body))
+		if response.Code != http.StatusGone || !strings.Contains(response.Body.String(), `"code":"ACTIVE_PROBING_REMOVED"`) {
+			t.Fatalf("%s %s status=%d body=%s", test.method, test.path, response.Code, response.Body.String())
+		}
 	}
-	if !createdConfig.Policy.Enabled || createdConfig.NextCheckAt == nil || !createdConfig.Schedulable {
-		t.Fatalf("unexpected created automation config: %#v", createdConfig)
+	if backend.getAccountCalls != 0 || len(backend.setCalls) != 0 || len(backend.exportCalls) != 0 {
+		t.Fatalf("removed endpoints reached outbound dependencies: get=%d set=%#v exports=%#v", backend.getAccountCalls, backend.setCalls, backend.exportCalls)
 	}
-
-	backend.accounts[0].Schedulable = false
-	updated := httptest.NewRecorder()
-	server.Handler().ServeHTTP(updated, authenticatedRequest(http.MethodPut, "/api/configs/9", `{"enabled":true}`))
-	if updated.Code != http.StatusOK || backend.getAccountCalls != 2 || len(backend.setCalls) != 2 || !backend.setCalls[1] {
-		t.Fatalf("update status=%d get=%d set=%#v body=%s", updated.Code, backend.getAccountCalls, backend.setCalls, updated.Body.String())
-	}
-}
-
-func TestAutomationConfigSurfacesSchedulingRestoreFailure(t *testing.T) {
-	backend := &fakeConsoleCore{
-		fakeAdminCore: fakeAdminCore{user: core.AdminUser{ID: 1, Role: "admin"}},
-		accounts: []model.UpstreamAccount{{
-			ID: 9, Name: "manual-key", Platform: "openai", Type: "apikey", Status: "active", Schedulable: false,
-		}},
-		setErr: errors.New("upstream unavailable"),
-	}
-	server := newConsoleTestServer(t, backend, nil)
-	response := httptest.NewRecorder()
-	server.Handler().ServeHTTP(response, authenticatedRequest(http.MethodPost, "/api/configs", `{"account_id":9,"enabled":true}`))
-	if response.Code != http.StatusBadGateway || !strings.Contains(response.Body.String(), "SCHEDULING_UPDATE_FAILED") {
-		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	stored := server.engine.List()[0]
+	if !stored.Policy.Enabled || stored.NextCheckAt == nil || stored.DirectProbe != nil {
+		t.Fatalf("removed endpoints mutated dormant compatibility data: %#v", stored)
 	}
 }
 
@@ -995,7 +1046,7 @@ func TestDirectProbeAuthorizationRequiresAdminBeforeExport(t *testing.T) {
 	}
 }
 
-func TestDirectProbeAuthorizationPropagatesStepUpFailure(t *testing.T) {
+func TestRemovedDirectProbeAuthorizationDoesNotAttemptStepUpExport(t *testing.T) {
 	account := directProbeTestAccount(9)
 	backend := &fakeConsoleCore{
 		fakeAdminCore: fakeAdminCore{user: core.AdminUser{ID: 1, Role: "admin"}},
@@ -1014,11 +1065,11 @@ func TestDirectProbeAuthorizationPropagatesStepUpFailure(t *testing.T) {
 
 	server.Handler().ServeHTTP(response, request)
 
-	if response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), `"code":"STEP_UP_REQUIRED"`) || !strings.Contains(response.Body.String(), "请先完成管理员二次验证") {
+	if response.Code != http.StatusGone || !strings.Contains(response.Body.String(), `"code":"ACTIVE_PROBING_REMOVED"`) {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
-	if len(backend.exportCalls) != 1 || backend.exportCalls[0] != 9 || backend.exportToken != "valid" || backend.exportIdentity.ClientIP != "203.0.113.9" || backend.exportIdentity.UserAgent != "probe-browser" {
-		t.Fatalf("unexpected export context: calls=%#v token=%q identity=%#v", backend.exportCalls, backend.exportToken, backend.exportIdentity)
+	if len(backend.exportCalls) != 0 {
+		t.Fatalf("removed direct probe attempted export: %#v", backend.exportCalls)
 	}
 	managed := server.engine.List()[0]
 	if managed.EffectiveProbeSource() != model.ProbeSourceLegacy || managed.DirectProbe != nil {
@@ -1026,7 +1077,7 @@ func TestDirectProbeAuthorizationPropagatesStepUpFailure(t *testing.T) {
 	}
 }
 
-func TestBatchDirectProbeAuthorizationReturnsRedactedViews(t *testing.T) {
+func TestRemovedBatchDirectProbeAuthorizationDoesNotMutateStoredState(t *testing.T) {
 	first := directProbeTestAccount(9)
 	second := directProbeTestAccount(10)
 	second.Name = "second-key"
@@ -1039,32 +1090,14 @@ func TestBatchDirectProbeAuthorizationReturnsRedactedViews(t *testing.T) {
 
 	server.Handler().ServeHTTP(response, authenticatedRequest(http.MethodPost, "/api/direct-probes/authorize", `{"account_ids":[9,10]}`))
 
-	if response.Code != http.StatusOK || len(backend.exportCalls) != 2 || backend.exportCalls[0] != 9 || backend.exportCalls[1] != 10 {
+	if response.Code != http.StatusGone || len(backend.exportCalls) != 0 || !strings.Contains(response.Body.String(), `"code":"ACTIVE_PROBING_REMOVED"`) {
 		t.Fatalf("status=%d calls=%#v body=%s", response.Code, backend.exportCalls, response.Body.String())
 	}
-	var payload directProbeBatchResponse
-	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
-		t.Fatal(err)
-	}
-	if len(payload.Authorized) != 2 || len(payload.Failures) != 0 {
-		t.Fatalf("unexpected batch response: %#v", payload)
-	}
-	assertDirectProbeResponseRedacted(t, response.Body.String())
 	for _, managed := range server.engine.List() {
-		if managed.EffectiveProbeSource() != model.ProbeSourceDirect || managed.DirectProbe == nil || managed.DirectProbe.AuthorizationState != model.DirectProbeAuthorized || managed.DirectProbe.Credential.Ciphertext == "" {
-			t.Fatalf("account %d was not stored as encrypted direct authorization: %#v", managed.AccountID, managed.DirectProbe)
-		}
-		if strings.Contains(managed.DirectProbe.Credential.Ciphertext, "direct-api-secret") {
-			t.Fatalf("account %d stored plaintext API key", managed.AccountID)
+		if managed.EffectiveProbeSource() != model.ProbeSourceLegacy || managed.DirectProbe != nil {
+			t.Fatalf("removed batch authorization changed account %d: %#v", managed.AccountID, managed.DirectProbe)
 		}
 	}
-
-	statusResponse := httptest.NewRecorder()
-	server.Handler().ServeHTTP(statusResponse, authenticatedRequest(http.MethodGet, "/api/configs/9/direct-probe", ""))
-	if statusResponse.Code != http.StatusOK || !strings.Contains(statusResponse.Body.String(), `"authorization_state":"authorized"`) {
-		t.Fatalf("status=%d body=%s", statusResponse.Code, statusResponse.Body.String())
-	}
-	assertDirectProbeResponseRedacted(t, statusResponse.Body.String())
 }
 
 func newConsoleTestServer(t *testing.T, backend *fakeConsoleCore, managed *model.ManagedAccount, upstreams ...UpstreamConsole) *Server {

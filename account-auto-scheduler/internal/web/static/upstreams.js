@@ -42,6 +42,8 @@
       bindingRows: [],
       bindingDraft: [],
       bindingOriginal: [],
+      boundGroupsTrigger: null,
+      boundGroupsUpstreamID: '',
       deleteTrigger: null,
       deleteUpstreamID: '',
       deleteIdentityID: '',
@@ -85,6 +87,7 @@
         'upstream-connect-error', 'upstream-connect-save-button', 'upstream-binding-dialog', 'upstream-binding-name',
         'upstream-binding-count', 'upstream-auto-match-button', 'upstream-step-up-notice', 'upstream-binding-list',
         'upstream-binding-error', 'upstream-binding-save-button', 'upstream-delete-identity-dialog',
+        'upstream-bound-groups-dialog', 'upstream-bound-groups-name', 'upstream-bound-groups-count', 'upstream-bound-groups-list',
         'upstream-delete-identity-name', 'upstream-delete-identity-button', 'upstream-recharge-dialog',
         'upstream-delete-dialog', 'upstream-delete-name', 'upstream-delete-button',
         'upstream-recharge-form', 'upstream-recharge-name', 'upstream-recharge-prefix', 'upstream-recharge-value',
@@ -139,9 +142,10 @@
       })
       elements.upstreamRechargeDialog.addEventListener('close', () => restoreFocus('recharge'))
       elements.upstreamBindingDialog.addEventListener('close', () => restoreFocus('binding'))
+      elements.upstreamBoundGroupsDialog.addEventListener('close', () => restoreFocus('boundGroups'))
       elements.upstreamDeleteIdentityDialog.addEventListener('close', () => restoreFocus('delete'))
       elements.upstreamDeleteDialog.addEventListener('close', () => restoreFocus('deleteUpstream'))
-      for (const dialog of [elements.upstreamCreateDialog, elements.upstreamConnectDialog, elements.upstreamRechargeDialog, elements.upstreamBindingDialog, elements.upstreamDeleteIdentityDialog, elements.upstreamDeleteDialog]) {
+      for (const dialog of [elements.upstreamCreateDialog, elements.upstreamConnectDialog, elements.upstreamRechargeDialog, elements.upstreamBindingDialog, elements.upstreamBoundGroupsDialog, elements.upstreamDeleteIdentityDialog, elements.upstreamDeleteDialog]) {
         dialog.addEventListener('cancel', (event) => {
           if (dialog.dataset.busy === 'true') event.preventDefault()
         })
@@ -205,7 +209,8 @@
       const localText = (upstream.local_accounts || []).map((account) => `${account.name || ''} ${account.platform || ''} ${account.id}`).join(' ')
       const identityText = (upstream.identities || []).map((identity) => {
         const keys = (identity.keys || []).map((key) => `${key.name || ''} ${key.masked_key || ''} ${key.group || ''}`).join(' ')
-        return `${identity.label || ''} ${identity.principal || ''} ${keys}`
+        const groups = (identity.groups || []).map((group) => `${group.id || ''} ${group.name || ''} ${group.platform || ''} ${group.multiplier_source || ''}`).join(' ')
+        return `${identity.label || ''} ${identity.principal || ''} ${keys} ${groups}`
       }).join(' ')
       return `${upstream.name || ''} ${upstream.base_url || ''} ${upstream.type || ''} ${localText} ${identityText}`.toLocaleLowerCase().includes(state.search)
     }
@@ -214,6 +219,7 @@
       const identities = upstream.identities || []
       const localAccounts = [...(upstream.local_accounts || [])].sort(sortLocalAccounts)
       const keys = keyCountFor(upstream)
+      const groups = groupCountFor(upstream)
       const currentState = siteState(upstream)
       const expanded = Boolean(state.search) || state.expanded.has(upstream.id)
       const contentID = `upstream-content-${safeID(upstream.id)}`
@@ -239,7 +245,7 @@
           <div class="upstream-summary">
             ${renderUpstreamBalanceSummary(upstream)}
             <div class="upstream-secondary-summary">
-              ${renderResourceSummary(localAccounts.length, identities.length, keys)}
+              ${renderResourceSummary(localAccounts.length, identities.length, keys, groups)}
               ${renderRechargeSummary(upstream)}
             </div>
           </div>
@@ -247,6 +253,7 @@
             <button class="icon-button ${state.busy.has(`detect:${upstream.id}`) ? 'spin' : ''}" type="button" data-upstream-action="detect" title="匿名探测网站类型" aria-label="匿名探测网站类型" ${state.busy.has(`detect:${upstream.id}`) ? 'disabled' : ''}><svg class="icon"><use href="#icon-activity"/></svg></button>
             <button class="button secondary" type="button" data-upstream-action="recharge-rate"><svg class="icon"><use href="#icon-edit"/></svg><span>充值倍率</span></button>
             <button class="button secondary" type="button" data-upstream-action="bind" ${keys === 0 ? 'disabled' : ''}><svg class="icon"><use href="#icon-link"/></svg><span>绑定账号</span></button>
+            <button class="button secondary" type="button" data-upstream-action="bound-groups" title="查看上游全部可用分组及本地 API Key 绑定"><svg class="icon"><use href="#icon-key"/></svg><span>上游分组 ${formatInteger(groups)}</span></button>
             <button class="button secondary" type="button" data-upstream-action="sync" title="${escapeAttr(disabledReason || '同步当前上游')}" ${!state.credentialsEnabled || identities.length === 0 || rowBusy ? 'disabled' : ''}><svg class="icon ${rowBusy ? 'spin' : ''}"><use href="#icon-refresh"/></svg><span>同步</span></button>
             <button class="button primary" type="button" data-upstream-action="connect" title="${escapeAttr(disabledReason || connectTitle)}" ${!state.credentialsEnabled ? 'disabled' : ''}><svg class="icon"><use href="#icon-log-in"/></svg><span>${connectLabel}</span></button>
           </div>
@@ -328,6 +335,7 @@
         case 'sync': await syncUpstream(upstream.id); break
         case 'sync-identity': await syncIdentity(upstream.id, identityID); break
         case 'bind': openBindings(upstream, button); break
+        case 'bound-groups': openBoundGroups(upstream, button); break
         case 'delete-identity': openDeleteIdentity(upstream, findIdentity(upstream, identityID), button); break
         case 'delete-upstream': openDeleteUpstream(upstream, button); break
       }
@@ -796,6 +804,69 @@
       window.requestAnimationFrame(() => elements.upstreamBindingList.querySelector('select')?.focus() || elements.upstreamAutoMatchButton.focus())
     }
 
+    function openBoundGroups(upstream, trigger) {
+      state.boundGroupsTrigger = trigger
+      state.boundGroupsUpstreamID = upstream.id
+      elements.upstreamBoundGroupsName.textContent = upstream.name || upstream.base_url
+      renderBoundGroups()
+      elements.upstreamBoundGroupsDialog.showModal()
+      window.requestAnimationFrame(() => elements.upstreamBoundGroupsDialog.querySelector('[data-close-dialog]')?.focus())
+    }
+
+    function renderBoundGroups() {
+      const upstream = getUpstream(state.boundGroupsUpstreamID)
+      if (!upstream) return
+      const rows = groupViewsFor(upstream)
+      const identityCount = new Set(rows.map((row) => row.identity.id)).size
+      const boundCount = rows.filter((row) => row.keys.length > 0).length
+      elements.upstreamBoundGroupsCount.textContent = rows.length
+        ? `${formatInteger(rows.length)} 个可用分组 · ${formatInteger(boundCount)} 个已绑定 · ${formatInteger(identityCount)} 个登录身份`
+        : '尚无可用分组快照'
+      if (!rows.length) {
+        elements.upstreamBoundGroupsList.innerHTML = '<div class="dialog-empty">尚未同步到可用分组快照。请先同步登录身份；已有绑定的上游 Key 也会在下次同步后显示。</div>'
+        return
+      }
+      const byIdentity = new Map()
+      for (const row of rows) {
+        const key = String(row.identity.id || '')
+        const entry = byIdentity.get(key) || { identity: row.identity, rows: [] }
+        entry.rows.push(row)
+        byIdentity.set(key, entry)
+      }
+      elements.upstreamBoundGroupsList.innerHTML = [...byIdentity.values()].map((entry) => renderBoundGroupIdentity(upstream, entry.identity, entry.rows)).join('')
+    }
+
+    function renderBoundGroupIdentity(upstream, identity, rows) {
+      const label = identity.label || identity.principal || '登录身份'
+      const principal = String(identity.principal || '').trim()
+      const description = principal && principal !== label ? principal : authModeLabel(identity.auth_mode)
+      const boundCount = rows.filter((row) => row.keys.length > 0).length
+      return `<section class="bound-group-identity">
+        <header class="bound-group-identity-header"><div><strong>${escapeHTML(label)}</strong><span>${escapeHTML(description || '已保存登录身份')}</span></div><span>${formatInteger(rows.length)} 个分组 · ${formatInteger(boundCount)} 个已绑定</span></header>
+        <div class="bound-group-table-header" aria-hidden="true"><span>上游分组</span><span>类型与快照</span><span>倍率</span><span>上游 Key</span><span>本地 API Key</span></div>
+        ${rows.map((row) => renderBoundGroup(upstream, row)).join('')}
+      </section>`
+    }
+
+    function renderBoundGroup(upstream, row) {
+      const rate = formatRemoteGroupRate(row.group, upstream)
+      const snapshot = !row.snapshotMatched
+        ? { label: '快照未匹配', tone: 'warning', detail: '由已绑定 Key 推断' }
+        : row.group.stale
+          ? { label: '旧快照', tone: 'warning', detail: formatDateTime(row.group.synced_at) }
+          : { label: '已同步', tone: 'success', detail: formatDateTime(row.group.synced_at) }
+      const bound = row.keys.length > 0
+      const remoteKeys = row.keys.map((key) => `${key.name || `Key ${key.id}`}${key.masked_key ? ` · ${key.masked_key}` : ''}`).join(' · ')
+      const localAccounts = row.accounts.map((account) => `${account.name || `账号 ${account.id}`} · #${account.id}${account.schedulable ? ' · 调度启用' : ' · 调度停止'}`).join(' · ')
+      return `<div class="bound-group-row">
+        <div class="bound-group-cell"><span class="mobile-field-label">上游分组</span><strong>${escapeHTML(row.group.name || row.group.id || '默认分组')}</strong><span>${escapeHTML(row.group.id || '上游未返回分组标识')}</span></div>
+        <div class="bound-group-cell"><span class="mobile-field-label">类型与快照</span>${renderRemoteGroupPlatformBadge(row.group.platform)}${renderStatusPill(snapshot.label, snapshot.tone)}<span>${escapeHTML(snapshot.detail)}</span></div>
+        <div class="bound-group-cell"><span class="mobile-field-label">倍率</span><strong class="rate-value">${escapeHTML(rate.finalPrimary)}</strong><span>${escapeHTML(`${rate.groupPrimary} · ${rate.groupSecondary}`)}</span><span>${escapeHTML(rate.finalSecondary)}</span></div>
+        <div class="bound-group-cell"><span class="mobile-field-label">上游 Key</span><strong class="${bound ? 'binding-present' : 'binding-empty'}">${bound ? `${formatInteger(row.keys.length)} 个已绑定 Key` : '未绑定本地 API Key'}</strong><span>${escapeHTML(bound ? remoteKeys : '可在“绑定账号”中关联上游 Key')}</span></div>
+        <div class="bound-group-cell"><span class="mobile-field-label">本地 API Key</span><strong class="${bound ? 'binding-present' : 'binding-empty'}">${bound ? `${formatInteger(row.accounts.length)} 个本地账号` : '—'}</strong><span>${escapeHTML(bound ? localAccounts : '未分配')}</span></div>
+      </div>`
+    }
+
     function renderBindings() {
       const upstream = getUpstream(state.bindingUpstreamID)
       if (!upstream) return
@@ -979,6 +1050,7 @@
         else if (kind === 'connect') findActionButton(state.connectUpstreamID, 'connect')?.focus()
         else if (kind === 'recharge') findActionButton(state.rechargeUpstreamID, 'recharge-rate')?.focus()
         else if (kind === 'binding') findActionButton(state.bindingUpstreamID, 'bind')?.focus()
+        else if (kind === 'boundGroups') findActionButton(state.boundGroupsUpstreamID, 'bound-groups')?.focus()
         else if (kind === 'deleteUpstream') {
           const fallback = findActionButton(state.deleteRecordUpstreamID, 'delete-upstream') || findActionButton(state.deleteRecordUpstreamID, 'toggle') || elements.upstreamRefreshButton
           fallback?.focus()
@@ -1012,8 +1084,83 @@
       return (upstream.identities || []).flatMap((identity) => (identity.keys || []).map((key) => ({ identity, key })))
     }
 
+    function groupViewsFor(upstream) {
+      const localAccounts = new Map((upstream.local_accounts || []).map((account) => [String(account.id), account]))
+      const entries = []
+      for (const identity of upstream.identities || []) {
+        const snapshots = identity.groups || []
+        const byReference = new Map()
+        for (const group of snapshots) {
+          const entry = {
+            identity,
+            group,
+            snapshotMatched: true,
+            keys: new Map(),
+            accounts: new Map(),
+          }
+          entries.push(entry)
+          for (const reference of [group.id, group.name]) {
+            const normalized = normalizeGroupReference(reference)
+            if (normalized && !byReference.has(normalized)) byReference.set(normalized, entry)
+          }
+        }
+        for (const key of identity.keys || []) {
+          if (!hasBoundLocalAccount(key)) continue
+          const groupReference = String(key.group || '').trim()
+          const normalized = normalizeGroupReference(groupReference)
+          let entry = normalized ? byReference.get(normalized) : null
+          if (!entry) {
+            entry = {
+              identity,
+              group: {
+                id: groupReference || 'default',
+                name: groupReference || '默认分组',
+                multiplier: key.multiplier,
+                final_multiplier: key.final_multiplier,
+                multiplier_source: key.multiplier_source,
+                stale: key.stale,
+                synced_at: key.synced_at,
+              },
+              snapshotMatched: false,
+              keys: new Map(),
+              accounts: new Map(),
+            }
+            entries.push(entry)
+            if (normalized) byReference.set(normalized, entry)
+          }
+          entry.keys.set(String(key.id || key.name || entry.keys.size), key)
+          const accountID = String(key.local_account_id)
+          entry.accounts.set(accountID, localAccounts.get(accountID) || { id: key.local_account_id, name: `账号 ${key.local_account_id}`, schedulable: false })
+        }
+      }
+      return entries.map((entry) => ({
+        identity: entry.identity,
+        group: entry.group,
+        snapshotMatched: entry.snapshotMatched,
+        keys: [...entry.keys.values()],
+        accounts: [...entry.accounts.values()],
+      })).sort((left, right) => {
+        const identityOrder = String(left.identity.label || left.identity.principal || left.identity.id || '').localeCompare(String(right.identity.label || right.identity.principal || right.identity.id || ''), 'zh-CN')
+        if (identityOrder !== 0) return identityOrder
+        return String(left.group.name || left.group.id || '').localeCompare(String(right.group.name || right.group.id || ''), 'zh-CN')
+      })
+    }
+
+    function hasBoundLocalAccount(key) {
+      const accountID = Number(key?.local_account_id)
+      return Number.isFinite(accountID) && accountID > 0
+    }
+
+    function normalizeGroupReference(value) {
+      return String(value || '').trim().toLocaleLowerCase()
+    }
+
     function keyCountFor(upstream) {
       return (upstream.identities || []).reduce((total, identity) => total + (identity.keys || []).length, 0)
+    }
+
+    function groupCountFor(upstream) {
+      return (upstream.identities || []).reduce((total, identity) => total + (identity.groups || []).length, 0)
     }
 
     function siteState(upstream) {
@@ -1052,12 +1199,13 @@
       return `<div class="recharge-stat"><span class="upstream-summary-label">充值倍率</span><strong>${escapeHTML(formatMultiplier(rate))} CNY/USD</strong></div>`
     }
 
-    function renderResourceSummary(localAccountCount, identityCount, keyCount) {
+    function renderResourceSummary(localAccountCount, identityCount, keyCount, groupCount) {
       return `<div class="upstream-resource-summary">
         <span class="upstream-summary-label">资源</span>
         <div class="resource-summary-values">
           <span><strong>${formatInteger(localAccountCount)}</strong> 本地账号</span>
           <span><strong>${formatInteger(identityCount)}</strong> 登录身份</span>
+          <span><strong>${formatInteger(groupCount)}</strong> 分组</span>
           <span><strong>${formatInteger(keyCount)}</strong> Key</span>
         </div>
       </div>`
@@ -1155,6 +1303,42 @@
         primary: finalMultiplier === null ? '未计算' : `${formatMultiplier(finalMultiplier)}x`,
         secondary: `分组 ${groupLabel} × 充值 ${rechargeLabel}`,
         detail,
+      }
+    }
+
+    function renderRemoteGroupPlatformBadge(platform) {
+      const normalized = String(platform || '').trim().toLocaleLowerCase()
+      const metadata = {
+        openai: { label: 'OpenAI', tone: 'openai' },
+        anthropic: { label: 'Anthropic', tone: 'anthropic' },
+        gemini: { label: 'Gemini', tone: 'gemini' },
+        grok: { label: 'GROK', tone: 'grok' },
+      }[normalized] || { label: '未知类型', tone: 'unknown' }
+      return `<span class="remote-platform-badge ${metadata.tone}">${escapeHTML(metadata.label)}</span>`
+    }
+
+    function formatRemoteGroupRate(group, upstream) {
+      const groupMultiplier = numberOrNull(group.multiplier)
+      const rechargeMultiplier = numberOrNull(upstream.recharge_rate?.cny_per_usd)
+      const finalMultiplier = numberOrNull(group.final_multiplier)
+      const source = String(group.multiplier_source || '')
+      const sourceLabel = source === 'dynamic' ? '动态分组' : (source === 'user_override' ? '用户有效倍率' : (source === 'group' ? '分组固定倍率' : '上游未提供倍率'))
+      const groupPrimary = groupMultiplier === null ? (source === 'dynamic' ? '动态' : '未提供') : `${formatMultiplier(groupMultiplier)}x`
+      let finalSecondary
+      if (finalMultiplier !== null) {
+        finalSecondary = `分组 ${formatMultiplier(groupMultiplier)} × 充值 ${formatMultiplier(rechargeMultiplier)}`
+      } else if (source === 'dynamic') {
+        finalSecondary = '动态分组不设统一倍率'
+      } else if (groupMultiplier === null) {
+        finalSecondary = '上游未返回分组倍率'
+      } else {
+        finalSecondary = '请设置充值倍率'
+      }
+      return {
+        groupPrimary,
+        groupSecondary: sourceLabel,
+        finalPrimary: finalMultiplier === null ? '未计算' : `${formatMultiplier(finalMultiplier)}x`,
+        finalSecondary,
       }
     }
 

@@ -40,8 +40,33 @@ type ConsoleCore interface {
 	ListAccounts(ctx context.Context) ([]model.UpstreamAccount, error)
 	ListGroups(ctx context.Context) ([]model.UpstreamGroup, error)
 	GetTodayStatsBatch(ctx context.Context, accountIDs []int64) (map[string]model.WindowStats, error)
+	GetGroupUserConsumption(ctx context.Context, groupID int64) (model.GroupUserConsumptionSnapshot, error)
 	GetPassiveUsage(ctx context.Context, accountID int64) (model.AccountUsageInfo, error)
 	SetAccountGroup(ctx context.Context, accountID, groupID int64, bound bool) (model.UpstreamAccount, error)
+}
+
+type OnlineUsersConsole interface {
+	GetOnlineUsersSummary(ctx context.Context) (model.OnlineUsersSummary, error)
+	GetOnlineUsers(ctx context.Context) (model.OnlineUsersSnapshot, error)
+}
+
+type AccountSuccessConsole interface {
+	GetAccountSuccessRates(ctx context.Context) (model.AccountSuccessSnapshot, error)
+}
+
+type accountModelsConsole interface {
+	GetAvailableModels(context.Context, int64) ([]model.AccountModel, error)
+}
+
+type accountPerformanceHealthConsole interface {
+	GetAccountPerformanceHealth(ctx context.Context) (model.AccountPerformanceCollectionHealth, error)
+}
+
+// groupUsageSummaryConsole is intentionally optional. This keeps the sidecar
+// compatible with older test doubles or older console implementations while
+// allowing the current Sub2API client to expose its existing rollup endpoint.
+type groupUsageSummaryConsole interface {
+	GetGroupUsageSummary(ctx context.Context) (model.GroupUsageSummarySnapshot, error)
 }
 
 type Options struct {
@@ -51,6 +76,8 @@ type Options struct {
 	AuthCacheTTL      time.Duration
 	Upstreams         UpstreamConsole
 	Notifications     NotificationConsole
+	OnlineUsers       OnlineUsersConsole
+	AccountSuccess    AccountSuccessConsole
 }
 
 type NotificationConsole interface {
@@ -121,6 +148,8 @@ type Server struct {
 	logger          *slog.Logger
 	upstreams       UpstreamConsole
 	notifications   NotificationConsole
+	onlineUsers     OnlineUsersConsole
+	accountSuccess  AccountSuccessConsole
 	loginChallenges *loginChallengeStore
 
 	cacheMu   sync.Mutex
@@ -147,6 +176,13 @@ type policyRequest struct {
 	LatencyLimitMS    *int64  `json:"latency_limit_ms"`
 	FailureThreshold  *int    `json:"failure_threshold"`
 	RecoveryThreshold *int    `json:"recovery_threshold"`
+	ReasoningEffort   *string `json:"reasoning_effort"`
+}
+
+type manualProbeRequest struct {
+	Models          []string `json:"models"`
+	Prompt          string   `json:"prompt"`
+	ReasoningEffort string   `json:"reasoning_effort"`
 }
 
 type notificationSettingsRequest struct {
@@ -250,6 +286,8 @@ func NewServer(scheduler *engine.Engine, coreClient AdminCore, options Options, 
 		logger:          logger,
 		upstreams:       options.Upstreams,
 		notifications:   options.Notifications,
+		onlineUsers:     options.OnlineUsers,
+		accountSuccess:  options.AccountSuccess,
 		loginChallenges: newLoginChallengeStore(defaultLoginChallengeTTL),
 		authCache:       map[string]cachedSession{},
 	}
@@ -262,8 +300,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /healthz", s.handleHealth)
 	mux.Handle("GET /api/session", s.requireAdmin(http.HandlerFunc(s.handleSession)))
 	mux.Handle("GET /api/overview", s.requireAdmin(http.HandlerFunc(s.handleOverview)))
+	mux.Handle("GET /api/online-users/summary", s.requireAdmin(http.HandlerFunc(s.handleOnlineUsersSummary)))
+	mux.Handle("GET /api/online-users", s.requireAdmin(http.HandlerFunc(s.handleOnlineUsers)))
+	mux.Handle("GET /api/groups/{groupID}/user-consumption", s.requireAdmin(http.HandlerFunc(s.handleGroupUserConsumption)))
+	mux.Handle("GET /api/groups/{groupID}/access-users", s.requireAdmin(http.HandlerFunc(s.handleGroupAccessUsers)))
+	mux.Handle("POST /api/groups/{groupID}/access-users/sync", s.requireAdmin(http.HandlerFunc(s.handleSyncGroupAccessUsers)))
 	mux.Handle("GET /api/accounts", s.requireAdmin(http.HandlerFunc(s.handleAccounts)))
 	mux.Handle("GET /api/accounts/{accountID}/usage", s.requireAdmin(http.HandlerFunc(s.handleAccountUsage)))
+	mux.Handle("GET /api/accounts/{accountID}/models", s.requireAdmin(http.HandlerFunc(s.handleAccountModels)))
+	mux.Handle("POST /api/accounts/{accountID}/manual-probe", s.requireAdmin(http.HandlerFunc(s.handleManualProbe)))
 	mux.Handle("PUT /api/accounts/{accountID}/schedulable", s.requireAdmin(http.HandlerFunc(s.handleSetAccountSchedulable)))
 	mux.Handle("GET /api/notifications", s.requireAdmin(http.HandlerFunc(s.handleNotificationSettings)))
 	mux.Handle("PUT /api/notifications", s.requireAdmin(http.HandlerFunc(s.handleSaveNotificationSettings)))
@@ -282,14 +327,14 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("PUT /api/groups/{groupID}/protection-default", s.requireAdmin(http.HandlerFunc(s.handleSetGroupProtectionDefault)))
 	mux.Handle("DELETE /api/groups/{groupID}/protection-default", s.requireAdmin(http.HandlerFunc(s.handleDeleteGroupProtectionDefault)))
 	mux.Handle("GET /api/configs", s.requireAdmin(http.HandlerFunc(s.handleListConfigs)))
-	mux.Handle("POST /api/configs", s.requireAdmin(http.HandlerFunc(s.handleCreateConfig)))
-	mux.Handle("PUT /api/configs/{accountID}", s.requireAdmin(http.HandlerFunc(s.handleUpdateConfig)))
-	mux.Handle("DELETE /api/configs/{accountID}", s.requireAdmin(http.HandlerFunc(s.handleDeleteConfig)))
-	mux.Handle("POST /api/configs/{accountID}/run", s.requireAdmin(http.HandlerFunc(s.handleRunNow)))
-	mux.Handle("GET /api/configs/{accountID}/direct-probe", s.requireAdmin(http.HandlerFunc(s.handleDirectProbeStatus)))
-	mux.Handle("POST /api/configs/{accountID}/direct-probe", s.requireAdmin(http.HandlerFunc(s.handleAuthorizeDirectProbe)))
-	mux.Handle("DELETE /api/configs/{accountID}/direct-probe", s.requireAdmin(http.HandlerFunc(s.handleRevokeDirectProbe)))
-	mux.Handle("POST /api/direct-probes/authorize", s.requireAdmin(http.HandlerFunc(s.handleBatchAuthorizeDirectProbes)))
+	mux.Handle("POST /api/configs", s.requireAdmin(http.HandlerFunc(s.handleActiveProbingRemoved)))
+	mux.Handle("PUT /api/configs/{accountID}", s.requireAdmin(http.HandlerFunc(s.handleActiveProbingRemoved)))
+	mux.Handle("DELETE /api/configs/{accountID}", s.requireAdmin(http.HandlerFunc(s.handleActiveProbingRemoved)))
+	mux.Handle("POST /api/configs/{accountID}/run", s.requireAdmin(http.HandlerFunc(s.handleActiveProbingRemoved)))
+	mux.Handle("GET /api/configs/{accountID}/direct-probe", s.requireAdmin(http.HandlerFunc(s.handleActiveProbingRemoved)))
+	mux.Handle("POST /api/configs/{accountID}/direct-probe", s.requireAdmin(http.HandlerFunc(s.handleActiveProbingRemoved)))
+	mux.Handle("DELETE /api/configs/{accountID}/direct-probe", s.requireAdmin(http.HandlerFunc(s.handleActiveProbingRemoved)))
+	mux.Handle("POST /api/direct-probes/authorize", s.requireAdmin(http.HandlerFunc(s.handleActiveProbingRemoved)))
 	mux.Handle("POST /api/tab/register", s.requireAdmin(http.HandlerFunc(s.handleRegisterTab)))
 	mux.Handle("GET /api/upstreams", s.requireAdmin(http.HandlerFunc(s.handleUpstreams)))
 	mux.Handle("POST /api/upstreams", s.requireAdmin(http.HandlerFunc(s.handleCreateUpstream)))
@@ -342,6 +387,64 @@ func (s *Server) handleAccounts(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"accounts": accounts})
 }
 
+func (s *Server) handleOnlineUsers(w http.ResponseWriter, r *http.Request) {
+	if s.onlineUsers == nil {
+		writeError(w, http.StatusServiceUnavailable, "CONSOLE_UNAVAILABLE", "在线用户数据暂不可用")
+		return
+	}
+	snapshot, err := s.onlineUsers.GetOnlineUsers(r.Context())
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "ONLINE_USERS_UNAVAILABLE", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, snapshot)
+}
+
+func (s *Server) handleOnlineUsersSummary(w http.ResponseWriter, r *http.Request) {
+	if s.onlineUsers == nil {
+		writeError(w, http.StatusServiceUnavailable, "CONSOLE_UNAVAILABLE", "在线用户数据暂不可用")
+		return
+	}
+	summary, err := s.onlineUsers.GetOnlineUsersSummary(r.Context())
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "ONLINE_USERS_UNAVAILABLE", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, summary)
+}
+
+func (s *Server) handleGroupUserConsumption(w http.ResponseWriter, r *http.Request) {
+	if s.console == nil {
+		writeError(w, http.StatusServiceUnavailable, "CONSOLE_UNAVAILABLE", "分组用户消耗数据暂不可用")
+		return
+	}
+	groupID, err := pathPositiveID(r, "groupID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_GROUP", err.Error())
+		return
+	}
+
+	groups, err := s.console.ListGroups(r.Context())
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "GROUPS_UNAVAILABLE", err.Error())
+		return
+	}
+	group, found := findGroup(groups, groupID)
+	if !found {
+		writeError(w, http.StatusNotFound, "GROUP_NOT_FOUND", "分组不存在")
+		return
+	}
+
+	snapshot, err := s.console.GetGroupUserConsumption(r.Context(), groupID)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "GROUP_USER_CONSUMPTION_UNAVAILABLE", err.Error())
+		return
+	}
+	snapshot.GroupID = groupID
+	snapshot.GroupName = group.Name
+	writeJSON(w, http.StatusOK, snapshot)
+}
+
 func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	if s.console == nil || s.engine == nil {
 		writeError(w, http.StatusServiceUnavailable, "CONSOLE_UNAVAILABLE", "账号总览暂不可用")
@@ -366,6 +469,29 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "USAGE_UNAVAILABLE", err.Error())
 		return
 	}
+	actualSuccess := model.AccountSuccessSnapshot{
+		QueriedAt: time.Now().UTC(),
+		Source:    "account_performance_aggregate",
+		Notice:    "实际成功率聚合读取未配置",
+		Items:     []model.GroupAccountSuccessRate{},
+	}
+	if s.accountSuccess != nil {
+		if snapshot, successErr := s.accountSuccess.GetAccountSuccessRates(r.Context()); successErr != nil {
+			s.logger.Warn("load account actual success rates", "error", successErr)
+			actualSuccess.Notice = "实际成功率暂不可用"
+		} else {
+			actualSuccess = snapshot
+		}
+	}
+	if healthConsole, ok := s.console.(accountPerformanceHealthConsole); ok {
+		if health, healthErr := healthConsole.GetAccountPerformanceHealth(r.Context()); healthErr == nil {
+			actualSuccess.CollectionHealth = &health
+			if health.Status != "" && health.Status != "complete" {
+				actualSuccess.Partial = true
+				actualSuccess.Notice = appendOverviewNotice(actualSuccess.Notice, "主服务实际成功率采集已降级")
+			}
+		}
+	}
 	configs := s.engine.List()
 	configByID := make(map[int64]model.ManagedAccount, len(configs))
 	for _, config := range configs {
@@ -388,6 +514,14 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.notifications != nil {
 		groupBalanceThresholds = s.notifications.GroupBalanceThresholds()
+	}
+	var groupUsage *model.GroupUsageSummarySnapshot
+	if usageConsole, ok := s.console.(groupUsageSummaryConsole); ok {
+		snapshot, usageErr := usageConsole.GetGroupUsageSummary(r.Context())
+		if usageErr != nil {
+			s.logger.Warn("load group usage summary", "error", usageErr)
+		}
+		groupUsage = &snapshot
 	}
 	overviewAccounts := make([]overviewAccount, 0, len(accounts))
 	for _, account := range accounts {
@@ -419,13 +553,30 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		overviewAccounts = append(overviewAccounts, item)
 	}
 	groupBalanceSummaries := projectGroupBalanceSummaries(overviewAccounts, logicalGroupIDs, groupProtections, time.Now().UTC())
-	writeJSON(w, http.StatusOK, map[string]any{
+	response := map[string]any{
 		"groups":                    groups,
 		"accounts":                  overviewAccounts,
 		"group_protection_defaults": groupProtectionDefaults,
 		"group_balance_thresholds":  groupBalanceThresholds,
 		"group_balance_summaries":   groupBalanceSummaries,
-	})
+		"actual_success":            actualSuccess,
+	}
+	if groupUsage != nil {
+		response["group_usage"] = groupUsage
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func appendOverviewNotice(existing, message string) string {
+	existing = strings.TrimSpace(existing)
+	message = strings.TrimSpace(message)
+	if existing == "" {
+		return message
+	}
+	if message == "" || strings.Contains(existing, message) {
+		return existing
+	}
+	return existing + "；" + message
 }
 
 func projectGroupBalanceSummaries(accounts []overviewAccount, logicalGroupIDs map[int64][]int64, protections map[int64]map[string]upstream.GroupAccountProtectionView, now time.Time) map[string]overviewGroupBalanceSummary {
@@ -1007,6 +1158,10 @@ func (s *Server) handleListConfigs(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"configs": s.engine.ListViews()})
 }
 
+func (s *Server) handleActiveProbingRemoved(w http.ResponseWriter, _ *http.Request) {
+	writeError(w, http.StatusGone, "ACTIVE_PROBING_REMOVED", "主动账号探测已移除，请使用真实请求成功率判断账号表现")
+}
+
 func (s *Server) handleCreateConfig(w http.ResponseWriter, r *http.Request) {
 	request, err := decodePolicyRequest(r)
 	if err != nil {
@@ -1089,6 +1244,52 @@ func (s *Server) handleRunNow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "running"})
+}
+
+func (s *Server) handleManualProbe(w http.ResponseWriter, r *http.Request) {
+	accountID, err := pathAccountID(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_ACCOUNT", err.Error())
+		return
+	}
+	var request manualProbeRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&request); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "请求格式无效")
+		return
+	}
+	if len(request.Models) == 0 || len(request.Models) > 8 {
+		writeError(w, http.StatusBadRequest, "INVALID_MODELS", "模型数量必须在 1 到 8 个之间")
+		return
+	}
+	token, _ := r.Context().Value(adminTokenKey).(string)
+	identity, _ := r.Context().Value(forwardedIdentityKey).(core.ForwardedIdentity)
+	results, err := s.engine.ManualProbe(r.Context(), accountID, token, identity, request.Models, request.Prompt, request.ReasoningEffort)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "MANUAL_PROBE_FAILED", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"account_id": accountID, "results": results})
+}
+
+func (s *Server) handleAccountModels(w http.ResponseWriter, r *http.Request) {
+	accountID, err := pathAccountID(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_ACCOUNT", err.Error())
+		return
+	}
+	client, ok := s.core.(accountModelsConsole)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "ACCOUNT_MODELS_UNAVAILABLE", "账号模型服务不可用")
+		return
+	}
+	models, err := client.GetAvailableModels(r.Context(), accountID)
+	if err != nil {
+		s.logger.WarnContext(r.Context(), "load account models", "account_id", accountID, "error", err)
+		writeError(w, http.StatusBadGateway, "ACCOUNT_MODELS_FAILED", "无法读取账号真实模型列表，请稍后重试")
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, map[string]any{"account_id": accountID, "models": models})
 }
 
 func (s *Server) handleDirectProbeStatus(w http.ResponseWriter, r *http.Request) {

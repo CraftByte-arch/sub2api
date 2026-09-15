@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/Wei-Shaw/sub2api-account-auto-scheduler/internal/engine"
 	"github.com/Wei-Shaw/sub2api-account-auto-scheduler/internal/notify"
 	"github.com/Wei-Shaw/sub2api-account-auto-scheduler/internal/store"
 )
@@ -115,9 +116,23 @@ func (s *Server) handleSetAccountBalanceAlert(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusBadRequest, "INVALID_BALANCE_ALERT", "余额告警阈值不能为空")
 		return
 	}
+	if s.engine == nil {
+		writeError(w, http.StatusServiceUnavailable, "CONSOLE_UNAVAILABLE", "账号设置暂不可用")
+		return
+	}
+	if _, err := s.engine.EnsurePassiveAccount(r.Context(), accountID); err != nil {
+		status := http.StatusBadGateway
+		code := "ACCOUNT_SETTINGS_FAILED"
+		if errors.Is(err, engine.ErrUnsupportedAccount) {
+			status = http.StatusBadRequest
+			code = "UNSUPPORTED_ACCOUNT"
+		}
+		writeError(w, status, code, err.Error())
+		return
+	}
 	if err := s.notifications.SetAccountBalanceThreshold(accountID, request.Threshold); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "NOT_FOUND", "请先为该账号创建检测配置")
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "账号设置不存在")
 			return
 		}
 		writeError(w, http.StatusBadRequest, "INVALID_BALANCE_ALERT", err.Error())
@@ -137,7 +152,7 @@ func (s *Server) handleClearAccountBalanceAlert(w http.ResponseWriter, r *http.R
 	}
 	if err := s.notifications.SetAccountBalanceThreshold(accountID, nil); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "NOT_FOUND", "账号检测配置不存在")
+			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 		writeError(w, http.StatusBadRequest, "BALANCE_ALERT_CLEAR_FAILED", err.Error())

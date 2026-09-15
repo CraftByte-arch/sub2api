@@ -14,6 +14,7 @@ type Config struct {
 	ListenAddr           string
 	Sub2APIBaseURL       string
 	AdminAPIKey          string
+	OnlineDatabaseURL    string
 	DataFile             string
 	PublicURL            string
 	UIOrigin             string
@@ -32,6 +33,7 @@ func Load() (Config, error) {
 		ListenAddr:           envOrDefault("AUTO_SCHEDULER_LISTEN_ADDR", ":8091"),
 		Sub2APIBaseURL:       strings.TrimRight(envOrDefault("SUB2API_BASE_URL", "http://127.0.0.1:8080"), "/"),
 		AdminAPIKey:          strings.TrimSpace(os.Getenv("SUB2API_ADMIN_API_KEY")),
+		OnlineDatabaseURL:    strings.TrimSpace(os.Getenv("AUTO_SCHEDULER_ONLINE_DATABASE_URL")),
 		DataFile:             envOrDefault("AUTO_SCHEDULER_DATA_FILE", "./data/state.json"),
 		PublicURL:            strings.TrimRight(strings.TrimSpace(os.Getenv("AUTO_SCHEDULER_PUBLIC_URL")), "/"),
 		UIOrigin:             strings.TrimRight(strings.TrimSpace(os.Getenv("AUTO_SCHEDULER_UI_ORIGIN")), "/"),

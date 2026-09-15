@@ -325,15 +325,15 @@ func TestConsoleDataMethodsNormalizeEnvelopes(t *testing.T) {
 			writeEnvelope(t, w, map[string]any{"stats": map[string]any{
 				"1": map[string]any{"requests": 4, "tokens": 1200, "cost": 0.75},
 			}})
-		case "GET /api/v1/admin/accounts/1/stats":
-			if r.URL.Query().Get("days") != "1" {
-				t.Fatalf("unexpected account stats range: %s", r.URL.RawQuery)
+		case "GET /api/v1/admin/usage/stats":
+			if r.URL.Query().Get("account_id") != "1" || r.URL.Query().Get("period") != "today" {
+				t.Fatalf("unexpected usage stats query: %s", r.URL.RawQuery)
 			}
-			writeEnvelope(t, w, map[string]any{"models": []map[string]any{
-				{"input_tokens": 300, "cache_creation_tokens": 100, "cache_read_tokens": 600},
-			}})
-		case "GET /api/v1/admin/accounts/2/stats":
-			writeEnvelope(t, w, map[string]any{"models": []map[string]any{}})
+			writeEnvelope(t, w, map[string]any{
+				"total_input_tokens":          400,
+				"total_cache_creation_tokens": 100,
+				"total_cache_read_tokens":     600,
+			})
 		case "GET /api/v1/admin/accounts/1/usage":
 			if r.URL.Query().Get("source") != "passive" {
 				t.Fatalf("unexpected usage source: %s", r.URL.RawQuery)
@@ -356,6 +356,9 @@ func TestConsoleDataMethodsNormalizeEnvelopes(t *testing.T) {
 	stats, err := client.GetTodayStatsBatch(context.Background(), []int64{2, 1, 2, 0})
 	if err != nil || stats["1"].Tokens != 1200 || stats["1"].Cache == nil || stats["1"].Cache.HitRate != 60 {
 		t.Fatalf("unexpected stats: %#v err=%v", stats, err)
+	}
+	if stats["2"].Cache == nil || stats["2"].Cache.PromptTokens != 0 {
+		t.Fatalf("idle account did not receive zero cache projection: %#v", stats["2"])
 	}
 	usage, err := client.GetPassiveUsage(context.Background(), 1)
 	if err != nil || usage.FiveHour == nil || usage.FiveHour.Utilization != 42.5 {

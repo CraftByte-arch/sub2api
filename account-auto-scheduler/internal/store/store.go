@@ -55,7 +55,7 @@ func (s *Store) load() error {
 	if err := json.Unmarshal(raw, &state); err != nil {
 		return fmt.Errorf("decode state: %w", err)
 	}
-	if state.Version != model.LegacyStateVersion && state.Version != model.UpstreamStateVersion && state.Version != model.ProtectionStateVersion && state.Version != model.GroupProtectionDefaultStateVersion && state.Version != model.StateVersion {
+	if state.Version != model.LegacyStateVersion && state.Version != model.UpstreamStateVersion && state.Version != model.ProtectionStateVersion && state.Version != model.GroupProtectionDefaultStateVersion && state.Version != model.RemoteGroupSnapshotStateVersion && state.Version != model.StateVersion {
 		return fmt.Errorf("unsupported state version %d", state.Version)
 	}
 	if state.Accounts == nil {
@@ -97,6 +97,9 @@ func (s *Store) load() error {
 		for identityKey, identity := range upstream.Identities {
 			if identity.Keys == nil {
 				identity.Keys = map[string]model.RemoteKey{}
+			}
+			if identity.Groups == nil {
+				identity.Groups = map[string]model.RemoteGroup{}
 			}
 			upstream.Identities[identityKey] = identity
 		}
@@ -734,6 +737,15 @@ func cloneUpstream(upstream model.ManagedUpstream) model.ManagedUpstream {
 				remoteKey.Multiplier = &multiplier
 			}
 			identity.Keys[keyID] = remoteKey
+		}
+		groups := identity.Groups
+		identity.Groups = make(map[string]model.RemoteGroup, len(groups))
+		for groupID, remoteGroup := range groups {
+			if remoteGroup.Multiplier != nil {
+				multiplier := *remoteGroup.Multiplier
+				remoteGroup.Multiplier = &multiplier
+			}
+			identity.Groups[groupID] = remoteGroup
 		}
 		upstream.Identities[key] = identity
 	}

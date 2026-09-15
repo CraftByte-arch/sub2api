@@ -7,6 +7,7 @@
   <title>账号自动调度</title>
   <link rel="stylesheet" href="app.css">
   <script src="upstreams.js" defer></script>
+  <script src="group-access.js" defer></script>
   <script src="app.js" defer></script>
 </head>
 <body>
@@ -25,6 +26,7 @@
     <symbol id="icon-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.1.1l2-2a5 5 0 0 0-7.1-7.1l-1.1 1.1"/><path d="M14 11a5 5 0 0 0-7.1-.1l-2 2A5 5 0 0 0 12 20l1.1-1.1"/></symbol>
     <symbol id="icon-chevron-left" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></symbol>
     <symbol id="icon-chevron-right" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+    <symbol id="icon-more-horizontal" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol>
     <symbol id="icon-server" viewBox="0 0 24 24"><rect width="20" height="8" x="2" y="2" rx="2"/><rect width="20" height="8" x="2" y="14" rx="2"/><path d="M6 6h.01M6 18h.01"/></symbol>
     <symbol id="icon-log-in" viewBox="0 0 24 24"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M15 12H3"/></symbol>
     <symbol id="icon-key" viewBox="0 0 24 24"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6M15 6l3 3M18 3l3 3"/></symbol>
@@ -57,10 +59,6 @@
           <button id="refresh-button" class="icon-button" type="button" title="刷新分组与账号" aria-label="刷新分组与账号">
             <svg class="icon"><use href="#icon-refresh"/></svg>
           </button>
-          <button id="add-button" class="button primary" type="button">
-            <svg class="icon"><use href="#icon-plus"/></svg>
-            <span>新增检测</span>
-          </button>
         </div>
         <div id="upstreams-header-actions" class="action-cluster" hidden>
           <button id="upstream-refresh-button" class="icon-button" type="button" title="同步全部上游" aria-label="同步全部上游">
@@ -88,7 +86,11 @@
         <div class="metric"><span>分组</span><strong id="metric-groups">0</strong></div>
         <div class="metric"><span>全部账号</span><strong id="metric-accounts">0</strong></div>
         <div class="metric"><span>当前可用</span><strong id="metric-enabled" class="text-success">0</strong></div>
-        <div class="metric"><span>检测自动暂停</span><strong id="metric-auto-stopped" class="text-warning">0</strong></div>
+        <div class="metric"><span>近 1 小时有调用账号</span><strong id="metric-active-traffic">—</strong></div>
+        <button id="online-users-metric" class="metric metric-button" type="button" aria-haspopup="dialog" aria-controls="online-users-dialog" title="查看最近十分钟有调用的用户">
+          <span>在线使用 <small id="metric-online-window">最近 10 分钟</small></span>
+          <strong id="metric-online-users">—</strong>
+        </button>
       </section>
 
       <section class="filter-bar" aria-label="筛选账号">
@@ -102,7 +104,6 @@
             <option value="all">全部状态</option>
             <option value="enabled">当前可用</option>
             <option value="manual">管理员停止</option>
-            <option value="auto">检测自动停止</option>
             <option value="protected">超过保护倍率</option>
             <option value="limited">临时受限</option>
             <option value="inactive">账号停用</option>
@@ -125,7 +126,7 @@
     <section id="upstreams-panel" role="tabpanel" aria-labelledby="upstreams-tab" tabindex="0" hidden>
       <div id="upstream-credentials-notice" class="operational-notice warning" hidden>
         <svg class="icon"><use href="#icon-shield"/></svg>
-        <div><strong>上游连接未启用</strong><span>请在调度侧车配置 AUTO_SCHEDULER_CREDENTIAL_KEY；现有账号检测不受影响。</span></div>
+        <div><strong>上游连接未启用</strong><span>请在调度侧车配置 AUTO_SCHEDULER_CREDENTIAL_KEY；分组账号、手动调度与实际成功率展示不受影响。</span></div>
       </div>
       <section class="upstream-metrics" aria-label="上游概览">
         <div><span>上游</span><strong id="upstream-metric-sites">0</strong></div>
@@ -170,10 +171,51 @@
     </section>
   </main>
 
-  <dialog id="config-dialog" class="modal">
+  <dialog id="group-access-dialog" class="modal wide-modal" aria-labelledby="group-access-title">
+    <article class="modal-panel">
+      <header class="modal-header">
+        <div><h2 id="group-access-title">专属分组用户</h2><p id="group-access-target"></p></div>
+        <button type="button" class="icon-button ghost" data-close-dialog="group-access-dialog" aria-label="关闭用户权限弹窗"><svg class="icon"><use href="#icon-x"/></svg></button>
+      </header>
+      <div class="group-access-body">
+      <div class="group-access-toolbar">
+        <label class="field"><span>查看 / 从其他分组同步</span><select id="group-access-source"></select></label>
+        <label class="field"><span>搜索用户</span><input id="group-access-search" type="search" placeholder="用户名、邮箱或用户 ID"></label>
+        <button id="group-access-refresh" type="button" class="button secondary">刷新列表</button>
+      </div>
+      <p class="group-access-note">名单为明确授予分组权限的用户；禁用状态单独显示。同步只追加权限，不复制订阅、倍率或余额。同步期间请勿在主后台同时修改这些用户的分组权限。</p>
+      <div class="group-access-selection">
+        <button id="group-access-all" type="button" class="button secondary">全选全部可同步用户（跨页）</button>
+        <button id="group-access-clear" type="button" class="button secondary">清空选择</button>
+        <span id="group-access-count" role="status"></span>
+      </div>
+      <div class="group-access-scroll" id="group-access-scroll">
+        <table class="group-access-table">
+          <thead><tr><th scope="col">选择</th><th scope="col">用户</th><th scope="col">状态</th><th scope="col">目标分组权限 / 同步结果</th></tr></thead>
+          <tbody id="group-access-list"></tbody>
+        </table>
+      </div>
+      <p id="group-access-message" class="group-access-note" role="status" aria-live="polite"></p>
+      <section id="group-access-confirmation" class="group-access-confirmation" hidden aria-label="确认追加用户权限">
+        <p id="group-access-confirm-text"></p>
+        <button id="group-access-back" class="button secondary" type="button">返回选择</button>
+        <button id="group-access-confirm" class="button primary" type="button">确认追加权限</button>
+      </section>
+      </div>
+      <footer class="modal-footer group-access-footer">
+        <span id="group-access-page" class="page-label"></span>
+        <button id="group-access-prev" class="button secondary" type="button">上一页</button>
+        <button id="group-access-next" class="button secondary" type="button">下一页</button>
+        <button id="group-access-stop" class="button secondary" type="button" hidden>停止后续批次</button>
+        <button id="group-access-submit" class="button primary" type="button" disabled>同步所选用户</button>
+      </footer>
+    </article>
+  </dialog>
+
+  <dialog id="config-dialog" class="modal small-modal">
     <form id="config-form" method="dialog" class="modal-panel">
       <header class="modal-header">
-        <div><h2 id="config-title">新增状态检测</h2><p>API Key 账号</p></div>
+        <div><h2 id="config-title">账号设置</h2><p>真实成功率来自实际用户调用，不会主动探测</p></div>
         <button class="icon-button ghost" type="button" data-close-dialog="config-dialog" title="关闭" aria-label="关闭">
           <svg class="icon"><use href="#icon-x"/></svg>
         </button>
@@ -181,58 +223,19 @@
       <div class="modal-body form-grid">
         <label class="field full-width">
           <span>账号</span>
-          <select id="account-select" required></select>
-        </label>
-        <label class="field">
-          <span>检测间隔（秒）</span>
-          <input id="interval-input" type="number" min="15" max="86400" step="1" required>
-        </label>
-        <label class="field">
-          <span>检测模型</span>
-          <input id="model-input" type="text" maxlength="200" placeholder="平台默认模型">
-        </label>
-        <label class="field">
-          <span>耗时上限（秒）</span>
-          <input id="latency-input" type="number" min="1" max="300" step="0.1" required>
-        </label>
-        <label class="field">
-          <span>连续异常后暂停</span>
-          <input id="failure-input" type="number" min="1" max="20" step="1" required>
-        </label>
-        <label class="field">
-          <span>连续正常后恢复</span>
-          <input id="recovery-input" type="number" min="1" max="20" step="1" required>
-        </label>
-        <label class="switch-field">
-          <span><strong>启用自动调度</strong></span>
-          <input id="enabled-input" type="checkbox" role="switch">
-          <i aria-hidden="true"></i>
+          <select id="account-select" disabled></select>
         </label>
         <label class="field full-width">
           <span>账号余额告警阈值（可选）</span>
           <input id="balance-alert-input" type="number" inputmode="decimal" min="0" max="1000000000000" step="any" placeholder="留空则继承分组阈值">
           <small>设置后优先于分组余额告警阈值；可用余额低于该值时只推送一次，恢复后才会再次触发。</small>
         </label>
-        <label class="field full-width">
-          <span>检测提示词</span>
-          <textarea id="prompt-input" rows="7" maxlength="8000" required></textarea>
-        </label>
-        <section id="direct-probe-control" class="direct-probe-control full-width" hidden aria-live="polite">
-          <div class="direct-probe-copy">
-            <span class="data-label">探测来源</span>
-            <strong id="direct-probe-state">通过 Sub2API 检测</strong>
-            <small id="direct-probe-message">直连上游探测需要管理员显式授权。</small>
-          </div>
-          <div class="direct-probe-actions">
-            <button id="direct-probe-authorize-button" class="button secondary" type="button">授权直连探测</button>
-            <button id="direct-probe-revoke-button" class="button danger" type="button" hidden>撤销授权</button>
-          </div>
-        </section>
+        <div class="passive-health-note full-width" role="note">侧车已停用所有主动检测。这里仅保留余额告警设置；账号启用或停止请使用账号行右侧的全局调度开关。</div>
         <p id="form-error" class="form-error" hidden></p>
       </div>
       <footer class="modal-footer">
         <button class="button secondary" type="button" data-close-dialog="config-dialog">取消</button>
-        <button id="save-button" class="button primary" type="submit">保存</button>
+        <button id="save-button" class="button primary" type="submit">保存设置</button>
       </footer>
     </form>
   </dialog>
@@ -285,28 +288,84 @@
       </footer>
     </article>
   </dialog>
-
-  <dialog id="delete-dialog" class="modal small-modal">
-    <form method="dialog" class="modal-panel">
-      <header class="modal-header"><div><h2>删除检测配置</h2><p id="delete-account-name"></p></div></header>
-      <div class="confirm-body"><p>确认删除该账号的检测规则与最近 50 次历史记录？</p></div>
-      <footer class="modal-footer">
-        <button class="button secondary" type="button" data-close-dialog="delete-dialog">取消</button>
-        <button id="confirm-delete-button" class="button danger" type="button">删除</button>
-      </footer>
+  <dialog id="manual-probe-dialog" class="modal wide-modal" aria-labelledby="manual-probe-title" aria-describedby="manual-probe-account">
+    <form method="dialog" class="modal-panel" id="manual-probe-form">
+      <header class="modal-header">
+        <div><h2 id="manual-probe-title">手动探测</h2><p id="manual-probe-account"></p></div>
+        <button type="button" class="icon-button ghost" data-close-dialog="manual-probe-dialog" title="关闭" aria-label="关闭手动探测弹窗"><svg class="icon"><use href="#icon-x"/></svg></button>
+      </header>
+      <div class="modal-body form-grid manual-probe-body">
+        <section class="field full-width manual-probe-model-field" aria-labelledby="manual-probe-model-label">
+          <div class="manual-probe-field-heading">
+            <span id="manual-probe-model-label">账号真实模型（可多选，最多 8 个）</span>
+            <button id="manual-probe-retry" type="button" class="button secondary compact-command" hidden>重新加载</button>
+          </div>
+          <p id="manual-probe-model-status" class="manual-probe-inline-status" role="status" aria-live="polite"></p>
+          <div id="manual-probe-models" class="manual-probe-model-list" role="group" aria-labelledby="manual-probe-model-label"></div>
+          <small>模型来自 Sub2API 后台为该账号提供的真实模型列表，不会自动填入预设模型。</small>
+        </section>
+        <label class="field">
+          <span>自定义模型</span>
+          <input id="manual-probe-custom-model" maxlength="200" autocomplete="off" placeholder="真实列表没有时可手动填写">
+          <small>自定义模型会与勾选模型一起探测。</small>
+        </label>
+        <label class="field">
+          <span>推理强度</span>
+          <select id="manual-probe-effort"><option value="">默认</option><option>none</option><option>minimal</option><option>low</option><option>medium</option><option>high</option><option>xhigh</option></select>
+          <small>上游协议不支持时会忽略此项。</small>
+        </label>
+        <label class="field full-width">
+          <span>提示词</span>
+          <textarea id="manual-probe-prompt" rows="4" maxlength="8000" placeholder="留空使用默认检测提示词"></textarea>
+        </label>
+        <p class="manual-probe-notice full-width">手动探测会直连上游并实际消耗额度，但不会改变调度状态、成功率或倍率保护。</p>
+        <section class="manual-probe-results full-width" aria-label="探测结果">
+          <div id="manual-probe-results" role="status" aria-live="polite"></div>
+        </section>
+      </div>
+      <footer class="modal-footer"><button type="button" class="button secondary" data-close-dialog="manual-probe-dialog">取消</button><button type="submit" class="button primary" id="manual-probe-submit">开始探测</button></footer>
     </form>
   </dialog>
 
-  <dialog id="result-dialog" class="modal small-modal">
+  <dialog id="online-users-dialog" class="modal wide-modal" aria-labelledby="online-users-title" aria-describedby="online-users-window-label">
     <article class="modal-panel">
       <header class="modal-header">
-        <div><h2>检测详情</h2><p id="result-account-name"></p></div>
-        <button class="icon-button ghost" type="button" data-close-dialog="result-dialog" title="关闭" aria-label="关闭">
+        <div><h2 id="online-users-title">在线使用人数</h2><p id="online-users-window-label">最近 10 分钟内有调用的用户</p></div>
+        <button class="icon-button ghost" type="button" data-close-dialog="online-users-dialog" title="关闭" aria-label="关闭">
           <svg class="icon"><use href="#icon-x"/></svg>
         </button>
       </header>
-      <dl id="result-details" class="result-details"></dl>
-      <footer class="modal-footer"><button class="button secondary" type="button" data-close-dialog="result-dialog">关闭</button></footer>
+      <div id="online-users-summary" class="online-users-summary" aria-live="polite"></div>
+      <div class="online-user-table-header" aria-hidden="true">
+        <span>用户</span><span>最后调用</span><span>今日消耗</span>
+      </div>
+      <div id="online-users-list" class="online-users-list" aria-live="polite"></div>
+      <footer class="modal-footer">
+        <button id="online-users-retry-button" class="button secondary" type="button">刷新列表</button>
+        <span class="modal-footer-spacer"></span>
+        <button class="button secondary" type="button" data-close-dialog="online-users-dialog">关闭</button>
+      </footer>
+    </article>
+  </dialog>
+
+  <dialog id="group-user-consumption-dialog" class="modal wide-modal" aria-labelledby="group-user-consumption-title" aria-describedby="group-user-consumption-date">
+    <article class="modal-panel">
+      <header class="modal-header">
+        <div><h2 id="group-user-consumption-title">今日用户消耗 Top 20</h2><p id="group-user-consumption-date">当前分组 · 正在读取当天统计</p></div>
+        <button class="icon-button ghost" type="button" data-close-dialog="group-user-consumption-dialog" title="关闭" aria-label="关闭">
+          <svg class="icon"><use href="#icon-x"/></svg>
+        </button>
+      </header>
+      <div id="group-user-consumption-summary" class="group-consumption-summary" aria-live="polite"></div>
+      <div class="group-consumption-table-header" aria-hidden="true">
+        <span>用户</span><span>今日消耗</span><span>请求 / Token</span>
+      </div>
+      <div id="group-user-consumption-list" class="group-consumption-list" aria-live="polite"></div>
+      <footer class="modal-footer">
+        <button id="group-user-consumption-retry-button" class="button secondary" type="button">刷新统计</button>
+        <span class="modal-footer-spacer"></span>
+        <button class="button secondary" type="button" data-close-dialog="group-user-consumption-dialog">关闭</button>
+      </footer>
     </article>
   </dialog>
 
@@ -502,6 +561,18 @@
       <div id="upstream-binding-list" class="remote-binding-list"></div>
       <p id="upstream-binding-error" class="dialog-error" role="alert" hidden></p>
       <footer class="modal-footer"><button class="button secondary" type="button" data-close-dialog="upstream-binding-dialog">取消</button><button id="upstream-binding-save-button" class="button primary" type="button">保存绑定</button></footer>
+    </article>
+  </dialog>
+
+  <dialog id="upstream-bound-groups-dialog" class="modal wide-modal" aria-labelledby="upstream-bound-groups-title" aria-describedby="upstream-bound-groups-name">
+    <article class="modal-panel">
+      <header class="modal-header">
+        <div><h2 id="upstream-bound-groups-title">上游可用分组</h2><p id="upstream-bound-groups-name"></p></div>
+        <button class="icon-button ghost" type="button" data-close-dialog="upstream-bound-groups-dialog" title="关闭" aria-label="关闭"><svg class="icon"><use href="#icon-x"/></svg></button>
+      </header>
+      <div class="bound-groups-summary"><span id="upstream-bound-groups-count">尚无可用分组快照</span><span>已绑定项会显示上游 Key 与本地 API Key</span></div>
+      <div id="upstream-bound-groups-list" class="bound-groups-list"></div>
+      <footer class="modal-footer"><button class="button secondary" type="button" data-close-dialog="upstream-bound-groups-dialog">关闭</button></footer>
     </article>
   </dialog>
 

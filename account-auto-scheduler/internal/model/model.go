@@ -9,11 +9,12 @@ import (
 )
 
 const (
-	StateVersion                           = 5
+	StateVersion                           = 6
 	LegacyStateVersion                     = 1
 	UpstreamStateVersion                   = 2
 	ProtectionStateVersion                 = 3
 	GroupProtectionDefaultStateVersion     = 4
+	RemoteGroupSnapshotStateVersion        = 5
 	HistoryLimit                           = 50
 	MinIntervalSeconds                     = 15
 	MaxIntervalSeconds                     = 86400
@@ -81,6 +82,7 @@ type Policy struct {
 	LatencyLimitMS    int64  `json:"latency_limit_ms"`
 	FailureThreshold  int    `json:"failure_threshold"`
 	RecoveryThreshold int    `json:"recovery_threshold"`
+	ReasoningEffort   string `json:"reasoning_effort,omitempty"`
 }
 
 func DefaultPolicy() Policy {
@@ -96,6 +98,12 @@ func DefaultPolicy() Policy {
 
 func (p Policy) Normalize() (Policy, error) {
 	p.Model = strings.TrimSpace(p.Model)
+	p.ReasoningEffort = strings.ToLower(strings.TrimSpace(p.ReasoningEffort))
+	switch p.ReasoningEffort {
+	case "", "none", "minimal", "low", "medium", "high", "xhigh":
+	default:
+		return Policy{}, errors.New("推理强度必须是 none、minimal、low、medium、high 或 xhigh")
+	}
 	// A direct probe must send an administrator's custom prompt verbatim. Keep
 	// meaningful leading/trailing whitespace while still treating whitespace-only
 	// input as a request for the shared default probe prompt.
@@ -342,6 +350,28 @@ type UpstreamGroup struct {
 	AccountCount            int64  `json:"account_count"`
 	ActiveAccountCount      int64  `json:"active_account_count"`
 	RateLimitedAccountCount int64  `json:"rate_limited_account_count"`
+	IsExclusive             bool   `json:"is_exclusive"`
+}
+
+type GroupAccessUser struct {
+	ID            int64   `json:"id"`
+	Username      string  `json:"username"`
+	Email         string  `json:"email"`
+	Status        string  `json:"status"`
+	AllowedGroups []int64 `json:"allowed_groups"`
+}
+
+type GroupAccessEntry struct {
+	ID         int64  `json:"id"`
+	Username   string `json:"username"`
+	Email      string `json:"email"`
+	Status     string `json:"status"`
+	Authorized bool   `json:"authorized"`
+}
+
+type AccountModel struct {
+	ID          string `json:"id"`
+	DisplayName string `json:"display_name,omitempty"`
 }
 
 type WindowStats struct {
@@ -354,9 +384,10 @@ type WindowStats struct {
 }
 
 // AccountCacheStats is the optional, sidecar-only daily prompt-cache
-// projection. A nil projection means the existing Sub2API account statistics
+// projection. A nil projection means the existing Sub2API usage-statistics
 // endpoint could not be read; a non-nil projection with PromptTokens == 0 is a
-// known zero-percent result.
+// known zero-percent result. PromptTokens uses the same cache-hit denominator
+// as the Sub2API usage-record page: input plus cache-read tokens.
 type AccountCacheStats struct {
 	InputTokens         int64   `json:"input_tokens"`
 	CacheCreationTokens int64   `json:"cache_creation_tokens"`
